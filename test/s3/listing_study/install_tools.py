@@ -83,6 +83,10 @@ def install(tool: str, study: Path, tools_dir: Path) -> None:
     bin_dir = tools_dir / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
     name = url.rsplit("/", 1)[-1]
+    stamp = tools_dir / "installed" / tool
+    if stamp.exists() and stamp.read_text() == sha:
+        print(f"{tool} {image.get('tool_version', '')} already installed")
+        return
 
     if tool == "aws-cli":
         archive = fetch(url, sha, dl / name)
@@ -188,6 +192,8 @@ def install(tool: str, study: Path, tools_dir: Path) -> None:
             subprocess.run(["docker", "rm", cid], check=True, stdout=subprocess.DEVNULL)
     else:
         raise SystemExit(f"unknown tool {tool}")
+    stamp.parent.mkdir(parents=True, exist_ok=True)
+    stamp.write_text(sha)
     print(f"installed {tool} {image.get('tool_version', '')}")
 
 

@@ -195,6 +195,9 @@ def parse_page(root: ET.Element, url_encoded: bool) -> Page:
         elif child.tag == S3NS + "CommonPrefixes":
             entries.append(("prefix", dec(text(child, "Prefix") or "")))
     nm = text(root, "NextMarker")
+    # XML carries Contents and CommonPrefixes as two lists; their merged byte
+    # order is what pagination has to respect.
+    entries.sort(key=lambda e: e[1].encode())
     return Page(
         entries,
         text(root, "IsTruncated") == "true",
@@ -366,6 +369,36 @@ class Probe:
         )
         self.expect_eq(mixed.entries, plain.entries, "continuation-token with a later start-after")
 
+    def versions(self, prefix: str, delimiter: str, max_keys: int, url: bool) -> None:
+        """ListObjectVersions paging (key-marker/version-id-marker) over unversioned keys."""
+        want = direct_view(self.keys, prefix, delimiter) if delimiter else [("key", k) for k in self.keys if k.startswith(prefix)]
+        got: list[tuple[str, str]] = []
+        key_marker = version_marker = None
+        dec = urllib.parse.unquote_plus if url else (lambda v: v)
+        for _ in range(10000):
+            params = [("versions", ""), ("max-keys", str(max_keys)), ("prefix", prefix)]
+            if delimiter:
+                params.append(("delimiter", delimiter))
+            if url:
+                params.append(("encoding-type", "url"))
+            if key_marker is not None:
+                params += [("key-marker", key_marker), ("version-id-marker", version_marker or "")]
+            root = self.s3.list_page(self.bucket, params)
+            page: list[tuple[str, str]] = []
+            for child in root:
+                if child.tag in (S3NS + "Version", S3NS + "DeleteMarker"):
+                    page.append(("key", dec(text(child, "Key") or "")))
+                elif child.tag == S3NS + "CommonPrefixes":
+                    page.append(("prefix", dec(text(child, "Prefix") or "")))
+            assert len(page) <= max_keys, f"{len(page)} entries > max-keys {max_keys}"
+            got += sorted(page, key=lambda e: e[1].encode())
+            if text(root, "IsTruncated") != "true":
+                break
+            nk = text(root, "NextKeyMarker")
+            assert nk, "truncated versions page without NextKeyMarker"
+            key_marker, version_marker = dec(nk), text(root, "NextVersionIdMarker")
+        self.expect_eq(got, want, f"versions prefix={prefix!r} delimiter={delimiter!r} max-keys={max_keys} url={url}")
+
     def url_encoding(self, prefix: str) -> None:
         want = [("key", k) for k in self.keys if k.startswith(prefix)]
         got = self.flat(self.v2_all([("prefix", prefix)], 7, url=True))
@@ -409,6 +442,11 @@ def run_probes(s3: S3, buckets: dict[str, dict[str, int]]) -> list[tuple[str, st
             for mk in (1, 3, 1000):
                 check(f"{tag}:delimiter-v2:prefix={prefix}:max-keys={mk}", p.delimiter, prefix, "/", mk)
                 check(f"{tag}:delimiter-v1:prefix={prefix}:max-keys={mk}", p.delimiter, prefix, "/", mk, True)
+        for prefix in ("", scopes[-1]):
+            for delim in ("", "/"):
+                for mk in (2, 1000):
+                    check(f"{tag}:versions:prefix={prefix}:delimiter={delim}:max-keys={mk}", p.versions, prefix, delim, mk, False)
+            check(f"{tag}:versions-url:prefix={prefix}", p.versions, prefix, "/", 3, True)
         for d in ("-", "a", "ou"):
             check(f"{tag}:delimiter={d}", p.delimiter, "", d, 1000)
         check(f"{tag}:serial:prefix-no-slash", p.serial, keys[len(keys) // 3][:4], 5)
@@ -472,6 +510,7 @@ class ToolRunner:
             "/usr/bin/python3": sys.executable,
             "/opt/benchmark/tools/": str(study / "tools") + "/",
         }
+        os.environ["PYTHONPATH"] = str(study / "benchmark" / "src")
         self.env = {
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
             "AWS_ACCESS_KEY_ID": args.access_key,
@@ -499,27 +538,61 @@ class ToolRunner:
         return self.study / "tools" / tool / "adapter"
 
     def write_fixture_companions(self, bucket: str, keys: list[str]) -> None:
-        """The staged-fixture companions the fixture-backed modes read (fixture_bundle.py)."""
-        out = self.fixture_dir / bucket
-        out.mkdir(parents=True, exist_ok=True)
-        top = sorted({k.split("/", 1)[0] + "/" for k in keys if "/" in k})
-        (out / "s5cmd-shards.input").write_text("".join(f"{t}\n" for t in top))
-        ordered = utf8_sorted(keys)
-        cuts = ordered[len(ordered) // 5 :: max(1, len(ordered) // 5)][:4]
-        (out / "s3-fast-list-hints.input").write_text("".join(f"{c}\n" for c in cuts))
+        """The staged-fixture companions, built the way fixture_bundle.py builds them."""
+        import duckdb  # noqa: PLC0415
 
-    def config_for(self, adapter, mode: str) -> dict[str, object]:
+        out = self.fixture_dir / bucket
+        shutil.rmtree(out, ignore_errors=True)
+        out.mkdir(parents=True)
+        shards = sorted({k.split("/", 1)[0] for k in keys})
+        if all(re.fullmatch(r"[A-Za-z0-9._/-]+", s) for s in shards):
+            (out / "s5cmd-shards.input").write_text("".join(f"{s}\n" for s in shards))
+        parts = out / "parquet"
+        parts.mkdir()
+        with duckdb.connect() as con:
+            con.execute("CREATE TABLE f (key BLOB, row_type VARCHAR)")
+            con.executemany("INSERT INTO f VALUES (?, 'OBJECT')", [(k.encode(),) for k in keys])
+            con.execute(f"COPY f TO '{parts / 'part-00000.parquet'}' (FORMAT parquet)")
+        sys.path.insert(0, str(self.study / "tools" / "s3-fast-list" / "adapter"))
+        from fixture_hints import FixtureHintsError, generate_hints  # noqa: PLC0415
+
+        try:
+            generate_hints(parts, out / "s3-fast-list-hints.input", segments=4)
+        except FixtureHintsError as exc:
+            print(f"{bucket}: no s3-fast-list fixture hints: {exc}", flush=True)
+
+    def inject_endpoint(self, tool: str, argv: list[str], env: dict) -> tuple[list[str], dict]:
+        """Add the endpoint the way the replay-endpoint pilot (run.sh) did, for modes
+        the capsule refuses only because the replay server lacks the API."""
+        ep = self.endpoint
+        if tool == "rclone":
+            return [a.replace(f"region={REGION}", f'region={REGION},endpoint="{ep}",force_path_style=true') for a in argv], env
+        if tool == "minio-mc":
+            return argv, {**env, "MC_HOST_s3": ep, "MC_REGION": REGION}
+        if tool == "s3kor":
+            return [argv[0], argv[1], "--custom-endpoint-url", ep, *argv[2:]], env
+        if tool == "s7cmd":
+            return [*argv[:-1], "--target-endpoint-url", ep, "--target-force-path-style", argv[-1]], env
+        if tool == "s5cmd":
+            return [argv[0], "--endpoint-url", ep, *argv[1:]], env
+        return [*argv, "--endpoint-url", ep], env
+
+    def config_for(self, adapter, case: Case, mode: str, keys: list[str]) -> dict[str, object]:
         config: dict[str, object] = {}
         for name, axis in adapter.modes[mode].axes.items():
             if isinstance(axis, self.stated):
-                config[name] = {"segments": 4}.get(name, 4)
+                config[name] = 4
         if adapter.tool == "s5cmd" and mode == "fanout-with-dirs":
-            config["shard_prefixes"] = []
+            initials = sorted({k[len(case.prefix)] for k in keys if k.startswith(case.prefix) and len(k) > len(case.prefix)})
+            if not all(re.fullmatch(r"[A-Za-z0-9._-]", c) for c in initials):
+                raise NotApplicable(f"key initials {initials} are outside the capsule's safe shard set")
+            config["shard_initials"] = "".join(initials)
         return config
 
-    def execute(self, adapter, case: Case, mode: str, sink: Path, artifact_path: str = "") -> tuple[Path | None, dict]:
+    def execute(self, adapter, case: Case, mode: str, sink: Path, keys: list[str], artifact_path: str = "") -> tuple[Path | None, dict]:
         signed = adapter.supports_signed
-        config = self.config_for(adapter, mode)
+        inject = case.tool in INJECT_ENDPOINT and mode in INJECT_ENDPOINT[case.tool]
+        config = self.config_for(adapter, case, mode, keys)
         argv, env = self.adapters.compile_command(
             self.adapter_dir(case.tool),
             case.tool,
@@ -532,8 +605,11 @@ class ToolRunner:
             sink_dir=str(sink),
             artifact_path=artifact_path,
             visible_memory_gb=2.0,
-            endpoint_url=self.endpoint,
+            endpoint_url="" if inject else self.endpoint,
         )
+        if inject:
+            argv, env = self.inject_endpoint(case.tool, list(argv), env)
+            case.detail = "endpoint injected; "
         argv = self.localize(argv, case.bucket)
         case.argv = argv
         sink.mkdir(parents=True, exist_ok=True)
@@ -560,24 +636,36 @@ class ToolRunner:
     def run_case(self, case: Case, expected: dict[str, tuple[int, str]]) -> None:
         adapter = self.adapters.load_adapter(self.adapter_dir(case.tool), case.tool)
         manifest = adapter.modes[case.mode]
-        if manifest.purpose_ceiling == "preparation" or not manifest.product_artifact:
+        if manifest.purpose_ceiling == "preparation" or not manifest.product_artifact or (case.tool, case.mode) in NOT_A_LISTING:
             case.status = "skip"
-            case.detail = "preparation mode, no listing product"
+            case.detail = f"{manifest.purpose_ceiling} mode, not a compared listing"
             return
+        if (case.tool, case.mode) in ROOT_ONLY and case.prefix:
+            case.status, case.detail = "skip", "mode lists the bucket root whatever the prefix"
+            return
+        fixture = self.fixture_dir / case.bucket
+        needs = {"fanout-fixture-with-dirs": "s5cmd-shards.input", "list-hinted-fixture": "s3-fast-list-hints.input"}.get(case.mode)
+        if needs and not (fixture / needs).exists():
+            case.status, case.detail = "skip", f"fixture_bundle.py would not build {needs} for this key set"
+            return
+        keys = list(expected)
         sink = self.work / "cases" / case.tool / case.mode / (case.bucket + "~" + (case.prefix.replace("/", "_") or "root"))
         shutil.rmtree(sink, ignore_errors=True)
         try:
             artifact_path = ""
             for step in adapter.requires.get(case.mode, ()):
                 producer_sink = sink / f"requires-{step.mode}"
-                self.execute(adapter, case, step.mode, producer_sink)
+                self.execute(adapter, case, step.mode, producer_sink, keys)
                 artifact_path = str(producer_sink / adapter.modes[step.mode].artifacts[step.artifact])
             if manifest.inline:
                 inline_sink = sink / f"inline-{manifest.inline}"
-                self.execute(adapter, case, manifest.inline, inline_sink, artifact_path)
+                self.execute(adapter, case, manifest.inline, inline_sink, keys, artifact_path)
                 inline_manifest = adapter.modes[manifest.inline]
                 artifact_path = str(inline_sink / next(iter(inline_manifest.artifacts.values())))
-            product, config = self.execute(adapter, case, case.mode, sink, artifact_path)
+            product, config = self.execute(adapter, case, case.mode, sink, keys, artifact_path)
+        except NotApplicable as exc:
+            case.status, case.detail = "skip", str(exc)
+            return
         except self.adapters.AdapterError as exc:
             if "custom endpoint" in str(exc) or "replay endpoint" in str(exc) or "no --prefix" in str(exc) or "requires HeadBucket" in str(exc):
                 case.status, case.detail = "skip", f"capsule refuses: {str(exc).split(': ', 2)[-1][:160]}"
@@ -596,6 +684,41 @@ class ToolRunner:
         )
         compare(case, normalized.read_bytes(), expected, manifest.fields)
 
+
+INJECT_ENDPOINT = {
+    "aws-cli": {"s3api-v1-text", "s3api-versions-text"},
+    "minio-mc": {"versions-json", "find", "find-json"},
+    "rclone": {"listv1"},
+    "s3kor": {"list-versions"},
+    "s4cmd": {"recursive", "shallow", "show-directory", "du"},
+    "s5cmd": {"listv1", "allversions"},
+    "s7cmd": {"all-versions"},
+}
+"""Capsule modes refused only because the study's replay server serves
+ListObjectsV2 alone; SeaweedFS serves ListObjects, ListObjectVersions and
+HeadBucket too."""
+
+NOT_A_LISTING = {
+    ("rclone", "debug"),
+    ("rclone", "walk-debug"),
+    ("s3p", "summarize"),
+    ("s4cmd", "du"),
+    ("s4cmd", "show-directory"),
+}
+"""Modes with no per-key listing: rclone's normalizer has no debug modes, summarize
+and du print one aggregate, and `ls -d` prints the directory itself."""
+
+
+class NotApplicable(Exception):
+    pass
+
+
+ROOT_ONLY = {
+    ("aws-cli", "s3api-v2-remainder"),
+    ("s5cmd", "fanout-fixture-with-dirs"),
+    ("s3-fast-list", "list-hinted-fixture"),
+}
+"""Modes whose capsule lists the root (remainder) or a staged root-scope fixture."""
 
 SHALLOW = re.compile(r"shallow|delimiter|rootkeys|remainder|max-depth")
 
@@ -646,7 +769,7 @@ def compare(case: Case, normalized: bytes, expected: dict[str, tuple[int, str]],
         if etag != "-" and etag != want_etag:
             problems.append(f"{key!r} etag {etag} != {want_etag}")
     case.status = "fail" if problems else "pass"
-    case.detail = "; ".join(problems)[:1500] if problems else f"{len(objects)} objects, {len(dirs)} prefixes"
+    case.detail += "; ".join(problems)[:1500] if problems else f"{len(objects)} objects, {len(dirs)} prefixes"
 
 
 # ---------------------------------------------------------------- main

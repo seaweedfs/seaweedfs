@@ -49,13 +49,13 @@ tools: study venv
 
 start-server:
 	@mkdir -p $(WORK_DIR)/data
-	@set -e; ports=$$(python3 -c 'import random; b=random.randrange(20000,50000,10); print(*range(b,b+5))'); \
+	@set -e; ports=$$(python3 free_ports.py 5); \
 	set -- $$ports; \
 	$(WEED_BINARY) server -filer -s3 -ip 127.0.0.1 -ip.bind 127.0.0.1 -dir=$(WORK_DIR)/data \
 		-master.peers=none -master.raftHashicorp -master.electionTimeout 1s -master.volumeSizeLimitMB=1024 \
-		-volume.max=16 -volume.preStopSeconds=1 \
+		-volume.max=50 -volume.preStopSeconds=1 \
 		-master.port=$$1 -volume.port=$$2 -filer.port=$$3 -s3.port=$$4 -metricsPort=$$5 \
-		-s3.port.iceberg=0 -s3.port.lance=0 -s3.config=$(CURDIR)/s3.json \
+		-s3.port.iceberg=0 -s3.port.lance=0 -s3.allowBackslashInKey -s3.config=$(CURDIR)/s3.json \
 		> $(WORK_DIR)/weed.log 2>&1 & echo $$! > $(WORK_DIR)/weed.pid; \
 	echo $$4 > $(WORK_DIR)/s3.port; \
 	for i in $$(seq 1 90); do \

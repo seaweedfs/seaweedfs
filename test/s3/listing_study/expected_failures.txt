@@ -1,1 +1,21 @@
-# <case name>  # why it is not a SeaweedFS regression
+# Cases that fail for reasons outside SeaweedFS. A listed case that passes is
+# reported as XPASS and fails the run, so this list has to shrink with fixes.
+# Format: <case name>  # reason
+
+# aws-cli prints "None" for a --query over a page with no Contents (the canary
+# has no root-level keys); the capsule normalizer reads it as a malformed row.
+aws-cli:s3api-v2-remainder:canary:/  # capsule normalizer cannot parse aws-cli's "None"
+
+# The edge bucket holds zero-byte directory markers (markers/dir/, markers/empty/).
+# These modes list them as directories, not objects: rclone's --files-only and
+# lsf --files-only drop them, s5cmd types any key ending in "/" as DIR and the
+# capsule normalizer drops DIR rows from its recursive modes. The reference
+# probes check that SeaweedFS returns both markers as Contents.
+rclone:recursive-fastlist:edge:/  # tool hides directory marker objects
+rclone:recursive-hierarchical:edge:/  # tool hides directory marker objects
+rclone:recursive-walk:edge:/  # tool hides directory marker objects
+rclone:listv1:edge:/  # tool hides directory marker objects
+rclone:lsf:edge:/  # tool hides directory marker objects
+s5cmd:recursive:edge:/  # tool hides directory marker objects
+s5cmd:listv1:edge:/  # tool hides directory marker objects
+s5cmd:allversions:edge:/  # tool hides directory marker objects
