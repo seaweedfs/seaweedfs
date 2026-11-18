@@ -573,7 +573,7 @@ func TestShouldSkipVolume(t *testing.T) {
 		},
 		// Edge case: Both volumes modified AFTER pulse cutoff time
 		// When ModifiedAtSecond >= pulseTimeAtSecond for both volumes with same counts,
-		// the condition (a.info.FileCount != b.info.FileCount) is false, so we skip
+		// countsDiffer is false, so we skip
 		// without calling eqVolumeFileCount
 		{
 			name: "both volumes modified after pulse cutoff with same file counts should be skipped",
@@ -590,6 +590,54 @@ func TestShouldSkipVolume(t *testing.T) {
 			pulseTimeAtSecond: 1696583400,
 			syncDeletions:     true,
 			shouldSkipVolume:  true, // Same counts = skip without calling eqVolumeFileCount
+		},
+		{
+			name: "replicas differing only in vacuum state should be skipped",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583300},
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        900,
+				DeleteCount:      0,
+				ModifiedAtSecond: 1696583300},
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     false,
+			shouldSkipVolume:  true,
+		},
+		{
+			name: "replicas differing only in vacuum state should be skipped with syncDeletions enabled",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583300},
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        900,
+				DeleteCount:      0,
+				ModifiedAtSecond: 1696583300},
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     true,
+			shouldSkipVolume:  true,
+		},
+		{
+			name: "vacuumed replica with a different live count should not be skipped",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583300},
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        899,
+				DeleteCount:      0,
+				ModifiedAtSecond: 1696583300},
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     false,
+			shouldSkipVolume:  false,
 		},
 	}
 	for _, tt := range tests {
