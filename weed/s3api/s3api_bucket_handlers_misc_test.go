@@ -661,3 +661,26 @@ func TestPutBucketAclKeepsOwner(t *testing.T) {
 		require.Equal(t, "team-a", aws.StringValue(grants[0].Grantee.ID))
 	}
 }
+
+func TestPutBucketAccelerateConfiguration(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"suspended", `<AccelerateConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Suspended</Status></AccelerateConfiguration>`, http.StatusOK},
+		{"enabled", `<AccelerateConfiguration><Status>Enabled</Status></AccelerateConfiguration>`, http.StatusNotImplemented},
+		{"invalid status", `<AccelerateConfiguration><Status>On</Status></AccelerateConfiguration>`, http.StatusBadRequest},
+		{"malformed", `<AccelerateConfiguration>`, http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s3a := newMiscTestServer(t, "b")
+			rec := httptest.NewRecorder()
+			s3a.PutBucketAccelerateConfigurationHandler(rec, newBucketRequest(http.MethodPut, "b", "accelerate=", tc.body))
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d, body=%s", rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+}

@@ -87,6 +87,10 @@ const (
 	S3_ACTION_GET_BUCKET_NOTIFICATION = "s3:GetBucketNotification"
 	S3_ACTION_PUT_BUCKET_NOTIFICATION = "s3:PutBucketNotification"
 
+	// Bucket transfer acceleration
+	S3_ACTION_GET_BUCKET_ACCELERATE = "s3:GetAccelerateConfiguration"
+	S3_ACTION_PUT_BUCKET_ACCELERATE = "s3:PutAccelerateConfiguration"
+
 	// Bucket object lock operations
 	S3_ACTION_GET_BUCKET_OBJECT_LOCK = "s3:GetBucketObjectLockConfiguration"
 	S3_ACTION_PUT_BUCKET_OBJECT_LOCK = "s3:PutBucketObjectLockConfiguration"
