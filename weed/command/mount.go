@@ -159,7 +159,7 @@ func init() {
 	// POSIX compliance options
 	mountOptions.posixDirNlink = cmdMount.Flag.Bool("posix.dirNLink", false, "report POSIX-compliant directory nlink (2 + subdirectory count); costs one directory listing per stat")
 
-	mountOptions.accessReport = cmdMount.Flag.Bool("accessReport", false, "report each open of a file for reading to the filer with TouchAccessTime, including opens answered from the metadata cache")
+	mountOptions.accessReport = cmdMount.Flag.Bool("accessReport", false, "report each open of a file for reading to the filer with TouchAccessTime, including opens answered from the metadata cache. Has no effect unless the filer implements TouchAccessTime")
 
 	// FUSE performance options
 	mountOptions.writebackCache = cmdMount.Flag.Bool("writebackCache", false, "enable FUSE writeback cache for improved write performance (at risk of data loss on crash)")

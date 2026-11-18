@@ -130,7 +130,9 @@ type Option struct {
 
 	// AccessReport reports each open of a file for reading to the filer with
 	// TouchAccessTime, so a filer that tracks access also sees the reads
-	// answered from the metadata cache.
+	// answered from the metadata cache. It has no effect unless the filer
+	// implements TouchAccessTime: while the filer answers Unimplemented,
+	// reporting pauses.
 	AccessReport bool
 
 	uniqueCacheDirForRead  string
@@ -307,6 +309,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 
 	if option.AccessReport {
 		wfs.accessReporter = newAccessReporter(wfs.touchAccessTime)
+		wfs.accessReporter.start()
 	}
 
 	wfs.option.filerIndex = int32(rand.IntN(len(option.FilerAddresses)))
@@ -356,6 +359,9 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			os.RemoveAll(option.getUniqueCacheDirForWrite())
 		}
 		os.RemoveAll(option.getUniqueCacheDirForRead())
+		if wfs.accessReporter != nil {
+			wfs.accessReporter.stop()
+		}
 		if wfs.peerAnnouncer != nil {
 			wfs.peerAnnouncer.Stop()
 		}
