@@ -61,7 +61,7 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 		fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 		retry := fh.refreshEntryForRead(ctx)
 		fhActiveLock = fh.wfs.fhLockTable.AcquireLock("Read", fh.fh, util.SharedLock)
-		if retry {
+		if retry && ctx.Err() == nil {
 			totalRead, err = readDataByFileHandleWithContext(ctx, buff, fh, offset)
 		}
 	}
