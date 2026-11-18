@@ -4096,7 +4096,8 @@ impl VolumeServer for VolumeGrpcService {
             let state = self.state.clone();
             let filter_vid = req.volume_id;
             tokio::spawn(async move {
-                crate::server::store_ec::recover_missing_ec_indexes(&state, filter_vid).await
+                crate::server::store_ec::recover_missing_ec_indexes(&state, filter_vid).await;
+                state.volume_state_notify.notify_one();
             })
             .await
             .map_err(|e| {
