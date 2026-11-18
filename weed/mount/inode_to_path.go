@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"slices"
 	"sync"
 	"time"
 
@@ -47,9 +48,21 @@ type wasCachedEntry struct {
 // dominant cost on a mount with millions of files. A hard link's extra paths
 // hang off a pointer for the same reason.
 type InodeEntry struct {
-	path       util.FullPath
-	nlookup    uint64
-	extraPaths *[]util.FullPath
+	path    util.FullPath
+	nlookup uint64
+	links   *inodeLinks
+}
+
+// The alias set's identity and revision fence a filer lookup in flight
+// against changes to the names in this mount.
+type inodeLinks struct {
+	extra    []util.FullPath
+	revision uint64
+}
+
+type hardLinkBinding struct {
+	links    *inodeLinks
+	revision uint64
 }
 
 type dirState struct {
@@ -81,8 +94,8 @@ func (ie *InodeEntry) appendPaths(dst []util.FullPath) []util.FullPath {
 		return dst
 	}
 	dst = append(dst, ie.path)
-	if ie.extraPaths != nil {
-		dst = append(dst, *ie.extraPaths...)
+	if ie.links != nil {
+		dst = append(dst, ie.links.extra...)
 	}
 	return dst
 }
@@ -92,33 +105,39 @@ func (ie *InodeEntry) addPath(p util.FullPath) {
 		ie.path = p
 		return
 	}
-	if ie.extraPaths == nil {
-		ie.extraPaths = &[]util.FullPath{p}
+	if ie.links == nil {
+		ie.links = &inodeLinks{extra: []util.FullPath{p}}
 		return
 	}
-	*ie.extraPaths = append(*ie.extraPaths, p)
+	ie.setExtraPaths(append(ie.links.extra, p))
 }
 
 func (ie *InodeEntry) replacePath(from, to util.FullPath) {
-	if ie.path == from {
+	changed := ie.path == from
+	if changed {
 		ie.path = to
 	}
-	if ie.extraPaths == nil {
+	if ie.links == nil {
 		return
 	}
-	for i, p := range *ie.extraPaths {
+	for i, p := range ie.links.extra {
 		if p == from {
-			(*ie.extraPaths)[i] = to
+			ie.links.extra[i] = to
+			changed = true
 		}
+	}
+	if changed {
+		ie.links.revision++
 	}
 }
 
 func (ie *InodeEntry) setExtraPaths(extra []util.FullPath) {
 	if len(extra) == 0 {
-		ie.extraPaths = nil
+		ie.links = nil
 		return
 	}
-	ie.extraPaths = &extra
+	ie.links.extra = extra
+	ie.links.revision++
 }
 
 // removeOnePath promotes an extra path when the primary is the one going away,
@@ -128,25 +147,24 @@ func (ie *InodeEntry) removeOnePath(p util.FullPath) bool {
 		return false
 	}
 	if ie.path == p {
-		if ie.extraPaths == nil {
+		if ie.links == nil {
 			ie.path = ""
 			return true
 		}
-		extra := *ie.extraPaths
+		extra := ie.links.extra
 		ie.path = extra[0]
+		extra[0] = ""
 		ie.setExtraPaths(extra[1:])
 		return true
 	}
-	if ie.extraPaths == nil {
+	if ie.links == nil {
 		return false
 	}
-	extra := *ie.extraPaths
-	for i, x := range extra {
-		if x != p {
-			continue
+	for i, x := range ie.links.extra {
+		if x == p {
+			ie.setExtraPaths(slices.Delete(ie.links.extra, i, i+1))
+			return true
 		}
-		ie.setExtraPaths(append(extra[:i], extra[i+1:]...))
-		return true
 	}
 	return false
 }
@@ -618,11 +636,22 @@ func (i *InodeToPath) RemovePath(path util.FullPath, onStillReferenced func(inod
 	i.removePathLocked(path, onStillReferenced)
 }
 
-// removePathIfInode ignores a stale event after another inode takes the name.
-func (i *InodeToPath) removePathIfInode(path util.FullPath, inode uint64) {
+// snapshotHardLink snapshots a name with a known alternative on this mount.
+func (i *InodeToPath) snapshotHardLink(path util.FullPath) (hardLinkBinding, bool) {
+	i.RLock()
+	defer i.RUnlock()
+	entry := i.inode2path[i.path2inode[path]]
+	if entry == nil || entry.links == nil {
+		return hardLinkBinding{}, false
+	}
+	return hardLinkBinding{links: entry.links, revision: entry.links.revision}, true
+}
+
+func (i *InodeToPath) removeHardLinkIfUnchanged(path util.FullPath, binding hardLinkBinding) {
 	i.Lock()
 	defer i.Unlock()
-	if i.path2inode[path] == inode {
+	entry := i.inode2path[i.path2inode[path]]
+	if entry != nil && entry.links != nil && entry.links == binding.links && entry.links.revision == binding.revision {
 		i.removePathLocked(path, nil)
 	}
 }
@@ -720,8 +749,8 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onRelease func(inode uint64)
 				callOnForgetDir = true
 			}
 			delete(i.path2inode, path.path)
-			if path.extraPaths != nil {
-				for _, p := range *path.extraPaths {
+			if path.links != nil {
+				for _, p := range path.links.extra {
 					delete(i.path2inode, p)
 				}
 			}

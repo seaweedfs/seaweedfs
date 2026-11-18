@@ -905,10 +905,8 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 	if !handled {
 		if invalidation.RenamedTo != "" {
 			_, replacedInode = wfs.inodeToPath.MovePath(invalidation.Path, invalidation.RenamedTo)
-		} else if invalidation.UnlinkedHardLinkInode != 0 {
-			// A closed inode can still have kernel lookup references. Drop the
-			// deleted name so a later open resolves through a surviving link.
-			wfs.inodeToPath.removePathIfInode(invalidation.Path, invalidation.UnlinkedHardLinkInode)
+		} else if len(invalidation.LiveHardLinkId) > 0 {
+			wfs.pruneClosedHardLink(invalidation.Path)
 		}
 	}
 	// A rename over an existing file destroys it, so its handle must not flush
@@ -916,6 +914,20 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 	// no other handle's lock.
 	if replacedInode != 0 {
 		wfs.markHandleDeleted(replacedInode)
+	}
+}
+
+// A delete event can arrive after the name has been reused. Confirm the
+// missing name at the filer and preserve any binding changed while it replied.
+func (wfs *WFS) pruneClosedHardLink(path util.FullPath) {
+	binding, tracked := wfs.inodeToPath.snapshotHardLink(path)
+	if !tracked {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wfs.filerRPCWait())
+	defer cancel()
+	if _, _, err := wfs.lookupOwnerEntry(ctx, path); errors.Is(err, filer_pb.ErrNotFound) {
+		wfs.inodeToPath.removeHardLinkIfUnchanged(path, binding)
 	}
 }
 

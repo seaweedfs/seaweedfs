@@ -15,6 +15,11 @@ import (
 // delivers the delete event this mount's subscription receives.
 func peerUnlink(t *testing.T, wfs *WFS, fake *hardLinkFiler, name string) {
 	t.Helper()
+	applyPeerUnlink(t, wfs, peerUnlinkEvent(t, fake, name))
+}
+
+func peerUnlinkEvent(t *testing.T, fake *hardLinkFiler, name string) *filer_pb.SubscribeMetadataResponse {
+	t.Helper()
 	old := fake.stored(name)
 	if _, err := fake.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{Directory: "/", Name: name}); err != nil {
 		t.Fatalf("peer delete %s: %v", name, err)
@@ -23,7 +28,11 @@ func peerUnlink(t *testing.T, wfs *WFS, fake *hardLinkFiler, name string) {
 	fake.stamp++
 	ts := fake.stamp
 	fake.mu.Unlock()
-	del := &filer_pb.SubscribeMetadataResponse{Directory: "/", TsNs: ts, EventNotification: &filer_pb.EventNotification{OldEntry: old}}
+	return &filer_pb.SubscribeMetadataResponse{Directory: "/", TsNs: ts, EventNotification: &filer_pb.EventNotification{OldEntry: old}}
+}
+
+func applyPeerUnlink(t *testing.T, wfs *WFS, del *filer_pb.SubscribeMetadataResponse) {
+	t.Helper()
 	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), del, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply peer delete: %v", err)
 	}
@@ -155,19 +164,36 @@ func TestPeerUnlinkedAliasKeepsPeriodicFlushPublishing(t *testing.T) {
 // A peer unlink rotates the preferred name even when the mount has no open
 // handle. A subsequent Open by inode then finds the surviving name.
 func TestPeerUnlinkedAliasKeepsClosedInodeReadable(t *testing.T) {
-	wfs, fake, fh, inode := openLinkTestFile(t)
-	linkInRoot(t, wfs, inode, "final")
-	wfs.fhMap.ReleaseByHandle(fh.fh)
-	peerUnlink(t, wfs, fake, "tmp")
-	if path, status := wfs.inodeToPath.GetPath(inode); status != fuse.OK || path != "/final" {
-		t.Fatalf("surviving inode resolved to %q (%v), want /final", path, status)
+	for _, tc := range []struct {
+		name       string
+		filerInode uint64
+	}{
+		{name: "matching", filerInode: 42},
+		{name: "missing", filerInode: 0},
+		{name: "different", filerInode: 41},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wfs, fake, fh, inode := openLinkTestFile(t)
+			linkInRoot(t, wfs, inode, "final")
+			wfs.fhMap.ReleaseByHandle(fh.fh)
+			fake.mu.Lock()
+			entry := fake.resolve("tmp")
+			entry.Attributes.Inode = tc.filerInode
+			fake.store(entry)
+			fake.mu.Unlock()
+
+			peerUnlink(t, wfs, fake, "tmp")
+			if path, status := wfs.inodeToPath.GetPath(inode); status != fuse.OK || path != "/final" {
+				t.Fatalf("surviving inode resolved to %q (%v), want /final", path, status)
+			}
+			wfs.openMtimeCache = make(map[uint64][2]int64)
+			var opened fuse.OpenOut
+			if status := wfs.Open(nil, &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: inode}}, &opened); status != fuse.OK {
+				t.Fatalf("open survivor: %v", status)
+			}
+			wfs.ReleaseHandle(FileHandleId(opened.Fh))
+		})
 	}
-	wfs.openMtimeCache = make(map[uint64][2]int64)
-	var opened fuse.OpenOut
-	if status := wfs.Open(nil, &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: inode}}, &opened); status != fuse.OK {
-		t.Fatalf("open survivor: %v", status)
-	}
-	wfs.ReleaseHandle(FileHandleId(opened.Fh))
 }
 
 func TestPeerUnlinkedAliasLeavesReplacementInode(t *testing.T) {
@@ -179,5 +205,42 @@ func TestPeerUnlinkedAliasLeavesReplacementInode(t *testing.T) {
 	peerUnlink(t, wfs, fake, "tmp")
 	if got, found := wfs.inodeToPath.GetInode("/tmp"); !found || got != replacement {
 		t.Fatalf("replacement inode = %d (%t), want %d", got, found, replacement)
+	}
+}
+
+func TestPeerUnlinkedAliasLeavesRenamedSurvivor(t *testing.T) {
+	wfs, fake, fh, inode := openLinkTestFile(t)
+	linkInRoot(t, wfs, inode, "final")
+	linkInRoot(t, wfs, inode, "other")
+	wfs.fhMap.ReleaseByHandle(fh.fh)
+	del := peerUnlinkEvent(t, fake, "tmp")
+
+	fake.mu.Lock()
+	fake.records["tmp"] = fake.records["final"]
+	delete(fake.records, "final")
+	fake.mu.Unlock()
+	wfs.inodeToPath.MovePath("/final", "/tmp")
+
+	applyPeerUnlink(t, wfs, del)
+	if got, found := wfs.inodeToPath.GetInode("/tmp"); !found || got != inode {
+		t.Fatalf("renamed survivor inode = %d (%t), want %d", got, found, inode)
+	}
+}
+
+func TestPeerUnlinkedAliasLeavesBindingChangedDuringLookup(t *testing.T) {
+	table := NewInodeToPath("/", 60)
+	inode := table.Lookup("/a", 1, false, false, 42, true)
+	table.AddPath(inode, "/b")
+	binding, tracked := table.snapshotHardLink("/a")
+	if !tracked {
+		t.Fatal("hard-link name is not tracked")
+	}
+
+	// The name came back to the same inode while the filer check was pending.
+	table.MovePath("/a", "/tmp")
+	table.MovePath("/tmp", "/a")
+	table.removeHardLinkIfUnchanged("/a", binding)
+	if got, found := table.GetInode("/a"); !found || got != inode {
+		t.Fatalf("new binding inode = %d (%t), want %d", got, found, inode)
 	}
 }

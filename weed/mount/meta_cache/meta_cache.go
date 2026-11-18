@@ -940,8 +940,6 @@ type EntryInvalidation struct {
 	// LiveHardLinkId is set on a delete that left other names holding the
 	// hard-linked file, by the count the filer kept its chunks on.
 	LiveHardLinkId []byte
-	// UnlinkedHardLinkInode identifies the file that lost this name.
-	UnlinkedHardLinkInode uint64
 }
 
 type metadataResponseSideEffects struct {
@@ -1448,7 +1446,6 @@ func collectEntryInvalidations(resp *filer_pb.SubscribeMetadataResponse) []Entry
 		invalidation := EntryInvalidation{Path: oldKey, TsNs: resp.TsNs, Deleted: true, Signatures: signatures, WasDirectory: message.OldEntry.IsDirectory}
 		if len(message.OldEntry.HardLinkId) > 0 && message.OldEntry.HardLinkCounter > 1 {
 			invalidation.LiveHardLinkId = message.OldEntry.HardLinkId
-			invalidation.UnlinkedHardLinkInode = message.OldEntry.GetAttributes().GetInode()
 		}
 		invalidations = append(invalidations, invalidation)
 	}
