@@ -24,7 +24,7 @@ import (
 func TestIncrementalCopyCarriesRemoteTierTombstone(t *testing.T) {
 	store := tierUploadForDeletes(t, "000")
 	const vid = needle.VolumeId(1)
-	if _, err := store.DeleteVolumeNeedle(vid, &needle.Needle{Id: 2}); err != nil {
+	if _, err := store.DeleteVolumeNeedle(vid, &needle.Needle{Id: 2}, false); err != nil {
 		t.Fatalf("delete on tiered volume: %v", err)
 	}
 	source := store.GetVolume(vid)
@@ -101,7 +101,7 @@ func TestIncrementalCopyCarriesRemoteTierTombstone(t *testing.T) {
 
 	// a delete landing after the copy rides the index stream alone: the run
 	// appends just the tombstone row and the needle stays deleted
-	if _, err := store.DeleteVolumeNeedle(vid, &needle.Needle{Id: 3}); err != nil {
+	if _, err := store.DeleteVolumeNeedle(vid, &needle.Needle{Id: 3}, false); err != nil {
 		t.Fatalf("second delete on tiered volume: %v", err)
 	}
 	if err := checkVolume.IncrementalBackup(serverAddress, dialOption); err != nil {

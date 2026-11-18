@@ -34,7 +34,7 @@ func TestLoad_MovedIdxDirectory_RebuildsIdx(t *testing.T) {
 			t.Fatalf("seed write %d: %v", id, err)
 		}
 	}
-	if _, err := v.deleteNeedle2(newRandomNeedle(2)); err != nil {
+	if _, err := v.deleteNeedle2(newRandomNeedle(2), false); err != nil {
 		t.Fatalf("seed delete: %v", err)
 	}
 	wantCount, wantDeleted := v.nm.FileCount(), v.nm.DeletedCount()

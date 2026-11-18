@@ -105,7 +105,7 @@ func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.B
 				// the delete cancels in-flight writes carrying this cookie
 				n.Cookie = fidCookie
 			}
-			if size, err := vs.store.DeleteVolumeNeedle(volumeId, n); err != nil {
+			if size, err := vs.store.DeleteVolumeNeedle(volumeId, n, false); err != nil {
 				resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{
 					FileId: fid,
 					Status: http.StatusInternalServerError,

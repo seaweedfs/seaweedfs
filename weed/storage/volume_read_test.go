@@ -113,7 +113,7 @@ func TestReadNeedMetaWithDeletesThenWrites(t *testing.T) {
 			t.Fatalf("write needle %d: %v", i, err)
 		}
 		if i < 5 {
-			size, err := v.deleteNeedle2(n)
+			size, err := v.deleteNeedle2(n, false)
 			if err != nil {
 				t.Fatalf("delete needle %d: %v", i, err)
 			}
@@ -706,7 +706,7 @@ func TestReadNeedleDataIntoFollowsACompaction(t *testing.T) {
 					t.Fatalf("write needle %d: %v", n.Id, err)
 				}
 			}
-			if _, err := v.deleteNeedle2(newEmptyNeedle(1)); err != nil {
+			if _, err := v.deleteNeedle2(newEmptyNeedle(1), false); err != nil {
 				t.Fatalf("delete: %v", err)
 			}
 

@@ -27,7 +27,7 @@ func TestCompactRefusesTieredVolume(t *testing.T) {
 	defer v.Close()
 	require.True(t, v.HasRemoteFile())
 	for i := 1; i <= 4; i++ {
-		_, err := v.deleteNeedle2(newRandomNeedle(uint64(i)))
+		_, err := v.deleteNeedle2(newRandomNeedle(uint64(i)), false)
 		require.NoError(t, err)
 	}
 	garbage := v.garbageLevel()
@@ -74,7 +74,7 @@ func testCommitCompactRefusesVolumeTieredDuringCopy(t *testing.T, kind NeedleMap
 		written[i] = n.Data
 	}
 	for i := uint64(1); i <= 3; i++ {
-		_, err := v.deleteNeedle2(newEmptyNeedle(i))
+		_, err := v.deleteNeedle2(newEmptyNeedle(i), false)
 		require.NoError(t, err)
 	}
 	require.NoError(t, v.CompactByIndex(nil))

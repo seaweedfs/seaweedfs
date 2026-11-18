@@ -611,7 +611,7 @@ func TestStoreWriteVolumeNeedleStaysDurableWhileStopping(t *testing.T) {
 	require.Equal(t, 1, counting.syncCount, "the accepted write must actually be on disk")
 }
 
-func TestDeleteNeedleWithFsyncSyncsTombstone(t *testing.T) {
+func TestDurableDeleteSyncsTombstone(t *testing.T) {
 	v, counting := newCountingVolume(t)
 
 	for id := uint64(1); id <= 2; id++ {
@@ -620,11 +620,11 @@ func TestDeleteNeedleWithFsyncSyncsTombstone(t *testing.T) {
 	}
 	require.Equal(t, 0, counting.syncCount)
 
-	_, err := v.deleteNeedleWithFsync(fixedNeedle(1, ""), false)
+	_, err := v.deleteNeedle2(fixedNeedle(1, ""), false)
 	require.NoError(t, err)
 	require.Equal(t, 0, counting.syncCount, "a delete that did not ask for fsync must not pay for one")
 
-	size, err := v.deleteNeedleWithFsync(fixedNeedle(2, ""), true)
+	size, err := v.deleteNeedle2(fixedNeedle(2, ""), true)
 	require.NoError(t, err)
 	require.NotZero(t, size)
 	require.Equal(t, 1, counting.syncCount, "a durable delete must flush its tombstone before the ack")
@@ -634,7 +634,7 @@ func TestDeleteNeedleWithFsyncSyncsTombstone(t *testing.T) {
 	require.True(t, !found || nv.Size.IsDeleted(), "the durable delete must survive a reload")
 }
 
-func TestSyncDeleteWithFsyncTakesBackTombstoneWhenFsyncFails(t *testing.T) {
+func TestDurableDeleteTakesBackTombstoneWhenFsyncFails(t *testing.T) {
 	v, counting := newCountingVolume(t)
 
 	_, _, _, err := v.writeNeedle2(fixedNeedle(1, "payload"), true, true, true)
@@ -644,7 +644,7 @@ func TestSyncDeleteWithFsyncTakesBackTombstoneWhenFsyncFails(t *testing.T) {
 	syncs := counting.syncCount
 
 	counting.syncErr = errors.New("disk went away")
-	_, err = v.syncDeleteWithFsync(fixedNeedle(1, ""), true)
+	_, err = v.syncDelete(fixedNeedle(1, ""), true)
 	require.Error(t, err, "a delete whose fsync failed must not be acked")
 	require.Equal(t, syncs+1, counting.syncCount)
 
@@ -656,30 +656,30 @@ func TestSyncDeleteWithFsyncTakesBackTombstoneWhenFsyncFails(t *testing.T) {
 	require.False(t, nv.Size.IsDeleted(), "the needle must stay live when its delete was not acked")
 }
 
-func TestDeleteNeedleWithFsyncOnFullVolume(t *testing.T) {
+func TestDurableDeleteOnFullVolume(t *testing.T) {
 	v, counting := newCountingVolume(t)
 
 	_, _, _, err := v.writeNeedle2(fixedNeedle(1, "payload"), true, false, false)
 	require.NoError(t, err)
 	atomic.StoreUint64(&v.nm.(*NeedleMap).FileByteCounter, types.MaxPossibleVolumeSize)
 
-	_, err = v.deleteNeedleWithFsync(fixedNeedle(1, ""), true)
+	_, err = v.deleteNeedle2(fixedNeedle(1, ""), true)
 	require.NoError(t, err, "a full volume must still take a durable delete")
 	require.Equal(t, 1, counting.syncCount)
 	nv, found := v.nm.Get(types.Uint64ToNeedleId(1))
 	require.True(t, !found || nv.Size.IsDeleted())
 }
 
-func TestSyncDeleteWithFsyncSyncsAfterUnsyncedDelete(t *testing.T) {
+func TestDurableDeleteSyncsAfterUnsyncedDelete(t *testing.T) {
 	v, counting := newCountingVolume(t)
 
 	_, _, _, err := v.writeNeedle2(fixedNeedle(1, "payload"), true, false, false)
 	require.NoError(t, err)
-	_, err = v.syncDelete(fixedNeedle(1, ""))
+	_, err = v.syncDelete(fixedNeedle(1, ""), false)
 	require.NoError(t, err)
 	require.Equal(t, 0, counting.syncCount)
 
-	size, err := v.syncDeleteWithFsync(fixedNeedle(1, ""), true)
+	size, err := v.syncDelete(fixedNeedle(1, ""), true)
 	require.NoError(t, err)
 	require.Zero(t, size)
 	require.Equal(t, 1, counting.syncCount, "an earlier unsynced delete must still be flushed before a durable ack")
@@ -703,8 +703,8 @@ func TestAsyncRequestAppendRefusesAfterChannelClosed(t *testing.T) {
 // taking writes instead: nothing is appended past the tombstone, so a reload
 // re-indexes it from the .dat tail rather than resurrect the needle.
 func TestDurableDeleteIndexFailureStopsWrites(t *testing.T) {
-	durableBatch := func(v *Volume, n *needle.Needle) (types.Size, error) { return v.deleteNeedleWithFsync(n, true) }
-	durableInline := func(v *Volume, n *needle.Needle) (types.Size, error) { return v.syncDeleteWithFsync(n, true) }
+	durableBatch := func(v *Volume, n *needle.Needle) (types.Size, error) { return v.deleteNeedle2(n, true) }
+	durableInline := func(v *Volume, n *needle.Needle) (types.Size, error) { return v.syncDelete(n, true) }
 	for _, tc := range []struct {
 		name   string
 		first  func(*Volume, *needle.Needle) (types.Size, error)
@@ -712,7 +712,7 @@ func TestDurableDeleteIndexFailureStopsWrites(t *testing.T) {
 	}{
 		{"batch", durableBatch, durableBatch},
 		{"inline", durableInline, durableInline},
-		{"non-durable then durable retry", func(v *Volume, n *needle.Needle) (types.Size, error) { return v.deleteNeedleWithFsync(n, false) }, durableBatch},
+		{"non-durable then durable retry", func(v *Volume, n *needle.Needle) (types.Size, error) { return v.deleteNeedle2(n, false) }, durableBatch},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v, _ := newCountingVolume(t)

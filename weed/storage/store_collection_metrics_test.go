@@ -107,7 +107,7 @@ func TestCollectHeartbeatSizesOnlySurvivingVolumes(t *testing.T) {
 		if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
 			t.Fatalf("write needle: %v", err)
 		}
-		if _, err := v.deleteNeedle2(n); err != nil {
+		if _, err := v.deleteNeedle2(n, false); err != nil {
 			t.Fatalf("delete needle: %v", err)
 		}
 	}

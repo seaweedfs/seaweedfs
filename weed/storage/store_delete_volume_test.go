@@ -51,7 +51,7 @@ func TestDeleteVolumeOnlyGarbage(t *testing.T) {
 		t.Fatal("refused delete removed the volume")
 	}
 
-	if _, err := store.DeleteVolumeNeedle(5, n); err != nil {
+	if _, err := store.DeleteVolumeNeedle(5, n, false); err != nil {
 		t.Fatal(err)
 	}
 	// The shell sends both flags so a pre-upgrade server still refuses; either

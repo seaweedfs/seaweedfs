@@ -36,12 +36,6 @@ func requireNeedleDeleted(t *testing.T, v *Volume, id NeedleId) {
 	require.ErrorIs(t, err, ErrorDeleted)
 }
 
-func requireNeedleNotFound(t *testing.T, v *Volume, id NeedleId) {
-	t.Helper()
-	_, err := v.readNeedle(&needle.Needle{Id: id}, nil, nil)
-	require.ErrorIs(t, err, ErrorNotFound)
-}
-
 // A replicate delete that finds nothing can still have the write it undoes
 // queued behind the volume locks. That write must not land live afterwards.
 func TestDeleteOfMissingNeedleCancelsQueuedWrite(t *testing.T) {
@@ -66,14 +60,16 @@ func TestDeleteOfMissingNeedleCancelsQueuedWrite(t *testing.T) {
 			v.dataFileSyncLock.Unlock()
 
 			require.ErrorIs(t, <-written, ErrorDeleted)
-			requireNeedleNotFound(t, v, n.Id)
+			_, err = v.readNeedle(&needle.Needle{Id: n.Id}, nil, nil)
+			require.ErrorIs(t, err, ErrorNotFound)
 			require.Empty(t, v.pendingWrites.byId)
 
 			v.Close()
 			v, err = NewVolume(dir, dir, "", 1, NeedleMapInMemory, nil, nil, 0, needle.GetCurrentVersion(), 0, 0)
 			require.NoError(t, err)
 			defer v.Close()
-			requireNeedleNotFound(t, v, n.Id)
+			_, err = v.readNeedle(&needle.Needle{Id: n.Id}, nil, nil)
+			require.ErrorIs(t, err, ErrorNotFound)
 		})
 	}
 }
@@ -97,7 +93,7 @@ func TestDeleteCancelsQueuedRewrite(t *testing.T) {
 	}()
 	waitForPendingWrites(t, v, n.Id, 1)
 
-	_, err = v.deleteNeedle2(&needle.Needle{Id: n.Id, Cookie: n.Cookie})
+	_, err = v.deleteNeedle2(&needle.Needle{Id: n.Id, Cookie: n.Cookie}, false)
 	require.NoError(t, err)
 	requireNeedleDeleted(t, v, n.Id)
 	v.asyncWorkerLock.Unlock()
@@ -134,7 +130,7 @@ func TestCancelledRewriteDoesNotAppend(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, before, after)
 
-	_, err = v.deleteNeedleWithFsync(&needle.Needle{Id: n.Id, Cookie: n.Cookie}, true)
+	_, err = v.deleteNeedle2(&needle.Needle{Id: n.Id, Cookie: n.Cookie}, true)
 	require.NoError(t, err)
 	requireNeedleDeleted(t, v, n.Id)
 }
@@ -145,7 +141,7 @@ func TestWriteAfterDeleteIsNotCancelled(t *testing.T) {
 	v := newWorkerTestVolume(t)
 	n := newRandomNeedle(1)
 	v.CancelPendingWrites(n.Id, n.Cookie)
-	_, err := v.deleteNeedle2(&needle.Needle{Id: n.Id, Cookie: n.Cookie})
+	_, err := v.deleteNeedle2(&needle.Needle{Id: n.Id, Cookie: n.Cookie}, false)
 	require.NoError(t, err)
 
 	_, _, _, err = v.writeNeedle2(n, true, false, false)

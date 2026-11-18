@@ -353,7 +353,7 @@ func (v *Volume) appendWriteRequest(n *needle.Needle, checkCookie bool, fsync bo
 	// A write cancelled before it got here must not append: its delete may
 	// already be durable, and an unsynced row could outlive its tombstone.
 	if v.isCancelledWrite(n) {
-		return 0, 0, false, cancelledWriteError(v.Id, n)
+		return 0, 0, false, fmt.Errorf("needle %s: %w", needle.NewFileIdFromNeedle(v.Id, n), ErrorDeleted)
 	}
 	if v.isFileUnchanged(n) {
 		size = Size(n.DataSize)
@@ -449,11 +449,7 @@ func (v *Volume) publishWriteRequest(n *needle.Needle, offset uint64, fsync bool
 	return
 }
 
-func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
-	return v.syncDeleteWithFsync(n, false)
-}
-
-func (v *Volume) syncDeleteWithFsync(n *needle.Needle, fsync bool) (Size, error) {
+func (v *Volume) syncDelete(n *needle.Needle, fsync bool) (Size, error) {
 	// glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	v.dataFileSyncLock.Lock()
 	defer v.dataFileSyncLock.Unlock()
@@ -514,23 +510,19 @@ func (v *Volume) syncDeleteWithFsync(n *needle.Needle, fsync bool) (Size, error)
 	return size, err
 }
 
-func (v *Volume) deleteNeedle2(n *needle.Needle) (Size, error) {
-	return v.deleteNeedleWithFsync(n, false)
-}
-
-// deleteNeedleWithFsync acknowledges a durable delete only once its tombstone
-// and .idx row are on disk, through the batch worker like a durable write.
-func (v *Volume) deleteNeedleWithFsync(n *needle.Needle, fsync bool) (Size, error) {
+// deleteNeedle2 acknowledges a durable delete only once its tombstone and .idx
+// row are on disk, through the batch worker like a durable write.
+func (v *Volume) deleteNeedle2(n *needle.Needle, fsync bool) (Size, error) {
 	v.CancelPendingWrites(n.Id, n.Cookie)
 
 	if !fsync {
-		return v.syncDelete(n)
+		return v.syncDelete(n, false)
 	}
 	asyncRequest := needle.NewAsyncRequest(n, false)
 	asyncRequest.ActualSize = needle.GetActualSize(0, v.Version())
 
 	if !v.asyncRequestAppend(asyncRequest) {
-		return v.syncDeleteWithFsync(n, true)
+		return v.syncDelete(n, true)
 	}
 	_, size, _, err := asyncRequest.WaitComplete()
 
