@@ -2398,24 +2398,26 @@ pub(crate) async fn recover_missing_ec_indexes(
         // of it, which may unlink the shards it renamed in, never has them
         // mounted from under it.
         let _lifecycle = state.ec_lifecycle_lock(m.vid).lock_owned().await;
-        let still_missing = state
+        let current = state
             .store
             .read()
             .unwrap()
             .collect_ec_volumes_missing_index()
-            .iter()
-            .any(|x| x.vid == m.vid);
+            .into_iter()
+            .find(|x| x.vid == m.vid);
         // A copy holding the lock may have installed the index meanwhile: skip
         // the fetch, but its shards still need the mount.
-        if still_missing && !fetch_ec_index_from_peers(state, m, &peers).await {
-            continue;
+        if let Some(current) = &current {
+            if !fetch_ec_index_from_peers(state, current, &peers).await {
+                continue;
+            }
         }
         state
             .store
             .write()
             .unwrap()
             .mount_recovered_ec_shards_only(Some(m.vid));
-        if still_missing {
+        if current.is_some() {
             recovered += 1;
         }
     }
