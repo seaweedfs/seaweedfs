@@ -161,6 +161,10 @@ class RegroupTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             rn.regroup(body, self.files)
 
+    def test_author_from_the_by_clause(self):
+        body = "## What's Changed\n* Bump a by @dependabot[bot] in docs by @alice in https://github.com/seaweedfs/seaweedfs/pull/7\n"
+        self.assertIn("### Documentation", rn.regroup(body, lambda n: ["README.md"]))
+
     def test_notes_without_prs_unchanged(self):
         body = "Hand-written notes\n\n**Full Changelog**: x"
         self.assertEqual(rn.regroup(body, no_files), body)

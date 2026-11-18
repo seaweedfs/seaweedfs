@@ -125,7 +125,7 @@ PATH_RULES = {
     ".github/": "Tests and CI",
 }
 
-PR_LINE = re.compile(r"^\* (?P<title>.+?) by @\S+ in https://github\.com/\S+/pull/(?P<num>\d+)\s*$")
+PR_LINE = re.compile(r"^\* (?P<title>.+?) by @(?P<author>\S+) in https://github\.com/\S+/pull/(?P<num>\d+)\s*$")
 # Lines regroup() writes between the PRs, so a second run accepts them.
 SCAFFOLD = re.compile(r"^$|^### |^<details>|^</details>$")
 # "fix(s3tables,s3vectors): ...", "s3 lifecycle: ...", "[Volume] ...", "Fix/admin ..."
@@ -228,9 +228,8 @@ def regroup(body, pr_files):
     groups = {s: [] for s in SECTIONS}
     for line in prs:
         m = PR_LINE.match(line)
-        author = re.search(r" by @(\S+) in ", line).group(1)
         num = int(m.group("num"))
-        groups[classify(m.group("title"), author, lambda: pr_files(num))].append(line)
+        groups[classify(m.group("title"), m.group("author"), lambda: pr_files(num))].append(line)
 
     out = [before, ""] if before else []
     out.append("## What's Changed")
