@@ -102,7 +102,7 @@ func checkVectorMetadata(key string, metadata map[string]interface{}, cfg *Metad
 	if cfg != nil {
 		nonFilterable = cfg.NonFilterableMetadataKeys
 	}
-	total, filterable := 2, 2 // the enclosing braces
+	total, filterable := 1, 1 // the braces, less the last member's comma
 	for k, v := range metadata {
 		size, err := metadataEntrySize(k, v)
 		if err != nil {

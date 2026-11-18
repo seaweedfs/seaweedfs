@@ -1,6 +1,7 @@
 package s3vectors
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -191,5 +192,22 @@ func TestQueryVectorsFilterConstraintLimit(t *testing.T) {
 	}
 	if w := query(orFilter(queryFilterMaxConstraints)); strings.Contains(w.Body.String(), "constraints") {
 		t.Fatalf("%d constraints refused: %d %s", queryFilterMaxConstraints, w.Code, w.Body.String())
+	}
+}
+
+func TestCheckVectorMetadataAcceptsExactLimits(t *testing.T) {
+	filterable := map[string]interface{}{"genre": strings.Repeat("x", vectorFilterableMetadataMaxBytes-12)}
+	if encoded, _ := json.Marshal(filterable); len(encoded) != vectorFilterableMetadataMaxBytes {
+		t.Fatalf("filterable metadata encodes to %d bytes, want %d", len(encoded), vectorFilterableMetadataMaxBytes)
+	}
+	if err := checkVectorMetadata("a", filterable, nil); err != nil {
+		t.Fatalf("filterable metadata of exactly %d bytes: %v", vectorFilterableMetadataMaxBytes, err)
+	}
+	total := map[string]interface{}{"genre": "x", "body": strings.Repeat("x", vectorMetadataMaxBytes-23)}
+	if encoded, _ := json.Marshal(total); len(encoded) != vectorMetadataMaxBytes {
+		t.Fatalf("metadata encodes to %d bytes, want %d", len(encoded), vectorMetadataMaxBytes)
+	}
+	if err := checkVectorMetadata("a", total, &MetadataConfiguration{NonFilterableMetadataKeys: []string{"body"}}); err != nil {
+		t.Fatalf("metadata of exactly %d bytes: %v", vectorMetadataMaxBytes, err)
 	}
 }
