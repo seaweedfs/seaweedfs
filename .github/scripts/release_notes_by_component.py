@@ -126,6 +126,8 @@ PATH_RULES = {
 }
 
 PR_LINE = re.compile(r"^\* (?P<title>.+?) by @\S+ in https://github\.com/\S+/pull/(?P<num>\d+)\s*$")
+# Lines regroup() writes between the PRs, so a second run accepts them.
+SCAFFOLD = re.compile(r"^$|^### |^<details>|^</details>$")
 # "fix(s3tables,s3vectors): ...", "s3 lifecycle: ...", "[Volume] ...", "Fix/admin ..."
 CONVENTIONAL = re.compile(r"^(?P<type>[a-z]+)\((?P<scope>[^)]*)\)!?$")
 TYPE_ONLY = {"fix", "feat", "feature", "perf", "refactor", "chore", "style", "revert", "improvement"}
@@ -206,7 +208,14 @@ def split_notes(body):
         return [], body, ""
     end = next((i for i in range(start + 1, len(lines))
                 if lines[i].startswith(("## ", "**Full Changelog**"))), len(lines))
-    prs = [l for l in lines[start + 1:end] if PR_LINE.match(l)]
+    prs, stray = [], []
+    for line in lines[start + 1:end]:
+        if PR_LINE.match(line):
+            prs.append(line)
+        elif not SCAFFOLD.match(line.strip()):
+            stray.append(line)
+    if prs and stray:
+        raise ValueError("What's Changed has lines that are not PRs: %r" % stray[:3])
     before = "\n".join(lines[:start]).rstrip()
     after = "\n".join(lines[end:]).strip()
     return prs, before, after
@@ -268,7 +277,10 @@ def main():
             return []
         return out.split()
 
-    notes = regroup(body, pr_files)
+    try:
+        notes = regroup(body, pr_files)
+    except ValueError as e:
+        sys.exit("release %s: %s" % (args.tag, e))
     if notes.strip() == body.replace("\r\n", "\n").strip():
         print("release %s: notes already grouped, nothing to change" % args.tag, file=sys.stderr)
     sys.stdout.write(notes)

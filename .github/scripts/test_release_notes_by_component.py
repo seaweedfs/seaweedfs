@@ -156,6 +156,11 @@ class RegroupTest(unittest.TestCase):
         self.assertTrue(out.endswith("</details>\n\n**Full Changelog**: https://github.com/seaweedfs/seaweedfs/compare/4.53...4.54\n"), out)
         self.assertEqual(rn.regroup(out, self.files), out)
 
+    def test_unknown_line_refused(self):
+        body = NOTES.replace("## New Contributors", "* a hand-written note\n\n## New Contributors")
+        with self.assertRaises(ValueError):
+            rn.regroup(body, self.files)
+
     def test_notes_without_prs_unchanged(self):
         body = "Hand-written notes\n\n**Full Changelog**: x"
         self.assertEqual(rn.regroup(body, no_files), body)
