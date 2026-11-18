@@ -167,14 +167,58 @@ func ServeGrpcOnLocalSocket(grpcServer *grpc.Server, grpcPort int) {
 	if listener == nil {
 		return
 	}
-	listener = &localSocketListener{Listener: listener}
 	glog.V(0).Infof("gRPC also listening on Unix socket %s", socketPath)
-	go func() {
-		if err := grpcServer.Serve(listener); err != nil && err != grpc.ErrServerStopped {
-			glog.Errorf("gRPC Unix socket server error on %s: %v", socketPath, err)
+	go serveGrpcOnLocalListener(grpcServer, socketPath, listener)
+}
+
+// localSocketCheckInterval is how often a served socket path is checked for
+// removal by something else, such as a temp cleaner aging /tmp.
+var localSocketCheckInterval = time.Minute
+
+// serveGrpcOnLocalListener serves the socket until the gRPC server stops,
+// rebinding it when the socket file is removed underneath the listener.
+func serveGrpcOnLocalListener(grpcServer *grpc.Server, socketPath string, listener net.Listener) {
+	served := make(chan error, 1)
+	serve := func(l net.Listener) {
+		// A replaced listener must not unlink the path its successor binds;
+		// every exit below removes the socket file itself.
+		if unixListener, ok := l.(*net.UnixListener); ok {
+			unixListener.SetUnlinkOnClose(false)
 		}
-		os.Remove(socketPath)
-	}()
+		go func() { served <- grpcServer.Serve(&localSocketListener{Listener: l}) }()
+	}
+	serve(listener)
+	ticker := time.NewTicker(localSocketCheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-served:
+			if err != nil && err != grpc.ErrServerStopped {
+				glog.Errorf("gRPC Unix socket server error on %s: %v", socketPath, err)
+			}
+			os.Remove(socketPath)
+			return
+		case <-ticker.C:
+			if _, err := os.Lstat(socketPath); !os.IsNotExist(err) {
+				continue
+			}
+			// Bind before closing the old listener, so a failed bind is
+			// retried on the next check and shutdown still ends this loop.
+			replacement := ListenOnLocalSocket(socketPath)
+			if replacement == nil {
+				continue
+			}
+			glog.Warningf("gRPC Unix socket %s was removed and has been recreated", socketPath)
+			listener.Close()
+			if err := <-served; err == nil || err == grpc.ErrServerStopped {
+				replacement.Close()
+				os.Remove(socketPath)
+				return
+			}
+			listener = replacement
+			serve(listener)
+		}
+	}
 }
 
 // localSocketListener re-applies the buffer sizes to every accepted connection.
@@ -233,22 +277,21 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 func GrpcDial(ctx context.Context, address string, waitForReady bool, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	var options []grpc.DialOption
 
-	// Route through Unix socket if one is registered for this address's port
+	// Route through Unix socket if one is registered for this address's port.
+	// The socket file can vanish under a running server (temp cleaners age
+	// /tmp), so a failed socket dial falls back to TCP.
 	if socketPath := resolveLocalGrpcSocket(address); socketPath != "" {
-		options = append(options, grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+		options = append(options, grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			d := net.Dialer{Control: setLocalSocketBuffers}
-			return d.DialContext(ctx, "unix", socketPath)
+			conn, err := d.DialContext(ctx, "unix", socketPath)
+			if err != nil && ctx.Err() == nil {
+				glog.V(1).Infof("dial unix %s: %v, dialing %s over TCP", socketPath, err, addr)
+				return dialGrpcTcp(ctx, addr)
+			}
+			return conn, err
 		}))
 	} else {
-		// Always install so a conn cached before SetOutboundLocalIP binds once set;
-		// the stock net.Dialer until then preserves gRPC's default dial behavior.
-		options = append(options, grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
-			if util.OutboundLocalAddr() == nil {
-				var d net.Dialer
-				return d.DialContext(ctx, "tcp", addr)
-			}
-			return util.OutboundDialContext(ctx, "tcp", addr)
-		}))
+		options = append(options, grpc.WithContextDialer(dialGrpcTcp))
 	}
 
 	options = append(options,
@@ -270,6 +313,17 @@ func GrpcDial(ctx context.Context, address string, waitForReady bool, opts ...gr
 		}
 	}
 	return grpc.DialContext(ctx, address, options...)
+}
+
+// dialGrpcTcp is installed even before SetOutboundLocalIP so a cached conn
+// binds once it is set; the stock net.Dialer until then preserves gRPC's
+// default dial behavior.
+func dialGrpcTcp(ctx context.Context, addr string) (net.Conn, error) {
+	if util.OutboundLocalAddr() == nil {
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", addr)
+	}
+	return util.OutboundDialContext(ctx, "tcp", addr)
 }
 
 func getOrCreateConnection(address string, waitForReady bool, opts ...grpc.DialOption) (*versionedGrpcClient, error) {
