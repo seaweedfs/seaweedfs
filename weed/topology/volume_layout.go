@@ -1140,6 +1140,51 @@ func (vl *VolumeLayout) CountUnderReplicatedVolumes() int {
 	return count
 }
 
+type WritableDisk struct {
+	DataCenter string
+	Rack       string
+	Node       string
+	DiskId     uint32
+}
+
+// WritableVolumesPerDisk counts, per disk, the replicas of this layout's
+// writable volumes, and how many of those are crowded.
+func (vl *VolumeLayout) WritableVolumesPerDisk() (writable, crowded map[WritableDisk]int) {
+	type replicas struct {
+		vid     needle.VolumeId
+		nodes   []*DataNode
+		crowded bool
+	}
+	vl.accessLock.RLock()
+	snapshot := make([]replicas, 0, len(vl.writables))
+	for _, vid := range vl.writables {
+		if locations, ok := vl.vid2location[vid]; ok {
+			_, isCrowded := vl.crowded[vid]
+			snapshot = append(snapshot, replicas{vid, append([]*DataNode(nil), locations.list...), isCrowded})
+		}
+	}
+	vl.accessLock.RUnlock()
+
+	writable, crowded = make(map[WritableDisk]int), make(map[WritableDisk]int)
+	for _, r := range snapshot {
+		for _, dn := range r.nodes {
+			v, err := dn.GetVolumesById(r.vid)
+			if err != nil {
+				continue
+			}
+			disk := WritableDisk{DataCenter: dn.GetDataCenterId(), Node: string(dn.Id()), DiskId: v.DiskId}
+			if rack := dn.Parent(); rack != nil {
+				disk.Rack = string(rack.Id())
+			}
+			writable[disk]++
+			if r.crowded {
+				crowded[disk]++
+			}
+		}
+	}
+	return writable, crowded
+}
+
 func (vl *VolumeLayout) removeFromWritable(vid needle.VolumeId) bool {
 	if _, ok := vl.writableMembers[vid]; !ok {
 		return false
