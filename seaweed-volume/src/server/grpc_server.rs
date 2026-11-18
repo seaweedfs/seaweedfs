@@ -3893,342 +3893,19 @@ impl VolumeServer for VolumeGrpcService {
 
         // Overlapping copies of one vid would share the staged index, and a
         // failed one's cleanup guards would remove shards another committed.
-        let _lifecycle = self.state.ec_lifecycle_lock(vid).lock_owned().await;
-
-        // Select target location:
-        //   When disk_id > 0: use that specific location.
-        //   When disk_id == 0 (unset): auto-select via
-        //   find_ec_shard_target_location, which prefers a disk that
-        //   already owns one of the shards being copied (a retried move
-        //   must overwrite in place, not leave two disks of this server
-        //   claiming the same shard), then a disk that already has the EC
-        //   volume mounted, then a disk that owns the .ecx on disk (volume
-        //   not yet mounted — relevant for ec.rebuild, where only the
-        //   first shard carries .ecx and subsequent shards must land on
-        //   the same disk; see #9212), then any HDD, then any disk. The
-        //   free-slot maths uses the volume's own data-shard count from its
-        //   .vif so a custom-ratio volume is not scored as 10+4.
-        let (dest_dir, dest_idx_dir) = {
-            let store = self.state.store.read().unwrap();
-            let count = store.locations.len();
-
-            if req.disk_id > 0 {
-                // Explicit disk selection
-                if (req.disk_id as usize) >= count {
-                    return Err(Status::invalid_argument(format!(
-                        "invalid disk_id {}: only have {} disks",
-                        req.disk_id, count
-                    )));
-                }
-                let loc = &store.locations[req.disk_id as usize];
-                (loc.directory.clone(), loc.idx_directory.clone())
-            } else {
-                // A batch whose requested shards are already owned by
-                // different local disks has no single correct destination:
-                // writing them all to one disk would duplicate the other
-                // disks' claims. Refuse so the caller splits the batch per
-                // shard (or chooses explicitly via disk_id).
-                let owners = store.ec_shard_owner_disks(vid, &shard_ids);
-                if owners.len() > 1 {
-                    let dirs: Vec<&str> = owners
-                        .iter()
-                        .map(|&i| store.locations[i].directory.as_str())
-                        .collect();
-                    return Err(Status::failed_precondition(format!(
-                        "volume {} shards {:?} are already owned by multiple local disks {:?}: no single destination; copy per shard or pass disk_id",
-                        req.volume_id, shard_ids, dirs
-                    )));
-                }
-                let data_shards = store.lookup_ec_data_shards(&req.collection, vid);
-                match store.find_ec_shard_target_location(
-                    &req.collection,
-                    vid,
-                    data_shards,
-                    &shard_ids,
-                ) {
-                    Some(i) => {
-                        let loc = &store.locations[i];
-                        (loc.directory.clone(), loc.idx_directory.clone())
-                    }
-                    None => {
-                        return Err(Status::internal("no space left".to_string()));
-                    }
-                }
-            }
+        let lifecycle = self.state.ec_lifecycle_lock(vid).lock_owned().await;
+        // The copy, and the cleanup of a failed one, run to completion like Go's
+        // even if the caller goes away: dropping them mid-await would release
+        // the lock while file operations they started are still landing.
+        let svc = VolumeGrpcService {
+            state: self.state.clone(),
         };
-
-        // Connect to source and copy shard files via CopyFile
-        let source = &req.source_data_node;
-        let grpc_addr = parse_grpc_address(source).map_err(|e| {
-            Status::internal(format!(
-                "VolumeEcShardsCopy volume {} invalid source_data_node {}: {}",
-                vid, source, e
-            ))
-        })?;
-
-        let channel = connect_channel_guarded(
-            &grpc_addr,
-            source,
-            self.state.outgoing_grpc_tls.as_ref(),
-            GrpcDialOptions::stream(),
-            self.state.allow_untrusted_remote_endpoints,
-        )
+        tokio::spawn(async move {
+            let _lifecycle = lifecycle;
+            svc.volume_ec_shards_copy_locked(req, vid, shard_ids).await
+        })
         .await
-        .map_err(|e| {
-            Status::internal(format!(
-                "VolumeEcShardsCopy volume {} connect to {}: {}",
-                vid, grpc_addr, e
-            ))
-        })?;
-
-        let mut client = volume_server_client(channel);
-        let data_base = crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
-        let index_base =
-            crate::storage::volume::volume_file_name(&dest_idx_dir, &req.collection, vid);
-
-        // A failed copy removes what it added, or every retry against the same
-        // unusable source strands another unmounted shard on this disk. Files
-        // already on the disk before the call are never tracked.
-        let mut created: Vec<crate::server::store_ec::RemoveIncomplete> = Vec::new();
-
-        // The index is staged first, so a source whose .ecx is unusable fails
-        // the copy before any shard lands here. It is committed after every
-        // other file, so a failed copy leaves an existing holder's index as is.
-        let ecx_path = format!("{}.ecx", index_base);
-        let mut staged_ecx: Option<crate::server::store_ec::RemoveIncomplete> = None;
-        if req.copy_ecx_file {
-            let copy_req = volume_server_pb::CopyFileRequest {
-                volume_id: req.volume_id,
-                collection: req.collection.clone(),
-                is_ec_volume: true,
-                ext: ".ecx".to_string(),
-                compaction_revision: u32::MAX,
-                stop_offset: i64::MAX as u64,
-                ..Default::default()
-            };
-            let mut stream = client
-                .copy_file(copy_req)
-                .await
-                .map_err(|e| {
-                    Status::internal(format!(
-                        "VolumeEcShardsCopy volume {} copy .ecx: {}",
-                        vid, e
-                    ))
-                })?
-                .into_inner();
-
-            let staging = format!("{}.copying", ecx_path);
-            let staged = crate::server::store_ec::RemoveIncomplete::new(&staging);
-            let file = tokio::fs::File::create(&staging)
-                .await
-                .map_err(|e| Status::internal(format!("create {}: {}", staging, e)))?;
-            let written = drain_copy_stream_to_file(&mut stream, file, &staging, ".ecx").await?;
-            if written == 0 {
-                return Err(Status::internal(format!(
-                    "VolumeEcShardsCopy volume {}: source .ecx is 0 bytes",
-                    vid
-                )));
-            }
-            staged_ecx = Some(staged);
-        }
-
-        // Copy each shard. A shard already on this disk is staged and replaced
-        // only once the whole copy succeeds, so a failed transfer leaves it as is.
-        let mut replaced_shards: Vec<(ShardId, crate::server::store_ec::RemoveIncomplete)> =
-            Vec::new();
-        for &shard_id in &shard_ids {
-            let ext = format!(".ec{:02}", shard_id);
-            let shard_path = format!("{}{}", data_base, ext);
-            let file_path = if std::fs::metadata(&shard_path).is_ok() {
-                let staging = format!("{}.copying", shard_path);
-                replaced_shards.push((
-                    shard_id,
-                    crate::server::store_ec::RemoveIncomplete::new(&staging),
-                ));
-                staging
-            } else {
-                track_ec_copy_created(&mut created, &shard_path);
-                shard_path
-            };
-
-            let copy_req = volume_server_pb::CopyFileRequest {
-                volume_id: req.volume_id,
-                collection: req.collection.clone(),
-                is_ec_volume: true,
-                ext: ext.clone(),
-                compaction_revision: u32::MAX,
-                stop_offset: i64::MAX as u64,
-                ..Default::default()
-            };
-            let mut stream = client
-                .copy_file(copy_req)
-                .await
-                .map_err(|e| {
-                    Status::internal(format!(
-                        "VolumeEcShardsCopy volume {} copy {}: {}",
-                        vid, ext, e
-                    ))
-                })?
-                .into_inner();
-
-            let file = tokio::fs::File::create(&file_path)
-                .await
-                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
-            drain_copy_stream_to_file(&mut stream, file, &file_path, &ext).await?;
-        }
-
-        // Copy .ecj file if requested. The journal is a *set* of ids: merge
-        // the source's into the local one as a union, never append it whole,
-        // or every balance round trip doubles it. A source without one
-        // is not an error.
-        if req.copy_ecj_file {
-            let copy_req = volume_server_pb::CopyFileRequest {
-                volume_id: req.volume_id,
-                collection: req.collection.clone(),
-                is_ec_volume: true,
-                ext: ".ecj".to_string(),
-                compaction_revision: u32::MAX,
-                stop_offset: i64::MAX as u64,
-                ignore_source_file_not_found: true,
-                ..Default::default()
-            };
-            let mut stream = client
-                .copy_file(copy_req)
-                .await
-                .map_err(|e| {
-                    Status::internal(format!(
-                        "VolumeEcShardsCopy volume {} copy .ecj: {}",
-                        vid, e
-                    ))
-                })?
-                .into_inner();
-            let (ids, found) = receive_ecj_ids(&mut stream).await.map_err(|e| {
-                Status::internal(format!(
-                    "VolumeEcShardsCopy volume {} copy .ecj: {}",
-                    vid, e
-                ))
-            })?;
-            if found {
-                let ecj_path = format!("{}.ecj", index_base);
-                track_ec_copy_created(&mut created, &ecj_path);
-                merge_ecj_ids(&self.state, vid, dest_dir.clone(), ecj_path, ids)
-                    .await
-                    .map_err(|e| {
-                        Status::internal(format!(
-                            "VolumeEcShardsCopy volume {} merge .ecj: {}",
-                            vid, e
-                        ))
-                    })?;
-            }
-        }
-
-        // The sidecars are staged too and committed with the index, so a failed
-        // copy cannot pair a new .vif with the index this disk keeps.
-        let mut staged_sidecars: Vec<(String, crate::server::store_ec::RemoveIncomplete)> =
-            Vec::new();
-        if req.copy_vif_file {
-            let copy_req = volume_server_pb::CopyFileRequest {
-                volume_id: req.volume_id,
-                collection: req.collection.clone(),
-                is_ec_volume: true,
-                ext: ".vif".to_string(),
-                compaction_revision: u32::MAX,
-                stop_offset: i64::MAX as u64,
-                ignore_source_file_not_found: true,
-                ..Default::default()
-            };
-            let mut stream = client
-                .copy_file(copy_req)
-                .await
-                .map_err(|e| {
-                    Status::internal(format!(
-                        "VolumeEcShardsCopy volume {} copy .vif: {}",
-                        vid, e
-                    ))
-                })?
-                .into_inner();
-
-            let file_path = format!("{}.vif", data_base);
-            let staging = format!("{}.copying", file_path);
-            let staged = crate::server::store_ec::RemoveIncomplete::new(&staging);
-            if drain_optional_copy_to_file(&mut stream, &staging, ".vif").await? > 0 {
-                staged_sidecars.push((file_path, staged));
-            }
-        }
-
-        // Copy the generation-0 bitrot checksum sidecar (.ecsum) when requested, so
-        // protection travels with the shards. Tolerant of a missing source (no-op):
-        // this non-2PC path has no Prepare backstop, and an unprotected source
-        // simply leaves the copy unprotected.
-        if req.copy_ecsum_file {
-            let copy_req = volume_server_pb::CopyFileRequest {
-                volume_id: req.volume_id,
-                collection: req.collection.clone(),
-                is_ec_volume: true,
-                ext: ".ecsum".to_string(),
-                compaction_revision: u32::MAX,
-                stop_offset: i64::MAX as u64,
-                ignore_source_file_not_found: true,
-                ..Default::default()
-            };
-            let mut stream = client
-                .copy_file(copy_req)
-                .await
-                .map_err(|e| {
-                    Status::internal(format!(
-                        "VolumeEcShardsCopy volume {} copy .ecsum: {}",
-                        vid, e
-                    ))
-                })?
-                .into_inner();
-
-            let file_path = format!("{}.ecsum", data_base);
-            let staging = format!("{}.copying", file_path);
-            let staged = crate::server::store_ec::RemoveIncomplete::new(&staging);
-            if drain_optional_copy_to_file(&mut stream, &staging, ".ecsum").await? > 0 {
-                staged_sidecars.push((file_path, staged));
-            }
-        }
-
-        for (file_path, mut staged) in staged_sidecars {
-            track_ec_copy_created(&mut created, &file_path);
-            tokio::fs::rename(format!("{}.copying", file_path), &file_path)
-                .await
-                .map_err(|e| Status::internal(format!("commit {}: {}", file_path, e)))?;
-            staged.committed();
-        }
-
-        for (shard_id, mut staged) in replaced_shards {
-            let shard_path = format!("{}.ec{:02}", data_base, shard_id);
-            tokio::fs::rename(format!("{}.copying", shard_path), &shard_path)
-                .await
-                .map_err(|e| Status::internal(format!("commit {}: {}", shard_path, e)))?;
-            staged.committed();
-            // A mounted shard keeps reading the replaced inode until reopened.
-            let mut store = self.state.store.write().unwrap();
-            if let Some(loc) = store.locations.iter_mut().find(|l| l.directory == dest_dir) {
-                if let Err(e) = loc.reopen_ec_shard(vid, shard_id) {
-                    tracing::warn!(
-                        "VolumeEcShardsCopy volume {}: reopen replaced shard {}: {}",
-                        vid,
-                        shard_id,
-                        e
-                    );
-                }
-            }
-        }
-
-        if let Some(_staged) = staged_ecx {
-            track_ec_copy_created(&mut created, &ecx_path);
-            commit_staged_ecx(&format!("{}.copying", ecx_path), &ecx_path)
-                .await
-                .map_err(|e| Status::internal(format!("commit {}: {}", ecx_path, e)))?;
-        }
-        created.iter_mut().for_each(|file| file.committed());
-
-        Ok(Response::new(
-            volume_server_pb::VolumeEcShardsCopyResponse {},
-        ))
+        .map_err(|e| Status::internal(format!("VolumeEcShardsCopy volume {}: {}", vid, e)))?
     }
 
     /// Allowed in maintenance mode: like `volume_delete` it only removes data, and
@@ -6492,6 +6169,349 @@ impl CopyDestination {
 }
 
 impl VolumeGrpcService {
+    /// The body of `volume_ec_shards_copy`, run under the volume's EC lifecycle lock.
+    async fn volume_ec_shards_copy_locked(
+        &self,
+        req: volume_server_pb::VolumeEcShardsCopyRequest,
+        vid: VolumeId,
+        shard_ids: Vec<ShardId>,
+    ) -> Result<Response<volume_server_pb::VolumeEcShardsCopyResponse>, Status> {
+        // Select target location:
+        //   When disk_id > 0: use that specific location.
+        //   When disk_id == 0 (unset): auto-select via
+        //   find_ec_shard_target_location, which prefers a disk that
+        //   already owns one of the shards being copied (a retried move
+        //   must overwrite in place, not leave two disks of this server
+        //   claiming the same shard), then a disk that already has the EC
+        //   volume mounted, then a disk that owns the .ecx on disk (volume
+        //   not yet mounted — relevant for ec.rebuild, where only the
+        //   first shard carries .ecx and subsequent shards must land on
+        //   the same disk; see #9212), then any HDD, then any disk. The
+        //   free-slot maths uses the volume's own data-shard count from its
+        //   .vif so a custom-ratio volume is not scored as 10+4.
+        let (dest_dir, dest_idx_dir) = {
+            let store = self.state.store.read().unwrap();
+            let count = store.locations.len();
+
+            if req.disk_id > 0 {
+                // Explicit disk selection
+                if (req.disk_id as usize) >= count {
+                    return Err(Status::invalid_argument(format!(
+                        "invalid disk_id {}: only have {} disks",
+                        req.disk_id, count
+                    )));
+                }
+                let loc = &store.locations[req.disk_id as usize];
+                (loc.directory.clone(), loc.idx_directory.clone())
+            } else {
+                // A batch whose requested shards are already owned by
+                // different local disks has no single correct destination:
+                // writing them all to one disk would duplicate the other
+                // disks' claims. Refuse so the caller splits the batch per
+                // shard (or chooses explicitly via disk_id).
+                let owners = store.ec_shard_owner_disks(vid, &shard_ids);
+                if owners.len() > 1 {
+                    let dirs: Vec<&str> = owners
+                        .iter()
+                        .map(|&i| store.locations[i].directory.as_str())
+                        .collect();
+                    return Err(Status::failed_precondition(format!(
+                        "volume {} shards {:?} are already owned by multiple local disks {:?}: no single destination; copy per shard or pass disk_id",
+                        req.volume_id, shard_ids, dirs
+                    )));
+                }
+                let data_shards = store.lookup_ec_data_shards(&req.collection, vid);
+                match store.find_ec_shard_target_location(
+                    &req.collection,
+                    vid,
+                    data_shards,
+                    &shard_ids,
+                ) {
+                    Some(i) => {
+                        let loc = &store.locations[i];
+                        (loc.directory.clone(), loc.idx_directory.clone())
+                    }
+                    None => {
+                        return Err(Status::internal("no space left".to_string()));
+                    }
+                }
+            }
+        };
+
+        // Connect to source and copy shard files via CopyFile
+        let source = &req.source_data_node;
+        let grpc_addr = parse_grpc_address(source).map_err(|e| {
+            Status::internal(format!(
+                "VolumeEcShardsCopy volume {} invalid source_data_node {}: {}",
+                vid, source, e
+            ))
+        })?;
+
+        let channel = connect_channel_guarded(
+            &grpc_addr,
+            source,
+            self.state.outgoing_grpc_tls.as_ref(),
+            GrpcDialOptions::stream(),
+            self.state.allow_untrusted_remote_endpoints,
+        )
+        .await
+        .map_err(|e| {
+            Status::internal(format!(
+                "VolumeEcShardsCopy volume {} connect to {}: {}",
+                vid, grpc_addr, e
+            ))
+        })?;
+
+        let mut client = volume_server_client(channel);
+        let data_base = crate::storage::volume::volume_file_name(&dest_dir, &req.collection, vid);
+        let index_base =
+            crate::storage::volume::volume_file_name(&dest_idx_dir, &req.collection, vid);
+
+        // A failed copy removes what it added, or every retry against the same
+        // unusable source strands another unmounted shard on this disk. Files
+        // already on the disk before the call are never tracked.
+        let mut created: Vec<crate::server::store_ec::RemoveIncomplete> = Vec::new();
+
+        // The index is staged first, so a source whose .ecx is unusable fails
+        // the copy before any shard lands here. It is committed after every
+        // other file, so a failed copy leaves an existing holder's index as is.
+        let ecx_path = format!("{}.ecx", index_base);
+        let mut staged_ecx: Option<crate::server::store_ec::RemoveIncomplete> = None;
+        if req.copy_ecx_file {
+            let copy_req = volume_server_pb::CopyFileRequest {
+                volume_id: req.volume_id,
+                collection: req.collection.clone(),
+                is_ec_volume: true,
+                ext: ".ecx".to_string(),
+                compaction_revision: u32::MAX,
+                stop_offset: i64::MAX as u64,
+                ..Default::default()
+            };
+            let mut stream = client
+                .copy_file(copy_req)
+                .await
+                .map_err(|e| {
+                    Status::internal(format!(
+                        "VolumeEcShardsCopy volume {} copy .ecx: {}",
+                        vid, e
+                    ))
+                })?
+                .into_inner();
+
+            let staging = format!("{}.copying", ecx_path);
+            let staged = crate::server::store_ec::RemoveIncomplete::new(&staging);
+            let file = tokio::fs::File::create(&staging)
+                .await
+                .map_err(|e| Status::internal(format!("create {}: {}", staging, e)))?;
+            let written = drain_copy_stream_to_file(&mut stream, file, &staging, ".ecx").await?;
+            if written == 0 {
+                return Err(Status::internal(format!(
+                    "VolumeEcShardsCopy volume {}: source .ecx is 0 bytes",
+                    vid
+                )));
+            }
+            staged_ecx = Some(staged);
+        }
+
+        // Copy each shard. A shard already on this disk is staged and replaced
+        // only once the whole copy succeeds, so a failed transfer leaves it as is.
+        let mut replaced_shards: Vec<(ShardId, crate::server::store_ec::RemoveIncomplete)> =
+            Vec::new();
+        for &shard_id in &shard_ids {
+            let ext = format!(".ec{:02}", shard_id);
+            let shard_path = format!("{}{}", data_base, ext);
+            let file_path = if std::fs::metadata(&shard_path).is_ok() {
+                let staging = format!("{}.copying", shard_path);
+                replaced_shards.push((
+                    shard_id,
+                    crate::server::store_ec::RemoveIncomplete::new(&staging),
+                ));
+                staging
+            } else {
+                track_ec_copy_created(&mut created, &shard_path);
+                shard_path
+            };
+
+            let copy_req = volume_server_pb::CopyFileRequest {
+                volume_id: req.volume_id,
+                collection: req.collection.clone(),
+                is_ec_volume: true,
+                ext: ext.clone(),
+                compaction_revision: u32::MAX,
+                stop_offset: i64::MAX as u64,
+                ..Default::default()
+            };
+            let mut stream = client
+                .copy_file(copy_req)
+                .await
+                .map_err(|e| {
+                    Status::internal(format!(
+                        "VolumeEcShardsCopy volume {} copy {}: {}",
+                        vid, ext, e
+                    ))
+                })?
+                .into_inner();
+
+            let file = tokio::fs::File::create(&file_path)
+                .await
+                .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
+            drain_copy_stream_to_file(&mut stream, file, &file_path, &ext).await?;
+        }
+
+        // Copy .ecj file if requested. The journal is a *set* of ids: merge
+        // the source's into the local one as a union, never append it whole,
+        // or every balance round trip doubles it. A source without one
+        // is not an error.
+        if req.copy_ecj_file {
+            let copy_req = volume_server_pb::CopyFileRequest {
+                volume_id: req.volume_id,
+                collection: req.collection.clone(),
+                is_ec_volume: true,
+                ext: ".ecj".to_string(),
+                compaction_revision: u32::MAX,
+                stop_offset: i64::MAX as u64,
+                ignore_source_file_not_found: true,
+                ..Default::default()
+            };
+            let mut stream = client
+                .copy_file(copy_req)
+                .await
+                .map_err(|e| {
+                    Status::internal(format!(
+                        "VolumeEcShardsCopy volume {} copy .ecj: {}",
+                        vid, e
+                    ))
+                })?
+                .into_inner();
+            let (ids, found) = receive_ecj_ids(&mut stream).await.map_err(|e| {
+                Status::internal(format!(
+                    "VolumeEcShardsCopy volume {} copy .ecj: {}",
+                    vid, e
+                ))
+            })?;
+            if found {
+                let ecj_path = format!("{}.ecj", index_base);
+                track_ec_copy_created(&mut created, &ecj_path);
+                merge_ecj_ids(&self.state, vid, dest_dir.clone(), ecj_path, ids)
+                    .await
+                    .map_err(|e| {
+                        Status::internal(format!(
+                            "VolumeEcShardsCopy volume {} merge .ecj: {}",
+                            vid, e
+                        ))
+                    })?;
+            }
+        }
+
+        // The sidecars are staged too and committed with the index, so a failed
+        // copy cannot pair a new .vif with the index this disk keeps.
+        let mut staged_sidecars: Vec<(String, crate::server::store_ec::RemoveIncomplete)> =
+            Vec::new();
+        if req.copy_vif_file {
+            let copy_req = volume_server_pb::CopyFileRequest {
+                volume_id: req.volume_id,
+                collection: req.collection.clone(),
+                is_ec_volume: true,
+                ext: ".vif".to_string(),
+                compaction_revision: u32::MAX,
+                stop_offset: i64::MAX as u64,
+                ignore_source_file_not_found: true,
+                ..Default::default()
+            };
+            let mut stream = client
+                .copy_file(copy_req)
+                .await
+                .map_err(|e| {
+                    Status::internal(format!(
+                        "VolumeEcShardsCopy volume {} copy .vif: {}",
+                        vid, e
+                    ))
+                })?
+                .into_inner();
+
+            let file_path = format!("{}.vif", data_base);
+            let staging = format!("{}.copying", file_path);
+            let staged = crate::server::store_ec::RemoveIncomplete::new(&staging);
+            if drain_optional_copy_to_file(&mut stream, &staging, ".vif").await? > 0 {
+                staged_sidecars.push((file_path, staged));
+            }
+        }
+
+        // Copy the generation-0 bitrot checksum sidecar (.ecsum) when requested, so
+        // protection travels with the shards. Tolerant of a missing source (no-op):
+        // this non-2PC path has no Prepare backstop, and an unprotected source
+        // simply leaves the copy unprotected.
+        if req.copy_ecsum_file {
+            let copy_req = volume_server_pb::CopyFileRequest {
+                volume_id: req.volume_id,
+                collection: req.collection.clone(),
+                is_ec_volume: true,
+                ext: ".ecsum".to_string(),
+                compaction_revision: u32::MAX,
+                stop_offset: i64::MAX as u64,
+                ignore_source_file_not_found: true,
+                ..Default::default()
+            };
+            let mut stream = client
+                .copy_file(copy_req)
+                .await
+                .map_err(|e| {
+                    Status::internal(format!(
+                        "VolumeEcShardsCopy volume {} copy .ecsum: {}",
+                        vid, e
+                    ))
+                })?
+                .into_inner();
+
+            let file_path = format!("{}.ecsum", data_base);
+            let staging = format!("{}.copying", file_path);
+            let staged = crate::server::store_ec::RemoveIncomplete::new(&staging);
+            if drain_optional_copy_to_file(&mut stream, &staging, ".ecsum").await? > 0 {
+                staged_sidecars.push((file_path, staged));
+            }
+        }
+
+        for (file_path, mut staged) in staged_sidecars {
+            track_ec_copy_created(&mut created, &file_path);
+            tokio::fs::rename(format!("{}.copying", file_path), &file_path)
+                .await
+                .map_err(|e| Status::internal(format!("commit {}: {}", file_path, e)))?;
+            staged.committed();
+        }
+
+        for (shard_id, mut staged) in replaced_shards {
+            let shard_path = format!("{}.ec{:02}", data_base, shard_id);
+            tokio::fs::rename(format!("{}.copying", shard_path), &shard_path)
+                .await
+                .map_err(|e| Status::internal(format!("commit {}: {}", shard_path, e)))?;
+            staged.committed();
+            // A mounted shard keeps reading the replaced inode until reopened.
+            let mut store = self.state.store.write().unwrap();
+            if let Some(loc) = store.locations.iter_mut().find(|l| l.directory == dest_dir) {
+                if let Err(e) = loc.reopen_ec_shard(vid, shard_id) {
+                    tracing::warn!(
+                        "VolumeEcShardsCopy volume {}: reopen replaced shard {}: {}",
+                        vid,
+                        shard_id,
+                        e
+                    );
+                }
+            }
+        }
+
+        if let Some(_staged) = staged_ecx {
+            track_ec_copy_created(&mut created, &ecx_path);
+            commit_staged_ecx(&format!("{}.copying", ecx_path), &ecx_path)
+                .await
+                .map_err(|e| Status::internal(format!("commit {}: {}", ecx_path, e)))?;
+        }
+        created.iter_mut().for_each(|file| file.committed());
+
+        Ok(Response::new(
+            volume_server_pb::VolumeEcShardsCopyResponse {},
+        ))
+    }
+
     async fn connect_to_copy_source(
         &self,
         vid: VolumeId,
@@ -10269,6 +10289,50 @@ mod tests {
         assert_eq!(sorted_dir_names(&dir), before);
         assert_eq!(std::fs::read(format!("{}/60.vif", dir)).unwrap(), vif);
         assert_eq!(std::fs::read(format!("{}/60.ecx", dir)).unwrap(), ecx);
+    }
+
+    // A caller that goes away mid-copy must not release the volume's lifecycle
+    // lock before the copy has finished with its files.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_shards_copy_runs_to_completion_after_cancel() {
+        let (source_service, source_tmp) = make_local_service_with_volume("", None);
+        let src = source_tmp.path().to_str().unwrap().to_string();
+        std::fs::write(
+            format!("{}/61.ecx", src),
+            vec![9u8; NEEDLE_MAP_ENTRY_SIZE as usize],
+        )
+        .unwrap();
+        let shard_len = 32u64 << 20;
+        std::fs::write(format!("{}/61.ec00", src), vec![1u8; shard_len as usize]).unwrap();
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest, _dest_tmp, dir) = ec_copy_destination().await;
+        let state = dest.state.clone();
+        let copy = tokio::spawn(async move {
+            dest.volume_ec_shards_copy(Request::new(volume_server_pb::VolumeEcShardsCopyRequest {
+                volume_id: 61,
+                shard_ids: vec![0],
+                copy_ecx_file: true,
+                source_data_node: format!("127.0.0.1:1.{}", port),
+                ..Default::default()
+            }))
+            .await
+        });
+        let ec00 = format!("{}/61.ec00", dir);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !std::path::Path::new(&ec00).exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "shard transfer never started"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        copy.abort();
+        let _ = copy.await;
+
+        let _lifecycle = state.ec_lifecycle_lock(VolumeId(61)).lock_owned().await;
+        assert_eq!(std::fs::metadata(&ec00).unwrap().len(), shard_len);
+        assert!(std::path::Path::new(&format!("{}/61.ecx", dir)).exists());
     }
 
     // The transfer itself must notice a caller that has gone, with no progress
