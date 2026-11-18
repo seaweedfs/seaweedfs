@@ -1621,6 +1621,8 @@ pub struct Volume {
     dat_syncs_for_test: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     idx_syncs_for_test: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    cancel_on_flush_for_test: Mutex<Option<(NeedleId, Cookie)>>,
     needle_map_kind: NeedleMapKind,
     data_file_access_control: Arc<DataFileAccessControl>,
     /// Serializes a data-file mutation with the sync that makes it durable:
@@ -1700,6 +1702,15 @@ pub struct PendingWrite {
     writes: Arc<PendingWrites>,
     id: NeedleId,
     flag: Arc<CancelFlag>,
+}
+
+/// A write cancelled before it appends is refused: its delete may already be
+/// durable, and an unsynced row could outlive its tombstone.
+fn refuse_cancelled_write(pending: Option<&PendingWrite>) -> Result<(), VolumeError> {
+    if pending.is_some_and(|p| p.flag.cancelled.load(Ordering::Acquire)) {
+        return Err(VolumeError::Deleted);
+    }
+    Ok(())
 }
 
 impl Drop for PendingWrite {
@@ -1785,6 +1796,8 @@ impl Volume {
             dat_syncs_for_test: Default::default(),
             #[cfg(test)]
             idx_syncs_for_test: Default::default(),
+            #[cfg(test)]
+            cancel_on_flush_for_test: Default::default(),
             needle_map_kind,
             data_file_access_control: Arc::new(DataFileAccessControl::default()),
             data_file_sync_lock: std::sync::Mutex::new(()),
@@ -1844,6 +1857,8 @@ impl Volume {
             dat_syncs_for_test: Default::default(),
             #[cfg(test)]
             idx_syncs_for_test: Default::default(),
+            #[cfg(test)]
+            cancel_on_flush_for_test: Default::default(),
             needle_map_kind: NeedleMapKind::InMemory,
             data_file_access_control: Arc::new(DataFileAccessControl::default()),
             data_file_sync_lock: std::sync::Mutex::new(()),
@@ -3062,6 +3077,7 @@ impl Volume {
         let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         let mut io = self.io.write().unwrap();
+        refuse_cancelled_write(pending)?;
         if let Err(refused) = self.check_writable() {
             return Ok(Err(refused));
         }
@@ -3112,11 +3128,12 @@ impl Volume {
                 let _guard = self.data_file_access_control.write_lock();
                 let mut io = self.io.write().unwrap();
                 for (i, (n, _)) in run.iter_mut().enumerate() {
+                    let pending = tracked.get(i).and_then(Option::as_ref);
                     let written = self
                         .check_writable()
+                        .and_then(|()| refuse_cancelled_write(pending))
                         .and_then(|()| self.do_write_request(&mut io, n, true, false));
                     results.push(written.and_then(|written| {
-                        let pending = tracked.get(i).and_then(Option::as_ref);
                         self.drop_cancelled_write(&mut io, pending, n, &written)
                             .map(|()| written)
                     }));
@@ -3147,8 +3164,9 @@ impl Volume {
             let _guard = self.data_file_access_control.write_lock();
             let mut io = self.io.write().unwrap();
             last_append_at_ns = io.last_append_at_ns;
-            for (n, fsync) in run.iter_mut() {
-                let r = self.append_unpublished(&mut io, n, &mut last_append_at_ns);
+            for (i, (n, fsync)) in run.iter_mut().enumerate() {
+                let r = refuse_cancelled_write(pending.get(i).and_then(Option::as_ref))
+                    .and_then(|()| self.append_unpublished(&mut io, n, &mut last_append_at_ns));
                 marks.push(self.io_errors.mark());
                 if let Ok(Some(offset)) = r {
                     run_start.get_or_insert(offset);
@@ -3294,6 +3312,10 @@ impl Volume {
     pub(crate) fn flush_dat(&self, io: &VolumeIo) -> io::Result<()> {
         #[cfg(test)]
         self.dat_syncs_for_test.fetch_add(1, Ordering::Relaxed);
+        #[cfg(test)]
+        if let Some((id, cookie)) = self.cancel_on_flush_for_test.lock().unwrap().take() {
+            self.cancel_pending_writes(id, cookie);
+        }
         #[cfg(test)]
         if io.fail_fsync_for_test {
             return Err(io::Error::other("injected fsync failure"));
@@ -9048,7 +9070,7 @@ mod tests {
             assert!(matches!(err, VolumeError::Deleted));
 
             let err = v.read_needle(&mut pending_needle(1, b"")).unwrap_err();
-            assert!(matches!(err, VolumeError::Deleted));
+            assert!(matches!(err, VolumeError::NotFound));
             assert!(v.pending_writes.0.lock().unwrap().is_empty());
 
             v.close();
@@ -9064,7 +9086,7 @@ mod tests {
         }
     }
 
-    /// The unsynced write path takes a cancelled write back the same way.
+    /// The unsynced write path refuses a cancelled write the same way.
     #[test]
     fn test_unsynced_write_cancelled_by_delete() {
         let tmp = TempDir::new().unwrap();
@@ -9078,7 +9100,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, VolumeError::Deleted));
         let err = v.read_needle(&mut pending_needle(1, b"")).unwrap_err();
-        assert!(matches!(err, VolumeError::Deleted));
+        assert!(matches!(err, VolumeError::NotFound));
     }
 
     /// A delete that finds a copy also cancels a retry of the same write that
@@ -9096,6 +9118,32 @@ mod tests {
         v.delete_needle(&mut pending_needle(1, b"")).unwrap();
         let err = write_pending(&v, rewrite, false, pending).unwrap_err();
         assert!(matches!(err, VolumeError::Deleted));
+        let err = v.read_needle(&mut pending_needle(1, b"")).unwrap_err();
+        assert!(matches!(err, VolumeError::Deleted));
+    }
+
+    /// A rewrite cancelled before it takes the volume locks appends nothing,
+    /// so no unsynced row of it can outlive a durable delete after a crash.
+    #[test]
+    fn test_cancelled_rewrite_does_not_append() {
+        let tmp = TempDir::new().unwrap();
+        let v = make_test_volume(tmp.path().to_str().unwrap());
+
+        v.write_needle(&mut pending_needle(1, b"first"), true, false)
+            .unwrap();
+        let before = std::fs::metadata(v.file_name(".dat")).unwrap().len();
+        let rewrite = pending_needle(1, b"retry");
+        let pending = v.track_pending_write(&rewrite);
+        v.cancel_pending_writes(rewrite.id, rewrite.cookie);
+        let err = write_pending(&v, rewrite, false, pending).unwrap_err();
+        assert!(matches!(err, VolumeError::Deleted));
+        assert_eq!(
+            std::fs::metadata(v.file_name(".dat")).unwrap().len(),
+            before
+        );
+
+        v.delete_needle_with_fsync(&mut pending_needle(1, b""), true)
+            .unwrap();
         let err = v.read_needle(&mut pending_needle(1, b"")).unwrap_err();
         assert!(matches!(err, VolumeError::Deleted));
     }
@@ -9165,7 +9213,7 @@ mod tests {
 
         let n = pending_needle(1, b"late write");
         let pending = v.track_pending_write(&n);
-        v.cancel_pending_writes(n.id, n.cookie);
+        *v.cancel_on_flush_for_test.lock().unwrap() = Some((n.id, n.cookie));
         let err = write_pending(&v, n, true, pending).unwrap_err();
         assert!(matches!(err, VolumeError::Deleted));
         assert_eq!(v.sync_counts_for_test(), (2, 1));
