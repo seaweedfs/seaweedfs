@@ -320,19 +320,22 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 
 	glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.GetChunks()))
 
-	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.GetChunks())
+	snapshot := entry.GetChunks()
+	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(snapshot)
 
 	chunks, _, err := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
 	if err != nil {
 		return fmt.Errorf("compact chunks of %s: %w", fileFullPath, err)
 	}
 
+	rewrote := false
 	if mergedChunks, mergeErr := wfs.maybeMergeChunks(fileFullPath, chunks, manifestChunks); mergeErr != nil {
 		glog.V(0).Infof("maybeMergeChunks %s: %v", fileFullPath, mergeErr)
 	} else if mergedChunks != nil {
 		chunks = mergedChunks
 		manifestChunks = nil
 		fh.noteRewrite()
+		rewrote = true
 	}
 
 	// no chunk deleter here: a failed fold reports the blobs it saved
@@ -341,7 +344,11 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		// not good, but should be ok
 		glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
 	}
-	entry.Chunks = append(chunks, manifestChunks...)
+	if rewrote {
+		fh.installRewrittenChunks(snapshot, append(chunks, manifestChunks...))
+	} else {
+		entry.Chunks = append(chunks, manifestChunks...)
+	}
 
 	// Clone the proto entry for the filer request so that mapPbIdFromLocalToFiler
 	// does not mutate the file handle's live entry. Without the clone, a concurrent

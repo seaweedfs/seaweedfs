@@ -224,6 +224,32 @@ func (fh *FileHandle) rebaseEntry(merged, sent *filer_pb.Entry) {
 	})
 }
 
+// installRewrittenChunks replaces the chunks a merge rewrote, taken from
+// snapshot, with rewritten, and moves the read view to the result: the filer
+// deletes the replaced chunks once the merge is committed, and a view still
+// naming them would send reads to needles a vacuum removes. Chunks attached
+// after snapshot was taken were not part of the merge and stay.
+func (fh *FileHandle) installRewrittenChunks(snapshot, rewritten []*filer_pb.FileChunk) {
+	inSnapshot := make(map[string]bool, len(snapshot))
+	for _, c := range snapshot {
+		inSnapshot[contentFileIdKey(c)] = true
+	}
+	fh.UpdateEntry(func(e *filer_pb.Entry) {
+		chunks := append([]*filer_pb.FileChunk{}, rewritten...)
+		for _, c := range e.Chunks {
+			if !inSnapshot[contentFileIdKey(c)] {
+				chunks = append(chunks, c)
+			}
+		}
+		e.Chunks = chunks
+		err := fh.entryChunkGroup.SetChunks(chunks)
+		if err != nil {
+			glog.Warningf("merge %s: resolve chunks: %v", fh.FullPath(), err)
+		}
+		fh.chunkViewStale.Store(err != nil)
+	})
+}
+
 // refreshChunkView retries a read view whose manifest resolution failed.
 func (fh *FileHandle) refreshChunkView() {
 	if !fh.chunkViewStale.Load() {

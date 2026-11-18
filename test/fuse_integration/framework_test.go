@@ -29,6 +29,7 @@ type FuseTestFramework struct {
 	mountProcess *managedProcess
 	filerAddr    string
 	filerPort    int
+	masterPort   int
 	weedBinary   string
 	isSetup      bool
 	config       *TestConfig
@@ -74,6 +75,10 @@ func NewFuseTestFramework(t *testing.T, config *TestConfig) *FuseTestFramework {
 	require.NoError(t, err)
 
 	filerPort := freePort(t)
+	masterPort := freePort(t)
+	for masterPort == filerPort {
+		masterPort = freePort(t)
+	}
 
 	return &FuseTestFramework{
 		t:          t,
@@ -83,6 +88,7 @@ func NewFuseTestFramework(t *testing.T, config *TestConfig) *FuseTestFramework {
 		logDir:     filepath.Join(tempDir, "logs"),
 		filerPort:  filerPort,
 		filerAddr:  fmt.Sprintf("127.0.0.1:%d", filerPort),
+		masterPort: masterPort,
 		weedBinary: findWeedBinary(),
 		isSetup:    false,
 		config:     config,
@@ -218,6 +224,11 @@ func (f *FuseTestFramework) GetFilerAddr() string {
 	return f.filerAddr
 }
 
+// GetMasterAddr returns the master HTTP address of the mini cluster.
+func (f *FuseTestFramework) GetMasterAddr() string {
+	return fmt.Sprintf("127.0.0.1:%d", f.masterPort)
+}
+
 // managedProcess is a started weed sub-command whose exit is watched, so a wait
 // for it to come up ends the moment it dies instead of burning its full timeout.
 type managedProcess struct {
@@ -321,7 +332,7 @@ func (f *FuseTestFramework) startMini(config *TestConfig) error {
 		args = append(args, "-v=4")
 	}
 	adminPort := freePort(f.t)
-	for adminPort == f.filerPort {
+	for adminPort == f.filerPort || adminPort == f.masterPort {
 		adminPort = freePort(f.t)
 	}
 	args = append(args,
@@ -330,6 +341,8 @@ func (f *FuseTestFramework) startMini(config *TestConfig) error {
 		"-ip=127.0.0.1",
 		"-ip.bind=127.0.0.1",
 		"-filer.port="+strconv.Itoa(f.filerPort),
+		"-master.port="+strconv.Itoa(f.masterPort),
+		"-master.port.grpc="+strconv.Itoa(f.masterPort+grpcPortOffset),
 		"-s3=false",
 		"-webdav=false",
 		"-admin.ui=false",
