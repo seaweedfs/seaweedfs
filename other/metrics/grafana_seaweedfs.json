@@ -2391,7 +2391,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "count by (collection) (sum by (collection, data_center, rack, node, disk_id) (SeaweedFS_master_writable_volumes_per_disk{cluster=~\"$cluster\", state=\"writable\"}) > 1)",
+              "expr": "count by (collection) (sum by (cluster, collection, data_center, rack, node, disk_id) (SeaweedFS_master_writable_volumes_per_disk{cluster=~\"$cluster\", state=\"writable\"}) > 1)",
               "range": true,
               "refId": "A",
               "legendFormat": "{{collection}} disks with 2+"
@@ -2402,7 +2402,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "max by (collection) (sum by (collection, data_center, rack, node, disk_id) (SeaweedFS_master_writable_volumes_per_disk{cluster=~\"$cluster\", state=\"writable\"}))",
+              "expr": "max by (collection) (sum by (cluster, collection, data_center, rack, node, disk_id) (SeaweedFS_master_writable_volumes_per_disk{cluster=~\"$cluster\", state=\"writable\"}))",
               "range": true,
               "refId": "B",
               "legendFormat": "{{collection}} max on one disk"
