@@ -164,3 +164,29 @@ func TestVolumeGrowthSkipsRefusingServerInOtherRack(t *testing.T) {
 		}
 	}
 }
+
+func TestVolumeGrowthSkipsRefusingServerWhenItsRackKeepsOneServer(t *testing.T) {
+	rp, _ := super_block.NewReplicaPlacementFromString("011")
+	option := &VolumeGrowOption{Collection: "spread", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL, DiskType: types.HardDriveType}
+	topo, racks := newSpreadTopology(1, 0, 0)
+	refusing := addMaintenanceTestNode(racks[0], "refusing", 100)
+	addMaintenanceTestNode(racks[0], "healthy1", 100)
+	otherRack := NewRack("rack2")
+	racks[0].Parent().LinkChildNode(otherRack)
+	addMaintenanceTestNode(otherRack, "healthy2", 100)
+	addMaintenanceTestNode(otherRack, "healthy3", 100)
+	placed := option.withLayoutLoad(topo)
+	placed.refused = map[*DataNode]bool{refusing: true}
+	vg := NewDefaultVolumeGrowth()
+	for i := 0; i < 50; i++ {
+		servers, _, err := vg.findEmptySlotsForOneVolume(topo, placed, false)
+		if err != nil {
+			t.Fatalf("attempt %d: %v", i, err)
+		}
+		for _, s := range servers {
+			if s == refusing {
+				t.Fatalf("attempt %d picked the refusing server", i)
+			}
+		}
+	}
+}

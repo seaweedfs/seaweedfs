@@ -312,7 +312,7 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		if availableSpaceFunc(node, option) < int64(rp.DiffRackCount+rp.SameRackCount+1) {
 			return fmt.Errorf("Free:%d < Expected:%d", availableSpaceFunc(node, option), rp.DiffRackCount+rp.SameRackCount+1)
 		}
-		possibleRacksCount := 0
+		possibleRacksCount, possibleMainRacksCount := 0, 0
 		for _, rack := range node.Children() {
 			possibleDataNodesCount := 0
 			for _, n := range rack.Children() {
@@ -320,12 +320,18 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 					possibleDataNodesCount++
 				}
 			}
-			if possibleDataNodesCount >= rp.SameRackCount+1 {
+			if possibleDataNodesCount >= 1 {
 				possibleRacksCount++
 			}
+			if possibleDataNodesCount >= rp.SameRackCount+1 {
+				possibleMainRacksCount++
+			}
+		}
+		if possibleMainRacksCount == 0 {
+			return fmt.Errorf("No rack has %d free data nodes.", rp.SameRackCount+1)
 		}
 		if possibleRacksCount < rp.DiffRackCount+1 {
-			return fmt.Errorf("Only has %d racks with more than %d free data nodes, not enough for %d.", possibleRacksCount, rp.SameRackCount+1, rp.DiffRackCount+1)
+			return fmt.Errorf("Only has %d racks with a free data node, not enough for %d.", possibleRacksCount, rp.DiffRackCount+1)
 		}
 		return nil
 	})
