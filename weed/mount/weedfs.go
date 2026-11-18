@@ -966,6 +966,12 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 	handled, replacedInode := wfs.invalidateOpenFileHandle(invalidation)
 	if !handled && invalidation.RenamedTo != "" {
 		_, replacedInode = wfs.inodeToPath.MovePath(invalidation.Path, invalidation.RenamedTo)
+	} else if !handled && invalidation.Deleted && len(invalidation.LiveHardLinkId) > 0 {
+		// Otherwise the next open by nodeid resolves to the deleted name. A
+		// newer stored entry means something has taken the name since.
+		if _, _, newer := wfs.cachedEntrySince(invalidation.Path, invalidation.TsNs); !newer {
+			wfs.inodeToPath.RemoveAlias(invalidation.Path)
+		}
 	}
 	// A rename over an existing file destroys it, so its handle must not flush
 	// the old content back over what took the name. Marked from here, holding
@@ -1063,12 +1069,9 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	// hit there is a stale leftover — use the event entry instead.
 	var candidate *filer_pb.Entry
 	candidateTsNs := eventTsNs
-	dir, _ := filePath.DirAndName()
-	if wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
-		if storeEntry, storeVersionTsNs, findErr := wfs.metaCache.FindEntry(context.Background(), filePath); findErr == nil && storeEntry != nil && storeVersionTsNs >= eventTsNs {
-			candidate = storeEntry.ToProtoEntry()
-			candidateTsNs = storeVersionTsNs
-		}
+	if storeEntry, storeVersionTsNs, found := wfs.cachedEntrySince(filePath, eventTsNs); found {
+		candidate = storeEntry.ToProtoEntry()
+		candidateTsNs = storeVersionTsNs
 	}
 	if candidate == nil && eventEntry != nil {
 		candidate = proto.Clone(eventEntry).(*filer_pb.Entry)
@@ -1089,7 +1092,7 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		if invalidation.Deleted {
 			// The next flush reads the survivor's stored entry before
 			// publishing, so the version stays where it was.
-			if len(invalidation.LiveHardLinkId) > 0 && wfs.followSurvivingLink(fh, inode, filePath) {
+			if len(invalidation.LiveHardLinkId) > 0 && wfs.followSurvivingLink(fh, filePath) {
 				fh.linkRefresh = invalidation.LiveHardLinkId
 				return
 			}
@@ -1137,22 +1140,29 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	return
 }
 
+// cachedEntrySince returns the meta cache's entry at path when its directory is
+// cached and the entry is no older than tsNs.
+func (wfs *WFS) cachedEntrySince(path util.FullPath, tsNs int64) (*filer.Entry, int64, bool) {
+	dir, _ := path.DirAndName()
+	if !wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
+		return nil, 0, false
+	}
+	entry, versionTsNs, err := wfs.metaCache.FindEntry(context.Background(), path)
+	if err != nil || entry == nil || versionTsNs < tsNs {
+		return nil, 0, false
+	}
+	return entry, versionTsNs, true
+}
+
 // followSurvivingLink drops a hard link name another client deleted and
 // keeps the handle on a name of the inode this mount still knows, reporting
 // false when it knows none.
-func (wfs *WFS) followSurvivingLink(fh *FileHandle, inode uint64, removed util.FullPath) bool {
-	survives := false
-	for _, p := range wfs.inodeToPath.GetAllPaths(inode) {
-		survives = survives || p != removed
-	}
-	if !survives {
-		return false
-	}
-	wfs.inodeToPath.RemovePath(removed, nil)
-	if survivor, status := wfs.inodeToPath.GetPath(inode); status == fuse.OK {
+func (wfs *WFS) followSurvivingLink(fh *FileHandle, removed util.FullPath) bool {
+	survivor, ok := wfs.inodeToPath.RemoveAlias(removed)
+	if ok {
 		fh.RememberPath(survivor)
 	}
-	return true
+	return ok
 }
 
 func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {
