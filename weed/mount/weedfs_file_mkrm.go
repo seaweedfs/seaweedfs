@@ -442,7 +442,9 @@ func (wfs *WFS) createRegularFile(ctx context.Context, dirFullPath util.FullPath
 		// create checks, stat, readdir).
 		// We use InsertEntry directly instead of applyLocalMetadataEvent to avoid
 		// triggering directory hot-threshold eviction that would wipe the entry.
-		if insertErr := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(string(dirFullPath), newEntry), 0); insertErr != nil {
+		cachedEntry := proto.Clone(newEntry).(*filer_pb.Entry)
+		wfs.mapPbIdFromLocalToFiler(cachedEntry)
+		if insertErr := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(string(dirFullPath), cachedEntry), 0); insertErr != nil {
 			glog.Warningf("createFile %s: insert local entry: %v", entryFullPath, insertErr)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)

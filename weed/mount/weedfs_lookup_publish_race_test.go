@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -475,4 +476,27 @@ func TestLookupSnapshotsPlaceholderWhileWritten(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+// The cache holds filer ids, so a placeholder cached by a deferred create
+// reads back with the caller's local owner under a non-identity id map.
+func TestLookupPlaceholderKeepsLocalOwnerUnderIdMap(t *testing.T) {
+	wfs, fake, dir, dirInode := newPublishRaceWFS(t)
+	mapper, err := meta_cache.NewUidGidMapper("123:5000,5000:123", "456:6000,6000:456")
+	if err != nil {
+		t.Fatalf("create uid/gid mapper: %v", err)
+	}
+	*wfs.option.UidGidMapper = *mapper
+	fake.mu.Lock()
+	fake.entries[dir].Attributes.FileMode = uint32(0o777 | 1<<31)
+	fake.mu.Unlock()
+	createDeferredFile(t, wfs, dirInode, "mapped")
+
+	entry, _, st := wfs.lookupEntry(context.Background(), dir.Child("mapped"))
+	if st != fuse.OK || entry == nil {
+		t.Fatalf("lookupEntry = %v, want the placeholder", st)
+	}
+	if entry.Attr.Uid != 123 || entry.Attr.Gid != 456 {
+		t.Fatalf("placeholder owner = %d:%d, want the caller's local 123:456", entry.Attr.Uid, entry.Attr.Gid)
+	}
 }
