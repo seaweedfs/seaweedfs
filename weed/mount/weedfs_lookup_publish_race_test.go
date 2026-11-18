@@ -49,18 +49,31 @@ func newPublishRaceFiler() *publishRaceFiler {
 	}
 }
 
-func (s *publishRaceFiler) hold(name string) (arrived, release chan struct{}) {
+// hold makes the next lookup of name wait until release is called. Release
+// is idempotent and also runs at test cleanup, so a failing test never
+// leaves a handler blocked.
+func (s *publishRaceFiler) hold(t *testing.T, name string) (arrived chan struct{}, release func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.holdName, s.arrived, s.release = name, make(chan struct{}), make(chan struct{})
-	return s.arrived, s.release
+	release = closeOnce(s.release)
+	t.Cleanup(release)
+	return s.arrived, release
 }
 
-func (s *publishRaceFiler) holdCreate(name string) (arrived, release chan struct{}) {
+// holdCreate is hold for the next create of name.
+func (s *publishRaceFiler) holdCreate(t *testing.T, name string) (arrived chan struct{}, release func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.holdCreateName, s.createArrived, s.createRelease = name, make(chan struct{}), make(chan struct{})
-	return s.createArrived, s.createRelease
+	release = closeOnce(s.createRelease)
+	t.Cleanup(release)
+	return s.createArrived, release
+}
+
+func closeOnce(ch chan struct{}) func() {
+	var once sync.Once
+	return func() { once.Do(func() { close(ch) }) }
 }
 
 func (s *publishRaceFiler) lookupCount(p util.FullPath) int {
@@ -177,7 +190,7 @@ func flushHandle(wfs *WFS, out *fuse.CreateOut) fuse.Status {
 func lookupWhilePublishing(t *testing.T, wfs *WFS, fake *publishRaceFiler, out *fuse.CreateOut, path util.FullPath) fuse.Status {
 	t.Helper()
 	_, name := path.DirAndName()
-	arrived, release := fake.hold(name)
+	arrived, release := fake.hold(t, name)
 	done := make(chan fuse.Status, 1)
 	go func() {
 		_, _, st := wfs.lookupEntry(context.Background(), path)
@@ -189,14 +202,14 @@ func lookupWhilePublishing(t *testing.T, wfs *WFS, fake *publishRaceFiler, out *
 		t.Fatal("lookup never reached the filer")
 	}
 	if st := flushHandle(wfs, out); st != fuse.OK {
-		close(release)
+		release()
 		t.Fatalf("Flush = %v, want OK", st)
 	}
 	if fh := wfs.GetHandle(FileHandleId(out.Fh)); fh == nil || fh.dirtyMetadata {
-		close(release)
+		release()
 		t.Fatal("the flush should publish the deferred create and leave the handle clean")
 	}
-	close(release)
+	release()
 	select {
 	case st := <-done:
 		return st
@@ -242,6 +255,52 @@ func TestLookupReportsFileRemovedAfterPublishDuringLookup(t *testing.T) {
 
 	if st := lookupWhilePublishing(t, wfs, fake, out, path); st != fuse.ENOENT {
 		t.Fatalf("lookupEntry = %v, want ENOENT: the filer no longer has the file", st)
+	}
+	if got := fake.lookupCount(path) - before; got != 2 {
+		t.Fatalf("LookupDirectoryEntry calls = %d, want 2", got)
+	}
+}
+
+// The flush can leave the handle dirty after the filer acknowledged it (a
+// write landed meanwhile, or the next one did). A not-found from asking again
+// is still final: the filer had the file, so another mount removed it, and
+// the handle's unflushed writes do not bring it back.
+func TestLookupReportsFileRemovedAfterPublishWhileHandleDirty(t *testing.T) {
+	wfs, fake, dir, dirInode := newPublishRaceWFS(t)
+	out := createDeferredFile(t, wfs, dirInode, ".tmpDirty")
+	path := dir.Child(".tmpDirty")
+	before := fake.lookupCount(path)
+	fake.mu.Lock()
+	fake.dropCreates = true
+	fake.mu.Unlock()
+
+	arrived, release := fake.hold(t, ".tmpDirty")
+	done := make(chan fuse.Status, 1)
+	go func() {
+		_, _, st := wfs.lookupEntry(context.Background(), path)
+		done <- st
+	}()
+	waitClosed(t, arrived, "lookup never reached the filer")
+	if st := flushHandle(wfs, out); st != fuse.OK {
+		t.Fatalf("Flush = %v, want OK", st)
+	}
+	payload := []byte("written after the publish")
+	in := &fuse.WriteIn{}
+	in.NodeId, in.Fh, in.Offset, in.Size = out.NodeId, out.Fh, 0, uint32(len(payload))
+	if n, st := wfs.Write(nil, in, payload); st != fuse.OK || n != uint32(len(payload)) {
+		t.Fatalf("Write = %d %v", n, st)
+	}
+	if fh := wfs.GetHandle(FileHandleId(out.Fh)); fh == nil || !fh.dirtyMetadata {
+		t.Fatal("the write should leave the handle dirty")
+	}
+	release()
+	select {
+	case st := <-done:
+		if st != fuse.ENOENT {
+			t.Fatalf("lookupEntry = %v, want ENOENT: the filer acknowledged the file and no longer has it", st)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("lookup did not return")
 	}
 	if got := fake.lookupCount(path) - before; got != 2 {
 		t.Fatalf("LookupDirectoryEntry calls = %d, want 2", got)
@@ -297,8 +356,8 @@ func TestLookupAnswersFromHandleWhilePublishInFlight(t *testing.T) {
 	path := dir.Child(".tmpSlow")
 	before := fake.lookupCount(path)
 
-	lookupArrived, lookupRelease := fake.hold(".tmpSlow")
-	createArrived, createRelease := fake.holdCreate(".tmpSlow")
+	lookupArrived, lookupRelease := fake.hold(t, ".tmpSlow")
+	createArrived, createRelease := fake.holdCreate(t, ".tmpSlow")
 	done := make(chan fuse.Status, 1)
 	go func() {
 		_, _, st := wfs.lookupEntry(context.Background(), path)
@@ -309,18 +368,18 @@ func TestLookupAnswersFromHandleWhilePublishInFlight(t *testing.T) {
 	go func() { flushed <- flushHandle(wfs, out) }()
 	waitClosed(t, createArrived, "flush never sent its create")
 
-	close(lookupRelease)
+	lookupRelease()
 	select {
 	case st := <-done:
 		if st != fuse.OK {
-			close(createRelease)
+			createRelease()
 			t.Fatalf("lookupEntry = %v, want OK: the file is being published", st)
 		}
 	case <-time.After(10 * time.Second):
-		close(createRelease)
+		createRelease()
 		t.Fatal("lookup did not return while the publish was in flight")
 	}
-	close(createRelease)
+	createRelease()
 	select {
 	case st := <-flushed:
 		if st != fuse.OK {

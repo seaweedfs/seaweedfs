@@ -712,15 +712,18 @@ func (wfs *WFS) lookupEntry(ctx context.Context, fullpath util.FullPath) (*filer
 	// handle land: it would otherwise answer with pre-close metadata, a
 	// truncate's old size or a write's old chunks. The cache paths above are
 	// already consistent and must not pay this wait.
-	//
-	// A deferred create stays a local placeholder, a handle with no filer
-	// base, until a flush publishes it, and that flush can land while this
-	// lookup is in flight. Note such a handle to judge a not-found answer.
-	var placeholder *FileHandle
 	if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
 		if !wfs.waitForPendingAsyncFlush(ctx, inode) {
 			return nil, entryVersion{}, fuse.EINTR
 		}
+	}
+
+	// A deferred create stays a local placeholder, a handle with no filer
+	// base, until a flush publishes it, and that flush can land while this
+	// lookup is in flight. Note the path's handle if it is one, resolved
+	// after the wait above.
+	var placeholder *FileHandle
+	if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
 		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound && fh.baseEntry.Load() == nil {
 			placeholder = fh
 		}
@@ -731,18 +734,32 @@ func (wfs *WFS) lookupEntry(ctx context.Context, fullpath util.FullPath) (*filer
 	entry, lookupVersion, err := wfs.lookupEntryOnFiler(ctx, fullpath)
 	// For a placeholder the filer may answer not-found from a read taken
 	// before the publish committed, and the flush may clear the dirty flag
-	// before the answer arrives. One look at the handle's base decides: with
-	// none, the filer cannot have the file yet and the handle answers below;
-	// a base comes only from the filer, here once it acknowledged the
-	// publish, so asking again finds the file.
-	stillPlaceholder := false
+	// before the answer arrives. One look at the handle's base decides.
 	if err == filer_pb.ErrNotFound && placeholder != nil && ctx.Err() == nil {
 		if inode, found := wfs.inodeToPath.GetInode(fullpath); found && inode == placeholder.inode {
 			if placeholder.baseEntry.Load() == nil {
-				stillPlaceholder = true
+				// Still unpublished: the filer cannot have the file yet, so
+				// the handle answers. Async upload workers append chunks
+				// under entryLock; read the entry under it.
+				placeholder.entryLock.RLock()
+				pbEntry := placeholder.GetEntry().GetEntry()
+				var localEntry *filer.Entry
+				if pbEntry != nil {
+					localEntry = filer.FromPbEntry(dir, pbEntry)
+				}
+				placeholder.entryLock.RUnlock()
+				if localEntry != nil {
+					return localEntry, entryVersion{}, fuse.OK
+				}
 			} else {
+				// A base comes only from the filer, here once it acknowledged
+				// the publish. This request leaves after that, so its answer
+				// is current: a miss means the file was removed since.
 				glog.V(1).Infof("lookupEntry %s: published while the lookup was in flight, asking the filer again", fullpath)
 				entry, lookupVersion, err = wfs.lookupEntryOnFiler(ctx, fullpath)
+				if err == filer_pb.ErrNotFound && ctx.Err() == nil {
+					return nil, entryVersion{}, fuse.ENOENT
+				}
 			}
 		}
 	}
@@ -767,7 +784,7 @@ func (wfs *WFS) lookupEntry(ctx context.Context, fullpath util.FullPath) (*filer
 				_, hasPendingFlush = wfs.pendingAsyncFlush[inode]
 				wfs.pendingAsyncFlushMu.Unlock()
 
-				if hasDirtyHandle || hasPendingFlush || stillPlaceholder {
+				if hasDirtyHandle || hasPendingFlush {
 					if localEntry, localVersionTsNs, localErr := wfs.metaCache.FindEntry(ctx, fullpath); localErr == nil && localEntry != nil {
 						glog.V(4).Infof("lookupEntry found deferred entry in local cache %s", fullpath)
 						return localEntry, entryVersion{tsNs: localVersionTsNs}, fuse.OK
