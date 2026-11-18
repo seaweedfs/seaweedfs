@@ -115,6 +115,29 @@ func TestPutBucketRequestPaymentBucketOwner(t *testing.T) {
 	}
 }
 
+func TestGetBucketRequestPayment(t *testing.T) {
+	s3a := newMiscTestServer(t, "b")
+	s3a.bucketConfigCache.SetNegativeCache("missing")
+
+	rec := httptest.NewRecorder()
+	s3a.GetBucketRequestPaymentHandler(rec, newBucketRequest(http.MethodGet, "b", "requestPayment=", ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !strings.Contains(rec.Body.String(), "<Payer>BucketOwner</Payer>") {
+		t.Fatalf("missing BucketOwner payer: %s", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	s3a.GetBucketRequestPaymentHandler(rec, newBucketRequest(http.MethodGet, "missing", "requestPayment=", ""))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing bucket status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+	if !strings.Contains(rec.Body.String(), "NoSuchBucket") {
+		t.Fatalf("body = %s, want NoSuchBucket", rec.Body.String())
+	}
+}
+
 func TestPutBucketRequestPaymentRequesterRejected(t *testing.T) {
 	s3a := newMiscTestServer(t, "b")
 	body := `<RequestPaymentConfiguration><Payer>Requester</Payer></RequestPaymentConfiguration>`
