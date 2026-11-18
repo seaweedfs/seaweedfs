@@ -257,11 +257,14 @@ def main():
 
     body = json.loads(gh("release", "view", args.tag, "-R", args.repo, "--json", "body"))["body"]
 
+    failed = []
+
     def pr_files(num):
         try:
             out = gh("pr", "view", str(num), "-R", args.repo, "--json", "files", "--jq", ".files[].path")
         except subprocess.CalledProcessError as e:
             print("warning: files of #%d: %s" % (num, e.stderr.strip()), file=sys.stderr)
+            failed.append(num)
             return []
         return out.split()
 
@@ -269,6 +272,9 @@ def main():
     if notes.strip() == body.replace("\r\n", "\n").strip():
         print("release %s: notes already grouped, nothing to change" % args.tag, file=sys.stderr)
     sys.stdout.write(notes)
+    if failed and args.write:
+        sys.exit("release %s: not writing, could not read the files of %s"
+                 % (args.tag, ", ".join("#%d" % n for n in failed)))
     if args.write:
         gh("release", "edit", args.tag, "-R", args.repo, "--notes-file", "-", stdin=notes)
         print("release %s: notes updated" % args.tag, file=sys.stderr)
