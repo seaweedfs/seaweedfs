@@ -35,7 +35,8 @@ const (
 )
 
 // accessReporter sends a TouchAccessTime for an open of a file for reading
-// (-accessReport), at most once per interval for each path. An open answered
+// (-accessReport), at most once per interval for each path unless the file
+// was modified since its last report, as relatime does. An open answered
 // from the metadata cache never reaches the filer, so without the report a
 // filer that tracks access cannot tell a cached file that is still read from
 // one that is not. Reports are sent in the background and never hold up the
@@ -90,14 +91,15 @@ func (r *accessReporter) stop() {
 	r.cancel()
 }
 
-// report queues one read of path unless path was reported within the
-// interval. It does nothing while reporting is paused.
-func (r *accessReporter) report(path util.FullPath) {
+// report queues one read of path, last modified at mtimeNs, unless path was
+// reported within the interval and not modified since. It does nothing while
+// reporting is paused.
+func (r *accessReporter) report(path util.FullPath, mtimeNs int64) {
 	if r.paused() || r.ctx.Err() != nil {
 		return
 	}
 	now := time.Now().UnixNano()
-	if !r.due(path, now) {
+	if !r.due(path, now, mtimeNs) {
 		return
 	}
 	select {
@@ -107,18 +109,20 @@ func (r *accessReporter) report(path util.FullPath) {
 	}
 }
 
-// due reports whether path has no report within the interval, and if so
-// records now as its last report.
-func (r *accessReporter) due(path util.FullPath, now int64) bool {
+// due reports whether path has no report within the interval or was modified
+// after its last report, and if so records the report. The record is never
+// older than mtimeNs, so a writer clock ahead of this one does not make every
+// open due.
+func (r *accessReporter) due(path util.FullPath, now, mtimeNs int64) bool {
 	if r.recent == nil {
 		return true
 	}
 	r.recentMu.Lock()
 	defer r.recentMu.Unlock()
-	if last, ok := r.recent.Get(path); ok && now-last < int64(r.interval) {
+	if last, ok := r.recent.Get(path); ok && now-last < int64(r.interval) && mtimeNs <= last {
 		return false
 	}
-	r.recent.Add(path, now)
+	r.recent.Add(path, max(now, mtimeNs))
 	return true
 }
 
@@ -182,22 +186,26 @@ func (r *accessReporter) logLosses() {
 }
 
 // reportOpen reports an open of inode for reading under its current path.
-func (wfs *WFS) reportOpen(flags uint32, inode uint64) {
+func (wfs *WFS) reportOpen(flags uint32, inode uint64, entry *filer_pb.Entry) {
 	if wfs.accessReporter == nil {
 		return
 	}
 	if path, status := wfs.inodeToPath.GetPath(inode); status == fuse.OK {
-		wfs.reportOpenPath(flags, path)
+		wfs.reportOpenPath(flags, path, entry)
 	}
 }
 
-// reportOpenPath reports an open of path for reading. A write-only open reads
-// nothing and is not reported.
-func (wfs *WFS) reportOpenPath(flags uint32, path util.FullPath) {
+// reportOpenPath reports an open of path, whose entry is entry, for reading.
+// A write-only open reads nothing and is not reported.
+func (wfs *WFS) reportOpenPath(flags uint32, path util.FullPath, entry *filer_pb.Entry) {
 	if wfs.accessReporter == nil || openFlagsToAccessMask(flags)&fuse.R_OK == 0 || path == "" {
 		return
 	}
-	wfs.accessReporter.report(path)
+	var mtimeNs int64
+	if attr := entry.GetAttributes(); attr != nil {
+		mtimeNs = attr.Mtime*int64(time.Second) + int64(attr.MtimeNs)
+	}
+	wfs.accessReporter.report(path, mtimeNs)
 }
 
 // touchAccessTime sends one report to the filer this mount uses or, if that

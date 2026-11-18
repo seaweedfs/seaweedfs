@@ -160,8 +160,8 @@ func init() {
 	// POSIX compliance options
 	mountOptions.posixDirNlink = cmdMount.Flag.Bool("posix.dirNLink", false, "report POSIX-compliant directory nlink (2 + subdirectory count); costs one directory listing per stat")
 
-	mountOptions.accessReport = cmdMount.Flag.Bool("accessReport", false, "report opens of a file for reading to the filer with TouchAccessTime, including opens answered from the metadata cache, at most once per -accessReport.interval for each file. Has no effect unless the filer implements TouchAccessTime")
-	mountOptions.accessReportInterval = cmdMount.Flag.Duration("accessReport.interval", time.Hour, "with -accessReport, the least time between two reports of the same file; 0 reports every open")
+	mountOptions.accessReport = cmdMount.Flag.Bool("accessReport", false, "report opens of a file for reading to the filer with TouchAccessTime, including opens answered from the metadata cache, at most once per -accessReport.interval for each file unless it was modified since its last report. Has no effect unless the filer implements TouchAccessTime")
+	mountOptions.accessReportInterval = cmdMount.Flag.Duration("accessReport.interval", time.Hour, "with -accessReport, the least time between two reports of the same unmodified file; 0 reports every open")
 
 	// FUSE performance options
 	mountOptions.writebackCache = cmdMount.Flag.Bool("writebackCache", false, "enable FUSE writeback cache for improved write performance (at risk of data loss on crash)")

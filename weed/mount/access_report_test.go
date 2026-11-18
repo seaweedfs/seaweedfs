@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -153,6 +154,42 @@ func TestOpensWithinTheIntervalAreReportedOnce(t *testing.T) {
 	}
 }
 
+// TestOpenAfterAWriteIsReportedWithinTheInterval checks that a file modified
+// since its last report is reported again on its next open within the
+// interval, as relatime updates atime on the first read after a write, and
+// that a writer clock ahead of the mount's does not make every open due.
+func TestOpenAfterAWriteIsReportedWithinTheInterval(t *testing.T) {
+	wfs := newAccessReportTestWFS(t, newAccessReportTestFiler(nil))
+	wfs.accessReporter = newAccessReporter(wfs.touchAccessTime, time.Hour)
+	t.Cleanup(wfs.accessReporter.stop)
+	if err := meta_cache.EnsureVisited(context.Background(), wfs.metaCache, wfs, "/dir", 0); err != nil {
+		t.Fatalf("EnsureVisited: %v", err)
+	}
+	modify := func(mtime time.Time, versionTsNs int64) {
+		entry := &filer_pb.Entry{Name: "a", Attributes: &filer_pb.FuseAttributes{FileSize: 1, FileMode: 0100644,
+			Mtime: mtime.Unix(), MtimeNs: int32(mtime.Nanosecond())}}
+		if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry("/dir", entry), versionTsNs); err != nil {
+			t.Fatalf("InsertEntry: %v", err)
+		}
+	}
+
+	openForTest(t, wfs, "a", syscall.O_RDONLY)
+	openForTest(t, wfs, "a", syscall.O_RDONLY)
+	modify(time.Now().Add(time.Millisecond), 6000)
+	openForTest(t, wfs, "a", syscall.O_RDONLY)
+	openForTest(t, wfs, "a", syscall.O_RDONLY)
+	if got, want := queuedReports(wfs.accessReporter), []string{"/dir/a", "/dir/a"}; !slices.Equal(got, want) {
+		t.Fatalf("reports = %v, want %v", got, want)
+	}
+
+	modify(time.Now().Add(time.Minute), 7000)
+	openForTest(t, wfs, "a", syscall.O_RDONLY)
+	openForTest(t, wfs, "a", syscall.O_RDONLY)
+	if got, want := queuedReports(wfs.accessReporter), []string{"/dir/a"}; !slices.Equal(got, want) {
+		t.Fatalf("reports with the writer clock ahead = %v, want %v", got, want)
+	}
+}
+
 // TestCreateOfAnExistingFileIsReported checks the opens that reach Create,
 // such as O_CREAT|O_RDWR of a file that already exists: they are reported
 // like opens, and only with read access.
@@ -263,8 +300,8 @@ func TestQueuedReportsAreDroppedWhilePaused(t *testing.T) {
 		return nil
 	}, 0)
 	defer r.stop()
-	r.report("/dir/a")
-	r.report("/dir/b")
+	r.report("/dir/a", 0)
+	r.report("/dir/b", 0)
 	r.pausedUntil.Store(time.Now().Add(time.Hour).UnixNano())
 
 	close(r.queue) // work returns once the queue is drained
@@ -284,7 +321,7 @@ func TestReportDoesNotBlockOnAFullQueue(t *testing.T) {
 	go func() {
 		defer close(done)
 		for i := 0; i < accessReportQueueSize+1; i++ {
-			r.report("/dir/a")
+			r.report("/dir/a", 0)
 		}
 	}()
 	select {
@@ -306,7 +343,7 @@ func TestStopCancelsTheReportInFlight(t *testing.T) {
 		return ctx.Err()
 	}, 0)
 	r.start()
-	r.report("/dir/a")
+	r.report("/dir/a", 0)
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
@@ -326,7 +363,7 @@ func TestStopCancelsTheReportInFlight(t *testing.T) {
 func TestReportAfterStopIsDropped(t *testing.T) {
 	r := newAccessReporter(func(ctx context.Context, path util.FullPath, atimeNs int64) error { return nil }, 0)
 	r.stop()
-	r.report("/dir/b")
+	r.report("/dir/b", 0)
 	if got := queuedReports(r); len(got) != 0 {
 		t.Fatalf("queued %v after stop", got)
 	}
