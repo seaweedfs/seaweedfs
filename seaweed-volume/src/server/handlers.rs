@@ -3766,7 +3766,7 @@ pub async fn delete_handler(
                 Err(crate::storage::volume::VolumeError::ReadOnly(vid))
             }
             Ok(vol) if fsync => {
-                tokio::task::spawn_blocking(move || vol.delete_needle_with_fsync(&mut n, true))
+                tokio::task::spawn_blocking(move || vol.delete_needle(&mut n, true))
                     .await
                     .unwrap_or_else(|e| {
                         Err(crate::storage::volume::VolumeError::Io(
@@ -3774,7 +3774,7 @@ pub async fn delete_handler(
                         ))
                     })
             }
-            Ok(vol) => vol.delete_needle(&mut n),
+            Ok(vol) => vol.delete_needle(&mut n, false),
         }
     };
 
@@ -8670,7 +8670,7 @@ mod tests {
             .store
             .write()
             .unwrap()
-            .delete_volume_needle(VolumeId(1), &mut filler)
+            .delete_volume_needle(VolumeId(1), &mut filler, false)
             .unwrap();
         let data_offset = || {
             let mut plan = crate::storage::store::Store::needle_read_plan(

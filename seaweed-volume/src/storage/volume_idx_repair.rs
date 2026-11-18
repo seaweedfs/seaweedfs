@@ -382,10 +382,13 @@ pub(crate) mod tests {
 
         write_test_volume(dir, 6);
         let v = open_volume(dir);
-        v.delete_needle(&mut Needle {
-            id: NeedleId(3),
-            ..Needle::default()
-        })
+        v.delete_needle(
+            &mut Needle {
+                id: NeedleId(3),
+                ..Needle::default()
+            },
+            false,
+        )
         .unwrap();
         drop(v);
 
@@ -417,10 +420,13 @@ pub(crate) mod tests {
 
         write_test_volume(dir, 8);
         let v = open_volume(dir);
-        v.delete_needle(&mut Needle {
-            id: NeedleId(2),
-            ..Needle::default()
-        })
+        v.delete_needle(
+            &mut Needle {
+                id: NeedleId(2),
+                ..Needle::default()
+            },
+            false,
+        )
         .unwrap();
         drop(v);
 

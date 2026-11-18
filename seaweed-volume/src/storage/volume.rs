@@ -1706,11 +1706,8 @@ pub struct PendingWrite {
 
 /// A write cancelled before it appends is refused: its delete may already be
 /// durable, and an unsynced row could outlive its tombstone.
-fn refuse_cancelled_write(pending: Option<&PendingWrite>) -> Result<(), VolumeError> {
-    if pending.is_some_and(|p| p.flag.cancelled.load(Ordering::Acquire)) {
-        return Err(VolumeError::Deleted);
-    }
-    Ok(())
+fn is_cancelled_write(pending: Option<&PendingWrite>) -> bool {
+    pending.is_some_and(|p| p.flag.cancelled.load(Ordering::Acquire))
 }
 
 impl Drop for PendingWrite {
@@ -3077,7 +3074,9 @@ impl Volume {
         let _sync_guard = self.data_file_sync_lock.lock().unwrap();
         let _guard = self.data_file_access_control.write_lock();
         let mut io = self.io.write().unwrap();
-        refuse_cancelled_write(pending)?;
+        if is_cancelled_write(pending) {
+            return Err(VolumeError::Deleted);
+        }
         if let Err(refused) = self.check_writable() {
             return Ok(Err(refused));
         }
@@ -3129,10 +3128,12 @@ impl Volume {
                 let mut io = self.io.write().unwrap();
                 for (i, (n, _)) in run.iter_mut().enumerate() {
                     let pending = tracked.get(i).and_then(Option::as_ref);
-                    let written = self
-                        .check_writable()
-                        .and_then(|()| refuse_cancelled_write(pending))
-                        .and_then(|()| self.do_write_request(&mut io, n, true, false));
+                    let written = self.check_writable().and_then(|()| {
+                        if is_cancelled_write(pending) {
+                            return Err(VolumeError::Deleted);
+                        }
+                        self.do_write_request(&mut io, n, true, false)
+                    });
                     results.push(written.and_then(|written| {
                         self.drop_cancelled_write(&mut io, pending, n, &written)
                             .map(|()| written)
@@ -3165,8 +3166,11 @@ impl Volume {
             let mut io = self.io.write().unwrap();
             last_append_at_ns = io.last_append_at_ns;
             for (i, (n, fsync)) in run.iter_mut().enumerate() {
-                let r = refuse_cancelled_write(pending.get(i).and_then(Option::as_ref))
-                    .and_then(|()| self.append_unpublished(&mut io, n, &mut last_append_at_ns));
+                let r = if is_cancelled_write(pending.get(i).and_then(Option::as_ref)) {
+                    Err(VolumeError::Deleted)
+                } else {
+                    self.append_unpublished(&mut io, n, &mut last_append_at_ns)
+                };
                 marks.push(self.io_errors.mark());
                 if let Ok(Some(offset)) = r {
                     run_start.get_or_insert(offset);
@@ -3830,53 +3834,31 @@ impl Volume {
 
     // ---- Delete ----
 
-    /// Delete a needle from the volume.
-    pub fn delete_needle(&self, n: &mut Needle) -> Result<Size, VolumeError> {
-        self.delete_needle_with_fsync(n, false)
-    }
-
-    /// With `fsync` the delete is only acknowledged once its tombstone and
-    /// .idx row are on disk, in the same order as a durable write.
-    pub fn delete_needle_with_fsync(
-        &self,
-        n: &mut Needle,
-        fsync: bool,
-    ) -> Result<Size, VolumeError> {
+    /// Delete a needle from the volume. With `fsync` the delete is only
+    /// acknowledged once its tombstone and .idx row are on disk, in the same
+    /// order as a durable write; the write guards are dropped for each flush
+    /// as in write_synced_run, so reads do not wait on the fsync.
+    pub fn delete_needle(&self, n: &mut Needle, fsync: bool) -> Result<Size, VolumeError> {
         self.cancel_pending_writes(n.id, n.cookie);
         let _sync_guard = self.data_file_sync_lock.lock().unwrap();
-        if fsync {
-            return self.delete_synced(n);
-        }
-        let _guard = self.data_file_access_control.write_lock();
-        let mut io = self.io.write().unwrap();
-        self.check_deletable()?;
-        self.do_delete_request(&mut io, n)
-    }
-
-    fn check_deletable(&self) -> Result<(), VolumeError> {
-        if self.is_closed() {
-            // A detached handle has no index; without this check the tombstone
-            // would silently no-op as Ok(0) while the needle lives on the
-            // remounted volume.
-            return Err(VolumeError::NotFound);
-        }
-        if let Some(e) = self.unavailable_error() {
-            return Err(e);
-        }
-        if self.no_write_flags().0 {
-            return Err(VolumeError::ReadOnly(self.id));
-        }
-        Ok(())
-    }
-
-    /// The durable delete under the caller's sync lock: the tombstone is
-    /// appended and published under the write guards, which are dropped for
-    /// each flush as in write_synced_run, so reads do not wait on the fsync.
-    fn delete_synced(&self, n: &mut Needle) -> Result<Size, VolumeError> {
         let staged = {
             let _guard = self.data_file_access_control.write_lock();
             let mut io = self.io.write().unwrap();
-            self.check_deletable()?;
+            if self.is_closed() {
+                // A detached handle has no index; without this check the tombstone
+                // would silently no-op as Ok(0) while the needle lives on the
+                // remounted volume.
+                return Err(VolumeError::NotFound);
+            }
+            if let Some(e) = self.unavailable_error() {
+                return Err(e);
+            }
+            if self.no_write_flags().0 {
+                return Err(VolumeError::ReadOnly(self.id));
+            }
+            if !fsync {
+                return self.do_delete_request(&mut io, n);
+            }
             self.append_delete_request(&mut io, n)?
         };
         // An already-deleted needle still syncs: an earlier delete may have
@@ -7360,11 +7342,14 @@ mod tests {
         let (_offset, is_last) = v.binary_search_by_append_at_ns(newest_ns).unwrap();
         assert!(is_last, "precondition: the caller starts caught up");
 
-        v.delete_needle(&mut Needle {
-            id: NeedleId(2),
-            cookie: Cookie(0x12345678),
-            ..Needle::default()
-        })
+        v.delete_needle(
+            &mut Needle {
+                id: NeedleId(2),
+                cookie: Cookie(0x12345678),
+                ..Needle::default()
+            },
+            false,
+        )
         .unwrap();
 
         let (offset, is_last) = v.binary_search_by_append_at_ns(newest_ns).unwrap();
@@ -7611,11 +7596,14 @@ mod tests {
         let written: Vec<u64> = (1..=3u64)
             .map(|id| write_test_needle(&mut v, id, b"scan"))
             .collect();
-        v.delete_needle(&mut Needle {
-            id: NeedleId(2),
-            cookie: Cookie(0x12345678),
-            ..Needle::default()
-        })
+        v.delete_needle(
+            &mut Needle {
+                id: NeedleId(2),
+                cookie: Cookie(0x12345678),
+                ..Needle::default()
+            },
+            false,
+        )
         .unwrap();
 
         let sb_size = v.super_block().block_size() as u64;
@@ -8389,7 +8377,7 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_needle_with_fsync_syncs_tombstone() {
+    fn test_durable_delete_syncs_tombstone() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let v = make_test_volume(dir);
@@ -8404,11 +8392,12 @@ mod tests {
         );
         assert_eq!(v.sync_counts_for_test(), (0, 0));
 
-        v.delete_needle(&mut batch_needle(1, 0xaa, b"")).unwrap();
+        v.delete_needle(&mut batch_needle(1, 0xaa, b""), false)
+            .unwrap();
         assert_eq!(v.sync_counts_for_test(), (0, 0));
 
         let size = v
-            .delete_needle_with_fsync(&mut batch_needle(2, 0xaa, b""), true)
+            .delete_needle(&mut batch_needle(2, 0xaa, b""), true)
             .unwrap();
         assert!(size.0 > 0);
         assert_eq!(v.sync_counts_for_test(), (1, 1));
@@ -8429,7 +8418,7 @@ mod tests {
 
         v.fail_next_fsync_for_test(true);
         assert!(
-            v.delete_needle_with_fsync(&mut batch_needle(1, 0xaa, b""), true)
+            v.delete_needle(&mut batch_needle(1, 0xaa, b""), true)
                 .is_err()
         );
         v.fail_next_fsync_for_test(false);
@@ -8443,7 +8432,7 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_needle_with_fsync_syncs_after_unsynced_delete() {
+    fn test_durable_delete_syncs_after_unsynced_delete() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
         let v = make_test_volume(dir);
@@ -8454,11 +8443,12 @@ mod tests {
                 .iter()
                 .all(|r| r.is_ok())
         );
-        v.delete_needle(&mut batch_needle(1, 0xaa, b"")).unwrap();
+        v.delete_needle(&mut batch_needle(1, 0xaa, b""), false)
+            .unwrap();
         assert_eq!(v.sync_counts_for_test(), (0, 0));
 
         let size = v
-            .delete_needle_with_fsync(&mut batch_needle(1, 0xaa, b""), true)
+            .delete_needle(&mut batch_needle(1, 0xaa, b""), true)
             .unwrap();
         assert_eq!(size.0, 0);
         assert_eq!(v.sync_counts_for_test(), (1, 1));
@@ -8467,7 +8457,7 @@ mod tests {
     /// A durable delete flushes with the write guards dropped, so a read of
     /// the volume does not wait on its fsync.
     #[test]
-    fn test_delete_needle_with_fsync_reads_during_flush() {
+    fn test_durable_delete_reads_during_flush() {
         let tmp = TempDir::new().unwrap();
         let v = Arc::new(make_test_volume(tmp.path().to_str().unwrap()));
         let mut writes: Vec<_> = (1..=2u64)
@@ -8490,7 +8480,7 @@ mod tests {
             let read = rx.recv_timeout(std::time::Duration::from_secs(5));
             flag.store(read == Ok(true), Ordering::Release);
         }));
-        v.delete_needle_with_fsync(&mut batch_needle(1, 0xaa, b""), true)
+        v.delete_needle(&mut batch_needle(1, 0xaa, b""), true)
             .unwrap();
         assert!(read_during_flush.load(Ordering::Acquire));
     }
@@ -8986,7 +8976,7 @@ mod tests {
             }
 
             assert!(
-                v.delete_needle_with_fsync(&mut batch_needle(1, 0xaa, b""), first_fsync)
+                v.delete_needle(&mut batch_needle(1, 0xaa, b""), first_fsync)
                     .is_err()
             );
             assert!(
@@ -8995,7 +8985,7 @@ mod tests {
                 "nothing may be appended past the unindexed tombstone"
             );
             assert!(
-                v.delete_needle_with_fsync(&mut batch_needle(1, 0xaa, b""), true)
+                v.delete_needle(&mut batch_needle(1, 0xaa, b""), true)
                     .is_err(),
                 "a retry must not ack a delete whose .idx row never landed"
             );
@@ -9176,11 +9166,14 @@ mod tests {
         assert_eq!(v.file_count(), 1);
 
         let deleted_size = v
-            .delete_needle(&mut Needle {
-                id: NeedleId(1),
-                cookie: Cookie(0xbb),
-                ..Needle::default()
-            })
+            .delete_needle(
+                &mut Needle {
+                    id: NeedleId(1),
+                    cookie: Cookie(0xbb),
+                    ..Needle::default()
+                },
+                false,
+            )
             .unwrap();
         assert!(deleted_size.0 > 0);
         // Additive-only: file_count stays at 1 after delete
@@ -9228,7 +9221,7 @@ mod tests {
 
             let n = pending_needle(1, b"late write");
             let pending = v.track_pending_write(&n);
-            v.delete_needle(&mut pending_needle(1, b"")).unwrap();
+            v.delete_needle(&mut pending_needle(1, b""), false).unwrap();
             let err = write_pending(&v, n, fsync, pending).unwrap_err();
             assert!(matches!(err, VolumeError::Deleted));
 
@@ -9278,7 +9271,7 @@ mod tests {
             .unwrap();
         let rewrite = pending_needle(1, b"retry");
         let pending = v.track_pending_write(&rewrite);
-        v.delete_needle(&mut pending_needle(1, b"")).unwrap();
+        v.delete_needle(&mut pending_needle(1, b""), false).unwrap();
         let err = write_pending(&v, rewrite, false, pending).unwrap_err();
         assert!(matches!(err, VolumeError::Deleted));
         let err = v.read_needle(&mut pending_needle(1, b"")).unwrap_err();
@@ -9305,8 +9298,7 @@ mod tests {
             before
         );
 
-        v.delete_needle_with_fsync(&mut pending_needle(1, b""), true)
-            .unwrap();
+        v.delete_needle(&mut pending_needle(1, b""), true).unwrap();
         let err = v.read_needle(&mut pending_needle(1, b"")).unwrap_err();
         assert!(matches!(err, VolumeError::Deleted));
     }
@@ -9319,7 +9311,7 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         let v = make_test_volume(dir);
 
-        v.delete_needle(&mut pending_needle(1, b"")).unwrap();
+        v.delete_needle(&mut pending_needle(1, b""), false).unwrap();
         let n = pending_needle(1, b"after the delete");
         let pending = v.track_pending_write(&n);
         write_pending(&v, n, false, pending).unwrap();
@@ -9414,11 +9406,14 @@ mod tests {
                 };
                 v.write_needle(&mut n, true, false).unwrap();
             }
-            v.delete_needle(&mut Needle {
-                id: NeedleId(2),
-                cookie: Cookie(2),
-                ..Needle::default()
-            })
+            v.delete_needle(
+                &mut Needle {
+                    id: NeedleId(2),
+                    cookie: Cookie(2),
+                    ..Needle::default()
+                },
+                false,
+            )
             .unwrap();
             v.sync_to_disk().unwrap();
         }
@@ -9472,11 +9467,14 @@ mod tests {
             // More than one tombstone: the scan has to walk back over the whole
             // run of them to reach a write.
             for i in [2u64, 3] {
-                v.delete_needle(&mut Needle {
-                    id: NeedleId(i),
-                    cookie: Cookie(i as u32),
-                    ..Needle::default()
-                })
+                v.delete_needle(
+                    &mut Needle {
+                        id: NeedleId(i),
+                        cookie: Cookie(i as u32),
+                        ..Needle::default()
+                    },
+                    false,
+                )
                 .unwrap();
             }
             v.sync_to_disk().unwrap();
@@ -9572,11 +9570,14 @@ mod tests {
             let (offset, _, _) = v.write_needle(&mut n, true, false).unwrap();
             written.push((offset, n.size));
         }
-        v.delete_needle(&mut Needle {
-            id: NeedleId(2),
-            cookie: Cookie(2),
-            ..Needle::default()
-        })
+        v.delete_needle(
+            &mut Needle {
+                id: NeedleId(2),
+                cookie: Cookie(2),
+                ..Needle::default()
+            },
+            false,
+        )
         .unwrap();
         v.sync_to_disk().unwrap();
         for (offset, size) in written {
@@ -9664,11 +9665,14 @@ mod tests {
         // The delete lands inside the commit window: makeup_diff replays its
         // tombstone into the new .idx behind the write row the copy carried.
         v.compact_by_index(0, 0, |_| true).unwrap();
-        v.delete_needle(&mut Needle {
-            id: NeedleId(2),
-            cookie: Cookie(2),
-            ..Needle::default()
-        })
+        v.delete_needle(
+            &mut Needle {
+                id: NeedleId(2),
+                cookie: Cookie(2),
+                ..Needle::default()
+            },
+            false,
+        )
         .unwrap();
         assert!(
             v.io.read().unwrap().last_write_deleted,
@@ -9851,11 +9855,14 @@ mod tests {
                 ..Needle::default()
             };
             v.write_needle(&mut n, true, false).unwrap();
-            v.delete_needle(&mut Needle {
-                id: NeedleId(1),
-                cookie: Cookie(1),
-                ..Needle::default()
-            })
+            v.delete_needle(
+                &mut Needle {
+                    id: NeedleId(1),
+                    cookie: Cookie(1),
+                    ..Needle::default()
+                },
+                false,
+            )
             .unwrap();
             v.sync_to_disk().unwrap();
         }
@@ -10058,11 +10065,14 @@ mod tests {
         let mut v = make_test_volume(dir);
 
         write_test_needle(&mut v, 1, b"needle data");
-        v.delete_needle(&mut Needle {
-            id: NeedleId(1),
-            cookie: Cookie(0x12345678),
-            ..Needle::default()
-        })
+        v.delete_needle(
+            &mut Needle {
+                id: NeedleId(1),
+                cookie: Cookie(0x12345678),
+                ..Needle::default()
+            },
+            false,
+        )
         .unwrap();
         // A later record keeps the tombstone mid-file rather than at the tail.
         write_test_needle(&mut v, 2, b"needle data");
@@ -10159,11 +10169,14 @@ mod tests {
         let mut v = make_test_volume(dir);
 
         write_test_needle(&mut v, 1, b"needle data");
-        v.delete_needle(&mut Needle {
-            id: NeedleId(1),
-            cookie: Cookie(0x12345678),
-            ..Needle::default()
-        })
+        v.delete_needle(
+            &mut Needle {
+                id: NeedleId(1),
+                cookie: Cookie(0x12345678),
+                ..Needle::default()
+            },
+            false,
+        )
         .unwrap();
         v.sync_to_disk().unwrap();
 
@@ -10863,7 +10876,7 @@ mod tests {
             cookie: Cookie(2),
             ..Needle::default()
         };
-        v.delete_needle(&mut del).unwrap();
+        v.delete_needle(&mut del, false).unwrap();
         // Additive-only: file_count stays at 3 after delete
         assert_eq!(v.file_count(), 3);
         assert_eq!(v.deleted_count(), 1);
@@ -11289,11 +11302,14 @@ mod tests {
         assert!(matches!(err, VolumeError::ReadOnly(_)));
 
         let deleted_size = v
-            .delete_needle(&mut Needle {
-                id: NeedleId(1),
-                cookie: Cookie(0x1234),
-                ..Needle::default()
-            })
+            .delete_needle(
+                &mut Needle {
+                    id: NeedleId(1),
+                    cookie: Cookie(0x1234),
+                    ..Needle::default()
+                },
+                false,
+            )
             .unwrap();
         assert!(deleted_size.0 > 0);
         assert_eq!(v.dat_file_size().unwrap(), dat_size_before_reload);
@@ -12122,11 +12138,14 @@ mod tests {
         // Deletes are still allowed on a tiered volume and land in .idx.
         let idx_before = std::fs::metadata(&idx_path).unwrap().len();
         let deleted = v
-            .delete_needle(&mut Needle {
-                id: NeedleId(3),
-                cookie: Cookie(0x1234),
-                ..Needle::default()
-            })
+            .delete_needle(
+                &mut Needle {
+                    id: NeedleId(3),
+                    cookie: Cookie(0x1234),
+                    ..Needle::default()
+                },
+                false,
+            )
             .unwrap();
         assert!(deleted.0 > 0);
         assert_eq!(
@@ -12312,11 +12331,14 @@ mod tests {
             assert!(matches!(err, VolumeError::ReadOnly(_)));
 
             let deleted = v
-                .delete_needle(&mut Needle {
-                    id: NeedleId(1),
-                    cookie: Cookie(1),
-                    ..Needle::default()
-                })
+                .delete_needle(
+                    &mut Needle {
+                        id: NeedleId(1),
+                        cookie: Cookie(1),
+                        ..Needle::default()
+                    },
+                    false,
+                )
                 .unwrap();
             assert!(deleted.0 > 0, "deletes must still land");
             v.sync_to_disk().unwrap();
@@ -12353,11 +12375,14 @@ mod tests {
         assert!(matches!(err, VolumeError::ReadOnly(_)));
 
         let deleted = v
-            .delete_needle(&mut Needle {
-                id: NeedleId(2),
-                cookie: Cookie(2),
-                ..Needle::default()
-            })
+            .delete_needle(
+                &mut Needle {
+                    id: NeedleId(2),
+                    cookie: Cookie(2),
+                    ..Needle::default()
+                },
+                false,
+            )
             .unwrap();
         assert!(deleted.0 > 0, "deletes must still land after restart");
 
@@ -12427,11 +12452,14 @@ mod tests {
             Some(NeedleMap::SortedFile(_))
         ));
         for id in ids.clone() {
-            v.delete_needle(&mut Needle {
-                id: NeedleId(id),
-                cookie: Cookie(id as u32),
-                ..Needle::default()
-            })
+            v.delete_needle(
+                &mut Needle {
+                    id: NeedleId(id),
+                    cookie: Cookie(id as u32),
+                    ..Needle::default()
+                },
+                false,
+            )
             .unwrap();
         }
         let after_deletes = counters(&v);
@@ -12479,11 +12507,14 @@ mod tests {
         .unwrap();
         assert!(v.no_write_flags().0);
         let err = v
-            .delete_needle(&mut Needle {
-                id: NeedleId(1),
-                cookie: Cookie(1),
-                ..Needle::default()
-            })
+            .delete_needle(
+                &mut Needle {
+                    id: NeedleId(1),
+                    cookie: Cookie(1),
+                    ..Needle::default()
+                },
+                false,
+            )
             .unwrap_err();
         assert!(
             matches!(err, VolumeError::ReadOnly(_)),
@@ -12498,11 +12529,14 @@ mod tests {
             "upgrade to canDelete must attach the .idx writer"
         );
         let deleted = v
-            .delete_needle(&mut Needle {
-                id: NeedleId(1),
-                cookie: Cookie(1),
-                ..Needle::default()
-            })
+            .delete_needle(
+                &mut Needle {
+                    id: NeedleId(1),
+                    cookie: Cookie(1),
+                    ..Needle::default()
+                },
+                false,
+            )
             .unwrap();
         assert!(deleted.0 > 0, "deletes must land once canDelete is set");
     }
@@ -13153,7 +13187,7 @@ mod tests {
                 cookie: Cookie(id as u32),
                 ..Needle::default()
             };
-            v.delete_needle(&mut del).unwrap();
+            v.delete_needle(&mut del, false).unwrap();
         }
         let expected_live = v.file_count() - v.deleted_count();
 

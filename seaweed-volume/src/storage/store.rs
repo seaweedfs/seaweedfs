@@ -1042,11 +1042,7 @@ impl Store {
     }
 
     /// Delete a needle from a volume.
-    pub fn delete_volume_needle(&self, vid: VolumeId, n: &mut Needle) -> Result<Size, VolumeError> {
-        self.delete_volume_needle_with_fsync(vid, n, false)
-    }
-
-    pub fn delete_volume_needle_with_fsync(
+    pub fn delete_volume_needle(
         &self,
         vid: VolumeId,
         n: &mut Needle,
@@ -1057,7 +1053,7 @@ impl Store {
         if vol.is_no_write_or_delete() {
             return Err(VolumeError::ReadOnly(vid));
         }
-        vol.delete_needle_with_fsync(n, fsync)
+        vol.delete_needle(n, fsync)
     }
 
     // ---- Collection operations ----
@@ -2932,7 +2928,9 @@ mod tests {
             cookie: Cookie(0xaa),
             ..Needle::default()
         };
-        let deleted = store.delete_volume_needle(VolumeId(1), &mut del_n).unwrap();
+        let deleted = store
+            .delete_volume_needle(VolumeId(1), &mut del_n, false)
+            .unwrap();
         assert!(deleted.0 > 0);
     }
 
@@ -3409,7 +3407,7 @@ mod tests {
             cookie: Cookie(2),
             ..Needle::default()
         };
-        store.delete_volume_needle(vid, &mut del).unwrap();
+        store.delete_volume_needle(vid, &mut del, false).unwrap();
 
         let size_before = store.find_volume(vid).unwrap().1.dat_file_size().unwrap();
 
@@ -3733,7 +3731,7 @@ mod tests {
             cookie: Cookie(2),
             ..Needle::default()
         };
-        store.delete_volume_needle(vid, &mut del).unwrap();
+        store.delete_volume_needle(vid, &mut del, false).unwrap();
         let revision = {
             let (_, v) = store.find_volume(vid).unwrap();
             v.super_block().compaction_revision
@@ -3758,7 +3756,7 @@ mod tests {
             cookie: Cookie(4),
             ..Needle::default()
         };
-        store.delete_volume_needle(vid, &mut del).unwrap();
+        store.delete_volume_needle(vid, &mut del, false).unwrap();
 
         drop(release_tx);
         copy.join().unwrap().unwrap();

@@ -188,7 +188,7 @@ mod tests {
         for id in 1..=3 {
             v.write_needle(&mut needle(id), true, false).unwrap();
         }
-        v.delete_needle(&mut needle(2)).unwrap();
+        v.delete_needle(&mut needle(2), false).unwrap();
         v.sync_to_disk().unwrap();
         let (want_count, want_deleted) = (v.file_count(), v.deleted_count());
         drop(v);
