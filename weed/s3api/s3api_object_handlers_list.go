@@ -1609,6 +1609,11 @@ func (s3a *S3ApiServer) dirHoldsOnlyHiddenEntriesInner(ctx context.Context, clie
 func getListObjectsV2Args(values url.Values) (prefix, startAfter, delimiter string, token OptionalString, encodingTypeUrl bool, fetchOwner bool, maxkeys uint16, allowUnordered bool, errCode s3err.ErrorCode) {
 	prefix = values.Get("prefix")
 	token = OptionalString{set: values.Has("continuation-token"), string: values.Get("continuation-token")}
+	// Every NextContinuationToken this server writes is non-empty.
+	if token.set && token.string == "" {
+		errCode = s3err.ErrInvalidContinuationToken
+		return
+	}
 	startAfter = values.Get("start-after")
 	delimiter = values.Get("delimiter")
 	encodingTypeUrl = values.Get("encoding-type") == s3.EncodingTypeUrl
