@@ -163,6 +163,9 @@ func TestSuppressedCreateReleasesParentDirectoryStamps(t *testing.T) {
 			if err := f.CreateEntry(ctx, entry, nil, false, false, nil, false, f.MaxFilenameLength); err != nil {
 				t.Fatalf("create %s: %v", tc.targetPath, err)
 			}
+			if got := f.LocalDeliveredThroughTsNs(time.Now().UnixNano()); got != entry.CommitTsNs-1 {
+				t.Fatalf("claim=%d before the covering event, want %d: the moved entry's stamp must stay in flight", got, entry.CommitTsNs-1)
+			}
 			// The rename handler emits the covering event for the moved entry
 			// after the commit, which adopts the entry's own stamp.
 			f.NotifyUpdateEvent(context.Background(), nil, entry, false, false, nil)
