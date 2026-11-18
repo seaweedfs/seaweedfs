@@ -98,6 +98,11 @@ func TestReadFailureWithoutInterruptReturnsEIO(t *testing.T) {
 		if code != fuse.EIO {
 			t.Fatalf("failed read returned %v, want EIO", code)
 		}
+		select {
+		case <-fake.started:
+		default:
+			t.Fatal("read failed before it reached the filer")
+		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("failed read never returned")
 	}
