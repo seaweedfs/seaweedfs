@@ -202,14 +202,16 @@ def classify(title, author, pr_files):
 
 
 def split_notes(body):
-    """Split generated notes into (PR lines, the text before them, the text after)."""
+    """Split generated notes into (PR lines, the text before them, the text after,
+    the non-blank lines of What's Changed)."""
     lines = body.replace("\r\n", "\n").split("\n")
     start = next((i for i, l in enumerate(lines) if l.strip() == "## What's Changed"), None)
     if start is None:
-        return [], body, ""
+        return [], body, "", []
     end = next((i for i in range(start + 1, len(lines))
                 if lines[i].startswith(("## ", "**Full Changelog**"))), len(lines))
     prs, stray = [], []
+    block = [l.strip() for l in lines[start + 1:end] if l.strip()]
     for line in lines[start + 1:end]:
         if PR_LINE.match(line):
             prs.append(line)
@@ -219,11 +221,11 @@ def split_notes(body):
         raise ValueError("What's Changed has lines that are not PRs: %r" % stray[:3])
     before = "\n".join(lines[:start]).rstrip()
     after = "\n".join(lines[end:]).strip()
-    return prs, before, after
+    return prs, before, after, block
 
 
 def regroup(body, pr_files):
-    prs, before, after = split_notes(body)
+    prs, before, after, block = split_notes(body)
     if not prs:
         return body
     groups = {s: [] for s in SECTIONS}
@@ -250,7 +252,12 @@ def regroup(body, pr_files):
             out.extend(items)
     if after:
         out.extend(["", after])
-    return "\n".join(out).strip() + "\n"
+    notes = "\n".join(out).strip() + "\n"
+    # Headings are accepted only as this script's own grouping: a hand-written
+    # "### Security" over PRs of other components would otherwise be dropped.
+    if len(block) != len(prs) and split_notes(notes)[3] != block:
+        raise ValueError("What's Changed has headings that do not match the component grouping")
+    return notes
 
 
 def gh(*args, stdin=None):
