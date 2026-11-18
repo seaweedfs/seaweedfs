@@ -366,7 +366,9 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	if rewrote {
 		fh.installRewrittenChunks(snapshot, append(chunks, manifestChunks...))
 	} else {
-		entry.Chunks = append(chunks, manifestChunks...)
+		fh.UpdateEntry(func(e *filer_pb.Entry) {
+			e.Chunks = withChunksAttachedSince(snapshot, append(chunks, manifestChunks...), e.Chunks)
+		})
 	}
 
 	// Clone the proto entry for the filer request so that mapPbIdFromLocalToFiler
