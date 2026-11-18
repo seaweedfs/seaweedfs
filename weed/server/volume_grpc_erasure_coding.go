@@ -493,29 +493,21 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			defer os.Remove(stagedEcx)
 		}
 
-		// copy ec data slices. A shard already on this disk is staged and
-		// replaced only once the whole copy succeeds, so a failed transfer
-		// leaves it as is.
-		var replacedShards []uint32
+		// copy ec data slices. Each shard is staged and moved into place only
+		// once the whole copy succeeds, so a failed transfer leaves a shard
+		// already here as is and never removes one another writer put there.
+		var stagedShards []uint32
 		for i, shardId := range req.ShardIds {
 			if slices.Contains(req.ShardIds[:i], shardId) {
 				continue
 			}
 			ext := erasure_coding.ToExt(int(shardId))
-			shardPath := dataBaseFileName + ext
-			if _, err := os.Stat(shardPath); err == nil {
-				staged, err := vs.stageEcCopyFile(client, req.Collection, req.VolumeId, ext, shardPath, false, throttler)
-				if err != nil {
-					return err
-				}
-				defer os.Remove(staged)
-				replacedShards = append(replacedShards, shardId)
-				continue
-			}
-			created.track(shardPath)
-			if _, err := vs.doCopyFileWithThrottler(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, dataBaseFileName, ext, false, false, nil, throttler); err != nil {
+			staged, err := vs.stageEcCopyFile(client, req.Collection, req.VolumeId, ext, dataBaseFileName+ext, false, throttler)
+			if err != nil {
 				return err
 			}
+			defer os.Remove(staged)
+			stagedShards = append(stagedShards, shardId)
 		}
 
 		if req.CopyEcjFile {
@@ -565,8 +557,11 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			}
 		}
 
-		for _, shardId := range replacedShards {
+		for _, shardId := range stagedShards {
 			shardPath := dataBaseFileName + erasure_coding.ToExt(int(shardId))
+			if _, err := os.Stat(shardPath); err != nil {
+				created.track(shardPath)
+			}
 			if err := os.Rename(shardPath+".copying", shardPath); err != nil {
 				return fmt.Errorf("VolumeEcShardsCopy volume %d: commit copied %s: %w", req.VolumeId, shardPath, err)
 			}

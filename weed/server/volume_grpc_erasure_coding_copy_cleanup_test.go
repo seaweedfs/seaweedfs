@@ -51,12 +51,16 @@ func serveEcCopySource(t *testing.T, srv volume_server_pb.VolumeServerServer) st
 type failingExtCopySource struct {
 	*VolumeServer
 	failExt string
+	onFail  func()
 	mu      sync.Mutex
 	served  []string
 }
 
 func (s *failingExtCopySource) CopyFile(req *volume_server_pb.CopyFileRequest, stream volume_server_pb.VolumeServer_CopyFileServer) error {
 	if req.Ext == s.failExt {
+		if s.onFail != nil {
+			s.onFail()
+		}
 		return status.Errorf(codes.Unavailable, "injected %s failure", req.Ext)
 	}
 	if err := s.VolumeServer.CopyFile(req, stream); err != nil {
@@ -430,5 +434,43 @@ func TestVolumeEcShardsDelete_FullTeardownWaitsForInFlightCopy(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("full teardown did not finish after the copy released the lifecycle lock")
+	}
+}
+
+// A shard another writer puts here while a copy is in flight survives the
+// copy's failure cleanup.
+func TestVolumeEcShardsCopy_FailedCopyKeepsShardWrittenMeanwhile(t *testing.T) {
+	const collection = "col"
+	vid := needle.VolumeId(65)
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	receiver := newEcCopyReceiver(t, dstDir)
+	dstBase := erasure_coding.EcShardFileName(collection, dstDir, int(vid))
+	received := bytes.Repeat([]byte{7}, 4096)
+
+	srcDir := filepath.Join(t.TempDir(), "src")
+	src := &failingExtCopySource{
+		VolumeServer: &VolumeServer{store: newRecoverTestStore(t, srcDir)},
+		failExt:      ".ec01",
+		onFail:       func() { writeFile(t, dstBase+".ec00", received) },
+	}
+	source := serveEcCopySource(t, src)
+	srcBase := erasure_coding.EcShardFileName(collection, srcDir, int(vid))
+	writeFile(t, srcBase+".ecx", bytes.Repeat([]byte{9}, types.NeedleMapEntrySize))
+	writeFile(t, srcBase+".ec00", bytes.Repeat([]byte{1}, 4096))
+	writeFile(t, srcBase+".ec01", bytes.Repeat([]byte{2}, 4096))
+
+	_, err := receiver.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
+		VolumeId:       uint32(vid),
+		Collection:     collection,
+		ShardIds:       []uint32{0, 1},
+		CopyEcxFile:    true,
+		SourceDataNode: source,
+	})
+	if err == nil || !strings.Contains(err.Error(), ".ec01") {
+		t.Fatalf("VolumeEcShardsCopy error = %v, want the .ec01 transfer to fail", err)
+	}
+	if got, err := os.ReadFile(dstBase + ".ec00"); err != nil || !bytes.Equal(got, received) {
+		t.Fatalf(".ec00 written during the copy = %d bytes, %v; want it kept", len(got), err)
 	}
 }

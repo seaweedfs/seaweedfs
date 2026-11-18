@@ -6325,24 +6325,18 @@ impl VolumeGrpcService {
             staged_ecx = Some(staged);
         }
 
-        // Copy each shard. A shard already on this disk is staged and replaced
-        // only once the whole copy succeeds, so a failed transfer leaves it as is.
-        let mut replaced_shards: Vec<(ShardId, crate::server::store_ec::RemoveIncomplete)> =
+        // Copy each shard. Each is staged and moved into place only once the
+        // whole copy succeeds, so a failed transfer leaves a shard already here
+        // as is and never removes one another writer put there.
+        let mut staged_shards: Vec<(ShardId, crate::server::store_ec::RemoveIncomplete)> =
             Vec::new();
         for &shard_id in &shard_ids {
             let ext = format!(".ec{:02}", shard_id);
-            let shard_path = format!("{}{}", data_base, ext);
-            let file_path = if std::fs::metadata(&shard_path).is_ok() {
-                let staging = format!("{}.copying", shard_path);
-                replaced_shards.push((
-                    shard_id,
-                    crate::server::store_ec::RemoveIncomplete::new(&staging),
-                ));
-                staging
-            } else {
-                track_ec_copy_created(&mut created, &shard_path);
-                shard_path
-            };
+            let file_path = format!("{}{}.copying", data_base, ext);
+            staged_shards.push((
+                shard_id,
+                crate::server::store_ec::RemoveIncomplete::new(&file_path),
+            ));
 
             let copy_req = volume_server_pb::CopyFileRequest {
                 volume_id: req.volume_id,
@@ -6491,8 +6485,11 @@ impl VolumeGrpcService {
             staged.committed();
         }
 
-        for (shard_id, mut staged) in replaced_shards {
+        for (shard_id, mut staged) in staged_shards {
             let shard_path = format!("{}.ec{:02}", data_base, shard_id);
+            if std::fs::metadata(&shard_path).is_err() {
+                track_ec_copy_created(&mut created, &shard_path);
+            }
             tokio::fs::rename(format!("{}.copying", shard_path), &shard_path)
                 .await
                 .map_err(|e| Status::internal(format!("commit {}: {}", shard_path, e)))?;
