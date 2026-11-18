@@ -3765,7 +3765,16 @@ pub async fn delete_handler(
             Ok(vol) if vol.is_no_write_or_delete() => {
                 Err(crate::storage::volume::VolumeError::ReadOnly(vid))
             }
-            Ok(vol) => vol.delete_needle_with_fsync(&mut n, fsync),
+            Ok(vol) if fsync => {
+                tokio::task::spawn_blocking(move || vol.delete_needle_with_fsync(&mut n, true))
+                    .await
+                    .unwrap_or_else(|e| {
+                        Err(crate::storage::volume::VolumeError::Io(
+                            std::io::Error::other(e),
+                        ))
+                    })
+            }
+            Ok(vol) => vol.delete_needle(&mut n),
         }
     };
 
