@@ -15,6 +15,7 @@ use tracing::warn;
 
 use crate::catalog::{NamespaceClient, SigningKey, parse_id};
 use crate::dataset;
+use crate::jobs::purge::{self, Retention};
 use crate::jobs::{clamp, string_list, table_id};
 
 pub const JOB_TYPE: &str = "lance_cleanup_versions";
@@ -28,7 +29,9 @@ const MAX_MIN_VERSIONS: i64 = 1000;
 
 /// Lance keeps every version until something removes it. Lance can also do this
 /// itself through auto-cleanup, so this job is for deployments that would rather
-/// the cluster owned the policy than each writer.
+/// the cluster owned the policy than each writer. A table may override the
+/// retention in its own config, and may ask for a purge (see [`purge`]), which
+/// this job carries out ahead of the retention window.
 pub struct CleanupVersionsHandler {
     namespace_url: String,
     storage: dataset::Storage,
@@ -181,10 +184,23 @@ impl JobHandler for CleanupVersionsHandler {
                     continue;
                 }
             };
+            let config = table.dataset.config();
+            let pending_purge = purge::pending(config);
+            let floor = Retention::for_table(
+                config,
+                Retention {
+                    retain_hours: DEFAULT_RETAIN_HOURS,
+                    min_versions,
+                },
+                MAX_RETAIN_HOURS,
+                MAX_MIN_VERSIONS,
+            )
+            .min_versions;
             // Age is decided at execution against the retention window; a table
             // at or under the floor cannot lose a version whatever its age, so
-            // proposing one would only produce a job with nothing to do.
-            if stats.total_versions <= min_versions {
+            // proposing one would only produce a job with nothing to do. A
+            // requested purge ignores the floor: it keeps only the latest.
+            if pending_purge.is_none() && stats.total_versions <= floor {
                 continue;
             }
             let mut parameters: HashMap<String, ConfigValue> = HashMap::new();
@@ -193,12 +209,21 @@ impl JobHandler for CleanupVersionsHandler {
                 proposal_id: format!("{JOB_TYPE}:{encoded}"),
                 dedupe_key: format!("{JOB_TYPE}:{encoded}"),
                 job_type: JOB_TYPE.to_string(),
-                summary: format!("Clean up {encoded} ({} versions)", stats.total_versions),
-                detail: format!(
-                    "{} versions retained, above the {min_versions} floor; \
-                     those outside the retention window can go",
-                    stats.total_versions
-                ),
+                summary: match &pending_purge {
+                    Some(_) => format!("Purge {encoded} ({} versions)", stats.total_versions),
+                    None => format!("Clean up {encoded} ({} versions)", stats.total_versions),
+                },
+                detail: match &pending_purge {
+                    Some(token) => format!(
+                        "purge requested at {token}: rewrite fragments with deletions \
+                         and keep only the latest version"
+                    ),
+                    None => format!(
+                        "{} versions retained, above the {floor} floor; \
+                         those outside the retention window can go",
+                        stats.total_versions
+                    ),
+                },
                 parameters,
                 ..Default::default()
             });
@@ -254,8 +279,26 @@ impl JobHandler for CleanupVersionsHandler {
         ) as usize;
 
         let client = self.client();
-        let table = dataset::open(&client, &id, &self.storage).await?;
+        let mut table = dataset::open(&client, &id, &self.storage).await?;
         let before = table.stats().await?;
+
+        if let Some(token) = purge::pending(table.dataset.config()) {
+            return self
+                .execute_purge(request, sender, &job.job_id, &mut table, &token)
+                .await;
+        }
+        let Retention {
+            retain_hours,
+            min_versions,
+        } = Retention::for_table(
+            table.dataset.config(),
+            Retention {
+                retain_hours,
+                min_versions,
+            },
+            MAX_RETAIN_HOURS,
+            MAX_MIN_VERSIONS,
+        );
 
         // The floor is a promise about how much history survives, so it has to
         // be applied here and not only when the job was proposed: by the time it
@@ -335,6 +378,54 @@ impl JobHandler for CleanupVersionsHandler {
                 summary: format!(
                     "removed {} versions and {} bytes",
                     stats.old_versions, stats.bytes_removed
+                ),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })?;
+        Ok(())
+    }
+}
+
+impl CleanupVersionsHandler {
+    async fn execute_purge(
+        &self,
+        request: &ExecuteJobRequest,
+        sender: &dyn ExecutionSender,
+        job_id: &str,
+        table: &mut dataset::OpenTable,
+        token: &str,
+    ) -> Result<()> {
+        let stats = purge::purge(&mut table.dataset, token)
+            .await
+            .with_context(|| format!("purge {}", table.location))?;
+        if let Some(counters) = &self.metrics {
+            counters.versions_removed.inc_by(stats.old_versions);
+            counters.bytes_reclaimed.inc_by(stats.bytes_removed);
+        }
+        let mut output: HashMap<String, ConfigValue> = HashMap::new();
+        output.insert(
+            "fragments_rewritten".to_string(),
+            int_value(stats.fragments_rewritten as i64),
+        );
+        output.insert(
+            "old_versions_removed".to_string(),
+            int_value(stats.old_versions as i64),
+        );
+        output.insert(
+            "bytes_removed".to_string(),
+            int_value(stats.bytes_removed as i64),
+        );
+        sender.send_completed(JobCompleted {
+            request_id: request.request_id.clone(),
+            job_id: job_id.to_string(),
+            job_type: JOB_TYPE.to_string(),
+            success: true,
+            result: Some(JobResult {
+                output_values: output,
+                summary: format!(
+                    "purged: rewrote {} fragments, removed {} versions and {} bytes",
+                    stats.fragments_rewritten, stats.old_versions, stats.bytes_removed
                 ),
                 ..Default::default()
             }),
