@@ -3,6 +3,7 @@ package kms
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -63,5 +64,49 @@ func TestAddKMSProviderReplacesTheInstance(t *testing.T) {
 	}
 	if created[1].closed || current() != created[1] {
 		t.Fatal("a failed reload closed or replaced the provider in use")
+	}
+}
+
+// TestAddKMSProviderDoesNotBlockLookups checks that creating a provider, which may wait on
+// a remote login, does not hold up lookups of the providers already configured.
+func TestAddKMSProviderDoesNotBlockLookups(t *testing.T) {
+	RegisterProvider("lookup-test", func(util.Configuration) (KMSProvider, error) {
+		return newCountingKMSProvider(), nil
+	})
+	started, release := make(chan struct{}), make(chan struct{})
+	RegisterProvider("slow-test", func(util.Configuration) (KMSProvider, error) {
+		close(started)
+		<-release
+		return newCountingKMSProvider(), nil
+	})
+	mgr := &KMSManager{
+		providers: make(map[string]KMSProvider),
+		configs:   make(map[string]*KMSConfig),
+		bucketKMS: make(map[string]string),
+	}
+	if err := mgr.AddKMSProvider("ready", &KMSConfig{Provider: "lookup-test"}); err != nil {
+		t.Fatalf("AddKMSProvider: %v", err)
+	}
+
+	added := make(chan error, 1)
+	go func() { added <- mgr.AddKMSProvider("slow", &KMSConfig{Provider: "slow-test"}) }()
+	<-started
+	looked := make(chan error, 1)
+	go func() {
+		_, err := mgr.GetKMSProviderByName("ready")
+		looked <- err
+	}()
+	select {
+	case err := <-looked:
+		if err != nil {
+			t.Fatalf("GetKMSProviderByName: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("a lookup waited for a provider being created")
+	}
+
+	close(release)
+	if err := <-added; err != nil {
+		t.Fatalf("AddKMSProvider (slow): %v", err)
 	}
 }
