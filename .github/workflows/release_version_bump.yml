@@ -4,7 +4,9 @@ name: "release: bump version and cut the release"
 #   1. bump MAJOR/MINOR in constants.go and the Helm Chart.yaml, commit to master
 #   2. push the <appVersion> tag, which fans out to the workflows that trigger on
 #      `push: tags` (binaries_release*, container_release_unified, helm_manual_release)
-#   3. create the GitHub release, with GitHub's generated notes
+#   3. create the GitHub release, with GitHub's generated notes, then regroup those
+#      notes by component (S3 API, Filer, Mount, ...) with
+#      .github/scripts/release_notes_by_component.py
 #   4. dispatch "Prepare release" in seaweedfs-csi-driver and seaweedfs-operator,
 #      which pick up the new master through `go get -u`, and wait for both
 #
@@ -41,6 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: read # the notes step reads a PR's files when its title has no component prefix
     outputs:
       app_version: ${{ steps.compute.outputs.app_version }}
       sha: ${{ steps.tag.outputs.sha }}
@@ -173,6 +176,19 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.compute.outputs.app_version }}
         run: gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag
+
+      # GitHub's generated notes are one flat list of PRs. Sort them under
+      # component headings by title prefix (or changed files). The release is
+      # already published, so a failure here only leaves the flat list; rerun
+      # the script by hand to fix it:
+      #   python3 .github/scripts/release_notes_by_component.py --tag <tag> --write
+      - name: Group the release notes by component
+        if: ${{ !inputs.dry_run }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.compute.outputs.app_version }}
+        run: python3 .github/scripts/release_notes_by_component.py --repo "$GITHUB_REPOSITORY" --tag "$TAG" --write > /dev/null
 
   downstream:
     needs: release
