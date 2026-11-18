@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """Compare an s3-api-compat-tests JSON report with expected_failures.txt.
 
-Fails on any test that did not pass and is not listed, and on any listed test
-that now passes or did not run, so the list only ever shrinks.
+Fails on any test that did not pass and is not listed with the status it
+ended with, and on any listed test that now passes or did not run, so the list
+only ever shrinks.
 """
 import json
 import sys
 
 
 def load_expected(path):
-    expected = set()
+    expected = {}
     with open(path) as f:
         for line in f:
-            name = line.split("#", 1)[0].strip()
-            if name:
-                expected.add(name)
+            fields = line.split("#", 1)[0].split()
+            if fields:
+                expected[fields[0]] = fields[1] if len(fields) > 1 else "fail"
     return expected
 
 
@@ -41,10 +42,12 @@ def main():
                 fixed.append(name)
         elif name not in expected:
             regressions.append(f"{name} [{status}]: {detail}")
+        elif status != expected[name]:
+            regressions.append(f"{name} [{status}, listed as {expected[name]}]: {detail}")
         else:
             print(f"expected failure: {name} [{status}]")
 
-    missing = sorted(expected - seen)
+    missing = sorted(set(expected) - seen)
     print(f"{len(results)} tests, {len(regressions)} unexpected failures, "
           f"{len(fixed)} unexpected passes, {len(missing)} listed but not run")
     for line in regressions:

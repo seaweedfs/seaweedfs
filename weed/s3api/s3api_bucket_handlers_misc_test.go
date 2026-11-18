@@ -710,3 +710,52 @@ func TestPutBucketAclKeepsOwner(t *testing.T) {
 		require.Equal(t, "team-a", aws.StringValue(grants[0].Grantee.ID))
 	}
 }
+
+func TestPutBucketAccelerateConfiguration(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"suspended", `<AccelerateConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Suspended</Status></AccelerateConfiguration>`, http.StatusOK},
+		{"enabled", `<AccelerateConfiguration><Status>Enabled</Status></AccelerateConfiguration>`, http.StatusNotImplemented},
+		{"invalid status", `<AccelerateConfiguration><Status>On</Status></AccelerateConfiguration>`, http.StatusBadRequest},
+		{"malformed", `<AccelerateConfiguration>`, http.StatusBadRequest},
+		{"wrong root", `<NotAConfiguration><Status>Suspended</Status></NotAConfiguration>`, http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s3a := newMiscTestServer(t, "b")
+			rec := httptest.NewRecorder()
+			s3a.PutBucketAccelerateConfigurationHandler(rec, newBucketRequest(http.MethodPut, "b", "accelerate=", tc.body))
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d, body=%s", rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestPutBucketNotificationConfiguration(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"empty", `<NotificationConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>`, http.StatusOK},
+		{"topic", `<NotificationConfiguration><TopicConfiguration><Topic>arn:aws:sns:us-east-1:1:t</Topic><Event>s3:ObjectCreated:*</Event></TopicConfiguration></NotificationConfiguration>`, http.StatusNotImplemented},
+		{"queue", `<NotificationConfiguration><QueueConfiguration><Queue>arn:aws:sqs:us-east-1:1:q</Queue><Event>s3:ObjectCreated:*</Event></QueueConfiguration></NotificationConfiguration>`, http.StatusNotImplemented},
+		{"eventbridge", `<NotificationConfiguration><EventBridgeConfiguration/></NotificationConfiguration>`, http.StatusNotImplemented},
+		{"malformed", `<NotificationConfiguration>`, http.StatusBadRequest},
+		{"wrong root", `<NotAConfiguration/>`, http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s3a := newMiscTestServer(t, "b")
+			rec := httptest.NewRecorder()
+			s3a.PutBucketNotificationConfigurationHandler(rec, newBucketRequest(http.MethodPut, "b", "notification=", tc.body))
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d, body=%s", rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+}
