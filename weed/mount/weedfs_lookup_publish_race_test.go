@@ -506,4 +506,15 @@ func TestLookupPlaceholderKeepsLocalOwnerUnderIdMap(t *testing.T) {
 	if entry.Attr.Uid != 123 || entry.Attr.Gid != 456 {
 		t.Fatalf("placeholder owner = %d:%d, want the caller's local 123:456", entry.Attr.Uid, entry.Attr.Gid)
 	}
+
+	if err := wfs.metaCache.DeleteEntry(context.Background(), dir.Child("mapped")); err != nil {
+		t.Fatalf("evict the cached copy: %v", err)
+	}
+	entry, _, st = wfs.lookupEntry(context.Background(), dir.Child("mapped"))
+	if st != fuse.OK || entry == nil || entry.Attr.Inode != out.NodeId {
+		t.Fatalf("lookupEntry after eviction = %v, want the placeholder's handle snapshot", st)
+	}
+	if entry.Attr.Uid != 123 || entry.Attr.Gid != 456 {
+		t.Fatalf("snapshot owner = %d:%d, want the caller's local 123:456", entry.Attr.Uid, entry.Attr.Gid)
+	}
 }
