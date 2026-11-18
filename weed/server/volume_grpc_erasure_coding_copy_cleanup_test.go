@@ -399,3 +399,36 @@ func TestVolumeEcShardsMount_WaitsForInFlightCopy(t *testing.T) {
 		t.Fatal("mount did not finish after the copy released the lifecycle lock")
 	}
 }
+
+// A full teardown waits out an in-flight copy of the same volume, which would
+// otherwise recreate the files after the teardown is acknowledged.
+func TestVolumeEcShardsDelete_FullTeardownWaitsForInFlightCopy(t *testing.T) {
+	vid := needle.VolumeId(64)
+	receiver := newEcCopyReceiver(t, filepath.Join(t.TempDir(), "dst"))
+	lifecycle := receiver.store.EcLifecycleLock(vid)
+	lifecycle.Lock()
+	done := make(chan error, 1)
+	go func() {
+		_, err := receiver.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
+			VolumeId:     uint32(vid),
+			Collection:   "col",
+			FullTeardown: true,
+		})
+		done <- err
+	}()
+	select {
+	case <-done:
+		lifecycle.Unlock()
+		t.Fatal("full teardown ran while a copy of the same volume held its lifecycle lock")
+	case <-time.After(200 * time.Millisecond):
+	}
+	lifecycle.Unlock()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("full teardown: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("full teardown did not finish after the copy released the lifecycle lock")
+	}
+}

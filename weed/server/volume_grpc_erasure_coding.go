@@ -764,6 +764,9 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 			// volume and wipe every EC artifact for it on every disk, not just the listed
 			// shards, so a remote node retains no stale generation a fresh copy collides with.
 			glog.V(0).Infof("ec volume %s full teardown", bName)
+			lifecycle := vs.store.EcLifecycleLock(needle.VolumeId(req.VolumeId))
+			lifecycle.Lock()
+			defer lifecycle.Unlock()
 			vs.store.UnloadEcVolume(needle.VolumeId(req.VolumeId))
 			for _, location := range vs.store.Locations {
 				dataBase := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))

@@ -3931,6 +3931,7 @@ impl VolumeServer for VolumeGrpcService {
                 //
                 // Unload every disk holding the vid (Go's Store.UnloadEcVolume):
                 // each registration returns its descriptors and ec_shards gauge.
+                let _lifecycle = self.state.ec_lifecycle_lock(vid).lock_owned().await;
                 {
                     let mut store = self.state.store.write().unwrap();
                     store.unload_ec_volume(vid);
@@ -10418,6 +10419,43 @@ mod tests {
             .expect("mount did not finish after the copy released the lifecycle lock")
             .unwrap()
             .ok();
+    }
+
+    // A full teardown waits out an in-flight copy of the same volume, which
+    // would otherwise recreate the files after the teardown is acknowledged.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_full_teardown_waits_for_in_flight_copy() {
+        let (dest, _dest_tmp, _dir) = ec_copy_destination().await;
+        let lifecycle = dest
+            .state
+            .ec_lifecycle_lock(VolumeId(64))
+            .lock_owned()
+            .await;
+        let mut teardown = tokio::spawn(async move {
+            dest.volume_ec_shards_delete(Request::new(
+                volume_server_pb::VolumeEcShardsDeleteRequest {
+                    volume_id: 64,
+                    collection: "col".to_string(),
+                    full_teardown: true,
+                    ..Default::default()
+                },
+            ))
+            .await
+        });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), &mut teardown)
+                .await
+                .is_err(),
+            "full teardown ran while a copy of the same volume held its lifecycle lock"
+        );
+        drop(lifecycle);
+        let resp = tokio::time::timeout(std::time::Duration::from_secs(10), teardown)
+            .await
+            .expect("full teardown did not finish after the copy released the lifecycle lock")
+            .unwrap()
+            .unwrap()
+            .into_inner();
+        assert!(resp.full_teardown_done);
     }
 
     // The transfer itself must notice a caller that has gone, with no progress
