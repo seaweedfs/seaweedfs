@@ -177,3 +177,49 @@ func TestVolumeEcShardsCopy_FailedShardRemovesCopiedShards(t *testing.T) {
 		t.Errorf("pre-existing .ecx changed: %x, want %x", got, ecx)
 	}
 }
+
+// A copied index replaces an existing holder's in place, so a mounted
+// EcVolume's open handle reads the source's index, tombstones included.
+func TestVolumeEcShardsCopy_ExistingEcxUpdatedInPlace(t *testing.T) {
+	const collection = "col"
+	vid := needle.VolumeId(59)
+
+	srcDir := filepath.Join(t.TempDir(), "src")
+	source := startEcCopySource(t, srcDir)
+	srcBase := erasure_coding.EcShardFileName(collection, srcDir, int(vid))
+	srcEcx := bytes.Repeat([]byte{9}, 2*types.NeedleMapEntrySize)
+	writeFile(t, srcBase+".ecx", srcEcx)
+	writeFile(t, srcBase+".ec00", bytes.Repeat([]byte{1}, 4096))
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	receiver := newEcCopyReceiver(t, dstDir)
+	dstBase := erasure_coding.EcShardFileName(collection, dstDir, int(vid))
+	writeFile(t, dstBase+".ecx", make([]byte, 2*types.NeedleMapEntrySize))
+	held, err := os.Open(dstBase + ".ecx")
+	if err != nil {
+		t.Fatalf("open .ecx: %v", err)
+	}
+	defer held.Close()
+
+	if _, err := receiver.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
+		VolumeId:       uint32(vid),
+		Collection:     collection,
+		ShardIds:       []uint32{0},
+		CopyEcxFile:    true,
+		SourceDataNode: source,
+	}); err != nil {
+		t.Fatalf("VolumeEcShardsCopy: %v", err)
+	}
+	got := make([]byte, len(srcEcx))
+	if _, err := held.ReadAt(got, 0); err != nil {
+		t.Fatalf("read open .ecx: %v", err)
+	}
+	if !bytes.Equal(got, srcEcx) {
+		t.Fatalf("open .ecx handle reads %x after the copy, want the source index %x", got, srcEcx)
+	}
+	for _, name := range listDir(t, dstDir) {
+		if strings.HasSuffix(name, ".copying") {
+			t.Errorf("staged file %s left behind", name)
+		}
+	}
+}

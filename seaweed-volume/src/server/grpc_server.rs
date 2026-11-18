@@ -4168,12 +4168,11 @@ impl VolumeServer for VolumeGrpcService {
             drain_optional_copy_to_file(&mut stream, &file_path, ".ecsum").await?;
         }
 
-        if let Some(mut staged) = staged_ecx {
+        if let Some(_staged) = staged_ecx {
             track_ec_copy_created(&mut created, &ecx_path);
-            tokio::fs::rename(format!("{}.copying", ecx_path), &ecx_path)
+            commit_staged_ecx(&format!("{}.copying", ecx_path), &ecx_path)
                 .await
                 .map_err(|e| Status::internal(format!("commit {}: {}", ecx_path, e)))?;
-            staged.committed();
         }
         created.iter_mut().for_each(|file| file.committed());
 
@@ -7032,7 +7031,6 @@ async fn ping_filer_target(
 // call site.
 use super::grpc_client::parse_grpc_address;
 
-/// Set the modification time of a file from nanoseconds since Unix epoch.
 /// Records a file volume_ec_shards_copy is about to add, so a failed copy
 /// removes it; a file already on the disk is left out.
 fn track_ec_copy_created(created: &mut Vec<crate::server::store_ec::RemoveIncomplete>, path: &str) {
@@ -7041,6 +7039,30 @@ fn track_ec_copy_created(created: &mut Vec<crate::server::store_ec::RemoveIncomp
     }
 }
 
+/// Installs a staged index at `ecx_path`. An index already there is
+/// overwritten in place: mounted EC volumes read it through open handles,
+/// which a rename would leave on the replaced inode.
+async fn commit_staged_ecx(staged: &str, ecx_path: &str) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let mut dst = match tokio::fs::OpenOptions::new()
+        .write(true)
+        .open(ecx_path)
+        .await
+    {
+        Ok(dst) => dst,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return tokio::fs::rename(staged, ecx_path).await;
+        }
+        Err(e) => return Err(e),
+    };
+    let mut src = tokio::fs::File::open(staged).await?;
+    let n = tokio::io::copy(&mut src, &mut dst).await?;
+    dst.flush().await?;
+    dst.set_len(n).await?;
+    dst.sync_all().await
+}
+
+/// Set the modification time of a file from nanoseconds since Unix epoch.
 fn set_file_mtime(path: &str, modified_ts_ns: i64) -> std::io::Result<()> {
     use std::time::{Duration, SystemTime};
     let ts = if modified_ts_ns >= 0 {
@@ -10103,6 +10125,47 @@ mod tests {
         .expect_err("shard 1 is missing on the source");
         assert_eq!(sorted_dir_names(&dir), before);
         assert_eq!(std::fs::read(format!("{}/58.ecx", dir)).unwrap(), ecx);
+    }
+
+    // A copied index replaces an existing holder's in place, so a mounted EC
+    // volume's open handle reads the source's index, tombstones included.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_shards_copy_existing_ecx_updated_in_place() {
+        let (source_service, source_tmp) = make_local_service_with_volume("", None);
+        let src = source_tmp.path().to_str().unwrap().to_string();
+        let src_ecx = vec![9u8; 2 * NEEDLE_MAP_ENTRY_SIZE as usize];
+        std::fs::write(format!("{}/59.ecx", src), &src_ecx).unwrap();
+        std::fs::write(format!("{}/59.ec00", src), vec![1u8; 4096]).unwrap();
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest, _dest_tmp, dir) = ec_copy_destination().await;
+        std::fs::write(
+            format!("{}/59.ecx", dir),
+            vec![0u8; 2 * NEEDLE_MAP_ENTRY_SIZE as usize],
+        )
+        .unwrap();
+        let held = std::fs::File::open(format!("{}/59.ecx", dir)).unwrap();
+
+        dest.volume_ec_shards_copy(Request::new(volume_server_pb::VolumeEcShardsCopyRequest {
+            volume_id: 59,
+            shard_ids: vec![0],
+            copy_ecx_file: true,
+            source_data_node: format!("127.0.0.1:1.{}", port),
+            ..Default::default()
+        }))
+        .await
+        .expect("copy onto an existing holder");
+        let mut got = vec![0u8; src_ecx.len()];
+        std::os::unix::fs::FileExt::read_exact_at(&held, &mut got, 0).unwrap();
+        assert_eq!(got, src_ecx, "open .ecx handle must read the source index");
+        assert!(
+            sorted_dir_names(&dir)
+                .iter()
+                .all(|n| !n.ends_with(".copying")),
+            "{:?}",
+            sorted_dir_names(&dir)
+        );
     }
 
     // The transfer itself must notice a caller that has gone, with no progress

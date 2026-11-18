@@ -532,7 +532,7 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 
 		if stagedEcx != "" {
 			created.track(ecxPath)
-			if err := os.Rename(stagedEcx, ecxPath); err != nil {
+			if err := commitStagedEcx(stagedEcx, ecxPath); err != nil {
 				return fmt.Errorf("VolumeEcShardsCopy volume %d: commit copied .ecx %s: %w", req.VolumeId, ecxPath, err)
 			}
 		}
@@ -600,6 +600,33 @@ func (vs *VolumeServer) stageEcxFile(client volume_server_pb.VolumeServerClient,
 		return "", fmt.Errorf("VolumeEcShardsCopy volume %d: source .ecx is 0 bytes", vid)
 	}
 	return staging, nil
+}
+
+// commitStagedEcx installs a staged index at ecxPath. An index already there
+// is overwritten in place: mounted EcVolumes read it through open handles, which
+// a rename would leave on the replaced inode.
+func commitStagedEcx(staged, ecxPath string) error {
+	dst, err := os.OpenFile(ecxPath, os.O_WRONLY, 0)
+	if os.IsNotExist(err) {
+		return os.Rename(staged, ecxPath)
+	}
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+	src, err := os.Open(staged)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	n, err := io.Copy(dst, src)
+	if err != nil {
+		return err
+	}
+	if err := dst.Truncate(n); err != nil {
+		return err
+	}
+	return dst.Sync()
 }
 
 // copyEcjAndMerge folds the source peer's .ecj into the local journal of vid
