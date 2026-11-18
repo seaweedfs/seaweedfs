@@ -2384,23 +2384,45 @@ pub(crate) async fn recover_missing_ec_indexes(
                     "cannot look up peers to recover missing .ecx: {}",
                     e
                 );
-                continue;
+                Vec::new()
             }
         };
-        if peers.is_empty() {
-            tracing::warn!(
-                volume_id = m.vid.0,
-                "shards present locally but .ecx missing and no peer holds it; leaving shards unloaded"
-            );
-            continue;
+        // Under the volume's lifecycle lock, so an in-flight VolumeEcShardsCopy
+        // of it, which may unlink the shards it renamed in, never has them
+        // mounted from under it.
+        let _lifecycle = state.ec_lifecycle_lock(m.vid).lock_owned().await;
+        let current = state
+            .store
+            .read()
+            .unwrap()
+            .collect_ec_volumes_missing_index_only(Some(m.vid))
+            .into_iter()
+            .find(|x| x.vid == m.vid && x.collection == m.collection);
+        // A copy holding the lock may have installed the index meanwhile: skip
+        // the fetch, but its shards still need the mount.
+        if let Some(current) = &current {
+            if peers.is_empty() {
+                tracing::warn!(
+                    volume_id = m.vid.0,
+                    "shards present locally but .ecx missing and no peer holds it; leaving shards unloaded"
+                );
+                continue;
+            }
+            if !fetch_ec_index_from_peers(state, current, &peers).await {
+                continue;
+            }
         }
-        if fetch_ec_index_from_peers(state, m, &peers).await {
+        state
+            .store
+            .write()
+            .unwrap()
+            .mount_recovered_ec_shards_only(Some(m.vid));
+        if current.is_some() {
             recovered += 1;
         }
     }
 
     if recovered > 0 {
-        state.store.write().unwrap().mount_recovered_ec_shards();
         tracing::info!(
             "recovered missing EC index for {} volume(s) from peers and mounted their shards",
             recovered

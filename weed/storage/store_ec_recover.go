@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"slices"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
@@ -27,13 +29,13 @@ type EcVolumeMissingIndex struct {
 //
 // It scans on-disk shard files directly, so it surfaces volumes the master never
 // learned about — including those whose every holder is missing its index.
-func (s *Store) CollectEcVolumesMissingIndex() []EcVolumeMissingIndex {
-	ecxOwners := s.indexEcxOwners()
+func (s *Store) CollectEcVolumesMissingIndex(only ...needle.VolumeId) []EcVolumeMissingIndex {
+	ecxOwners := s.indexEcxOwners(only...)
 
 	seen := make(map[ecKeyForReconcile]bool)
 	var missing []EcVolumeMissingIndex
 	for _, loc := range s.Locations {
-		for key := range loc.collectOrphanEcShards() {
+		for key := range loc.collectOrphanEcShards(only...) {
 			if _, hasLocalIndex := ecxOwners[key]; hasLocalIndex {
 				continue
 			}
@@ -58,19 +60,24 @@ func (s *Store) CollectEcVolumesMissingIndex() []EcVolumeMissingIndex {
 // back to the cross-disk virtual mount for any disk the mirror could not reach.
 // Each shard load announces itself through ecShardNotifyHandler so the master
 // learns about the now-registered shards.
-func (s *Store) MountRecoveredEcShards() {
-	s.mirrorEcMetadataToShardDisks()
-	s.loadOrphanEcShardsWithLocalIndex()
-	s.reconcileEcShardsAcrossDisks()
+// Given volume ids, it touches only those volumes' shards.
+func (s *Store) MountRecoveredEcShards(only ...needle.VolumeId) {
+	s.mirrorEcMetadataToShardDisks(only...)
+	s.loadOrphanEcShardsWithLocalIndex(only...)
+	s.reconcileEcShardsAcrossDisks(only...)
+}
+
+func ecVolumeSelected(vid needle.VolumeId, only []needle.VolumeId) bool {
+	return len(only) == 0 || slices.Contains(only, vid)
 }
 
 // loadOrphanEcShardsWithLocalIndex mounts on-disk EC shards whose .ecx index is
 // now present on the same disk. Unlike reconcileEcShardsAcrossDisks it does not
 // require a sibling disk, so a single-disk store recovers too once its index has
 // been fetched from a peer.
-func (s *Store) loadOrphanEcShardsWithLocalIndex() {
+func (s *Store) loadOrphanEcShardsWithLocalIndex(only ...needle.VolumeId) {
 	for _, loc := range s.Locations {
-		orphans := loc.collectOrphanEcShards()
+		orphans := loc.collectOrphanEcShards(only...)
 		for key, shards := range orphans {
 			if !loc.HasEcxFileOnDisk(key.collection, key.vid) {
 				continue

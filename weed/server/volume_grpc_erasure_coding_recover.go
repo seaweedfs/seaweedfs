@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -49,32 +50,53 @@ func (vs *VolumeServer) recoverMissingEcIndexes(filterVid uint32) int {
 
 	master := vs.getCurrentMaster()
 	if master == "" {
-		glog.Warningf("cannot recover missing EC index without a master connection")
-		return 0
+		glog.Warningf("cannot look up peers to recover missing EC indexes without a master connection")
 	}
 	self := pb.NewServerAddress(vs.store.Ip, vs.store.Port, vs.store.GrpcPort)
 
 	recovered := 0
 	for _, m := range orphans {
-		peers, err := vs.lookupEcVolumePeers(master, uint32(m.VolumeId), self)
-		if err != nil {
-			glog.Warningf("ec volume %d: cannot look up peers to recover missing .ecx: %v", m.VolumeId, err)
-			continue
+		var peers []pb.ServerAddress
+		if master != "" {
+			var err error
+			if peers, err = vs.lookupEcVolumePeers(master, uint32(m.VolumeId), self); err != nil {
+				glog.Warningf("ec volume %d: cannot look up peers to recover missing .ecx: %v", m.VolumeId, err)
+			}
 		}
-		if len(peers) == 0 {
-			glog.Warningf("ec volume %d: shards present locally but .ecx missing and no peer holds it; leaving shards unloaded", m.VolumeId)
-			continue
-		}
-		if vs.fetchEcIndexFromPeers(peers, m) {
+		if vs.recoverEcIndexLocked(peers, m) {
 			recovered++
 		}
 	}
 
 	if recovered > 0 {
-		vs.store.MountRecoveredEcShards()
 		glog.V(0).Infof("recovered missing EC index for %d volume(s) from peers and mounted their shards", recovered)
 	}
 	return recovered
+}
+
+// recoverEcIndexLocked fetches m's index and mounts that volume's shards under
+// its lifecycle lock, so an in-flight VolumeEcShardsCopy of the volume, which
+// may unlink the shards it renamed in, never has them mounted from under it.
+func (vs *VolumeServer) recoverEcIndexLocked(peers []pb.ServerAddress, m storage.EcVolumeMissingIndex) bool {
+	lifecycle := vs.store.EcLifecycleLock(m.VolumeId)
+	lifecycle.Lock()
+	defer lifecycle.Unlock()
+	// A copy holding the lock may have installed the index meanwhile: skip
+	// the fetch, but its shards still need the mount.
+	fetched := false
+	current := vs.store.CollectEcVolumesMissingIndex(m.VolumeId)
+	if i := slices.IndexFunc(current, func(x storage.EcVolumeMissingIndex) bool { return x.VolumeId == m.VolumeId && x.Collection == m.Collection }); i >= 0 {
+		if len(peers) == 0 {
+			glog.Warningf("ec volume %d: shards present locally but .ecx missing and no peer holds it; leaving shards unloaded", m.VolumeId)
+			return false
+		}
+		if !vs.fetchEcIndexFromPeers(peers, current[i]) {
+			return false
+		}
+		fetched = true
+	}
+	vs.store.MountRecoveredEcShards(m.VolumeId)
+	return fetched
 }
 
 // lookupEcVolumePeers asks the master which servers hold shards for vid and

@@ -199,3 +199,44 @@ func TestCollectEcVolumesMissingIndex_ExcludesCrossDiskOrphan(t *testing.T) {
 		t.Errorf("cross-disk .ecx must not be reported as a cross-server orphan")
 	}
 }
+
+// Recovering one volume mounts only that volume's shards. Another volume's
+// orphan shards, such as ones an in-flight copy just renamed in, stay
+// unmounted even when an index for them is already on disk.
+func TestMountRecoveredEcShards_OnlyNamedVolume(t *testing.T) {
+	tempDir := t.TempDir()
+	dir0 := filepath.Join(tempDir, "disk0")
+	dir1 := filepath.Join(tempDir, "disk1")
+	const collection = "col"
+	recoveredVid, otherVid := needle.VolumeId(71), needle.VolumeId(72)
+	const datSize int64 = 10 * 1024 * 1024
+	shardSize := calculateExpectedShardSize(datSize, 10)
+
+	store := newDrainingStore(t, []string{dir0, dir1})
+	plantEcShard(t, dir0, collection, recoveredVid, 0, shardSize)
+	plantEcShard(t, dir1, collection, recoveredVid, 1, shardSize)
+	plantEcShard(t, dir0, collection, otherVid, 0, shardSize)
+	plantEcShard(t, dir1, collection, otherVid, 1, shardSize)
+	plantEcIndex(t, dir0, dir0, collection, otherVid, datSize)
+	m, ok := findMissingIndex(store.CollectEcVolumesMissingIndex(), collection, recoveredVid)
+	if !ok {
+		t.Fatalf("volume %d not reported as missing its index", recoveredVid)
+	}
+	plantEcIndex(t, m.IdxDir, m.DataDir, collection, recoveredVid, datSize)
+
+	store.MountRecoveredEcShards(recoveredVid)
+
+	for i, loc := range store.Locations {
+		if ev, found := loc.FindEcVolume(recoveredVid); !found {
+			t.Errorf("volume %d not mounted on disk%d", recoveredVid, i)
+		} else if _, ok := ev.FindEcVolumeShard(erasure_coding.ShardId(i)); !ok {
+			t.Errorf("shard %d.%d not mounted on disk%d", recoveredVid, i, i)
+		}
+		if _, found := loc.FindEcVolume(otherVid); found {
+			t.Errorf("volume %d mounted on disk%d by the recovery of volume %d", otherVid, i, recoveredVid)
+		}
+	}
+	if _, err := os.Stat(erasure_coding.EcShardFileName(collection, dir1, int(otherVid)) + ".ecx"); !os.IsNotExist(err) {
+		t.Errorf("volume %d index mirrored to disk1 by the recovery of volume %d: %v", otherVid, recoveredVid, err)
+	}
+}

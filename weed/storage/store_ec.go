@@ -253,6 +253,14 @@ func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 }
 
 func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, sourceDiskType string) error {
+	// Serialize against full teardown and the other canonical-EC-file writers for
+	// this vid (which all hold the per-vid lifecycle lock) so a fresh generation
+	// cannot be installed while a teardown is path-wiping this vid's files — otherwise
+	// the identity-blind wipe could clobber the freshly mounted shards.
+	lifecycle := s.EcLifecycleLock(vid)
+	lifecycle.Lock()
+	defer lifecycle.Unlock()
+
 	ownersBefore := s.EcShardOwnerDisks(vid, []erasure_coding.ShardId{shardId})
 	ecVolume, diskId, err := s.LoadEcShardAcrossDisks(collection, vid, shardId)
 	if err != nil {
@@ -424,6 +432,36 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 		return lastErr
 	}
 	return nil
+}
+
+// UnmountEcShardOnDisk unloads one shard from the disk at diskId only and
+// reports its removal; copies of it on other disks stay mounted.
+func (s *Store) UnmountEcShardOnDisk(diskId int, vid needle.VolumeId, shardId erasure_coding.ShardId) bool {
+	location := s.Locations[diskId]
+	ecShard, found := location.FindEcShard(vid, shardId)
+	if !found {
+		return false
+	}
+	var encodeTsNs int64
+	if ecVolume, ok := location.FindEcVolume(vid); ok {
+		encodeTsNs = ecVolume.EncodeTsNs
+	}
+	if !location.UnloadEcShard(vid, shardId) {
+		return false
+	}
+	si := erasure_coding.NewShardsInfo()
+	si.Set(erasure_coding.NewShardInfo(shardId, 0))
+	s.DeletedEcShardsChan <- &master_pb.VolumeEcShardInformationMessage{
+		Id:          uint32(vid),
+		Collection:  ecShard.Collection,
+		EcIndexBits: si.Bitmap(),
+		ShardSizes:  si.SizesInt64(),
+		DiskType:    string(ecShard.DiskType),
+		DiskId:      uint32(diskId),
+		EncodeTsNs:  encodeTsNs,
+	}
+	glog.V(0).Infof("UnmountEcShards %d.%d disk_id:%d", vid, shardId, diskId)
+	return true
 }
 
 func (s *Store) findEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (diskId uint32, shard *erasure_coding.EcVolumeShard, found bool) {
@@ -1537,4 +1575,10 @@ func (s *Store) EcVolumes() (ecVolumes []*erasure_coding.EcVolume) {
 		return int(a.VolumeId) - int(b.VolumeId)
 	})
 	return ecVolumes
+}
+
+// EcLifecycleLock returns the per-vid EC lifecycle mutex, creating it on first use.
+func (s *Store) EcLifecycleLock(vid needle.VolumeId) *sync.Mutex {
+	actual, _ := s.ecLifecycleLocks.LoadOrStore(vid, &sync.Mutex{})
+	return actual.(*sync.Mutex)
 }

@@ -102,7 +102,10 @@ type Store struct {
 	NewEcShardsChan     chan *master_pb.VolumeEcShardInformationMessage
 	DeletedEcShardsChan chan *master_pb.VolumeEcShardInformationMessage
 	isStopping          atomic.Bool
-	volumeReport        volumeReportState
+	// ecLifecycleLocks holds a per-vid *sync.Mutex serializing EC ops that
+	// install or remove a vid's files. Entries are never reaped.
+	ecLifecycleLocks sync.Map
+	volumeReport     volumeReportState
 	// One heartbeat at a time: the report state is marked in place as the scan
 	// runs, so two overlapping scans would each forget what the other marked
 	// and name every volume it holds as departed.

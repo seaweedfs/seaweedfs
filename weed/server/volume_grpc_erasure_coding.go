@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -209,6 +210,14 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	}
 
 	glog.V(0).Infof("VolumeEcShardsRebuild: %v", req)
+
+	// Serialize against full teardown and the other canonical-EC-file writers for this
+	// vid so a concurrent teardown wipe cannot clobber the rebuilt .ecNN/.ecx, and vice
+	// versa. Held across the rebuild IO.
+	lifecycle := vs.store.EcLifecycleLock(needle.VolumeId(req.VolumeId))
+	lifecycle.Lock()
+	defer lifecycle.Unlock()
+
 	baseFileName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId))
 
 	var rebuiltShardIds []uint32
@@ -399,6 +408,12 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 
 	glog.V(0).Infof("VolumeEcShardsCopy: %v", req)
 
+	// Overlapping copies of one vid would share the staged index, and a failed
+	// one's cleanup would remove shards another already committed.
+	lifecycle := vs.store.EcLifecycleLock(needle.VolumeId(req.VolumeId))
+	lifecycle.Lock()
+	defer lifecycle.Unlock()
+
 	var location *storage.DiskLocation
 
 	// Select the target location for storing EC shard files.
@@ -467,61 +482,64 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 	}
 	throttler := util.NewWriteThrottler(ioBytePerSecond)
 
+	// A failed copy removes what it added, or every retry against the same
+	// unusable source strands another unmounted shard on this disk.
+	var created ecCopyCreatedFiles
 	err := operation.WithVolumeServerClientOptions(true, pb.ServerAddress(req.SourceDataNode), func(client volume_server_pb.VolumeServerClient) error {
 
-		// copy ec data slices
-		for _, shardId := range req.ShardIds {
-			if _, err := vs.doCopyFileWithThrottler(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, dataBaseFileName, erasure_coding.ToExt(int(shardId)), false, false, nil, throttler); err != nil {
+		// The index is staged first, so a source whose .ecx is unusable fails
+		// the copy before any shard lands here. It is committed after every
+		// other file, so a failed copy leaves an existing holder's index as is.
+		ecxPath := indexBaseFileName + ".ecx"
+		var stagedEcx string
+		if req.CopyEcxFile {
+			staged, err := vs.stageEcxFile(client, req.Collection, req.VolumeId, ecxPath, throttler)
+			if err != nil {
 				return err
 			}
+			stagedEcx = staged
+			defer os.Remove(stagedEcx)
 		}
 
-		if req.CopyEcxFile {
-
-			// copy ecx file
-			if _, err := vs.doCopyFileWithThrottler(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, indexBaseFileName, ".ecx", false, false, nil, throttler); err != nil {
+		// copy ec data slices. Each shard is staged and moved into place only
+		// once the whole copy succeeds, so a failed transfer leaves a shard
+		// already here as is and never removes one another writer put there.
+		var stagedShards []uint32
+		seen := make(map[uint32]bool, len(req.ShardIds))
+		for _, shardId := range req.ShardIds {
+			if seen[shardId] {
+				continue
+			}
+			seen[shardId] = true
+			ext := erasure_coding.ToExt(int(shardId))
+			staged, err := vs.stageEcCopyFile(client, req.Collection, req.VolumeId, ext, dataBaseFileName+ext, false, throttler)
+			if err != nil {
 				return err
 			}
-			// Defense in depth: writeToFile now removes partial files on
-			// stream error, but a source that genuinely held a 0-byte
-			// .ecx (e.g. a corrupted upstream replica) would otherwise
-			// leave a 0-byte file here and the mount path would reject
-			// it later. Catch that at distribute time so the orchestrator
-			// can pick a different source rather than learning about it
-			// at mount.
-			// Stat failure must not silently pass. doCopyFile reported
-			// success, but if the file is gone, unreadable, or a directory
-			// somehow, the orchestrator should learn now — at mount time
-			// the operator only sees "no .ecx found" with no useful context
-			// about which step actually failed.
-			ecxPath := indexBaseFileName + ".ecx"
-			info, statErr := os.Stat(ecxPath)
-			if statErr != nil {
-				return fmt.Errorf("VolumeEcShardsCopy volume %d: stat copied .ecx %s: %w", req.VolumeId, ecxPath, statErr)
-			}
-			if info.IsDir() {
-				return fmt.Errorf("VolumeEcShardsCopy volume %d: copied .ecx path %s is a directory", req.VolumeId, ecxPath)
-			}
-			if info.Size() == 0 {
-				if removeErr := os.Remove(ecxPath); removeErr != nil && !os.IsNotExist(removeErr) {
-					glog.Warningf("VolumeEcShardsCopy volume %d: remove 0-byte .ecx %s: %v", req.VolumeId, ecxPath, removeErr)
-				}
-				return fmt.Errorf("VolumeEcShardsCopy volume %d: source .ecx is 0 bytes", req.VolumeId)
-			}
+			defer os.Remove(staged)
+			stagedShards = append(stagedShards, shardId)
 		}
 
 		if req.CopyEcjFile {
 			// The journal is a *set* of ids: merge the source's into the
 			// local one as a union, never append it whole.
+			created.track(indexBaseFileName + ".ecj")
 			if err := vs.copyEcjAndMerge(client, req.Collection, req.VolumeId, location.Directory, indexBaseFileName, throttler); err != nil {
 				return err
 			}
 		}
 
+		// The sidecars are staged too and committed with the index, so a failed
+		// copy cannot pair a new .vif with the index this disk keeps.
+		var stagedSidecars []string
 		if req.CopyVifFile {
-			// copy vif file
-			if _, err := vs.doCopyFileWithThrottler(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, dataBaseFileName, ".vif", false, true, nil, throttler); err != nil {
+			staged, err := vs.stageEcCopyFile(client, req.Collection, req.VolumeId, ".vif", dataBaseFileName+".vif", true, throttler)
+			if err != nil {
 				return err
+			}
+			if staged != "" {
+				defer os.Remove(staged)
+				stagedSidecars = append(stagedSidecars, dataBaseFileName+".vif")
 			}
 		}
 
@@ -531,17 +549,156 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			// distribution) has no Prepare backstop, and fresh-encode sidecar
 			// writes are best-effort, so a missing source sidecar is a no-op
 			// (ignore-not-found): the holder is simply unprotected.
-			if _, err := vs.doCopyFileWithThrottler(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, dataBaseFileName, erasure_coding.BitrotSidecarExt, false, true, nil, throttler); err != nil {
+			sidecarPath := dataBaseFileName + erasure_coding.BitrotSidecarExt
+			staged, err := vs.stageEcCopyFile(client, req.Collection, req.VolumeId, erasure_coding.BitrotSidecarExt, sidecarPath, true, throttler)
+			if err != nil {
 				return fmt.Errorf("VolumeEcShardsCopy volume %d: copy %s sidecar: %w", req.VolumeId, erasure_coding.BitrotSidecarExt, err)
+			}
+			if staged != "" {
+				defer os.Remove(staged)
+				stagedSidecars = append(stagedSidecars, sidecarPath)
+			}
+		}
+
+		for _, path := range stagedSidecars {
+			created.track(path)
+			if err := os.Rename(path+".copying", path); err != nil {
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: commit copied %s: %w", req.VolumeId, path, err)
+			}
+		}
+
+		for _, shardId := range stagedShards {
+			shardPath := dataBaseFileName + erasure_coding.ToExt(int(shardId))
+			// A mounted shard reads the file once reopened, so it is not ours to remove.
+			if _, mounted := location.FindEcShard(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId)); !mounted {
+				created.track(shardPath)
+			}
+			if err := os.Rename(shardPath+".copying", shardPath); err != nil {
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: commit copied %s: %w", req.VolumeId, shardPath, err)
+			}
+			// A mounted shard keeps reading the replaced inode until reopened.
+			if _, err := location.ReopenEcShard(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId)); err != nil {
+				if diskId := slices.Index(vs.store.Locations, location); diskId >= 0 {
+					vs.store.UnmountEcShardOnDisk(diskId, needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId))
+				}
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: reopen replaced shard %d: %w", req.VolumeId, shardId, err)
+			}
+		}
+
+		if stagedEcx != "" {
+			created.track(ecxPath)
+			if err := commitStagedEcx(stagedEcx, ecxPath); err != nil {
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: commit copied .ecx %s: %w", req.VolumeId, ecxPath, err)
 			}
 		}
 		return nil
 	}, vs.grpcDialOption, vs.guardedGrpcDialOption(req.SourceDataNode))
 	if err != nil {
+		created.remove(req.VolumeId)
 		return nil, fmt.Errorf("VolumeEcShardsCopy volume %d: %v", req.VolumeId, err)
 	}
 
 	return &volume_server_pb.VolumeEcShardsCopyResponse{}, nil
+}
+
+// ecCopyCreatedFiles records the files a VolumeEcShardsCopy adds to its disk,
+// so a failed copy removes exactly those and never one that was already there.
+type ecCopyCreatedFiles []string
+
+func (c *ecCopyCreatedFiles) track(path string) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		*c = append(*c, path)
+	}
+}
+
+func (c ecCopyCreatedFiles) remove(vid uint32) {
+	for _, path := range c {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			glog.Warningf("VolumeEcShardsCopy volume %d: remove %s after failed copy: %v", vid, path, err)
+		}
+	}
+}
+
+// stageEcxFile copies the source's .ecx beside ecxPath and returns the staged
+// path once it proves non-empty; the caller renames it into place. A source
+// holding a 0-byte index neither lands a stub nor truncates an .ecx this disk
+// already has.
+func (vs *VolumeServer) stageEcxFile(client volume_server_pb.VolumeServerClient, collection string, vid uint32, ecxPath string, throttler *util.WriteThrottler) (string, error) {
+	staging, err := vs.stageEcCopyFile(client, collection, vid, ".ecx", ecxPath, false, throttler)
+	if err != nil {
+		return "", err
+	}
+	// Stat failure must not silently pass: at mount time the operator would
+	// only see "no .ecx found" with no context about which step failed.
+	info, err := os.Stat(staging)
+	if err != nil {
+		return "", fmt.Errorf("VolumeEcShardsCopy volume %d: stat copied .ecx %s: %w", vid, staging, err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("VolumeEcShardsCopy volume %d: copied .ecx path %s is a directory", vid, staging)
+	}
+	if info.Size() == 0 {
+		if removeErr := os.Remove(staging); removeErr != nil && !os.IsNotExist(removeErr) {
+			glog.Warningf("VolumeEcShardsCopy volume %d: remove 0-byte .ecx %s: %v", vid, staging, removeErr)
+		}
+		return "", fmt.Errorf("VolumeEcShardsCopy volume %d: source .ecx is 0 bytes", vid)
+	}
+	return staging, nil
+}
+
+// stageEcCopyFile copies the source's ext file of vid to path+".copying" and
+// returns the staged path; the caller renames it into place. With
+// ignoreSourceFileNotFound, a source without the file stages nothing and
+// returns "".
+func (vs *VolumeServer) stageEcCopyFile(client volume_server_pb.VolumeServerClient, collection string, vid uint32, ext, path string, ignoreSourceFileNotFound bool, throttler *util.WriteThrottler) (string, error) {
+	stream, err := client.CopyFile(context.Background(), &volume_server_pb.CopyFileRequest{
+		VolumeId:                 vid,
+		Ext:                      ext,
+		CompactionRevision:       math.MaxUint32,
+		StopOffset:               math.MaxInt64,
+		Collection:               collection,
+		IsEcVolume:               true,
+		IgnoreSourceFileNotFound: ignoreSourceFileNotFound,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to start copying volume %d %s file: %v", vid, ext, err)
+	}
+	staging := path + ".copying"
+	modifiedTsNs, err := writeToFile(stream, staging, throttler, false, ignoreSourceFileNotFound, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to copy %s file: %v", path, err)
+	}
+	if ignoreSourceFileNotFound && modifiedTsNs == 0 {
+		return "", nil
+	}
+	return staging, nil
+}
+
+// commitStagedEcx installs a staged index at ecxPath. An index already there
+// is overwritten in place: mounted EcVolumes read it through open handles, which
+// a rename would leave on the replaced inode.
+func commitStagedEcx(staged, ecxPath string) error {
+	dst, err := os.OpenFile(ecxPath, os.O_WRONLY, 0)
+	if os.IsNotExist(err) {
+		return os.Rename(staged, ecxPath)
+	}
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+	src, err := os.Open(staged)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	n, err := io.Copy(dst, src)
+	if err != nil {
+		return err
+	}
+	if err := dst.Truncate(n); err != nil {
+		return err
+	}
+	return dst.Sync()
 }
 
 // copyEcjAndMerge folds the source peer's .ecj into the local journal of vid
@@ -616,6 +773,9 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 			// volume and wipe every EC artifact for it on every disk, not just the listed
 			// shards, so a remote node retains no stale generation a fresh copy collides with.
 			glog.V(0).Infof("ec volume %s full teardown", bName)
+			lifecycle := vs.store.EcLifecycleLock(needle.VolumeId(req.VolumeId))
+			lifecycle.Lock()
+			defer lifecycle.Unlock()
 			vs.store.UnloadEcVolume(needle.VolumeId(req.VolumeId))
 			for _, location := range vs.store.Locations {
 				dataBase := storage.VolumeFileName(location.Directory, req.Collection, int(req.VolumeId))
@@ -670,6 +830,12 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 	}
 
 	glog.V(0).Infof("ec volume %s shard delete %v", bName, req.ShardIds)
+
+	// A copy's staged shards are invisible to the last-shard check below, so
+	// wait for it rather than remove the index it is about to need.
+	lifecycle := vs.store.EcLifecycleLock(needle.VolumeId(req.VolumeId))
+	lifecycle.Lock()
+	defer lifecycle.Unlock()
 
 	// Pass 1: delete the requested shard files (and any now-orphaned per-disk bitrot
 	// sidecars) on every disk.

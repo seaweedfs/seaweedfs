@@ -57,18 +57,18 @@ type ecxOwnerInfo struct {
 // ecVolumes map (so heartbeat reporting carries the right DiskId per
 // shard), but point the EcVolume at the sibling disk's index files so it
 // can serve reads and route deletes through a real .ecx / .ecj.
-func (s *Store) reconcileEcShardsAcrossDisks() {
+func (s *Store) reconcileEcShardsAcrossDisks(only ...needle.VolumeId) {
 	if len(s.Locations) < 2 {
 		return
 	}
 
-	ecxOwners := s.indexEcxOwners()
+	ecxOwners := s.indexEcxOwners(only...)
 	if len(ecxOwners) == 0 {
 		return
 	}
 
 	for _, loc := range s.Locations {
-		orphans := loc.collectOrphanEcShards()
+		orphans := loc.collectOrphanEcShards(only...)
 		if len(orphans) == 0 {
 			continue
 		}
@@ -146,7 +146,7 @@ func (s *Store) findEcxIdxDirForVolume(collection string, vid needle.VolumeId) (
 // downstream loaders point NewEcVolume at the directory that really has
 // the file. The first owner found wins; duplicates across disks are
 // unusual but tolerated.
-func (s *Store) indexEcxOwners() map[ecKeyForReconcile]ecxOwnerInfo {
+func (s *Store) indexEcxOwners(only ...needle.VolumeId) map[ecKeyForReconcile]ecxOwnerInfo {
 	owners := make(map[ecKeyForReconcile]ecxOwnerInfo)
 	for _, loc := range s.Locations {
 		seen := make(map[string]bool, 2)
@@ -163,6 +163,11 @@ func (s *Store) indexEcxOwners() map[ecKeyForReconcile]ecxOwnerInfo {
 				if !strings.HasSuffix(name, ".ecx") {
 					return true
 				}
+				base := name[:len(name)-len(".ecx")]
+				collection, vid, err := parseCollectionVolumeId(base)
+				if err != nil || !ecVolumeSelected(vid, only) {
+					return true
+				}
 				// A 0-byte .ecx is a corrupt stub from a failed copy and
 				// not a credible owner — skip it so the scan keeps looking
 				// for a real index on a sibling disk. Without this, an
@@ -172,11 +177,6 @@ func (s *Store) indexEcxOwners() map[ecKeyForReconcile]ecxOwnerInfo {
 				// shards unloaded even when a valid index exists nearby.
 				info, statErr := entry.Info()
 				if statErr != nil || info.Size() == 0 {
-					return true
-				}
-				base := name[:len(name)-len(".ecx")]
-				collection, vid, err := parseCollectionVolumeId(base)
-				if err != nil {
 					return true
 				}
 				key := ecKeyForReconcile{collection: collection, vid: vid}
@@ -399,7 +399,7 @@ func (s *Store) indexDatOwners() map[ecKeyForReconcile]datOwnerInfo {
 //
 // Zero-byte shard files are ignored — loadAllEcShards already treats them
 // as cleanup-worthy noise and we want the same shape here.
-func (l *DiskLocation) collectOrphanEcShards() map[ecKeyForReconcile][]string {
+func (l *DiskLocation) collectOrphanEcShards(only ...needle.VolumeId) map[ecKeyForReconcile][]string {
 	orphans := make(map[ecKeyForReconcile][]string)
 	if err := eachDirEntry(l.Directory, func(entry os.DirEntry) bool {
 		if entry.IsDir() {
@@ -410,17 +410,17 @@ func (l *DiskLocation) collectOrphanEcShards() map[ecKeyForReconcile][]string {
 		if !re.MatchString(ext) {
 			return true
 		}
-		info, err := entry.Info()
-		if err != nil || info.Size() == 0 {
-			return true
-		}
 		shardId, err := strconv.ParseInt(ext[3:], 10, 64)
 		if err != nil || shardId < 0 || shardId > 255 {
 			return true
 		}
 		base := name[:len(name)-len(ext)]
 		collection, vid, err := parseCollectionVolumeId(base)
-		if err != nil {
+		if err != nil || !ecVolumeSelected(vid, only) {
+			return true
+		}
+		info, err := entry.Info()
+		if err != nil || info.Size() == 0 {
 			return true
 		}
 		if _, loaded := l.FindEcShard(vid, erasure_coding.ShardId(shardId)); loaded {

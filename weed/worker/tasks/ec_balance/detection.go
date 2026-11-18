@@ -172,6 +172,7 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config, all
 		vid        uint32
 	}
 	volRatios := make(map[volRatioKey][2]int)
+	emptyIndex := emptyIndexEcVolumes(topoInfo)
 
 	// Normalize the disk-type filter: "hdd" (and the default "") map to the
 	// HardDriveType, which the topology reports under the empty-string key. Keep a
@@ -288,6 +289,9 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config, all
 						if !allowedCollections.Matches(eci.Collection) {
 							continue
 						}
+						if emptyIndex[ecVolumeKey{eci.Collection, eci.Id}] {
+							continue
+						}
 						node.AddShards(eci.Id, eci.Collection, eci.DiskId, erasure_coding.ShardBits(eci.EcIndexBits))
 						if d, p := ecbalancer.VolumeShardRatio(eci); d > 0 || p > 0 {
 							volRatios[volRatioKey{eci.Collection, eci.Id}] = [2]int{d, p}
@@ -305,6 +309,40 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config, all
 		return r[0], r[1]
 	}
 	return topo, nodeCount, volumeRatio
+}
+
+// ecVolumeKey names an EC volume: ids repeat across collections.
+type ecVolumeKey struct {
+	collection string
+	vid        uint32
+}
+
+// emptyIndexEcVolumes are the EC volumes no holder reports a needle for, i.e.
+// every .ecx is empty. A shard copy refuses a 0-byte .ecx, so a move of one
+// can only fail, every detection cycle; there is no data in it to balance.
+// Their shards still count toward disk occupancy.
+func emptyIndexEcVolumes(topoInfo *master_pb.TopologyInfo) map[ecVolumeKey]bool {
+	empty := make(map[ecVolumeKey]bool)
+	for _, dc := range topoInfo.GetDataCenterInfos() {
+		for _, rack := range dc.GetRackInfos() {
+			for _, dn := range rack.GetDataNodeInfos() {
+				for _, diskInfo := range dn.GetDiskInfos() {
+					for _, eci := range diskInfo.GetEcShardInfos() {
+						k := ecVolumeKey{eci.Collection, eci.Id}
+						if isEmpty, seen := empty[k]; !seen || isEmpty {
+							empty[k] = eci.FileCount == 0
+						}
+					}
+				}
+			}
+		}
+	}
+	for k, isEmpty := range empty {
+		if !isEmpty {
+			delete(empty, k)
+		}
+	}
+	return empty
 }
 
 // resolveECRatio returns the (dataShards, parityShards) for a collection from the
