@@ -420,6 +420,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	}
 
 	fs.filer.LoadFilerConf()
+	fs.filer.LoadNotificationWebhooks()
 
 	fs.filer.LoadRemoteStorageConfAndMapping()
 

@@ -70,6 +70,12 @@ sub_url = "rabbit://myqueue"
 # BEST FOR: Low to moderate traffic (< 100 events/second sustained)
 # FOR HIGH TRAFFIC: Consider using Kafka, SQS, or pull-based event logs instead
 # Documentation: https://github.com/seaweedfs/seaweedfs/wiki/Filer-Notification-Webhook
+#
+# Webhook targets edited in the admin UI (stored in the filer at
+# /etc/seaweedfs/notification_webhooks.json) always run and apply without a
+# filer restart, whether or not this section is enabled. They are sent after
+# the notification queue configured in this file, so a saturated target there
+# also delays them.
 enabled = false
 endpoint = "https://your-server.com/webhook"       # required: HTTP endpoint URL
 bearer_token = ""                                  # optional: bearer token for authentication

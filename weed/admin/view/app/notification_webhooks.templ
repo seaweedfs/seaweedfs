@@ -1,0 +1,283 @@
+package app
+
+import (
+    "strings"
+    "github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ NotificationWebhooks(data dash.NotificationWebhooksData) {
+    <div class="container-fluid">
+        <div class="d-sm-flex align-items-center justify-content-between mb-4">
+            <div>
+                <h1 class="h3 mb-0 text-gray-800">
+                    <i class="bi bi-broadcast me-2"></i>Webhooks
+                </h1>
+                <p class="mb-0 text-muted">Send filer events to HTTP endpoints, filtered by path and event type</p>
+            </div>
+            <button type="button" class="btn btn-primary" onclick="openWebhookModal()">
+                <i class="bi bi-plus me-1"></i>Add Webhook
+            </button>
+        </div>
+
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle me-1"></i>
+            Targets are stored in the filer at <code>{ data.ConfigPath }</code> and apply to all filers without a restart.
+        </div>
+
+        <div class="card shadow mb-4">
+            <div class="card-body">
+                if len(data.Webhooks) == 0 {
+                    <div class="text-center py-5 text-muted">
+                        <i class="bi bi-broadcast icon-3x mb-3"></i>
+                        <p>No webhook targets yet.</p>
+                    </div>
+                } else {
+                    <div class="table-responsive">
+                        <table class="table table-bordered table-hover" id="webhooksTable" width="100%" cellspacing="0">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Status</th>
+                                    <th>Endpoint</th>
+                                    <th>Events</th>
+                                    <th>Path Prefixes</th>
+                                    <th>Token</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                for _, hook := range data.Webhooks {
+                                    <tr>
+                                        <td><strong>{ hook.Name }</strong></td>
+                                        <td>
+                                            if hook.Enabled {
+                                                <span class="badge bg-success">Enabled</span>
+                                            } else {
+                                                <span class="badge bg-secondary">Disabled</span>
+                                            }
+                                        </td>
+                                        <td><code>{ hook.Endpoint }</code></td>
+                                        <td>{ webhookFilterLabel(hook.EventTypes) }</td>
+                                        <td>{ webhookFilterLabel(hook.PathPrefixes) }</td>
+                                        <td>
+                                            if hook.HasBearerToken {
+                                                <i class="bi bi-key text-success" title="Bearer token set"></i>
+                                            } else {
+                                                <span class="text-muted">-</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            <div class="btn-group btn-group-sm">
+                                                <button type="button" class="btn btn-outline-primary" title="Edit" data-name={ hook.Name } onclick="editWebhook(this.dataset.name)">
+                                                    <i class="bi bi-pencil"></i>
+                                                </button>
+                                                <button type="button" class="btn btn-outline-danger" title="Delete" data-name={ hook.Name } onclick="deleteWebhook(this.dataset.name)">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="webhookModal" tabindex="-1" aria-labelledby="webhookModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="webhookModalLabel">Add Webhook</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="webhookForm" onsubmit="saveWebhook(); return false;">
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <label for="webhookName" class="form-label">Name</label>
+                                <input type="text" class="form-control" id="webhookName" required pattern="[A-Za-z0-9_\-]{1,64}" placeholder="ingest"/>
+                            </div>
+                            <div class="col-md-8 mb-3">
+                                <label for="webhookEndpoint" class="form-label">Endpoint</label>
+                                <input type="url" class="form-control" id="webhookEndpoint" required placeholder="https://example.com/hook"/>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="webhookToken" class="form-label">Bearer Token</label>
+                            <input type="password" class="form-control" id="webhookToken" autocomplete="new-password"/>
+                            <div class="form-check mt-1 d-none" id="webhookClearTokenGroup">
+                                <input class="form-check-input" type="checkbox" id="webhookClearToken"/>
+                                <label class="form-check-label" for="webhookClearToken">Remove the stored token</label>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Event Types</label>
+                            <div>
+                                for _, et := range []string{"create", "update", "delete", "rename"} {
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input webhook-event" type="checkbox" id={ "webhookEvent-" + et } value={ et }/>
+                                        <label class="form-check-label" for={ "webhookEvent-" + et }>{ et }</label>
+                                    </div>
+                                }
+                            </div>
+                            <div class="form-text">None selected sends every event type.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="webhookPaths" class="form-label">Path Prefixes</label>
+                            <textarea class="form-control" id="webhookPaths" rows="3" placeholder="/buckets/uploads"></textarea>
+                            <div class="form-text">One per line. Empty sends events for every path.</div>
+                        </div>
+                        <details class="mb-3">
+                            <summary>Delivery settings</summary>
+                            <div class="row mt-2">
+                                @webhookNumberInput("webhookTimeout", "Timeout (s)", "10")
+                                @webhookNumberInput("webhookRetries", "Max Retries", "3")
+                                @webhookNumberInput("webhookBackoff", "Backoff (s)", "3")
+                                @webhookNumberInput("webhookMaxBackoff", "Max Backoff (s)", "30")
+                                @webhookNumberInput("webhookWorkers", "Workers", "5")
+                                @webhookNumberInput("webhookBuffer", "Buffer Size", "10000")
+                            </div>
+                        </details>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="webhookEnabled" checked/>
+                            <label class="form-check-label" for="webhookEnabled">Enabled</label>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary" form="webhookForm">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let editingWebhook = '';
+
+        function webhookRequest(path, method, body) {
+            const headers = { 'Content-Type': 'application/json' };
+            const csrf = document.querySelector('meta[name="csrf-token"]');
+            if (csrf && csrf.content) {
+                headers['X-CSRF-Token'] = csrf.content;
+            }
+            return fetch(basePath('/api/notifications/webhooks' + path), {
+                method: method,
+                headers: headers,
+                body: body ? JSON.stringify(body) : undefined
+            });
+        }
+
+        async function webhookResult(response, okMessage) {
+            if (response.ok) {
+                showAlert(okMessage, 'success');
+                setTimeout(() => window.location.reload(), 800);
+                return;
+            }
+            const error = await response.json().catch(() => ({}));
+            showAlert(error.error || ('Request failed: ' + response.status), 'error');
+        }
+
+        function fillWebhookForm(hook) {
+            document.getElementById('webhookName').value = hook.name || '';
+            document.getElementById('webhookName').disabled = !!editingWebhook;
+            document.getElementById('webhookEndpoint').value = hook.endpoint || '';
+            document.getElementById('webhookToken').value = '';
+            document.getElementById('webhookToken').placeholder = hook.has_bearer_token ? 'Leave empty to keep the stored token' : '';
+            document.getElementById('webhookClearToken').checked = false;
+            document.getElementById('webhookClearTokenGroup').classList.toggle('d-none', !hook.has_bearer_token);
+            document.querySelectorAll('.webhook-event').forEach(cb => {
+                cb.checked = (hook.event_types || []).includes(cb.value);
+            });
+            document.getElementById('webhookPaths').value = (hook.path_prefixes || []).join('\n');
+            document.getElementById('webhookTimeout').value = hook.timeout_seconds || '';
+            document.getElementById('webhookRetries').value = hook.max_retries || '';
+            document.getElementById('webhookBackoff').value = hook.backoff_seconds || '';
+            document.getElementById('webhookMaxBackoff').value = hook.max_backoff_seconds || '';
+            document.getElementById('webhookWorkers').value = hook.workers || '';
+            document.getElementById('webhookBuffer').value = hook.buffer_size || '';
+            document.getElementById('webhookEnabled').checked = hook.enabled !== false;
+            document.getElementById('webhookModalLabel').textContent = editingWebhook ? 'Edit Webhook: ' + editingWebhook : 'Add Webhook';
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('webhookModal')).show();
+        }
+
+        function openWebhookModal() {
+            editingWebhook = '';
+            fillWebhookForm({ enabled: true });
+        }
+
+        async function editWebhook(name) {
+            try {
+                const response = await webhookRequest('', 'GET');
+                const data = await response.json();
+                const hook = (data.webhooks || []).find(h => h.name === name);
+                if (!hook) {
+                    showAlert('Webhook target not found', 'error');
+                    return;
+                }
+                editingWebhook = name;
+                fillWebhookForm(hook);
+            } catch (error) {
+                showAlert('Failed to load webhook target: ' + error.message, 'error');
+            }
+        }
+
+        function webhookNumber(id) {
+            const value = parseInt(document.getElementById(id).value, 10);
+            return isNaN(value) ? 0 : value;
+        }
+
+        async function saveWebhook() {
+            const body = {
+                name: document.getElementById('webhookName').value.trim(),
+                enabled: document.getElementById('webhookEnabled').checked,
+                endpoint: document.getElementById('webhookEndpoint').value.trim(),
+                bearer_token: document.getElementById('webhookToken').value,
+                clear_bearer_token: document.getElementById('webhookClearToken').checked,
+                event_types: Array.from(document.querySelectorAll('.webhook-event:checked')).map(cb => cb.value),
+                path_prefixes: document.getElementById('webhookPaths').value.split('\n').map(p => p.trim()).filter(p => p),
+                timeout_seconds: webhookNumber('webhookTimeout'),
+                max_retries: webhookNumber('webhookRetries'),
+                backoff_seconds: webhookNumber('webhookBackoff'),
+                max_backoff_seconds: webhookNumber('webhookMaxBackoff'),
+                workers: webhookNumber('webhookWorkers'),
+                buffer_size: webhookNumber('webhookBuffer')
+            };
+            try {
+                const response = editingWebhook
+                    ? await webhookRequest('/' + encodeURIComponent(editingWebhook), 'PUT', body)
+                    : await webhookRequest('', 'POST', body);
+                await webhookResult(response, 'Webhook target saved');
+            } catch (error) {
+                showAlert('Failed to save webhook target: ' + error.message, 'error');
+            }
+        }
+
+        function deleteWebhook(name) {
+            showDeleteConfirm(name, async function() {
+                try {
+                    await webhookResult(await webhookRequest('/' + encodeURIComponent(name), 'DELETE'), 'Webhook target deleted');
+                } catch (error) {
+                    showAlert('Failed to delete webhook target: ' + error.message, 'error');
+                }
+            }, 'Are you sure you want to delete this webhook target?');
+        }
+    </script>
+}
+
+templ webhookNumberInput(id string, label string, placeholder string) {
+    <div class="col-md-4 mb-2">
+        <label for={ id } class="form-label">{ label }</label>
+        <input type="number" min="0" class="form-control" id={ id } placeholder={ placeholder }/>
+    </div>
+}
+
+func webhookFilterLabel(values []string) string {
+    if len(values) == 0 {
+        return "all"
+    }
+    return strings.Join(values, ", ")
+}

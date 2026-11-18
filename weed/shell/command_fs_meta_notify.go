@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/notification"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -54,6 +55,9 @@ func (c *commandFsMetaNotify) Do(args []string, commandEnv *CommandEnv, writer i
 
 	err = filer_pb.TraverseBfs(context.Background(), commandEnv, util.FullPath(path), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 
+		if string(parentPath.Child(entry.Name)) == filer.NotificationWebhooksConfPath {
+			return nil
+		}
 		if entry.IsDirectory {
 			dirCount++
 		} else {

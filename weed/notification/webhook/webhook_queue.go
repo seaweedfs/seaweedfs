@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ThreeDotsLabs/watermill"
@@ -40,9 +41,9 @@ type target struct {
 
 func newTarget(name string, cfg *config) (*target, error) {
 	t := &target{
-		name:   name,
-		config: cfg,
-		filter: newFilter(cfg),
+		name:    name,
+		config:  cfg,
+		filter:  newFilter(cfg),
 		sem:     make(chan struct{}, cfg.nWorkers),
 		inbox:   make(chan *message.Message, cfg.bufferSize),
 		pending: make(chan struct{}, cfg.bufferSize),
@@ -74,9 +75,17 @@ type Queue struct {
 	queueChannel *gochannel.GoChannel
 	targets      []*target
 
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx     context.Context
+	cancel  context.CancelFunc
+	stopped chan struct{}
+	// managed queues are replaced on reload and stopped with Close
+	managed bool
+	closing atomic.Bool
+	senders atomic.Int64
 }
+
+// ErrQueueClosed is returned by SendMessage once Close has started.
+var ErrQueueClosed = errors.New("webhook queue closed")
 
 func (w *Queue) GetName() string {
 	return queueName
@@ -138,6 +147,11 @@ func buildTargets(configuration util.Configuration, prefix string) ([]*target, e
 }
 
 func (w *Queue) SendMessage(key string, msg proto.Message) error {
+	w.senders.Add(1)
+	defer w.senders.Add(-1)
+	if w.closing.Load() {
+		return ErrQueueClosed
+	}
 	eventNotification, ok := msg.(*filer_pb.EventNotification)
 	if !ok {
 		return nil
@@ -225,6 +239,7 @@ func (w *Queue) Initialize(configuration util.Configuration, prefix string) erro
 
 func (w *Queue) initialize(targets []*target) error {
 	w.ctx, w.cancel = context.WithCancel(context.Background())
+	w.stopped = make(chan struct{})
 	w.targets = targets
 
 	if err := w.setupWatermillQueue(targets); err != nil {
@@ -281,7 +296,9 @@ func (w *Queue) setupWatermillQueue(targets []*target) error {
 			return fmt.Errorf("failed to create poison queue: %w", err)
 		}
 
-		router.AddPlugin(plugin.SignalsHandler)
+		if !w.managed {
+			router.AddPlugin(plugin.SignalsHandler)
+		}
 		// outermost: the reservation SendMessage took releases once the whole
 		// chain (retries, dead letter) is done, bounding in-flight deliveries.
 		// poison wraps retry so the delivery is retried before dead-lettering.
@@ -329,9 +346,35 @@ func (w *Queue) setupWatermillQueue(targets []*target) error {
 	go func() {
 		wg.Wait()
 		w.cancel()
+		close(w.stopped)
 	}()
 
 	return nil
+}
+
+// Close stops the queue once every sender already inside SendMessage has
+// returned and every target has delivered or dead-lettered what it holds, or
+// when drainTimeout passes.
+func (w *Queue) Close(drainTimeout time.Duration) {
+	w.closing.Store(true)
+	deadline := time.Now().Add(drainTimeout)
+	for (w.senders.Load() > 0 || !w.drained()) && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	w.cancel()
+	<-w.stopped
+	if err := w.queueChannel.Close(); err != nil {
+		glog.Warningf("close webhook queue: %v", err)
+	}
+}
+
+func (w *Queue) drained() bool {
+	for _, t := range w.targets {
+		if len(t.pending) > 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // forwardTargetMessages publishes each queued event to the target's topic in

@@ -12,6 +12,7 @@ import (
 // onMetadataChangeEvent is triggered after filer processed change events from local or remote filers
 func (f *Filer) onMetadataChangeEvent(event *filer_pb.SubscribeMetadataResponse) {
 	f.maybeReloadFilerConfiguration(event)
+	f.maybeReloadNotificationWebhooks(event)
 	f.maybeReloadRemoteStorageConfigurationAndMapping(event)
 	f.onBucketEvents(event)
 	f.onEmptyFolderCleanupEvents(event)
