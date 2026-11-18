@@ -57,11 +57,13 @@ type InodeEntry struct {
 // against changes to the names in this mount.
 type inodeLinks struct {
 	extra    []util.FullPath
+	id       string
 	revision uint64
 }
 
 type hardLinkBinding struct {
 	links    *inodeLinks
+	id       string
 	revision uint64
 }
 
@@ -103,6 +105,9 @@ func (ie *InodeEntry) appendPaths(dst []util.FullPath) []util.FullPath {
 func (ie *InodeEntry) addPath(p util.FullPath) {
 	if ie.path == "" {
 		ie.path = p
+		if ie.links != nil {
+			ie.links.revision++
+		}
 		return
 	}
 	if ie.links == nil {
@@ -110,6 +115,18 @@ func (ie *InodeEntry) addPath(p util.FullPath) {
 		return
 	}
 	ie.setExtraPaths(append(ie.links.extra, p))
+}
+
+func (ie *InodeEntry) rememberHardLinkID(id string) {
+	if id == "" {
+		return
+	}
+	if ie.links == nil {
+		ie.links = &inodeLinks{id: id}
+	} else if ie.links.id == "" {
+		ie.links.id = id
+		ie.links.revision++
+	}
 }
 
 func (ie *InodeEntry) replacePath(from, to util.FullPath) {
@@ -132,7 +149,7 @@ func (ie *InodeEntry) replacePath(from, to util.FullPath) {
 }
 
 func (ie *InodeEntry) setExtraPaths(extra []util.FullPath) {
-	if len(extra) == 0 {
+	if len(extra) == 0 && ie.links.id == "" {
 		ie.links = nil
 		return
 	}
@@ -152,6 +169,11 @@ func (ie *InodeEntry) removeOnePath(p util.FullPath) bool {
 			return true
 		}
 		extra := ie.links.extra
+		if len(extra) == 0 {
+			ie.path = ""
+			ie.links.revision++
+			return true
+		}
 		ie.path = extra[0]
 		extra[0] = ""
 		ie.setExtraPaths(extra[1:])
@@ -202,19 +224,35 @@ func (i *InodeToPath) EnsurePath(path util.FullPath, isDirectory bool) bool {
 }
 
 func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory bool, isHardlink bool, possibleInode uint64, isLookup bool) uint64 {
+	return i.lookup(path, unixTime, isDirectory, isHardlink, "", possibleInode, isLookup)
+}
+
+// lookupEntry records the stable filer identity alongside the mount's node ID.
+func (i *InodeToPath) lookupEntry(path util.FullPath, unixTime int64, isDirectory bool, hardLinkID []byte, possibleInode uint64, isLookup bool) uint64 {
+	return i.lookup(path, unixTime, isDirectory, len(hardLinkID) > 0, string(hardLinkID), possibleInode, isLookup)
+}
+
+func (i *InodeToPath) lookup(path util.FullPath, unixTime int64, isDirectory bool, isHardlink bool, hardLinkID string, possibleInode uint64, isLookup bool) uint64 {
 	i.Lock()
 	defer i.Unlock()
 	inode, found := i.path2inode[path]
+	if found && (!isHardlink || hardLinkID != "") {
+		if entry := i.inode2path[inode]; entry.hasDifferentHardLinkID(hardLinkID) {
+			i.removePathLocked(path, nil)
+			found = false
+		}
+	}
 	if !found {
 		if possibleInode == 0 {
 			inode = path.AsInode(unixTime)
 		} else {
 			inode = possibleInode
 		}
-		if !isHardlink {
-			for _, found := i.inode2path[inode]; found; inode++ {
-				_, found = i.inode2path[inode+1]
+		for current := i.inode2path[inode]; current != nil; current = i.inode2path[inode] {
+			if isHardlink && (hardLinkID == "" || !current.hasDifferentHardLinkID(hardLinkID)) {
+				break
 			}
+			inode++
 		}
 	}
 	i.path2inode[path] = inode
@@ -241,7 +279,12 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 		}
 	}
 
+	i.inode2path[inode].rememberHardLinkID(hardLinkID)
 	return inode
+}
+
+func (ie *InodeEntry) hasDifferentHardLinkID(id string) bool {
+	return ie != nil && ie.links != nil && ie.links.id != "" && ie.links.id != id
 }
 
 // IncrementNlookup takes one more reference on an inode already in the table,
@@ -608,9 +651,12 @@ func (i *InodeToPath) CollectEvictableDirs(now time.Time, idle time.Duration) []
 	return dirs
 }
 
-func (i *InodeToPath) AddPath(inode uint64, path util.FullPath) {
+func (i *InodeToPath) AddPath(inode uint64, path util.FullPath, hardLinkID []byte) {
 	i.Lock()
 	defer i.Unlock()
+	if previous, found := i.path2inode[path]; found && previous != inode {
+		i.removePathLocked(path, nil)
+	}
 	i.path2inode[path] = inode
 
 	ie, found := i.inode2path[inode]
@@ -623,6 +669,7 @@ func (i *InodeToPath) AddPath(inode uint64, path util.FullPath) {
 			nlookup: 1,
 		}
 	}
+	i.inode2path[inode].rememberHardLinkID(string(hardLinkID))
 }
 
 // RemovePath drops the name. onStillReferenced, if given, runs under the
@@ -636,24 +683,31 @@ func (i *InodeToPath) RemovePath(path util.FullPath, onStillReferenced func(inod
 	i.removePathLocked(path, onStillReferenced)
 }
 
-// snapshotHardLink snapshots a name with a known alternative on this mount.
-func (i *InodeToPath) snapshotHardLink(path util.FullPath) (hardLinkBinding, bool) {
+// snapshotInodePath returns the primary name and the hard-link binding, if any.
+func (i *InodeToPath) snapshotInodePath(inode uint64) (util.FullPath, hardLinkBinding) {
 	i.RLock()
 	defer i.RUnlock()
-	entry := i.inode2path[i.path2inode[path]]
-	if entry == nil || entry.links == nil {
-		return hardLinkBinding{}, false
+	entry := i.inode2path[inode]
+	if entry == nil || entry.path == "" {
+		return "", hardLinkBinding{}
 	}
-	return hardLinkBinding{links: entry.links, revision: entry.links.revision}, true
+	if entry.links == nil || entry.links.id == "" {
+		return entry.path, hardLinkBinding{}
+	}
+	return entry.path, hardLinkBinding{links: entry.links, id: entry.links.id, revision: entry.links.revision}
 }
 
-func (i *InodeToPath) removeHardLinkIfUnchanged(path util.FullPath, binding hardLinkBinding) {
+func (i *InodeToPath) validateHardLinkBinding(path util.FullPath, binding hardLinkBinding, stale bool) bool {
 	i.Lock()
 	defer i.Unlock()
 	entry := i.inode2path[i.path2inode[path]]
-	if entry != nil && entry.links != nil && entry.links == binding.links && entry.links.revision == binding.revision {
+	if entry == nil || entry.links == nil || entry.links != binding.links || entry.links.revision != binding.revision {
+		return false
+	}
+	if stale {
 		i.removePathLocked(path, nil)
 	}
+	return true
 }
 
 func (i *InodeToPath) removePathLocked(path util.FullPath, onStillReferenced func(inode uint64)) {

@@ -30,6 +30,7 @@ type hardLinkFiler struct {
 	failName    string
 	failLookups int
 	deleted     bool
+	onMissing   func(name string)
 }
 
 func (s *hardLinkFiler) resolve(name string) *filer_pb.Entry {
@@ -81,6 +82,9 @@ func (s *hardLinkFiler) LookupDirectoryEntry(ctx context.Context, r *filer_pb.Lo
 	}
 	entry := s.resolve(r.Name)
 	if entry == nil {
+		if s.onMissing != nil {
+			s.onMissing(r.Name)
+		}
 		return nil, status.Error(codes.NotFound, filer_pb.ErrNotFound.Error())
 	}
 	return &filer_pb.LookupDirectoryEntryResponse{Entry: entry}, nil

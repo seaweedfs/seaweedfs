@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // peerUnlink removes name on the filer the way another mount does and
@@ -183,16 +184,27 @@ func TestPeerUnlinkedAliasKeepsClosedInodeReadable(t *testing.T) {
 			fake.mu.Unlock()
 
 			peerUnlink(t, wfs, fake, "tmp")
+			requireClosedLinkOpensAt(t, wfs, inode, "/final")
 			if path, status := wfs.inodeToPath.GetPath(inode); status != fuse.OK || path != "/final" {
 				t.Fatalf("surviving inode resolved to %q (%v), want /final", path, status)
 			}
-			wfs.openMtimeCache = make(map[uint64][2]int64)
-			var opened fuse.OpenOut
-			if status := wfs.Open(nil, &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: inode}}, &opened); status != fuse.OK {
-				t.Fatalf("open survivor: %v", status)
-			}
-			wfs.ReleaseHandle(FileHandleId(opened.Fh))
 		})
+	}
+}
+
+func requireClosedLinkOpensAt(t *testing.T, wfs *WFS, inode uint64, want util.FullPath) {
+	t.Helper()
+	if wfs.openMtimeCache == nil {
+		wfs.openMtimeCache = make(map[uint64][2]int64)
+	}
+	var opened fuse.OpenOut
+	if status := wfs.Open(nil, &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: inode}}, &opened); status != fuse.OK {
+		t.Fatalf("open survivor: %v", status)
+	}
+	defer wfs.ReleaseHandle(FileHandleId(opened.Fh))
+	handle := wfs.GetHandle(FileHandleId(opened.Fh))
+	if path := handle.FullPath(); path != want {
+		t.Fatalf("opened %q, want %q", path, want)
 	}
 }
 
@@ -222,6 +234,7 @@ func TestPeerUnlinkedAliasLeavesRenamedSurvivor(t *testing.T) {
 	wfs.inodeToPath.MovePath("/final", "/tmp")
 
 	applyPeerUnlink(t, wfs, del)
+	requireClosedLinkOpensAt(t, wfs, inode, "/tmp")
 	if got, found := wfs.inodeToPath.GetInode("/tmp"); !found || got != inode {
 		t.Fatalf("renamed survivor inode = %d (%t), want %d", got, found, inode)
 	}
@@ -230,17 +243,82 @@ func TestPeerUnlinkedAliasLeavesRenamedSurvivor(t *testing.T) {
 func TestPeerUnlinkedAliasLeavesBindingChangedDuringLookup(t *testing.T) {
 	table := NewInodeToPath("/", 60)
 	inode := table.Lookup("/a", 1, false, false, 42, true)
-	table.AddPath(inode, "/b")
-	binding, tracked := table.snapshotHardLink("/a")
-	if !tracked {
+	table.AddPath(inode, "/b", []byte("same-file"))
+	_, binding := table.snapshotInodePath(inode)
+	if binding.links == nil {
 		t.Fatal("hard-link name is not tracked")
 	}
 
 	// The name came back to the same inode while the filer check was pending.
 	table.MovePath("/a", "/tmp")
 	table.MovePath("/tmp", "/a")
-	table.removeHardLinkIfUnchanged("/a", binding)
+	if table.validateHardLinkBinding("/a", binding, true) {
+		t.Fatal("stale lookup accepted after the name was restored")
+	}
 	if got, found := table.GetInode("/a"); !found || got != inode {
 		t.Fatalf("new binding inode = %d (%t), want %d", got, found, inode)
+	}
+}
+
+func TestPeerUnlinkedAliasOpensOriginalAfterNameReused(t *testing.T) {
+	wfs, fake, fh, inode := openLinkTestFile(t)
+	linkInRoot(t, wfs, inode, "final")
+	wfs.fhMap.ReleaseByHandle(fh.fh)
+	del := peerUnlinkEvent(t, fake, "tmp")
+
+	fake.mu.Lock()
+	fake.store(&filer_pb.Entry{Name: "tmp", Attributes: &filer_pb.FuseAttributes{Inode: 43, FileMode: 0o600}})
+	fake.mu.Unlock()
+	applyPeerUnlink(t, wfs, del)
+
+	requireClosedLinkOpensAt(t, wfs, inode, "/final")
+	var replacement fuse.EntryOut
+	if status := wfs.Lookup(nil, &fuse.InHeader{NodeId: 1}, "tmp", &replacement); status != fuse.OK {
+		t.Fatalf("lookup replacement: %v", status)
+	}
+	if replacement.NodeId == inode {
+		t.Fatal("replacement is still routed to the old inode")
+	}
+}
+
+func TestPeerUnlinkedAliasRetriesAfterFilerError(t *testing.T) {
+	wfs, fake, fh, inode := openLinkTestFile(t)
+	linkInRoot(t, wfs, inode, "final")
+	wfs.fhMap.ReleaseByHandle(fh.fh)
+	fake.mu.Lock()
+	fake.failName, fake.failLookups = "tmp", 100
+	fake.mu.Unlock()
+	peerUnlink(t, wfs, fake, "tmp")
+	if _, _, status := wfs.AcquireHandle(context.Background(), inode, 0, 0, 0); status != fuse.EIO {
+		t.Fatalf("open while filer lookup fails: %v, want EIO", status)
+	}
+
+	fake.mu.Lock()
+	fake.failLookups = 0
+	fake.mu.Unlock()
+	requireClosedLinkOpensAt(t, wfs, inode, "/final")
+}
+
+func TestPeerUnlinkedAliasRetriesAfterDiscoveringAnotherName(t *testing.T) {
+	wfs, fake, fh, inode := openLinkTestFile(t)
+	linkInRoot(t, wfs, inode, "final")
+	linkInRoot(t, wfs, inode, "other")
+	wfs.fhMap.ReleaseByHandle(fh.fh)
+	wfs.inodeToPath.RemovePath("/other", nil)
+	peerUnlink(t, wfs, fake, "tmp")
+
+	fake.mu.Lock()
+	hardLinkID := fake.resolve("other").GetHardLinkId()
+	fake.onMissing = func(name string) {
+		if name == "tmp" {
+			wfs.inodeToPath.AddPath(inode, "/other", hardLinkID)
+			fake.onMissing = nil
+		}
+	}
+	fake.mu.Unlock()
+
+	requireClosedLinkOpensAt(t, wfs, inode, "/final")
+	if got, found := wfs.inodeToPath.GetInode("/other"); !found || got != inode {
+		t.Fatalf("discovered alias inode = %d (%t), want %d", got, found, inode)
 	}
 }

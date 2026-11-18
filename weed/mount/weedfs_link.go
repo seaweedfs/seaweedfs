@@ -42,12 +42,6 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	if code != fuse.OK {
 		return
 	}
-	oldEntryPath, code := wfs.inodeToPath.GetPath(in.Oldnodeid)
-	if code != fuse.OK {
-		return
-	}
-	oldParentPath, _ := oldEntryPath.DirAndName()
-
 	// The new link has to be reported with the node id the kernel already holds
 	// for the source, which is what makes the two names share one file.
 	// oldEntry.Attributes.Inode is not a substitute. It is a mount-runtime
@@ -65,10 +59,11 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	if !wfs.waitForPendingAsyncFlush(ctx, sourceInode) {
 		return fuse.EINTR
 	}
-	oldEntry, _, status := wfs.maybeLoadEntry(ctx, oldEntryPath)
+	oldEntryPath, oldEntry, _, status := wfs.loadEntryByInode(ctx, sourceInode)
 	if status != fuse.OK {
 		return status
 	}
+	oldParentPath, _ := oldEntryPath.DirAndName()
 
 	// hardlink is not allowed in WORM mode
 	if wormEnforced, _ := wfs.wormEnforcedForEntry(oldEntryPath, oldEntry); wormEnforced {
@@ -209,7 +204,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		return fuse.EIO
 	}
 
-	wfs.inodeToPath.AddPath(sourceInode, newEntryPath)
+	wfs.inodeToPath.AddPath(sourceInode, newEntryPath, request.Entry.HardLinkId)
 	if fh, found := wfs.fhMap.FindFileHandle(sourceInode); found {
 		fh.adoptLinkChange(linkedEntry, linkVersionTsNs, linkSignature)
 	}

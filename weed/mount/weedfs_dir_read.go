@@ -235,7 +235,7 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 		}
 		var inode uint64
 		if takesLookupRef {
-			inode = wfs.inodeToPath.Lookup(childPath, entry.Crtime.Unix(), entry.IsDirectory(), len(entry.HardLinkId) > 0, entry.Inode, false)
+			inode = wfs.inodeToPath.lookupEntry(childPath, entry.Crtime.Unix(), entry.IsDirectory(), entry.HardLinkId, entry.Inode, false)
 		} else {
 			inode = wfs.inodeToPath.InodeForListing(childPath, entry.Crtime.Unix(), entry.Inode)
 		}
@@ -261,7 +261,7 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 			// Taken only once the entry is really in the sink, so one that did not
 			// fit leaves no reference behind. The fallback covers a racing Forget.
 			if takesLookupRef && !wfs.inodeToPath.IncrementNlookup(inode) {
-				wfs.inodeToPath.Lookup(childPath, entry.Crtime.Unix(), entry.IsDirectory(), len(entry.HardLinkId) > 0, entry.Inode, true)
+				wfs.inodeToPath.lookupEntry(childPath, entry.Crtime.Unix(), entry.IsDirectory(), entry.HardLinkId, entry.Inode, true)
 			}
 		}
 		return true

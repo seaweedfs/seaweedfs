@@ -40,7 +40,7 @@ func TestListXAttrCanceledWhileFilerStalled(t *testing.T) {
 	wfs.inodeToPath.EnsurePath(util.FullPath("/dir"), true)
 	filePath := util.FullPath("/dir/f")
 	inode := wfs.inodeToPath.AllocateInode(filePath, time.Now().Unix())
-	wfs.inodeToPath.AddPath(inode, filePath)
+	wfs.inodeToPath.AddPath(inode, filePath, nil)
 
 	cancel := make(chan struct{})
 	done := make(chan fuse.Status, 1)
@@ -77,7 +77,7 @@ func TestListXAttrTimesOutWhileFilerStalled(t *testing.T) {
 	wfs.inodeToPath.EnsurePath(util.FullPath("/dir"), true)
 	filePath := util.FullPath("/dir/f")
 	inode := wfs.inodeToPath.AllocateInode(filePath, time.Now().Unix())
-	wfs.inodeToPath.AddPath(inode, filePath)
+	wfs.inodeToPath.AddPath(inode, filePath, nil)
 
 	done := make(chan fuse.Status, 1)
 	go func() {

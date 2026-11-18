@@ -34,7 +34,7 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		return status
 	}
 
-	inode := wfs.inodeToPath.Lookup(fullFilePath, localEntry.Crtime.Unix(), localEntry.IsDirectory(), len(localEntry.HardLinkId) > 0, localEntry.Inode, true)
+	inode := wfs.inodeToPath.lookupEntry(fullFilePath, localEntry.Crtime.Unix(), localEntry.IsDirectory(), localEntry.HardLinkId, localEntry.Inode, true)
 
 	if fh, found := wfs.fhMap.FindFileHandle(inode); found {
 		fh.entryLock.RLock()

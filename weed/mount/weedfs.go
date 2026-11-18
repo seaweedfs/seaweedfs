@@ -547,15 +547,47 @@ func (wfs *WFS) maybeReadEntry(ctx context.Context, inode uint64) (path util.Ful
 		})
 		return path, fh, entry, fuse.OK
 	}
-	path, status = wfs.inodeToPath.GetPath(inode)
-	if status != fuse.OK {
+	path, entry, _, status = wfs.loadEntryByInode(ctx, inode)
+	if path == "" && status == fuse.ENOENT {
 		if entry = wfs.removedDirEntry(inode); entry != nil {
 			return "", nil, entry, fuse.OK
 		}
-		return
 	}
-	entry, _, status = wfs.maybeLoadEntry(ctx, path)
 	return
+}
+
+// loadEntryByInode checks the stable hard-link identity before returning an
+// entry by node ID. A missing or reused primary name is repaired on demand,
+// so a transient filer error can be retried by the next inode operation.
+func (wfs *WFS) loadEntryByInode(ctx context.Context, inode uint64) (util.FullPath, *filer_pb.Entry, entryVersion, fuse.Status) {
+	for ctx.Err() == nil {
+		path, binding := wfs.inodeToPath.snapshotInodePath(inode)
+		if path == "" {
+			return "", nil, entryVersion{}, fuse.ENOENT
+		}
+		entry, version, status := wfs.maybeLoadEntry(ctx, path)
+		if binding.id == "" || (status == fuse.OK && string(entry.GetHardLinkId()) == binding.id) {
+			return path, entry, version, status
+		}
+		if status != fuse.OK && status != fuse.ENOENT {
+			return path, nil, entryVersion{}, status
+		}
+
+		// Bypass cached entries before changing a binding. A name may have
+		// been restored or replaced while a peer's delete was in flight.
+		entry, version, err := wfs.lookupFilerEntry(ctx, path)
+		if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+			if ctx.Err() != nil {
+				break
+			}
+			return path, nil, entryVersion{}, fuse.EIO
+		}
+		stale := err != nil || string(entry.GetHardLinkId()) != binding.id
+		if wfs.inodeToPath.validateHardLinkBinding(path, binding, stale) && !stale {
+			return path, entry, version, fuse.OK
+		}
+	}
+	return "", nil, entryVersion{}, fuse.EINTR
 }
 
 // isLocalOnlyEntry reports whether entry holds local-only state not yet on the
@@ -902,32 +934,14 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 	// on addressing a moved inode by nodeid whether or not anything holds it
 	// open.
 	handled, replacedInode := wfs.invalidateOpenFileHandle(invalidation)
-	if !handled {
-		if invalidation.RenamedTo != "" {
-			_, replacedInode = wfs.inodeToPath.MovePath(invalidation.Path, invalidation.RenamedTo)
-		} else if len(invalidation.LiveHardLinkId) > 0 {
-			wfs.pruneClosedHardLink(invalidation.Path)
-		}
+	if !handled && invalidation.RenamedTo != "" {
+		_, replacedInode = wfs.inodeToPath.MovePath(invalidation.Path, invalidation.RenamedTo)
 	}
 	// A rename over an existing file destroys it, so its handle must not flush
 	// the old content back over what took the name. Marked from here, holding
 	// no other handle's lock.
 	if replacedInode != 0 {
 		wfs.markHandleDeleted(replacedInode)
-	}
-}
-
-// A delete event can arrive after the name has been reused. Confirm the
-// missing name at the filer and preserve any binding changed while it replied.
-func (wfs *WFS) pruneClosedHardLink(path util.FullPath) {
-	binding, tracked := wfs.inodeToPath.snapshotHardLink(path)
-	if !tracked {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), wfs.filerRPCWait())
-	defer cancel()
-	if _, _, err := wfs.lookupOwnerEntry(ctx, path); errors.Is(err, filer_pb.ErrNotFound) {
-		wfs.inodeToPath.removeHardLinkIfUnchanged(path, binding)
 	}
 }
 

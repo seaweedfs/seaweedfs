@@ -157,7 +157,7 @@ func (wfs *WFS) openExistingForCreate(ctx context.Context, in *fuse.CreateIn, en
 			entryFullPath, entry.Attributes.Uid, entry.Attributes.Gid, entry.Attributes.FileMode)
 		return fuse.Status(syscall.EEXIST)
 	}
-	inode := wfs.inodeToPath.Lookup(entryFullPath, entry.Attributes.Crtime, false, len(entry.HardLinkId) > 0, entry.Attributes.Inode, true)
+	inode := wfs.inodeToPath.lookupEntry(entryFullPath, entry.Attributes.Crtime, false, entry.HardLinkId, entry.Attributes.Inode, true)
 	fileHandle, openFh, status := wfs.AcquireHandle(ctx, inode, in.Flags, in.Uid, in.Gid)
 	if status != fuse.OK {
 		return status
