@@ -5,11 +5,13 @@ on:
     branches: [ master ]
     paths:
       - '.github/actions/**'
+      - '.github/scripts/*release_notes_by_component.py'
       - '.github/workflows/action-tests.yml'
   pull_request:
     branches: [ master ]
     paths:
       - '.github/actions/**'
+      - '.github/scripts/*release_notes_by_component.py'
       - '.github/workflows/action-tests.yml'
 
 concurrency:
@@ -28,3 +30,12 @@ jobs:
 
       - name: Run cleanup action unit tests
         run: python3 .github/actions/cleanup-stale-fuse-mounts/test_cleanup.py
+
+  release-notes-by-component:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Run release notes grouping unit tests
+        run: python3 .github/scripts/test_release_notes_by_component.py
