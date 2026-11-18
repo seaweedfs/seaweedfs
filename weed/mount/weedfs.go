@@ -1071,7 +1071,7 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		if invalidation.Deleted {
 			// The next flush reads the survivor's stored entry before
 			// publishing, so the version stays where it was.
-			if len(invalidation.LiveHardLinkId) > 0 && wfs.followSurvivingLink(fh, inode, filePath) {
+			if len(invalidation.LiveHardLinkId) > 0 && wfs.followSurvivingLink(fh, filePath) {
 				fh.linkRefresh = invalidation.LiveHardLinkId
 				return
 			}
@@ -1122,19 +1122,12 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 // followSurvivingLink drops a hard link name another client deleted and
 // keeps the handle on a name of the inode this mount still knows, reporting
 // false when it knows none.
-func (wfs *WFS) followSurvivingLink(fh *FileHandle, inode uint64, removed util.FullPath) bool {
-	survives := false
-	for _, p := range wfs.inodeToPath.GetAllPaths(inode) {
-		survives = survives || p != removed
-	}
-	if !survives {
-		return false
-	}
-	wfs.inodeToPath.RemovePath(removed, nil)
-	if survivor, status := wfs.inodeToPath.GetPath(inode); status == fuse.OK {
+func (wfs *WFS) followSurvivingLink(fh *FileHandle, removed util.FullPath) bool {
+	survivor, ok := wfs.inodeToPath.RemoveAlias(removed)
+	if ok {
 		fh.RememberPath(survivor)
 	}
-	return true
+	return ok
 }
 
 func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {
