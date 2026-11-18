@@ -234,8 +234,9 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 			childPath = dirPath.Child(dirEntry.Name)
 		}
 		var inode uint64
-		if takesLookupRef {
-			inode = wfs.inodeToPath.lookupEntry(childPath, entry.Crtime.Unix(), entry.IsDirectory(), entry.HardLinkId, entry.Inode, false)
+		cacheLookup := takesLookupRef && !wfs.inodeToPath.hasPendingPeerUnlink(childPath)
+		if cacheLookup {
+			inode = wfs.inodeToPath.Lookup(childPath, entry.Crtime.Unix(), entry.IsDirectory(), len(entry.HardLinkId) > 0, entry.Inode, false)
 		} else {
 			inode = wfs.inodeToPath.InodeForListing(childPath, entry.Crtime.Unix(), entry.Inode)
 		}
@@ -253,6 +254,11 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 			if entryOut == nil {
 				return false
 			}
+			// Until a peer unlink is validated, only emit the name. A
+			// subsequent LOOKUP checks the filer before assigning a node ID.
+			if takesLookupRef && !cacheLookup {
+				return true
+			}
 			if fh, found := wfs.fhMap.FindFileHandle(inode); found {
 				glog.V(4).Infof("readdir opened file %s", childPath)
 				entry = filer.FromPbEntry(string(dirPath), fh.GetEntry().GetEntry())
@@ -260,8 +266,8 @@ func (wfs *WFS) doReadDirectory(ctx context.Context, input *fuse.ReadIn, out Dir
 			wfs.outputFilerEntry(entryOut, inode, entry)
 			// Taken only once the entry is really in the sink, so one that did not
 			// fit leaves no reference behind. The fallback covers a racing Forget.
-			if takesLookupRef && !wfs.inodeToPath.IncrementNlookup(inode) {
-				wfs.inodeToPath.lookupEntry(childPath, entry.Crtime.Unix(), entry.IsDirectory(), entry.HardLinkId, entry.Inode, true)
+			if cacheLookup && !wfs.inodeToPath.IncrementNlookup(inode) {
+				wfs.inodeToPath.Lookup(childPath, entry.Crtime.Unix(), entry.IsDirectory(), len(entry.HardLinkId) > 0, entry.Inode, true)
 			}
 		}
 		return true

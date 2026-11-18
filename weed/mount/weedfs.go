@@ -556,38 +556,86 @@ func (wfs *WFS) maybeReadEntry(ctx context.Context, inode uint64) (path util.Ful
 	return
 }
 
-// loadEntryByInode checks the stable hard-link identity before returning an
-// entry by node ID. A missing or reused primary name is repaired on demand,
-// so a transient filer error can be retried by the next inode operation.
 func (wfs *WFS) loadEntryByInode(ctx context.Context, inode uint64) (util.FullPath, *filer_pb.Entry, entryVersion, fuse.Status) {
+	path, entry, version, status := wfs.resolvePeerUnlink(ctx, inode, "")
+	if status == fuse.OK && entry == nil {
+		entry, version, status = wfs.maybeLoadEntry(ctx, path)
+	}
+	return path, entry, version, status
+}
+
+// resolvePeerUnlink only consults the filer for names marked by a peer delete.
+// For an inode read it can follow a surviving link, while a path lookup must
+// return the entry that currently occupies that name.
+func (wfs *WFS) resolvePeerUnlink(ctx context.Context, inode uint64, name util.FullPath) (util.FullPath, *filer_pb.Entry, entryVersion, fuse.Status) {
 	for ctx.Err() == nil {
-		path, binding := wfs.inodeToPath.snapshotInodePath(inode)
+		path, binding := wfs.inodeToPath.pendingPeerUnlink(inode, name)
 		if path == "" {
 			return "", nil, entryVersion{}, fuse.ENOENT
 		}
-		entry, version, status := wfs.maybeLoadEntry(ctx, path)
-		if binding.id == "" || (status == fuse.OK && string(entry.GetHardLinkId()) == binding.id) {
-			return path, entry, version, status
-		}
-		if status != fuse.OK && status != fuse.ENOENT {
-			return path, nil, entryVersion{}, status
+		if binding.event == nil {
+			return path, nil, entryVersion{}, fuse.OK
 		}
 
-		// Bypass cached entries before changing a binding. A name may have
-		// been restored or replaced while a peer's delete was in flight.
-		entry, version, err := wfs.lookupFilerEntry(ctx, path)
-		if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
-			if ctx.Err() != nil {
-				break
+		current, version, status := wfs.lookupPeerUnlinkName(ctx, path)
+		if status != fuse.OK {
+			return path, nil, entryVersion{}, status
+		}
+		var survivor util.FullPath
+		var survivingEntry *filer_pb.Entry
+		var survivingVersion entryVersion
+		currentID := string(current.GetHardLinkId())
+		if currentID != binding.event.id {
+			sameGroup := false
+			for _, sibling := range binding.paths {
+				if sibling == path {
+					continue
+				}
+				entry, version, status := wfs.lookupPeerUnlinkName(ctx, sibling)
+				if status != fuse.OK {
+					return path, nil, entryVersion{}, status
+				}
+				id := string(entry.GetHardLinkId())
+				if id == binding.event.id {
+					survivor, survivingEntry, survivingVersion = sibling, entry, version
+					break
+				}
+				sameGroup = sameGroup || (id != "" && id == currentID)
 			}
-			return path, nil, entryVersion{}, fuse.EIO
+			if survivor == "" && !sameGroup {
+				// A delayed rename can still move this inode. Keep its path.
+				if !wfs.inodeToPath.finishPeerUnlink(path, "", binding, false) {
+					continue
+				}
+				if inode == 0 {
+					return path, nil, entryVersion{}, fuse.EAGAIN
+				}
+				return path, nil, entryVersion{}, fuse.ENOENT
+			}
 		}
-		stale := err != nil || string(entry.GetHardLinkId()) != binding.id
-		if wfs.inodeToPath.validateHardLinkBinding(path, binding, stale) && !stale {
-			return path, entry, version, fuse.OK
+		if !wfs.inodeToPath.finishPeerUnlink(path, survivor, binding, true) {
+			continue
 		}
+		if survivor != "" && inode != 0 {
+			return survivor, survivingEntry, survivingVersion, fuse.OK
+		}
+		if current == nil {
+			return path, nil, entryVersion{}, fuse.ENOENT
+		}
+		return path, current, version, fuse.OK
 	}
 	return "", nil, entryVersion{}, fuse.EINTR
+}
+
+func (wfs *WFS) lookupPeerUnlinkName(ctx context.Context, path util.FullPath) (*filer_pb.Entry, entryVersion, fuse.Status) {
+	entry, version, err := wfs.lookupFilerEntry(ctx, path)
+	if ctx.Err() != nil {
+		return nil, entryVersion{}, fuse.EINTR
+	}
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		err = nil
+	}
+	return entry, version, grpcErrorToFuseStatus(err)
 }
 
 // isLocalOnlyEntry reports whether entry holds local-only state not yet on the
@@ -934,8 +982,12 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 	// on addressing a moved inode by nodeid whether or not anything holds it
 	// open.
 	handled, replacedInode := wfs.invalidateOpenFileHandle(invalidation)
-	if !handled && invalidation.RenamedTo != "" {
-		_, replacedInode = wfs.inodeToPath.MovePath(invalidation.Path, invalidation.RenamedTo)
+	if !handled {
+		if invalidation.RenamedTo != "" {
+			_, replacedInode = wfs.inodeToPath.MovePath(invalidation.Path, invalidation.RenamedTo)
+		} else if len(invalidation.LiveHardLinkId) > 0 {
+			wfs.inodeToPath.rememberPeerUnlink(invalidation.Path, invalidation.LiveHardLinkId)
+		}
 	}
 	// A rename over an existing file destroys it, so its handle must not flush
 	// the old content back over what took the name. Marked from here, holding

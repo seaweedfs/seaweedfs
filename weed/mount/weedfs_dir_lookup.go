@@ -26,15 +26,20 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 	fullFilePath := dirPath.Child(name)
 
-	// Use shared lookup logic that checks cache first, then filer if needed
 	ctx, cancelFunc := ctxFromCancel(cancel)
 	defer cancelFunc()
-	localEntry, _, status := wfs.lookupEntry(ctx, fullFilePath)
+	_, checked, _, status := wfs.resolvePeerUnlink(ctx, 0, fullFilePath)
 	if status != fuse.OK {
 		return status
 	}
+	var localEntry *filer.Entry
+	if checked != nil {
+		localEntry = filer.FromPbEntry(string(dirPath), checked)
+	} else if localEntry, _, status = wfs.lookupEntry(ctx, fullFilePath); status != fuse.OK {
+		return status
+	}
 
-	inode := wfs.inodeToPath.lookupEntry(fullFilePath, localEntry.Crtime.Unix(), localEntry.IsDirectory(), localEntry.HardLinkId, localEntry.Inode, true)
+	inode := wfs.inodeToPath.Lookup(fullFilePath, localEntry.Crtime.Unix(), localEntry.IsDirectory(), len(localEntry.HardLinkId) > 0, localEntry.Inode, true)
 
 	if fh, found := wfs.fhMap.FindFileHandle(inode); found {
 		fh.entryLock.RLock()

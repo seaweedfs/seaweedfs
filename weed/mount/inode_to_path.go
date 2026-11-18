@@ -16,6 +16,7 @@ type InodeToPath struct {
 	cacheMetaTtlSec time.Duration
 	inode2path      map[uint64]*InodeEntry
 	path2inode      map[util.FullPath]uint64
+	peerUnlinks     map[util.FullPath]*peerUnlinkEventRecord // allocated only after a peer unlink with known aliases
 	// dirStates holds directory-only readdir-cache state, keyed by inode. An
 	// inode is a directory iff it has an entry here, registered at creation.
 	dirStates map[uint64]*dirState
@@ -48,23 +49,19 @@ type wasCachedEntry struct {
 // dominant cost on a mount with millions of files. A hard link's extra paths
 // hang off a pointer for the same reason.
 type InodeEntry struct {
-	path    util.FullPath
-	nlookup uint64
-	links   *inodeLinks
+	path       util.FullPath
+	nlookup    uint64
+	extraPaths *[]util.FullPath
 }
 
-// The alias set's identity and revision fence a filer lookup in flight
-// against changes to the names in this mount.
-type inodeLinks struct {
-	extra    []util.FullPath
-	id       string
-	revision uint64
+type peerUnlinkEventRecord struct {
+	inode uint64
+	id    string
 }
 
-type hardLinkBinding struct {
-	links    *inodeLinks
-	id       string
-	revision uint64
+type peerUnlinkBinding struct {
+	event *peerUnlinkEventRecord
+	paths []util.FullPath
 }
 
 type dirState struct {
@@ -96,8 +93,8 @@ func (ie *InodeEntry) appendPaths(dst []util.FullPath) []util.FullPath {
 		return dst
 	}
 	dst = append(dst, ie.path)
-	if ie.links != nil {
-		dst = append(dst, ie.links.extra...)
+	if ie.extraPaths != nil {
+		dst = append(dst, *ie.extraPaths...)
 	}
 	return dst
 }
@@ -105,56 +102,35 @@ func (ie *InodeEntry) appendPaths(dst []util.FullPath) []util.FullPath {
 func (ie *InodeEntry) addPath(p util.FullPath) {
 	if ie.path == "" {
 		ie.path = p
-		if ie.links != nil {
-			ie.links.revision++
-		}
 		return
 	}
-	if ie.links == nil {
-		ie.links = &inodeLinks{extra: []util.FullPath{p}}
+	if ie.extraPaths == nil {
+		ie.extraPaths = &[]util.FullPath{p}
 		return
 	}
-	ie.setExtraPaths(append(ie.links.extra, p))
-}
-
-func (ie *InodeEntry) rememberHardLinkID(id string) {
-	if id == "" {
-		return
-	}
-	if ie.links == nil {
-		ie.links = &inodeLinks{id: id}
-	} else if ie.links.id == "" {
-		ie.links.id = id
-		ie.links.revision++
-	}
+	*ie.extraPaths = append(*ie.extraPaths, p)
 }
 
 func (ie *InodeEntry) replacePath(from, to util.FullPath) {
-	changed := ie.path == from
-	if changed {
+	if ie.path == from {
 		ie.path = to
 	}
-	if ie.links == nil {
+	if ie.extraPaths == nil {
 		return
 	}
-	for i, p := range ie.links.extra {
+	for i, p := range *ie.extraPaths {
 		if p == from {
-			ie.links.extra[i] = to
-			changed = true
+			(*ie.extraPaths)[i] = to
 		}
-	}
-	if changed {
-		ie.links.revision++
 	}
 }
 
 func (ie *InodeEntry) setExtraPaths(extra []util.FullPath) {
-	if len(extra) == 0 && ie.links.id == "" {
-		ie.links = nil
+	if len(extra) == 0 {
+		ie.extraPaths = nil
 		return
 	}
-	ie.links.extra = extra
-	ie.links.revision++
+	ie.extraPaths = &extra
 }
 
 // removeOnePath promotes an extra path when the primary is the one going away,
@@ -164,29 +140,25 @@ func (ie *InodeEntry) removeOnePath(p util.FullPath) bool {
 		return false
 	}
 	if ie.path == p {
-		if ie.links == nil {
+		if ie.extraPaths == nil {
 			ie.path = ""
 			return true
 		}
-		extra := ie.links.extra
-		if len(extra) == 0 {
-			ie.path = ""
-			ie.links.revision++
-			return true
-		}
+		extra := *ie.extraPaths
 		ie.path = extra[0]
-		extra[0] = ""
 		ie.setExtraPaths(extra[1:])
 		return true
 	}
-	if ie.links == nil {
+	if ie.extraPaths == nil {
 		return false
 	}
-	for i, x := range ie.links.extra {
-		if x == p {
-			ie.setExtraPaths(slices.Delete(ie.links.extra, i, i+1))
-			return true
+	extra := *ie.extraPaths
+	for i, x := range extra {
+		if x != p {
+			continue
 		}
+		ie.setExtraPaths(append(extra[:i], extra[i+1:]...))
+		return true
 	}
 	return false
 }
@@ -224,35 +196,19 @@ func (i *InodeToPath) EnsurePath(path util.FullPath, isDirectory bool) bool {
 }
 
 func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory bool, isHardlink bool, possibleInode uint64, isLookup bool) uint64 {
-	return i.lookup(path, unixTime, isDirectory, isHardlink, "", possibleInode, isLookup)
-}
-
-// lookupEntry records the stable filer identity alongside the mount's node ID.
-func (i *InodeToPath) lookupEntry(path util.FullPath, unixTime int64, isDirectory bool, hardLinkID []byte, possibleInode uint64, isLookup bool) uint64 {
-	return i.lookup(path, unixTime, isDirectory, len(hardLinkID) > 0, string(hardLinkID), possibleInode, isLookup)
-}
-
-func (i *InodeToPath) lookup(path util.FullPath, unixTime int64, isDirectory bool, isHardlink bool, hardLinkID string, possibleInode uint64, isLookup bool) uint64 {
 	i.Lock()
 	defer i.Unlock()
 	inode, found := i.path2inode[path]
-	if found && (!isHardlink || hardLinkID != "") {
-		if entry := i.inode2path[inode]; entry.hasDifferentHardLinkID(hardLinkID) {
-			i.removePathLocked(path, nil)
-			found = false
-		}
-	}
 	if !found {
 		if possibleInode == 0 {
 			inode = path.AsInode(unixTime)
 		} else {
 			inode = possibleInode
 		}
-		for current := i.inode2path[inode]; current != nil; current = i.inode2path[inode] {
-			if isHardlink && (hardLinkID == "" || !current.hasDifferentHardLinkID(hardLinkID)) {
-				break
+		if !isHardlink {
+			for _, found := i.inode2path[inode]; found; inode++ {
+				_, found = i.inode2path[inode+1]
 			}
-			inode++
 		}
 	}
 	i.path2inode[path] = inode
@@ -279,12 +235,7 @@ func (i *InodeToPath) lookup(path util.FullPath, unixTime int64, isDirectory boo
 		}
 	}
 
-	i.inode2path[inode].rememberHardLinkID(hardLinkID)
 	return inode
-}
-
-func (ie *InodeEntry) hasDifferentHardLinkID(id string) bool {
-	return ie != nil && ie.links != nil && ie.links.id != "" && ie.links.id != id
 }
 
 // IncrementNlookup takes one more reference on an inode already in the table,
@@ -651,17 +602,20 @@ func (i *InodeToPath) CollectEvictableDirs(now time.Time, idle time.Duration) []
 	return dirs
 }
 
-func (i *InodeToPath) AddPath(inode uint64, path util.FullPath, hardLinkID []byte) {
+func (i *InodeToPath) AddPath(inode uint64, path util.FullPath) {
 	i.Lock()
 	defer i.Unlock()
-	if previous, found := i.path2inode[path]; found && previous != inode {
-		i.removePathLocked(path, nil)
+	previous := i.path2inode[path]
+	if previous != inode {
+		delete(i.peerUnlinks, path)
 	}
 	i.path2inode[path] = inode
 
 	ie, found := i.inode2path[inode]
 	if found {
-		ie.addPath(path)
+		if previous != inode {
+			ie.addPath(path)
+		}
 		ie.nlookup++
 	} else {
 		i.inode2path[inode] = &InodeEntry{
@@ -669,7 +623,6 @@ func (i *InodeToPath) AddPath(inode uint64, path util.FullPath, hardLinkID []byt
 			nlookup: 1,
 		}
 	}
-	i.inode2path[inode].rememberHardLinkID(string(hardLinkID))
 }
 
 // RemovePath drops the name. onStillReferenced, if given, runs under the
@@ -683,31 +636,72 @@ func (i *InodeToPath) RemovePath(path util.FullPath, onStillReferenced func(inod
 	i.removePathLocked(path, onStillReferenced)
 }
 
-// snapshotInodePath returns the primary name and the hard-link binding, if any.
-func (i *InodeToPath) snapshotInodePath(inode uint64) (util.FullPath, hardLinkBinding) {
-	i.RLock()
-	defer i.RUnlock()
-	entry := i.inode2path[inode]
-	if entry == nil || entry.path == "" {
-		return "", hardLinkBinding{}
-	}
-	if entry.links == nil || entry.links.id == "" {
-		return entry.path, hardLinkBinding{}
-	}
-	return entry.path, hardLinkBinding{links: entry.links, id: entry.links.id, revision: entry.links.revision}
-}
-
-func (i *InodeToPath) validateHardLinkBinding(path util.FullPath, binding hardLinkBinding, stale bool) bool {
+// rememberPeerUnlink only records deletes with another name known to this
+// mount. The next access validates the event without holding up invalidations.
+func (i *InodeToPath) rememberPeerUnlink(path util.FullPath, id []byte) {
 	i.Lock()
 	defer i.Unlock()
-	entry := i.inode2path[i.path2inode[path]]
-	if entry == nil || entry.links == nil || entry.links != binding.links || entry.links.revision != binding.revision {
+	inode := i.path2inode[path]
+	entry := i.inode2path[inode]
+	if entry == nil || entry.extraPaths == nil {
+		return
+	}
+	if i.peerUnlinks == nil {
+		i.peerUnlinks = make(map[util.FullPath]*peerUnlinkEventRecord)
+	}
+	i.peerUnlinks[path] = &peerUnlinkEventRecord{inode: inode, id: string(id)}
+}
+
+func (i *InodeToPath) pendingPeerUnlink(inode uint64, path util.FullPath) (util.FullPath, peerUnlinkBinding) {
+	i.RLock()
+	defer i.RUnlock()
+	if inode == 0 {
+		inode = i.path2inode[path]
+	} else if entry := i.inode2path[inode]; entry != nil {
+		path = entry.path
+	}
+	if event := i.peerUnlinks[path]; event != nil && event.inode == inode {
+		return path, peerUnlinkBinding{event, i.peerUnlinkPaths(inode)}
+	}
+	return path, peerUnlinkBinding{}
+}
+
+func (i *InodeToPath) hasPendingPeerUnlink(path util.FullPath) bool {
+	i.RLock()
+	defer i.RUnlock()
+	return i.peerUnlinks[path] != nil
+}
+
+// finishPeerUnlink applies the result only to the bindings checked on the
+// filer. A nonempty survivor must still be a known alias of the same inode.
+func (i *InodeToPath) finishPeerUnlink(path, survivor util.FullPath, binding peerUnlinkBinding, confirmed bool) bool {
+	i.Lock()
+	defer i.Unlock()
+	inode := binding.event.inode
+	if i.peerUnlinks[path] != binding.event || i.path2inode[path] != inode {
 		return false
 	}
-	if stale {
+	entry := i.inode2path[inode]
+	if !slices.Equal(binding.paths, i.peerUnlinkPaths(inode)) {
+		return false
+	}
+	if survivor != "" {
+		if entry.path == path {
+			extra := *entry.extraPaths
+			index := slices.Index(extra, survivor)
+			extra[0], extra[index] = extra[index], extra[0]
+		}
 		i.removePathLocked(path, nil)
+	} else if confirmed {
+		delete(i.peerUnlinks, path)
 	}
 	return true
+}
+
+func (i *InodeToPath) peerUnlinkPaths(inode uint64) []util.FullPath {
+	return slices.DeleteFunc(i.inode2path[inode].appendPaths(nil), func(path util.FullPath) bool {
+		return i.path2inode[path] != inode
+	})
 }
 
 func (i *InodeToPath) removePathLocked(path util.FullPath, onStillReferenced func(inode uint64)) {
@@ -726,6 +720,7 @@ func (i *InodeToPath) removePathLocked(path util.FullPath, onStillReferenced fun
 }
 
 func (i *InodeToPath) removePathFromInode2Path(inode uint64, path util.FullPath) {
+	delete(i.peerUnlinks, path)
 	ie, found := i.inode2path[inode]
 	if !found {
 		return
@@ -761,6 +756,7 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 		i.markWasCached(targetPath)
 	}
 	delete(i.path2inode, sourcePath)
+	delete(i.peerUnlinks, sourcePath)
 	i.path2inode[targetPath] = sourceInode
 	if entry, entryFound := i.inode2path[sourceInode]; entryFound {
 		entry.replacePath(sourcePath, targetPath)
@@ -803,9 +799,11 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onRelease func(inode uint64)
 				callOnForgetDir = true
 			}
 			delete(i.path2inode, path.path)
-			if path.links != nil {
-				for _, p := range path.links.extra {
+			delete(i.peerUnlinks, path.path)
+			if path.extraPaths != nil {
+				for _, p := range *path.extraPaths {
 					delete(i.path2inode, p)
+					delete(i.peerUnlinks, p)
 				}
 			}
 			delete(i.inode2path, inode)

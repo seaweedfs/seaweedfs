@@ -25,6 +25,11 @@ func (wfs *WFS) AcquireHandle(ctx context.Context, inode uint64, flags, uid, gid
 			return nil, 0, fuse.EINTR
 		}
 
+		path, status = wfs.inodeToPath.GetPath(inode)
+		if status != fuse.OK {
+			return nil, 0, status
+		}
+
 		// A fresh lookup returns the entry with the filer log position it
 		// reflects; the handle takes that entry and version as one decision in
 		// AcquireFileHandle, so a slower concurrent opener cannot
@@ -34,10 +39,6 @@ func (wfs *WFS) AcquireHandle(ctx context.Context, inode uint64, flags, uid, gid
 		var entryVersionTsNs entryVersion
 		freshLookup := false
 		if existingFh, found := wfs.fhMap.FindFileHandle(inode); found {
-			path, status = wfs.inodeToPath.GetPath(inode)
-			if status != fuse.OK {
-				return nil, 0, status
-			}
 			entry = existingFh.UpdateEntry(func(entry *filer_pb.Entry) {
 				if entry != nil && existingFh.entry.Attributes == nil {
 					entry.Attributes = &filer_pb.FuseAttributes{}
