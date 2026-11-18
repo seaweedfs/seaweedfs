@@ -51,6 +51,9 @@ type MetaAggregator struct {
 	// gone past the grace is dropped so it cannot pin the low-watermarks.
 	// The mark itself stays until the peer's resume point is forgotten.
 	peerRemovedAtNs map[pb.ServerAddress]int64
+	// peerUnreachableSinceNs is when each peer's subscription last started
+	// failing to connect; see notePeerUnreachable.
+	peerUnreachableSinceNs map[pb.ServerAddress]int64
 	// lowWatermarkTsNs and lowFlushWatermarkTsNs are the last minima signalled
 	// on deliveryAdvanced and flushAdvanced, each closed and replaced when its
 	// own minimum rises. Held readers park on the one that bounds them:
@@ -95,6 +98,8 @@ func NewMetaAggregator(filer *Filer, self pb.ServerAddress, grpcDialOption grpc.
 		peerFlushWatermarks: make(map[pb.ServerAddress]int64),
 		peerRemovedAtNs:     make(map[pb.ServerAddress]int64),
 		peerResumeTsNs:      make(map[pb.ServerAddress]int64),
+
+		peerUnreachableSinceNs: make(map[pb.ServerAddress]int64),
 	}
 	t.peerSubscribeLoop = t.loopSubscribeToOneFiler
 	// nil notifyFn: aggregated subscribers wake through the buffer's
@@ -155,6 +160,47 @@ const peerWatermarkRemovalGrace = 2 * LogFlushInterval
 // watermark grace, so a slow restart or a partition still rejoins at its old
 // position.
 const peerResumeRetention = time.Hour
+
+// peerUnreachableRemovalAfter is how long a peer may refuse connections
+// before it is treated as removed.
+const peerUnreachableRemovalAfter = 2 * LogFlushInterval
+
+// errPeerUnreachable marks a subscription attempt that never reached the peer.
+var errPeerUnreachable = errors.New("connecting to peer filer")
+
+// notePeerUnreachable records a failed connection to peer at nowNs and marks
+// the peer removed once the failures have lasted peerUnreachableRemovalAfter.
+// The master's removal notice reaches only the clients attached to the master
+// that saw the peer go, so a peer that died across a leader change is
+// otherwise followed forever and its zero watermark holds every aggregated
+// subscriber at the settled horizon. Reports true the one time it marks.
+func (ma *MetaAggregator) notePeerUnreachable(peer pb.ServerAddress, nowNs int64) bool {
+	ma.peerWatermarksLock.Lock()
+	if ma.peerUnreachableSinceNs == nil {
+		ma.peerUnreachableSinceNs = make(map[pb.ServerAddress]int64)
+	}
+	since, found := ma.peerUnreachableSinceNs[peer]
+	if !found {
+		ma.peerUnreachableSinceNs[peer] = nowNs
+		since = nowNs
+	}
+	_, alreadyMarked := ma.peerRemovedAtNs[peer]
+	ma.peerWatermarksLock.Unlock()
+	if nowNs-since < int64(peerUnreachableRemovalAfter) {
+		return false
+	}
+	ma.markPeerWatermarkRemoved(peer)
+	return !alreadyMarked
+}
+
+// notePeerReachable tracks peer again after a successful connection, from a
+// zero watermark if the removal grace already dropped it.
+func (ma *MetaAggregator) notePeerReachable(peer pb.ServerAddress) {
+	ma.peerWatermarksLock.Lock()
+	delete(ma.peerUnreachableSinceNs, peer)
+	ma.peerWatermarksLock.Unlock()
+	ma.initPeerWatermark(peer)
+}
 
 // initPeerWatermark adds the peer with a zero (unknown) watermark; a re-added
 // peer keeps its prior values and stops being considered removed.
@@ -494,6 +540,9 @@ func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddres
 				errLvl = glog.Level(4)
 			}
 			glog.V(errLvl).Infof("subscribing remote %s meta change: %v", peer, err)
+			if errors.Is(err, errPeerUnreachable) && ma.notePeerUnreachable(peer, time.Now().UnixNano()) {
+				glog.V(0).Infof("peer %s unreachable for %v, treating it as removed until it answers", peer, peerUnreachableRemovalAfter)
+			}
 		}
 		if lastTsNs < nextLastTsNs {
 			lastTsNs = nextLastTsNs
@@ -548,8 +597,9 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 
 	peerSignature, err := ma.readFilerStoreSignature(ctx, peer)
 	if err != nil {
-		return lastTsNs, fmt.Errorf("connecting to peer filer %s: %v", peer, err)
+		return lastTsNs, fmt.Errorf("%w %s: %v", errPeerUnreachable, peer, err)
 	}
+	ma.notePeerReachable(peer)
 
 	// when filer store is not shared by multiple filers
 	if peerSignature != f.Signature {

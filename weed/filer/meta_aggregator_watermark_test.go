@@ -217,3 +217,49 @@ func TestWatermarkAdvancedChansAreScoped(t *testing.T) {
 		t.Fatal("the trailing peer catching up did not signal a rise")
 	}
 }
+
+// TestUnreachablePeerStopsPinningAfterTheGrace pins the rule for a peer whose
+// removal never reached this filer (it died across a master leader change):
+// its zero watermark holds the low-watermark only until the connection
+// failures have lasted peerUnreachableRemovalAfter; it is then marked removed,
+// drops after the usual grace, and is tracked again the moment it answers.
+func TestUnreachablePeerStopsPinningAfterTheGrace(t *testing.T) {
+	ma := newTestAggregator()
+	a, b := pb.ServerAddress("filer-a:8888"), pb.ServerAddress("filer-b:8888")
+	ma.initPeerWatermark(a)
+	ma.initPeerWatermark(b)
+	ma.advancePeerWatermark(a, 100)
+
+	t0 := time.Now().UnixNano()
+	if ma.notePeerUnreachable(b, t0) || ma.notePeerUnreachable(b, t0+int64(peerUnreachableRemovalAfter)-1) {
+		t.Fatal("a peer unreachable for less than the bound must not be marked")
+	}
+	if !ma.notePeerUnreachable(b, t0+int64(peerUnreachableRemovalAfter)) {
+		t.Fatal("a peer unreachable for the bound must be marked removed")
+	}
+	if ma.notePeerUnreachable(b, t0+int64(peerUnreachableRemovalAfter)+1) {
+		t.Fatal("the mark must be reported once")
+	}
+	if got := ma.PeerLowWatermarkTsNs(); got != 0 {
+		t.Fatalf("within the removal grace: low=%d want 0", got)
+	}
+	ma.peerWatermarksLock.Lock()
+	ma.peerRemovedAtNs[b] = time.Now().UnixNano() - int64(peerWatermarkRemovalGrace) - 1
+	ma.peerWatermarksLock.Unlock()
+	if got := ma.PeerLowWatermarkTsNs(); got != 100 {
+		t.Fatalf("past the grace the unreachable peer must not pin: low=%d want 100", got)
+	}
+
+	// It answers again: tracked from zero until it signals.
+	ma.notePeerReachable(b)
+	if got := ma.PeerLowWatermarkTsNs(); got != 0 {
+		t.Fatalf("re-tracked peer before its first claim: low=%d want 0", got)
+	}
+	ma.advancePeerWatermark(b, 70)
+	if got := ma.PeerLowWatermarkTsNs(); got != 70 {
+		t.Fatalf("after its claim: low=%d want 70", got)
+	}
+	if ma.notePeerUnreachable(b, t0+10*int64(peerUnreachableRemovalAfter)) {
+		t.Fatal("a fresh outage must start a fresh clock")
+	}
+}
