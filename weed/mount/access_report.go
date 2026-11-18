@@ -160,7 +160,7 @@ func (wfs *WFS) reportOpen(flags uint32, fh *FileHandle) {
 
 // touchAccessTime sends one report to the filer this mount uses or, if that
 // filer cannot be reached in time, to the next one, which the mount then
-// keeps using. Any other answer, Unimplemented included, ends the walk.
+// keeps using. Any answer, Unimplemented included, ends the walk.
 func (wfs *WFS) touchAccessTime(ctx context.Context, path util.FullPath, atimeNs int64) error {
 	dir, name := path.DirAndName()
 	req := &filer_pb.TouchAccessTimeRequest{
@@ -185,9 +185,25 @@ func (wfs *WFS) touchAccessTime(ctx context.Context, path util.FullPath, atimeNs
 			atomic.StoreInt32(&wfs.option.filerIndex, int32(i))
 			return nil
 		}
-		if !util.IsTransientError(err) || ctx.Err() != nil {
+		if !filerUnreachable(err) || ctx.Err() != nil {
 			return err
 		}
 	}
 	return err
+}
+
+// filerUnreachable reports whether err means the filer did not answer. A
+// status the filer sent is its answer, whatever words its message contains.
+func filerUnreachable(err error) bool {
+	st, ok := util.ServerStatus(err)
+	if !ok {
+		return util.IsTransientError(err)
+	}
+	switch st.Code() {
+	case codes.Unavailable, codes.ResourceExhausted, codes.DeadlineExceeded:
+		return true
+	case codes.Canceled:
+		return util.IsTransientError(err)
+	}
+	return false
 }

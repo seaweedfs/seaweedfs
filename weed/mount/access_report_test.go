@@ -271,9 +271,18 @@ func TestStopCancelsTheReportInFlight(t *testing.T) {
 // TestTouchAccessTimeDoesNotFailOverOnAnAnswer checks that a filer that
 // answers, even with an error, is not followed by the next filer.
 func TestTouchAccessTimeDoesNotFailOverOnAnAnswer(t *testing.T) {
-	for _, code := range []codes.Code{codes.Unimplemented, codes.InvalidArgument} {
-		t.Run(code.String(), func(t *testing.T) {
-			first := newAccessReportTestFiler(status.Error(code, "refused"))
+	for _, answer := range []struct {
+		code    codes.Code
+		message string
+	}{
+		{codes.Unimplemented, "refused"},
+		{codes.Unimplemented, "rate limit reporting not implemented"},
+		{codes.InvalidArgument, "refused"},
+		{codes.InvalidArgument, "invalid path /transport"},
+	} {
+		code := answer.code
+		t.Run(code.String()+" "+answer.message, func(t *testing.T) {
+			first := newAccessReportTestFiler(status.Error(code, answer.message))
 			wfs := newAccessReportTestWFS(t, first)
 			second := newAccessReportTestFiler(nil)
 			addFiler(t, wfs, second)
