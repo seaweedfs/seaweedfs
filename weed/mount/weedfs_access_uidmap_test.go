@@ -58,4 +58,17 @@ func TestPermissionChecksUseLocalOwnerUnderIdMap(t *testing.T) {
 	if _, _, st := wfs.createRegularFile(context.Background(), util.FullPath("/owned"), "new.txt", 0o600, 123, 456, 0, true, true); st != fuse.OK {
 		t.Fatalf("create in the owner's directory = %v, want OK", st)
 	}
+
+	// A deferred create's cached placeholder answers for its owner too.
+	placeholder, _, st := wfs.createRegularFile(context.Background(), util.FullPath("/"), "pending.txt", 0o600, 123, 456, 0, true, true)
+	if st != fuse.OK {
+		t.Fatalf("deferred create = %v, want OK", st)
+	}
+	wfs.inodeToPath.Lookup(util.FullPath("/pending.txt"), time.Now().Unix(), false, false, placeholder, true)
+	if st := wfs.Access(make(chan struct{}), &fuse.AccessIn{
+		InHeader: fuse.InHeader{NodeId: placeholder, Caller: caller},
+		Mask:     fuse.R_OK | fuse.W_OK,
+	}); st != fuse.OK {
+		t.Fatalf("Access to a deferred create by its owner = %v, want OK", st)
+	}
 }
