@@ -1505,7 +1505,7 @@ func (s3a *S3ApiServer) GetBucketOwnershipControls(w http.ResponseWriter, r *htt
 // DeleteBucketOwnershipControls https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketOwnershipControls.html
 func (s3a *S3ApiServer) DeleteBucketOwnershipControls(w http.ResponseWriter, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
-	glog.V(3).Infof("PutBucketOwnershipControls %s", bucket)
+	glog.V(3).Infof("DeleteBucketOwnershipControls %s", bucket)
 
 	errCode := s3a.checkAccessByOwnership(r, bucket)
 	if errCode != s3err.ErrNone {
@@ -1538,10 +1538,7 @@ func (s3a *S3ApiServer) DeleteBucketOwnershipControls(w http.ResponseWriter, r *
 		return
 	}
 
-	emptyOwnershipControls := &s3.OwnershipControls{
-		Rules: []*s3.OwnershipControlsRule{},
-	}
-	s3err.WriteAwsXMLResponse(w, r, http.StatusOK, emptyOwnershipControls)
+	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 }
 
 // GetBucketVersioningHandler Get Bucket Versioning status

@@ -2,13 +2,16 @@ package acl
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awsmiddleware "github.com/aws/aws-sdk-go-v2/aws/middleware"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,10 +66,13 @@ func TestBucketOwnershipControlsLifecycle(t *testing.T) {
 	putObjectOwnership(t, client, bucketName, types.ObjectOwnershipBucketOwnerEnforced)
 	assert.Equal(t, types.ObjectOwnershipBucketOwnerEnforced, getObjectOwnership(t, client, bucketName))
 
-	_, err := client.DeleteBucketOwnershipControls(context.TODO(), &s3.DeleteBucketOwnershipControlsInput{
+	deleted, err := client.DeleteBucketOwnershipControls(context.TODO(), &s3.DeleteBucketOwnershipControlsInput{
 		Bucket: aws.String(bucketName),
 	})
 	require.NoError(t, err)
+	raw, ok := awsmiddleware.GetRawResponse(deleted.ResultMetadata).(*smithyhttp.Response)
+	require.True(t, ok)
+	assert.Equal(t, http.StatusNoContent, raw.StatusCode)
 
 	_, err = client.GetBucketOwnershipControls(context.TODO(), &s3.GetBucketOwnershipControlsInput{
 		Bucket: aws.String(bucketName),
