@@ -4090,8 +4090,18 @@ impl VolumeServer for VolumeGrpcService {
         // a local index can be mounted (issue #10104). Driven on demand by
         // ec.rebuild. volume_id 0 recovers every orphan on this server, including
         // volumes the master never learned about.
+        // Like Go's, recovery runs to completion if the caller goes away, so
+        // the lifecycle lock it holds outlives the journal merge it started.
         if req.recover_missing_index {
-            crate::server::store_ec::recover_missing_ec_indexes(&self.state, req.volume_id).await;
+            let state = self.state.clone();
+            let filter_vid = req.volume_id;
+            tokio::spawn(async move {
+                crate::server::store_ec::recover_missing_ec_indexes(&state, filter_vid).await
+            })
+            .await
+            .map_err(|e| {
+                Status::internal(format!("recover missing EC index of {}: {}", filter_vid, e))
+            })?;
         }
 
         // Mount one shard at a time, returning error on first failure.
