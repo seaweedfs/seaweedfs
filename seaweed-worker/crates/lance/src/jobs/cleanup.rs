@@ -7,8 +7,8 @@ use lance::Dataset;
 use lance::dataset::cleanup::{CleanupPolicy, cleanup_old_versions};
 use seaweed_worker_core::config_form::{form, int_or, int_value, number_field};
 use seaweed_worker_core::pb::{
-    ConfigValue, DetectionComplete, DetectionProposals, ExecuteJobRequest, JobCompleted,
-    JobProgressUpdate, JobProposal, JobResult, JobTypeCapability, JobTypeDescriptor,
+    AdminRuntimeDefaults, ConfigValue, DetectionComplete, DetectionProposals, ExecuteJobRequest,
+    JobCompleted, JobProgressUpdate, JobProposal, JobResult, JobTypeCapability, JobTypeDescriptor,
     RunDetectionRequest,
 };
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
@@ -164,6 +164,12 @@ impl JobHandler for CleanupVersionsHandler {
                 defaults.clone(),
             )),
             worker_default_values: defaults,
+            // A purge compacts and retrains, so it gets a build's time.
+            admin_runtime_defaults: Some(AdminRuntimeDefaults {
+                job_type_max_runtime_seconds: super::vector_index::EXECUTION_TIMEOUT_SECONDS,
+                execution_timeout_seconds: super::vector_index::EXECUTION_TIMEOUT_SECONDS,
+                ..Default::default()
+            }),
             ..Default::default()
         }
     }
@@ -454,5 +460,19 @@ impl CleanupVersionsHandler {
             ..Default::default()
         })?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_purge_gets_a_builds_execution_timeout() {
+        let descriptor = CleanupVersionsHandler::new(String::new()).descriptor();
+        let defaults = descriptor.admin_runtime_defaults.unwrap();
+        assert_eq!(defaults.execution_timeout_seconds, 3600);
+        assert_eq!(defaults.job_type_max_runtime_seconds, 3600);
+        assert!(!defaults.enabled);
     }
 }
