@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -178,6 +179,9 @@ func (fs *FilerServer) ReplicateLock(ctx context.Context, req *filer_pb.Replicat
 // 2. Re-replicating to the new backup
 // 3. Transferring locks that no longer belong here
 func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
+	if slices.Contains(snapshot, fs.option.Host) {
+		fs.resetLockRingClock()
+	}
 	locks := fs.filer.Dlm.AllLocks()
 	if len(locks) == 0 {
 		return

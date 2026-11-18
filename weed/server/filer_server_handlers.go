@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -390,12 +391,68 @@ func pathHasComponentPrefix(reqPath, prefix string) bool {
 	return strings.HasPrefix(cleanedPath, cleanedPrefix+"/")
 }
 
+// lockRingUnhealthyGracePeriod covers the first ring update after announcing
+// and the master's ring-change batching delay.
+const lockRingUnhealthyGracePeriod = 30 * time.Second
+
+// lockRingHealthy reports false once this filer has been missing from its own
+// lock ring past the grace period: locked writes cannot be routed to it, and
+// a restart re-registers it with the master.
+func (fs *FilerServer) lockRingHealthy() bool {
+	dlm := fs.filer.Dlm
+	if dlm == nil || dlm.LockRing == nil || dlm.LockRing.Ring == nil {
+		return true
+	}
+	if announce := fs.option.AnnounceCh; announce != nil {
+		select {
+		case <-announce:
+		default:
+			return true
+		}
+	}
+	absent := fs.lockRingAbsence(func() bool { return slices.Contains(dlm.LockRing.Ring.GetServers(), dlm.Host) })
+	if absent < lockRingUnhealthyGracePeriod {
+		return true
+	}
+	glog.Warningf("filerHealthz: %s absent from lock ring for %v (ring: %v)",
+		dlm.Host, absent.Round(time.Second), dlm.LockRing.Ring.GetServers())
+	return false
+}
+
+// lockRingAbsence returns how long inRing has reported this filer missing,
+// or 0 while it is in the ring.
+func (fs *FilerServer) lockRingAbsence(inRing func() bool) time.Duration {
+	since := fs.lockRingUnhealthySince.Load()
+	if inRing() {
+		fs.resetLockRingClock()
+		return 0
+	}
+	// A rejoin after the load has stored a new reset value, so the clock
+	// neither starts nor is read across it.
+	if since <= 0 {
+		fs.lockRingUnhealthySince.CompareAndSwap(since, time.Now().UnixNano())
+		return 0
+	}
+	if fs.lockRingUnhealthySince.Load() != since {
+		return 0
+	}
+	return time.Since(time.Unix(0, since))
+}
+
+func (fs *FilerServer) resetLockRingClock() {
+	fs.lockRingUnhealthySince.Store(-fs.lockRingResets.Add(1))
+}
+
 func (fs *FilerServer) filerHealthzHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Server", "SeaweedFS "+version.VERSION)
 	if _, err := fs.filer.Store.FindEntry(context.Background(), filer.TopicsDir); err != nil && err != filer_pb.ErrNotFound {
 		glog.Warningf("filerHealthzHandler FindEntry: %+v", err)
 		w.WriteHeader(http.StatusServiceUnavailable)
-	} else {
-		w.WriteHeader(http.StatusOK)
+		return
 	}
+	if !fs.lockRingHealthy() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
