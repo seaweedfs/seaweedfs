@@ -127,7 +127,8 @@ PATH_RULES = {
 
 PR_LINE = re.compile(r"^\* (?P<title>.+?) by @(?P<author>\S+) in https://github\.com/\S+/pull/(?P<num>\d+)\s*$")
 # Lines regroup() writes between the PRs, so a second run accepts them.
-SCAFFOLD = re.compile(r"^$|^### |^<details>|^</details>$")
+SCAFFOLD = re.compile(r"^$|^### (%s)$|^<details><summary>Dependencies \(\d+ updates?\)</summary>$|^</details>$"
+                      % "|".join(re.escape(s) for s in SECTIONS))
 # "fix(s3tables,s3vectors): ...", "s3 lifecycle: ...", "[Volume] ...", "Fix/admin ..."
 CONVENTIONAL = re.compile(r"^(?P<type>[a-z]+)\((?P<scope>[^)]*)\)!?$")
 TYPE_ONLY = {"fix", "feat", "feature", "perf", "refactor", "chore", "style", "revert", "improvement"}

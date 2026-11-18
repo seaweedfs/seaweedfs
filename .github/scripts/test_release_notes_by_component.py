@@ -160,6 +160,8 @@ class RegroupTest(unittest.TestCase):
         body = NOTES.replace("## New Contributors", "* a hand-written note\n\n## New Contributors")
         with self.assertRaises(ValueError):
             rn.regroup(body, self.files)
+        with self.assertRaises(ValueError):
+            rn.regroup(NOTES.replace("## What's Changed\n", "## What's Changed\n### Known issue\n"), self.files)
 
     def test_author_from_the_by_clause(self):
         body = "## What's Changed\n* Bump a by @dependabot[bot] in docs by @alice in https://github.com/seaweedfs/seaweedfs/pull/7\n"
