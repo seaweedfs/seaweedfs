@@ -1622,7 +1622,7 @@ pub struct Volume {
     #[cfg(test)]
     idx_syncs_for_test: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
-    cancel_on_flush_for_test: Mutex<Option<(NeedleId, Cookie)>>,
+    on_flush_dat_for_test: Mutex<Option<Box<dyn FnOnce(&Volume) + Send>>>,
     needle_map_kind: NeedleMapKind,
     data_file_access_control: Arc<DataFileAccessControl>,
     /// Serializes a data-file mutation with the sync that makes it durable:
@@ -1797,7 +1797,7 @@ impl Volume {
             #[cfg(test)]
             idx_syncs_for_test: Default::default(),
             #[cfg(test)]
-            cancel_on_flush_for_test: Default::default(),
+            on_flush_dat_for_test: Default::default(),
             needle_map_kind,
             data_file_access_control: Arc::new(DataFileAccessControl::default()),
             data_file_sync_lock: std::sync::Mutex::new(()),
@@ -1858,7 +1858,7 @@ impl Volume {
             #[cfg(test)]
             idx_syncs_for_test: Default::default(),
             #[cfg(test)]
-            cancel_on_flush_for_test: Default::default(),
+            on_flush_dat_for_test: Default::default(),
             needle_map_kind: NeedleMapKind::InMemory,
             data_file_access_control: Arc::new(DataFileAccessControl::default()),
             data_file_sync_lock: std::sync::Mutex::new(()),
@@ -3313,8 +3313,11 @@ impl Volume {
         #[cfg(test)]
         self.dat_syncs_for_test.fetch_add(1, Ordering::Relaxed);
         #[cfg(test)]
-        if let Some((id, cookie)) = self.cancel_on_flush_for_test.lock().unwrap().take() {
-            self.cancel_pending_writes(id, cookie);
+        {
+            let hook = self.on_flush_dat_for_test.lock().unwrap().take();
+            if let Some(hook) = hook {
+                hook(self);
+            }
         }
         #[cfg(test)]
         if io.fail_fsync_for_test {
@@ -3821,7 +3824,7 @@ impl Volume {
             cookie: n.cookie,
             ..Needle::default()
         };
-        self.do_delete_request(io, &mut tombstone, false)?;
+        self.do_delete_request(io, &mut tombstone)?;
         Err(VolumeError::Deleted)
     }
 
@@ -3841,8 +3844,16 @@ impl Volume {
     ) -> Result<Size, VolumeError> {
         self.cancel_pending_writes(n.id, n.cookie);
         let _sync_guard = self.data_file_sync_lock.lock().unwrap();
+        if fsync {
+            return self.delete_synced(n);
+        }
         let _guard = self.data_file_access_control.write_lock();
         let mut io = self.io.write().unwrap();
+        self.check_deletable()?;
+        self.do_delete_request(&mut io, n)
+    }
+
+    fn check_deletable(&self) -> Result<(), VolumeError> {
         if self.is_closed() {
             // A detached handle has no index; without this check the tombstone
             // would silently no-op as Ok(0) while the needle lives on the
@@ -3855,15 +3866,71 @@ impl Volume {
         if self.no_write_flags().0 {
             return Err(VolumeError::ReadOnly(self.id));
         }
-        self.do_delete_request(&mut io, n, fsync)
+        Ok(())
     }
 
-    fn do_delete_request(
+    /// The durable delete under the caller's sync lock: the tombstone is
+    /// appended and published under the write guards, which are dropped for
+    /// each flush as in write_synced_run, so reads do not wait on the fsync.
+    fn delete_synced(&self, n: &mut Needle) -> Result<Size, VolumeError> {
+        let staged = {
+            let _guard = self.data_file_access_control.write_lock();
+            let mut io = self.io.write().unwrap();
+            self.check_deletable()?;
+            self.append_delete_request(&mut io, n)?
+        };
+        // An already-deleted needle still syncs: an earlier delete may have
+        // skipped it.
+        if !self.has_remote_file() {
+            let io = self.io.read().unwrap();
+            if let Err(e) = self.flush_dat(&io) {
+                self.check_read_write_error(Some(&e));
+                if let Some((offset, _)) = staged {
+                    self.undo_unsynced_append(&io, offset);
+                }
+                return Err(VolumeError::Io(e));
+            }
+        }
+        if let Some((offset, _)) = staged {
+            let _guard = self.data_file_access_control.write_lock();
+            let mut io = self.io.write().unwrap();
+            self.publish_delete_request(&mut io, n, offset)?;
+        }
+        self.flush_idx(&self.io.read().unwrap())?;
+        let Some((_, size)) = staged else {
+            return Ok(Size(0));
+        };
+        let _guard = self.data_file_access_control.write_lock();
+        let mut io = self.io.write().unwrap();
+        if self.maybe_checkpoint_index(&mut io, true) {
+            self.check_read_write_error(None);
+        }
+        Ok(size)
+    }
+
+    fn do_delete_request(&self, io: &mut VolumeIo, n: &mut Needle) -> Result<Size, VolumeError> {
+        let Some((offset, size)) = self.append_delete_request(io, n)? else {
+            return Ok(Size(0));
+        };
+        self.publish_delete_request(io, n, offset)?;
+        let checkpoint_ok = self.maybe_checkpoint_index(io, false);
+
+        // Clear the EIO streak after a successful delete (tombstone append +
+        // index update + checkpoint), mirroring do_write_request.
+        if checkpoint_ok {
+            self.check_read_write_error(None);
+        }
+
+        Ok(size)
+    }
+
+    /// do_delete_request through the tombstone append, leaving the index
+    /// update to publish_delete_request. None when there is nothing to delete.
+    fn append_delete_request(
         &self,
         io: &mut VolumeIo,
         n: &mut Needle,
-        fsync: bool,
-    ) -> Result<Size, VolumeError> {
+    ) -> Result<Option<(u64, Size)>, VolumeError> {
         let (found, size, _stored_offset) = if let Some(nm) = &io.nm {
             // Propagate: acknowledging the delete as a no-op because the index
             // could not be read would drop the tombstone on the floor while the
@@ -3878,21 +3945,11 @@ impl Volume {
                 (false, Size(0), Offset::default())
             }
         } else {
-            return Ok(Size(0));
+            return Ok(None);
         };
 
         if !found {
-            // An earlier delete that skipped fsync may have dropped it.
-            if fsync {
-                if !self.has_remote_file()
-                    && let Err(e) = self.flush_dat(io)
-                {
-                    self.check_read_write_error(Some(&e));
-                    return Err(VolumeError::Io(e));
-                }
-                self.flush_idx(io)?;
-            }
-            return Ok(Size(0));
+            return Ok(None);
         }
 
         // Write tombstone: append needle with empty data
@@ -3902,16 +3959,20 @@ impl Volume {
         let offset = if !self.has_remote_file() {
             // Normal volume: append tombstone to .dat file
             let (offset, _, _) = self.append_needle(io, n)?;
-            if fsync && let Err(e) = self.flush_dat(io) {
-                self.check_read_write_error(Some(&e));
-                self.undo_unsynced_append(io, offset);
-                return Err(VolumeError::Io(e));
-            }
             offset
         } else {
             // Remote-tiered volume: skip .dat append, use offset 0
             0
         };
+        Ok(Some((offset, size)))
+    }
+
+    fn publish_delete_request(
+        &self,
+        io: &mut VolumeIo,
+        n: &Needle,
+        offset: u64,
+    ) -> Result<(), VolumeError> {
         io.last_append_at_ns = n.append_at_ns;
 
         // Update index
@@ -3923,18 +3984,7 @@ impl Volume {
             io.last_write_needle_key = NeedleId(0);
             io.last_write_deleted = true;
         }
-        if fsync {
-            self.flush_idx(io)?;
-        }
-        let checkpoint_ok = self.maybe_checkpoint_index(io, fsync);
-
-        // Clear the EIO streak after a successful delete (tombstone append +
-        // index update + checkpoint), mirroring do_write_request.
-        if checkpoint_ok {
-            self.check_read_write_error(None);
-        }
-
-        Ok(size)
+        Ok(())
     }
 
     // ---- Metrics ----
@@ -8403,6 +8453,37 @@ mod tests {
         assert_eq!(v.sync_counts_for_test(), (1, 1));
     }
 
+    /// A durable delete flushes with the write guards dropped, so a read of
+    /// the volume does not wait on its fsync.
+    #[test]
+    fn test_delete_needle_with_fsync_reads_during_flush() {
+        let tmp = TempDir::new().unwrap();
+        let v = Arc::new(make_test_volume(tmp.path().to_str().unwrap()));
+        let mut writes: Vec<_> = (1..=2u64)
+            .map(|id| (batch_needle(id, 0xaa, b"payload"), false))
+            .collect();
+        assert!(
+            v.write_needles_grouped(&mut writes)
+                .iter()
+                .all(|r| r.is_ok())
+        );
+
+        let read_during_flush = Arc::new(AtomicBool::new(false));
+        let (reader, flag) = (v.clone(), read_during_flush.clone());
+        *v.on_flush_dat_for_test.lock().unwrap() = Some(Box::new(move |_: &Volume| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let mut n = batch_needle(2, 0xaa, b"");
+                let _ = tx.send(reader.read_needle(&mut n).is_ok());
+            });
+            let read = rx.recv_timeout(std::time::Duration::from_secs(5));
+            flag.store(read == Ok(true), Ordering::Release);
+        }));
+        v.delete_needle_with_fsync(&mut batch_needle(1, 0xaa, b""), true)
+            .unwrap();
+        assert!(read_during_flush.load(Ordering::Acquire));
+    }
+
     /// A batch of durable writes shares one .dat sync and one .idx sync,
     /// where writing them one at a time syncs both files per needle.
     #[test]
@@ -9213,7 +9294,10 @@ mod tests {
 
         let n = pending_needle(1, b"late write");
         let pending = v.track_pending_write(&n);
-        *v.cancel_on_flush_for_test.lock().unwrap() = Some((n.id, n.cookie));
+        let (id, cookie) = (n.id, n.cookie);
+        *v.on_flush_dat_for_test.lock().unwrap() = Some(Box::new(move |v: &Volume| {
+            v.cancel_pending_writes(id, cookie)
+        }));
         let err = write_pending(&v, n, true, pending).unwrap_err();
         assert!(matches!(err, VolumeError::Deleted));
         assert_eq!(v.sync_counts_for_test(), (2, 1));
