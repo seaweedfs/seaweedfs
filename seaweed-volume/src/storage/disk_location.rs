@@ -829,6 +829,24 @@ impl DiskLocation {
         self.volumes.len()
     }
 
+    /// Number of local volumes of `collection` that still take writes: not
+    /// read-only and, when `volume_size_limit` is known (non zero), with a .dat
+    /// below it. The .dat size is what the master compares with the limit to
+    /// stop writes. Mirrors Go's WritableCollectionVolumesLen.
+    pub fn writable_collection_volumes_len(
+        &self,
+        collection: &str,
+        volume_size_limit: u64,
+    ) -> usize {
+        self.volumes
+            .values()
+            .filter(|v| v.collection == collection && !v.has_remote_file() && !v.is_read_only())
+            .filter(|v| {
+                volume_size_limit == 0 || v.dat_file_size().unwrap_or(0) < volume_size_limit
+            })
+            .count()
+    }
+
     /// Get all volume IDs, sorted.
     pub fn volume_ids(&self) -> Vec<VolumeId> {
         let mut ids: Vec<VolumeId> = self.volumes.keys().copied().collect();
