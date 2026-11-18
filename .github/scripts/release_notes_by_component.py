@@ -211,7 +211,7 @@ def split_notes(body):
     end = next((i for i in range(start + 1, len(lines))
                 if lines[i].startswith(("## ", "**Full Changelog**"))), len(lines))
     prs, stray = [], []
-    block = [l.strip() for l in lines[start + 1:end] if l.strip()]
+    block = [l.rstrip() for l in lines[start + 1:end] if l.strip()]
     for line in lines[start + 1:end]:
         if PR_LINE.match(line):
             prs.append(line)

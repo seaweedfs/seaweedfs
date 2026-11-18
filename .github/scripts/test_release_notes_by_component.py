@@ -166,6 +166,9 @@ class RegroupTest(unittest.TestCase):
     def test_hand_written_component_heading_refused(self):
         with self.assertRaises(ValueError):
             rn.regroup(NOTES.replace("## What's Changed\n", "## What's Changed\n### Security\n"), self.files)
+        once = rn.regroup(NOTES, self.files)
+        with self.assertRaises(ValueError):
+            rn.regroup(once.replace("\n### Filer\n", "\n    ### Filer\n"), self.files)
 
     def test_author_from_the_by_clause(self):
         body = "## What's Changed\n* Bump a by @dependabot[bot] in docs by @alice in https://github.com/seaweedfs/seaweedfs/pull/7\n"
