@@ -131,6 +131,7 @@ var (
 type uploadStatusError struct {
 	StatusCode          int
 	refusedBeforeAppend bool
+	expiredBeforeAppend bool
 	stalled             bool // the stall watchdog cancelled this attempt's request
 	err                 error
 }
@@ -149,7 +150,7 @@ func ShouldReassignUpload(err error) bool {
 	}
 	var se *uploadStatusError
 	if errors.As(err, &se) {
-		return se.StatusCode == 0 || se.StatusCode >= 500 || (se.StatusCode == http.StatusConflict && se.refusedBeforeAppend)
+		return se.StatusCode == 0 || se.StatusCode >= 500 || (se.StatusCode == http.StatusConflict && se.refusedBeforeAppend) || (se.StatusCode == http.StatusUnauthorized && se.expiredBeforeAppend)
 	}
 	return strings.Contains(err.Error(), "transport")
 }
@@ -243,17 +244,29 @@ func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, ho
 		return err
 	}
 
+	// A credential can expire while the first HTTP request is queued. Bound
+	// expiry-specific reassignment even when unrelated transient retries are
+	// intentionally unbounded. The third marked refusal is final.
+	expiryRefusals := 0
+	shouldRetry := func(err error) bool {
+		var statusErr *uploadStatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusUnauthorized && statusErr.expiredBeforeAppend {
+			expiryRefusals++
+			return expiryRefusals < 3
+		}
+		return ShouldReassignUpload(err)
+	}
 	if uploadOption.RetryForever {
 		util.RetryUntil("uploadWithRetryForever", doUploadFunc, func(err error) (shouldContinue bool) {
 			glog.V(0).Infof("upload content: %v", err)
 			var statusErr *uploadStatusError
-			if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusConflict {
-				return ShouldReassignUpload(err)
+			if errors.As(err, &statusErr) && (statusErr.StatusCode == http.StatusConflict || (statusErr.StatusCode == http.StatusUnauthorized && statusErr.expiredBeforeAppend)) {
+				return shouldRetry(err)
 			}
 			return true
 		})
 	} else {
-		err = util.RetryOnError("uploadWithRetry", ShouldReassignUpload, doUploadFunc)
+		err = util.RetryOnError("uploadWithRetry", shouldRetry, doUploadFunc)
 	}
 
 	return
@@ -380,7 +393,7 @@ func (uploader *Uploader) retriedUploadData(ctx context.Context, prepared *prepa
 		}
 		var statusErr *uploadStatusError
 		if errors.As(err, &statusErr) {
-			if statusErr.StatusCode == http.StatusConflict {
+			if statusErr.StatusCode == http.StatusConflict || (statusErr.StatusCode == http.StatusUnauthorized && statusErr.expiredBeforeAppend) {
 				return nil, err
 			}
 			if statusErr.stalled {
@@ -720,26 +733,27 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		respStallTimer := time.AfterFunc(uploadStallMinWait, stallFired)
 		defer respStallTimer.Stop()
 	}
-	refusedBeforeAppend := resp.StatusCode == http.StatusConflict && resp.Header.Get("X-Seaweed-Write-Outcome") == "refused-before-append"
+	refusedBeforeAppend := resp.StatusCode == http.StatusConflict && resp.Header.Get(util_http.WriteOutcomeHeader) == util_http.WriteOutcomeRefusedBeforeAppend
+	expiredBeforeAppend := resp.StatusCode == http.StatusUnauthorized && resp.Header.Get(util_http.WriteOutcomeHeader) == util_http.WriteOutcomeExpiredJwtBeforeAppend
 	resp_body, ra_err := io.ReadAll(resp.Body)
 	uploadDone.Store(true)
 	if ra_err != nil {
 		stats.UploadErrorCounter.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
-		return nil, &uploadStatusError{StatusCode: resp.StatusCode, refusedBeforeAppend: refusedBeforeAppend, stalled: reqCtx.Err() != nil && ctx.Err() == nil, err: fmt.Errorf("read response body %v: %w", option.UploadUrl, ra_err)}
+		return nil, &uploadStatusError{StatusCode: resp.StatusCode, refusedBeforeAppend: refusedBeforeAppend, expiredBeforeAppend: expiredBeforeAppend, stalled: reqCtx.Err() != nil && ctx.Err() == nil, err: fmt.Errorf("read response body %v: %w", option.UploadUrl, ra_err)}
 	}
 
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
 		stats.UploadErrorCounter.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
 		glog.ErrorfCtx(ctx, "unmarshal %s: %v", option.UploadUrl, string(resp_body))
-		return nil, &uploadStatusError{StatusCode: resp.StatusCode, refusedBeforeAppend: refusedBeforeAppend, err: fmt.Errorf("unmarshal %v: %w", option.UploadUrl, unmarshal_err)}
+		return nil, &uploadStatusError{StatusCode: resp.StatusCode, refusedBeforeAppend: refusedBeforeAppend, expiredBeforeAppend: expiredBeforeAppend, err: fmt.Errorf("unmarshal %v: %w", option.UploadUrl, unmarshal_err)}
 	}
-	if resp.StatusCode == http.StatusConflict && ret.Error == "" {
+	if (resp.StatusCode == http.StatusConflict || expiredBeforeAppend) && ret.Error == "" {
 		ret.Error = http.StatusText(resp.StatusCode)
 	}
 	if ret.Error != "" {
 		stats.UploadErrorCounter.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
-		return nil, &uploadStatusError{StatusCode: resp.StatusCode, refusedBeforeAppend: refusedBeforeAppend, err: fmt.Errorf("unmarshalled error %v: %v", option.UploadUrl, ret.Error)}
+		return nil, &uploadStatusError{StatusCode: resp.StatusCode, refusedBeforeAppend: refusedBeforeAppend, expiredBeforeAppend: expiredBeforeAppend, err: fmt.Errorf("unmarshalled error %v: %v", option.UploadUrl, ret.Error)}
 	}
 	if bps := uploadObservedBps(bodySize, movedIn); bps > 0 {
 		uploader.fastUploadHosts.Store(req.URL.Host, fastHostMark{at: time.Now().UnixNano(), bps: bps})
