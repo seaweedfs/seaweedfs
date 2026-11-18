@@ -483,6 +483,18 @@ fn extract_file_id(path: &str) -> String {
     format!("{},{}", parsed.vid, fid)
 }
 
+fn is_multipart_form_data(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|media_type| {
+            media_type
+                .trim()
+                .eq_ignore_ascii_case("multipart/form-data")
+        })
+}
+
 fn streaming_chunk_size(read_buffer_size_bytes: usize, data_size: usize) -> usize {
     std::cmp::min(
         read_buffer_size_bytes.max(DEFAULT_STREAMING_CHUNK_SIZE),
@@ -2777,14 +2789,28 @@ pub async fn post_handler(
     // JWT check for writes
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if state
-        .guard
-        .read()
-        .unwrap()
-        .check_jwt_for_file(token.as_deref(), &file_id, true)
-        .is_err()
-    {
-        return json_error_with_query(StatusCode::UNAUTHORIZED, "wrong jwt", Some(&query));
+    let expired_jwt = {
+        let guard = state.guard.read().unwrap();
+        match guard.check_jwt_for_file(token.as_deref(), &file_id, true) {
+            Ok(()) => None,
+            Err(_) => Some(
+                is_multipart_form_data(&headers)
+                    && token.as_deref().is_some_and(|token| {
+                        crate::security::is_expired_volume_jwt(&guard.signing_key, token, &file_id)
+                    }),
+            ),
+        }
+    };
+    if let Some(expired_jwt) = expired_jwt {
+        let mut response =
+            json_error_with_query(StatusCode::UNAUTHORIZED, "wrong jwt", Some(&query));
+        if expired_jwt {
+            response.headers_mut().insert(
+                "x-seaweed-write-outcome",
+                header::HeaderValue::from_static("expired-jwt-before-append"),
+            );
+        }
+        return response;
     }
 
     // Upload throttling: check inflight bytes against limit
@@ -5463,6 +5489,83 @@ mod tests {
         let headers = HeaderMap::new();
         let uri: axum::http::Uri = "/test".parse().unwrap();
         assert_eq!(extract_jwt(&headers, &uri), None);
+    }
+
+    #[tokio::test]
+    async fn http_expired_write_jwt_is_marked_before_append() {
+        use crate::security::SigningKey;
+        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+        use tower::ServiceExt;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let key = SigningKey(b"write-secret".to_vec());
+        state.guard.write().unwrap().signing_key = key.clone();
+        let volume = state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1;
+        let before = volume.dat_file_size().unwrap();
+        let fid = format!("1,{:x}{TEST_COOKIE:08x}", 0x6e7a_0c09u64);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let sign = |key: &[u8]| {
+            encode(
+                &Header::new(Algorithm::HS256),
+                &serde_json::json!({"fid": fid, "exp": now - 10}),
+                &EncodingKey::from_secret(key),
+            )
+            .unwrap()
+        };
+        let boundary = "expiredjwtboundary";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a\"\r\n\r\nexpired-bytes\r\n--{boundary}--\r\n"
+        );
+        for (token, content_type, marked) in [
+            (
+                sign(&key.0),
+                format!("multipart/form-data; boundary={boundary}"),
+                true,
+            ),
+            (
+                sign(b"other-secret"),
+                format!("multipart/form-data; boundary={boundary}"),
+                false,
+            ),
+            (sign(&key.0), "application/octet-stream".to_string(), false),
+        ] {
+            let response = super::super::volume_server::build_admin_router(state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method(Method::POST)
+                        .uri(format!("/{fid}"))
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                        .header(header::CONTENT_TYPE, &content_type)
+                        .body(Body::from(body.clone()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::UNAUTHORIZED,
+                "{content_type}"
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get("x-seaweed-write-outcome")
+                    .map(|value| value.to_str().unwrap()),
+                marked.then_some("expired-jwt-before-append"),
+                "{content_type}"
+            );
+        }
+        assert_eq!(volume.dat_file_size().unwrap(), before);
     }
 
     #[test]

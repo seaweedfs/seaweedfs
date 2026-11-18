@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,11 +15,13 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 	"github.com/seaweedfs/seaweedfs/weed/util/buffer_pool"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 var jpegStart = []byte{0xFF, 0xD8, 0xFF}
@@ -52,7 +55,22 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !vs.maybeCheckJwtAuthorization(r, vid, fid, true) {
+	// Snapshot the write signing key once, so the authorization check and the
+	// expired-JWT classification below read the same key even if it rotates.
+	writeSigningKey := vs.guard.SigningKey()
+	if !vs.checkJwtAuthorizationWithKey(r, vid, fid, writeSigningKey) {
+		// ParseForm does not read multipart bodies. Preserve its existing placement
+		// and status precedence for other content types, which get no retry marker.
+		contentType, _, typeErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if typeErr == nil && contentType == "multipart/form-data" {
+			baseFid := fid
+			if sep := strings.LastIndex(baseFid, "_"); sep > 0 {
+				baseFid = baseFid[:sep]
+			}
+			if security.IsExpiredVolumeJwt(writeSigningKey, security.GetJwt(r), vid+","+baseFid) {
+				w.Header().Set(util_http.WriteOutcomeHeader, util_http.WriteOutcomeExpiredJwtBeforeAppend)
+			}
+		}
 		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
 		return
 	}
@@ -77,7 +95,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusConflict
 		}
 		if errors.Is(writeError, topology.ErrorWriteRefused) {
-			w.Header().Set("X-Seaweed-Write-Outcome", "refused-before-append")
+			w.Header().Set(util_http.WriteOutcomeHeader, util_http.WriteOutcomeRefusedBeforeAppend)
 		}
 		writeJsonError(w, r, status, writeError)
 		return

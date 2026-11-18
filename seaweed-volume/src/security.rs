@@ -106,6 +106,39 @@ pub fn decode_jwt(signing_key: &SigningKey, token: &str) -> Result<FileIdClaims,
     Ok(data.claims)
 }
 
+/// Reports a signed, fid-bound write token whose only failure is expiry. It
+/// never authorizes a request. Mirrors Go's `security.IsExpiredVolumeJwt`.
+pub fn is_expired_volume_jwt(signing_key: &SigningKey, token: &str, expected_fid: &str) -> bool {
+    match decode_jwt(signing_key, token) {
+        Err(JwtError::Jwt(e))
+            if matches!(e.kind(), jsonwebtoken::errors::ErrorKind::ExpiredSignature) => {}
+        _ => return false,
+    }
+
+    #[derive(Deserialize)]
+    struct ExpiredClaims {
+        fid: Option<String>,
+        iat: Option<u64>,
+    }
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.required_spec_claims.clear();
+    validation.validate_exp = false;
+    validation.validate_nbf = true;
+    validation.leeway = 0;
+    let Ok(data) = decode::<ExpiredClaims>(
+        token,
+        &DecodingKey::from_secret(&signing_key.0),
+        &validation,
+    ) else {
+        return false;
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    data.claims.fid.as_deref() == Some(expected_fid) && data.claims.iat.is_none_or(|iat| iat <= now)
+}
+
 // ============================================================================
 // Guard
 // ============================================================================
@@ -408,6 +441,53 @@ mod tests {
         let key2 = SigningKey::from_string("secret2");
         let token = gen_jwt(&key1, 3600, "1,abc").unwrap();
         assert!(decode_jwt(&key2, &token).is_err());
+    }
+
+    #[test]
+    fn test_is_expired_volume_jwt_classifies_expiry_only() {
+        let key = SigningKey::from_string("write-key");
+        let fid = "3,01637037d6";
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let sign = |claims: serde_json::Value, key: &SigningKey| {
+            encode(
+                &Header::new(Algorithm::HS256),
+                &claims,
+                &EncodingKey::from_secret(&key.0),
+            )
+            .unwrap()
+        };
+        let expired = sign(serde_json::json!({"fid": fid, "exp": now - 10}), &key);
+        assert!(is_expired_volume_jwt(&key, &expired, fid));
+        assert!(!is_expired_volume_jwt(&key, &expired, "3,01637037d7"));
+        assert!(!is_expired_volume_jwt(
+            &SigningKey::from_string("other-key"),
+            &expired,
+            fid
+        ));
+        assert!(!is_expired_volume_jwt(&SigningKey(vec![]), &expired, fid));
+        let immature = sign(
+            serde_json::json!({"fid": fid, "exp": now - 10, "nbf": now + 60}),
+            &key,
+        );
+        assert!(!is_expired_volume_jwt(&key, &immature, fid));
+        let future_issued = sign(
+            serde_json::json!({"fid": fid, "exp": now - 10, "iat": now + 60}),
+            &key,
+        );
+        assert!(!is_expired_volume_jwt(&key, &future_issued, fid));
+        let live = sign(serde_json::json!({"fid": fid, "exp": now + 60}), &key);
+        assert!(!is_expired_volume_jwt(&key, &live, fid));
+        let unsigned = format!(
+            "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.{}.",
+            base64::Engine::encode(
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+                serde_json::json!({"fid": fid, "exp": now - 10}).to_string()
+            )
+        );
+        assert!(!is_expired_volume_jwt(&key, &unsigned, fid));
     }
 
     #[test]
