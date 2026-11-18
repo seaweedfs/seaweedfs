@@ -25,19 +25,19 @@ func (s *Store) mirrorEcMetadataToShardDisks(only ...needle.VolumeId) {
 		return
 	}
 
-	ecxOwners := s.indexEcxOwners()
+	ecxOwners := s.indexEcxOwners(only...)
 	if len(ecxOwners) == 0 {
 		return
 	}
 
 	for _, loc := range s.Locations {
-		orphans := loc.collectOrphanEcShards()
+		orphans := loc.collectOrphanEcShards(only...)
 		if len(orphans) == 0 {
 			continue
 		}
 		for key := range orphans {
 			owner, ok := ecxOwners[key]
-			if !ok || !ecVolumeSelected(key.vid, only) {
+			if !ok {
 				continue
 			}
 			if owner.location == loc {

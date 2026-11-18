@@ -84,7 +84,7 @@ func (vs *VolumeServer) recoverEcIndexLocked(peers []pb.ServerAddress, m storage
 	// A copy holding the lock may have installed the index meanwhile: skip
 	// the fetch, but its shards still need the mount.
 	fetched := false
-	current := vs.store.CollectEcVolumesMissingIndex()
+	current := vs.store.CollectEcVolumesMissingIndex(m.VolumeId)
 	if i := slices.IndexFunc(current, func(x storage.EcVolumeMissingIndex) bool { return x.VolumeId == m.VolumeId }); i >= 0 {
 		if len(peers) == 0 {
 			glog.Warningf("ec volume %d: shards present locally but .ecx missing and no peer holds it; leaving shards unloaded", m.VolumeId)

@@ -29,13 +29,13 @@ type EcVolumeMissingIndex struct {
 //
 // It scans on-disk shard files directly, so it surfaces volumes the master never
 // learned about — including those whose every holder is missing its index.
-func (s *Store) CollectEcVolumesMissingIndex() []EcVolumeMissingIndex {
-	ecxOwners := s.indexEcxOwners()
+func (s *Store) CollectEcVolumesMissingIndex(only ...needle.VolumeId) []EcVolumeMissingIndex {
+	ecxOwners := s.indexEcxOwners(only...)
 
 	seen := make(map[ecKeyForReconcile]bool)
 	var missing []EcVolumeMissingIndex
 	for _, loc := range s.Locations {
-		for key := range loc.collectOrphanEcShards() {
+		for key := range loc.collectOrphanEcShards(only...) {
 			if _, hasLocalIndex := ecxOwners[key]; hasLocalIndex {
 				continue
 			}
@@ -77,9 +77,9 @@ func ecVolumeSelected(vid needle.VolumeId, only []needle.VolumeId) bool {
 // been fetched from a peer.
 func (s *Store) loadOrphanEcShardsWithLocalIndex(only ...needle.VolumeId) {
 	for _, loc := range s.Locations {
-		orphans := loc.collectOrphanEcShards()
+		orphans := loc.collectOrphanEcShards(only...)
 		for key, shards := range orphans {
-			if !ecVolumeSelected(key.vid, only) || !loc.HasEcxFileOnDisk(key.collection, key.vid) {
+			if !loc.HasEcxFileOnDisk(key.collection, key.vid) {
 				continue
 			}
 			if err := loc.loadEcShards(shards, key.collection, key.vid, loc.ecShardNotifyHandler); err != nil {
