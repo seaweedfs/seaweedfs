@@ -1,0 +1,18 @@
+{
+  "identities": [
+    {
+      "name": "listing_study_admin",
+      "credentials": [
+        {
+          "accessKey": "listing_study_access",
+          "secretKey": "listing_study_secret"
+        }
+      ],
+      "actions": ["Admin", "Read", "List", "Tagging", "Write"]
+    },
+    {
+      "name": "anonymous",
+      "actions": ["Read", "List"]
+    }
+  ]
+}

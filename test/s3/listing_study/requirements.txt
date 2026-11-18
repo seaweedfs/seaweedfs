@@ -1,0 +1,6 @@
+# Versions the pinned s3-listing-study uv.lock resolves for the capsule normalizers.
+duckdb==1.5.5
+ijson==3.5.1
+pyyaml==6.0.3
+zstandard==0.25.0
+botocore==1.44.5
