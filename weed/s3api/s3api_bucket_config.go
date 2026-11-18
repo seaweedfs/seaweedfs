@@ -36,6 +36,7 @@ type BucketConfig struct {
 	Name             string
 	Versioning       string // "Enabled", "Suspended", or ""
 	Ownership        string
+	OwnershipDeleted bool // DeleteBucketOwnershipControls removed it; GET reports none
 	ACL              []byte
 	Owner            string
 	IdentityId       string // identity that created the bucket
@@ -432,6 +433,7 @@ func (s3a *S3ApiServer) newBucketConfigFromEntry(bucket string, entry *filer_pb.
 		if ownership, exists := entry.Extended[s3_constants.ExtOwnershipKey]; exists {
 			config.Ownership = string(ownership)
 		}
+		config.OwnershipDeleted = len(entry.Extended[s3_constants.ExtOwnershipDeletedKey]) > 0
 		if data, exists := entry.Extended[s3_constants.ExtPublicAccessBlockKey]; exists && len(data) > 0 {
 			if pab, err := parsePublicAccessBlock(data); err == nil {
 				config.PublicAccessBlock = pab
@@ -587,6 +589,11 @@ func applyBucketConfigToExtended(config *BucketConfig, ext map[string][]byte) er
 	}
 	setOrDelete(s3_constants.ExtVersioningKey, []byte(config.Versioning))
 	setOrDelete(s3_constants.ExtOwnershipKey, []byte(config.Ownership))
+	if config.OwnershipDeleted && config.Ownership == "" {
+		ext[s3_constants.ExtOwnershipDeletedKey] = []byte("true")
+	} else {
+		delete(ext, s3_constants.ExtOwnershipDeletedKey)
+	}
 	if config.PublicAccessBlock != nil {
 		data, err := xml.Marshal(config.PublicAccessBlock)
 		if err != nil {
@@ -766,6 +773,9 @@ func (s3a *S3ApiServer) getBucketOwnership(bucket string) (string, s3err.ErrorCo
 	config, errCode := s3a.getBucketConfig(bucket)
 	if errCode != s3err.ErrNone {
 		return "", errCode
+	}
+	if config.OwnershipDeleted && config.Ownership == "" {
+		return "", s3err.OwnershipControlsNotFoundError
 	}
 
 	return s3_constants.EffectiveOwnership(config.Ownership), s3err.ErrNone

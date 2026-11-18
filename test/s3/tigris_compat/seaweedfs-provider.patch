@@ -1,0 +1,19 @@
+diff --git a/providers.go b/providers.go
+index 149f94c..bc7aeeb 100644
+--- a/providers.go
++++ b/providers.go
+@@ -180,6 +180,14 @@ func (p *Provider) CreateVersionedBucket(ctx context.Context, client *s3.Client,
+ // If names is non-empty, only those named providers are returned.
+ func LoadProviders(names []string) []Provider {
+ 	all := []Provider{
++		{
++			Name:      "seaweedfs",
++			Endpoint:  os.Getenv("SEAWEEDFS_S3_ENDPOINT"),
++			Region:    envOr("SEAWEEDFS_S3_REGION", "us-east-1"),
++			PathStyle: true,
++			AccessKey: os.Getenv("SEAWEEDFS_S3_ACCESS_KEY_ID"),
++			SecretKey: os.Getenv("SEAWEEDFS_S3_SECRET_ACCESS_KEY"),
++		},
+ 		{
+ 			Name:      "tigris",
+ 			Endpoint:  "https://t3.storage.dev",

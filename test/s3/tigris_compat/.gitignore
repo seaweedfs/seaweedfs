@@ -1,0 +1,6 @@
+s3-api-compat-tests/
+test-volume-data/
+compat-runner
+results.json
+weed-test.log
+weed-server.pid
