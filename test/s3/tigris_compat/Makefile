@@ -57,7 +57,6 @@ build-suite:
 	@cd $(SUITE_DIR) && go build -o ../compat-runner .
 
 start-server: build-weed
-	@mkdir -p $(SERVER_DIR)
 	@if curl -sS --max-time 2 -o /dev/null http://127.0.0.1:$(S3_PORT)/ >/dev/null 2>&1; then \
 		echo "port $(S3_PORT) is already served by another process; refusing to test against it"; \
 		exit 1; \
@@ -66,7 +65,8 @@ start-server: build-weed
 		echo "the server this Makefile started (pid $$(cat weed-server.pid)) is still running; run make stop-server first"; \
 		exit 1; \
 	fi
-	@rm -f weed-server.pid weed-server.started
+	@rm -rf weed-server.pid weed-server.started $(SERVER_DIR)
+	@mkdir -p $(SERVER_DIR)
 	@$(WEED_BINARY) mini \
 		-dir=$(SERVER_DIR) \
 		-ip=127.0.0.1 \
