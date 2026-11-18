@@ -3860,6 +3860,16 @@ impl Volume {
         };
 
         if !found {
+            // An earlier delete that skipped fsync may have dropped it.
+            if fsync {
+                if !self.has_remote_file()
+                    && let Err(e) = self.flush_dat(io)
+                {
+                    self.check_read_write_error(Some(&e));
+                    return Err(VolumeError::Io(e));
+                }
+                self.flush_idx(io)?;
+            }
             return Ok(Size(0));
         }
 
@@ -8295,8 +8305,6 @@ mod tests {
         std::fs::metadata(v.file_name(".dat")).unwrap().len()
     }
 
-    /// A batch of durable writes shares one .dat sync and one .idx sync,
-    /// where writing them one at a time syncs both files per needle.
     #[test]
     fn test_delete_needle_with_fsync_syncs_tombstone() {
         let tmp = TempDir::new().unwrap();
@@ -8351,6 +8359,30 @@ mod tests {
         assert_eq!(n.data, b"payload");
     }
 
+    #[test]
+    fn test_delete_needle_with_fsync_syncs_after_unsynced_delete() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+
+        let mut writes = vec![(batch_needle(1, 0xaa, b"payload"), false)];
+        assert!(
+            v.write_needles_grouped(&mut writes)
+                .iter()
+                .all(|r| r.is_ok())
+        );
+        v.delete_needle(&mut batch_needle(1, 0xaa, b"")).unwrap();
+        assert_eq!(v.sync_counts_for_test(), (0, 0));
+
+        let size = v
+            .delete_needle_with_fsync(&mut batch_needle(1, 0xaa, b""), true)
+            .unwrap();
+        assert_eq!(size.0, 0);
+        assert_eq!(v.sync_counts_for_test(), (1, 1));
+    }
+
+    /// A batch of durable writes shares one .dat sync and one .idx sync,
+    /// where writing them one at a time syncs both files per needle.
     #[test]
     fn test_grouped_fsync_writes_share_one_sync() {
         let tmp = TempDir::new().unwrap();
