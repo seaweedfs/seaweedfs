@@ -2395,7 +2395,7 @@ pub(crate) async fn recover_missing_ec_indexes(
             .store
             .read()
             .unwrap()
-            .collect_ec_volumes_missing_index()
+            .collect_ec_volumes_missing_index_only(Some(m.vid))
             .into_iter()
             .find(|x| x.vid == m.vid);
         // A copy holding the lock may have installed the index meanwhile: skip

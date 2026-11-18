@@ -43,7 +43,7 @@ impl Store {
         if self.locations.len() < 2 {
             return;
         }
-        let owners = self.index_ecx_owners_for_mirror();
+        let owners = self.index_ecx_owners_for_mirror(only);
         if owners.is_empty() {
             return;
         }
@@ -58,11 +58,8 @@ impl Store {
         }
         let mut mirrors: Vec<Mirror> = Vec::new();
         for (loc_idx, loc) in self.locations.iter().enumerate() {
-            let orphans = collect_shard_disk_volumes(loc);
+            let orphans = collect_shard_disk_volumes(loc, only);
             for (key, _shards) in orphans {
-                if only.is_some_and(|vid| vid != key.vid) {
-                    continue;
-                }
                 let Some(owner) = owners.get(&key) else {
                     continue;
                 };
@@ -120,7 +117,7 @@ impl Store {
     // Records both idx_dir (where .ecx was found) and data_dir, so
     // the mirror can resolve .vif from data_dir even when .ecx lives
     // in idx_directory.
-    fn index_ecx_owners_for_mirror(&self) -> HashMap<EcKey, EcxOwner> {
+    fn index_ecx_owners_for_mirror(&self, only: Option<VolumeId>) -> HashMap<EcKey, EcxOwner> {
         let mut owners: HashMap<EcKey, EcxOwner> = HashMap::new();
         for (loc_idx, loc) in self.locations.iter().enumerate() {
             let mut seen: Vec<&str> = Vec::with_capacity(2);
@@ -140,15 +137,18 @@ impl Store {
                     let Some(base) = name.strip_suffix(".ecx") else {
                         continue;
                     };
+                    let Some((collection, vid)) = parse_collection_volume_id_pub(base) else {
+                        continue;
+                    };
+                    if only.is_some_and(|o| o != vid) {
+                        continue;
+                    }
                     // A 0-byte .ecx is a corrupt stub from a failed copy, not a
                     // credible owner — skip it so the scan keeps looking for a
                     // real index on a sibling disk (Go's indexEcxOwners).
                     if !ent.metadata().is_ok_and(|m| m.len() > 0) {
                         continue;
                     }
-                    let Some((collection, vid)) = parse_collection_volume_id_pub(base) else {
-                        continue;
-                    };
                     owners
                         .entry(EcKey { collection, vid })
                         .or_insert_with(|| EcxOwner {
@@ -304,7 +304,10 @@ fn copy_sidecar_atomic(src: &Path, dst: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn collect_shard_disk_volumes(loc: &DiskLocation) -> HashMap<EcKey, Vec<String>> {
+fn collect_shard_disk_volumes(
+    loc: &DiskLocation,
+    only: Option<VolumeId>,
+) -> HashMap<EcKey, Vec<String>> {
     let mut out: HashMap<EcKey, Vec<String>> = HashMap::new();
     let Ok(read) = fs::read_dir(&loc.directory) else {
         return out;
@@ -321,13 +324,16 @@ fn collect_shard_disk_volumes(loc: &DiskLocation) -> HashMap<EcKey, Vec<String>>
         if crate::storage::disk_location::is_ec_shard_extension(ext).is_none() {
             continue;
         }
+        let Some((collection, vid)) = parse_collection_volume_id_pub(base) else {
+            continue;
+        };
+        if only.is_some_and(|o| o != vid) {
+            continue;
+        }
         match ent.metadata() {
             Ok(meta) if meta.len() > 0 => {}
             _ => continue,
         }
-        let Some((collection, vid)) = parse_collection_volume_id_pub(base) else {
-            continue;
-        };
         out.entry(EcKey { collection, vid }).or_default().push(name);
     }
     out
@@ -695,7 +701,7 @@ mod tests {
         add_loc(&mut store, &dir0);
         add_loc(&mut store, &dir1);
 
-        let owners = store.index_ecx_owners_for_mirror();
+        let owners = store.index_ecx_owners_for_mirror(None);
         let owner = owners
             .get(&EcKey {
                 collection: collection.to_string(),

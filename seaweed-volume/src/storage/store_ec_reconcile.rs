@@ -100,7 +100,7 @@ impl Store {
             return;
         }
 
-        let owners = self.index_ecx_owners();
+        let owners = self.index_ecx_owners(only);
         if owners.is_empty() {
             return;
         }
@@ -110,11 +110,8 @@ impl Store {
         // loc.idx_directory instead of the owner disk.
         let mut to_load: Vec<OrphanShardLoad> = Vec::new();
         for (loc_idx, loc) in self.locations.iter().enumerate() {
-            let orphans = collect_orphan_ec_shards(loc, loc_idx);
+            let orphans = collect_orphan_ec_shards(loc, loc_idx, only);
             for (key, shards) in orphans {
-                if only.is_some_and(|vid| vid != key.vid) {
-                    continue;
-                }
                 let Some(owner) = owners.get(&key) else {
                     warn!(
                         volume_id = key.vid.0,
@@ -409,7 +406,7 @@ impl Store {
     /// matched so downstream loaders point `EcVolume::new` at the
     /// directory that really has the file. The first owner found wins;
     /// duplicates across disks are unusual but tolerated.
-    fn index_ecx_owners(&self) -> HashMap<EcKey, EcxOwnerInfo> {
+    fn index_ecx_owners(&self, only: Option<VolumeId>) -> HashMap<EcKey, EcxOwnerInfo> {
         let mut owners: HashMap<EcKey, EcxOwnerInfo> = HashMap::new();
         for (loc_idx, loc) in self.locations.iter().enumerate() {
             let mut seen: Vec<&str> = Vec::with_capacity(2);
@@ -429,15 +426,18 @@ impl Store {
                     let Some(base) = name.strip_suffix(".ecx") else {
                         continue;
                     };
+                    let Some((collection, vid)) = parse_collection_volume_id_pub(base) else {
+                        continue;
+                    };
+                    if only.is_some_and(|o| o != vid) {
+                        continue;
+                    }
                     // A 0-byte .ecx is a corrupt stub from a failed copy, not a
                     // credible owner — skip it so the scan keeps looking for a
                     // real index on a sibling disk (Go's indexEcxOwners).
                     if !ent.metadata().is_ok_and(|m| m.len() > 0) {
                         continue;
                     }
-                    let Some((collection, vid)) = parse_collection_volume_id_pub(base) else {
-                        continue;
-                    };
                     let key = EcKey { collection, vid };
                     owners.entry(key).or_insert(EcxOwnerInfo {
                         location: loc_idx,
@@ -457,11 +457,18 @@ impl Store {
     ///
     /// Mirrors `Store.CollectEcVolumesMissingIndex` in Go.
     pub(crate) fn collect_ec_volumes_missing_index(&self) -> Vec<EcVolumeMissingIndex> {
-        let owners = self.index_ecx_owners();
+        self.collect_ec_volumes_missing_index_only(None)
+    }
+
+    pub(crate) fn collect_ec_volumes_missing_index_only(
+        &self,
+        only: Option<VolumeId>,
+    ) -> Vec<EcVolumeMissingIndex> {
+        let owners = self.index_ecx_owners(only);
         let mut seen: HashSet<EcKey> = HashSet::new();
         let mut missing = Vec::new();
         for (loc_idx, loc) in self.locations.iter().enumerate() {
-            for (key, _shards) in collect_orphan_ec_shards(loc, loc_idx) {
+            for (key, _shards) in collect_orphan_ec_shards(loc, loc_idx, only) {
                 if owners.contains_key(&key) || !seen.insert(key.clone()) {
                     continue;
                 }
@@ -498,10 +505,8 @@ impl Store {
     fn load_orphan_ec_shards_with_local_index(&mut self, only: Option<VolumeId>) {
         let mut work: Vec<(usize, EcKey, Vec<ShardId>)> = Vec::new();
         for (loc_idx, loc) in self.locations.iter().enumerate() {
-            for (key, shards) in collect_orphan_ec_shards(loc, loc_idx) {
-                if only.is_some_and(|vid| vid != key.vid)
-                    || !loc.has_ecx_file_on_disk(&key.collection, key.vid)
-                {
+            for (key, shards) in collect_orphan_ec_shards(loc, loc_idx, only) {
+                if !loc.has_ecx_file_on_disk(&key.collection, key.vid) {
                     continue;
                 }
                 let ids: Vec<ShardId> = shards.iter().map(|(_, sid)| *sid).collect();
@@ -531,6 +536,7 @@ impl Store {
 fn collect_orphan_ec_shards(
     loc: &crate::storage::disk_location::DiskLocation,
     _loc_idx: usize,
+    only: Option<VolumeId>,
 ) -> HashMap<EcKey, Vec<(String, ShardId)>> {
     let mut orphans: HashMap<EcKey, Vec<(String, ShardId)>> = HashMap::new();
     let Ok(read) = fs::read_dir(&loc.directory) else {
@@ -548,6 +554,12 @@ fn collect_orphan_ec_shards(
         let Some(shard_id) = is_ec_shard_extension(ext) else {
             continue;
         };
+        let Some((collection, vid)) = parse_collection_volume_id_pub(base) else {
+            continue;
+        };
+        if only.is_some_and(|o| o != vid) {
+            continue;
+        }
         // Ignore zero-byte shards. Use the DirEntry's metadata so we
         // don't pay a second stat syscall per file beyond what
         // read_dir already returned.
@@ -555,9 +567,6 @@ fn collect_orphan_ec_shards(
             Ok(meta) if meta.len() > 0 => {}
             _ => continue,
         }
-        let Some((collection, vid)) = parse_collection_volume_id_pub(base) else {
-            continue;
-        };
         // Skip shards that are already registered to an EcVolume.
         if let Some(ecv) = loc.find_ec_volume(vid)
             && ecv.has_shard(shard_id)
@@ -670,7 +679,7 @@ mod tests {
         std::fs::write(ec_local_ecx_path(&d0, "pics", VolumeId(7)), b"").unwrap();
         write_index_files(&d1, "pics", 7, 10, 4);
 
-        let owners = store.index_ecx_owners();
+        let owners = store.index_ecx_owners(None);
         let owner = owners
             .get(&EcKey {
                 collection: "pics".to_string(),
@@ -682,7 +691,7 @@ mod tests {
 
         // A stub with no real index anywhere owns nothing.
         std::fs::write(ec_local_ecx_path(&d0, "pics", VolumeId(8)), b"").unwrap();
-        assert!(!store.index_ecx_owners().contains_key(&EcKey {
+        assert!(!store.index_ecx_owners(None).contains_key(&EcKey {
             collection: "pics".to_string(),
             vid: VolumeId(8),
         }));
