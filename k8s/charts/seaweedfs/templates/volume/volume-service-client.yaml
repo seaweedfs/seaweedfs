@@ -1,9 +1,10 @@
-{{- /* Ready-only backend for the volume ingress and HTTPRoute; the volume Service publishes not-ready pods for DNS */}}
+{{- /* Ready-only backend for the volume ingress and HTTPRoute; the volume Service publishes not-ready pods for DNS.
+       Not named volume-client: every volume-<key> name belongs to a group under .Values.volumes. */}}
 {{- if and .Values.volume.enabled (not .Values.allInOne.enabled) (or .Values.volume.ingress.enabled .Values.volume.httpRoute.enabled) }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "seaweedfs.componentName" (list . "volume-client") }}
+  name: {{ include "seaweedfs.componentName" (list . "client-volume") }}
   namespace: {{ include "seaweedfs.namespace" . | quote }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}

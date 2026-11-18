@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -22,24 +23,24 @@ func TestVolumeServicePublishesNotReadyPods(t *testing.T) {
 	if service["spec"].(map[string]interface{})["publishNotReadyAddresses"] != true {
 		t.Fatal("volume pod DNS names must resolve before the pods are Ready")
 	}
-	if findDocument(documents, "Service", "vector-test-seaweedfs-volume-client") != nil {
-		t.Fatal("volume-client service rendered without ingress or httpRoute")
+	if findDocument(documents, "Service", "vector-test-seaweedfs-client-volume") != nil {
+		t.Fatal("client-volume service rendered without ingress or httpRoute")
 	}
 }
 
 func TestVolumeIngressUsesReadyOnlyService(t *testing.T) {
 	_, documents := render(t, "volume.ingress.enabled=true", "volume.httpRoute.enabled=true", "volume.metricsPort=9327")
-	client := findDocument(documents, "Service", "vector-test-seaweedfs-volume-client")
+	client := findDocument(documents, "Service", "vector-test-seaweedfs-client-volume")
 	if client == nil {
-		t.Fatal("no volume-client service")
+		t.Fatal("no client-volume service")
 	}
 	spec := client["spec"].(map[string]interface{})
 	if _, found := spec["publishNotReadyAddresses"]; found {
-		t.Fatal("volume-client must publish only Ready pods")
+		t.Fatal("client-volume must publish only Ready pods")
 	}
 	for _, port := range spec["ports"].([]interface{}) {
 		if port.(map[string]interface{})["name"] == "metrics" {
-			t.Fatal("volume-client must not expose metrics, or the ServiceMonitor scrapes each pod twice")
+			t.Fatal("client-volume must not expose metrics, or the ServiceMonitor scrapes each pod twice")
 		}
 	}
 
@@ -48,7 +49,7 @@ func TestVolumeIngressUsesReadyOnlyService(t *testing.T) {
 		t.Fatal("no volume ingress")
 	}
 	path := ingress["spec"].(map[string]interface{})["rules"].([]interface{})[0].(map[string]interface{})["http"].(map[string]interface{})["paths"].([]interface{})[0].(map[string]interface{})
-	if backend := path["backend"].(map[string]interface{})["service"].(map[string]interface{})["name"]; backend != "vector-test-seaweedfs-volume-client" {
+	if backend := path["backend"].(map[string]interface{})["service"].(map[string]interface{})["name"]; backend != "vector-test-seaweedfs-client-volume" {
 		t.Fatalf("volume ingress backend is %v", backend)
 	}
 
@@ -57,15 +58,30 @@ func TestVolumeIngressUsesReadyOnlyService(t *testing.T) {
 		t.Fatal("no volume httpRoute")
 	}
 	rule := route["spec"].(map[string]interface{})["rules"].([]interface{})[0].(map[string]interface{})
-	if backend := rule["backendRefs"].([]interface{})[0].(map[string]interface{})["name"]; backend != "vector-test-seaweedfs-volume-client" {
+	if backend := rule["backendRefs"].([]interface{})[0].(map[string]interface{})["name"]; backend != "vector-test-seaweedfs-client-volume" {
 		t.Fatalf("volume httpRoute backend is %v", backend)
+	}
+}
+
+func TestVolumeRoutingServiceDoesNotCollideWithVolumeGroups(t *testing.T) {
+	_, documents := render(t, "volume.ingress.enabled=true", "volume.httpRoute.enabled=true", "volumes.client.replicas=1")
+	seen := map[string]bool{}
+	for _, document := range documents {
+		key := fmt.Sprint(document["kind"], "/", document["metadata"].(map[string]interface{})["name"])
+		if seen[key] {
+			t.Fatalf("%s rendered twice", key)
+		}
+		seen[key] = true
+	}
+	if !seen["Service/vector-test-seaweedfs-volume-client"] || !seen["Service/vector-test-seaweedfs-client-volume"] {
+		t.Fatal("volumes.client group Service and the routing Service must both render")
 	}
 }
 
 func TestVolumeIngressAllInOne(t *testing.T) {
 	_, documents := render(t, "allInOne.enabled=true", "volume.ingress.enabled=true")
-	if findDocument(documents, "Service", "vector-test-seaweedfs-volume-client") != nil {
-		t.Fatal("volume-client service rendered in all-in-one mode")
+	if findDocument(documents, "Service", "vector-test-seaweedfs-client-volume") != nil {
+		t.Fatal("client-volume service rendered in all-in-one mode")
 	}
 	ingress := findDocument(documents, "Ingress", "ingress-vector-test-seaweedfs-volume")
 	if ingress == nil {
