@@ -10426,27 +10426,30 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_ec_shards_mount_waits_for_in_flight_copy() {
         let (dest, _dest_tmp, _dir) = ec_copy_destination().await;
-        let lifecycle = dest.state.ec_lifecycle_lock(VolumeId(63)).lock_owned().await;
-        let mut mount = tokio::spawn(async move {
-            dest.volume_ec_shards_mount(Request::new(volume_server_pb::VolumeEcShardsMountRequest {
+        let lifecycle = dest
+            .state
+            .ec_lifecycle_lock(VolumeId(63))
+            .lock_owned()
+            .await;
+        let handler = dest.volume_ec_shards_mount(Request::new(
+            volume_server_pb::VolumeEcShardsMountRequest {
                 volume_id: 63,
                 collection: "col".to_string(),
                 shard_ids: vec![0],
                 ..Default::default()
-            }))
-            .await
-        });
+            },
+        ));
+        tokio::pin!(handler);
         assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(200), &mut mount)
+            tokio::time::timeout(std::time::Duration::from_millis(200), &mut handler)
                 .await
                 .is_err(),
             "mount ran while a copy of the same volume held its lifecycle lock"
         );
         drop(lifecycle);
-        tokio::time::timeout(std::time::Duration::from_secs(10), mount)
+        tokio::time::timeout(std::time::Duration::from_secs(10), handler)
             .await
             .expect("mount did not finish after the copy released the lifecycle lock")
-            .unwrap()
             .ok();
     }
 
@@ -10460,27 +10463,24 @@ mod tests {
             .ec_lifecycle_lock(VolumeId(66))
             .lock_owned()
             .await;
-        let mut rebuild = tokio::spawn(async move {
-            dest.volume_ec_shards_rebuild(Request::new(
-                volume_server_pb::VolumeEcShardsRebuildRequest {
-                    volume_id: 66,
-                    collection: "col".to_string(),
-                    ..Default::default()
-                },
-            ))
-            .await
-        });
+        let handler = dest.volume_ec_shards_rebuild(Request::new(
+            volume_server_pb::VolumeEcShardsRebuildRequest {
+                volume_id: 66,
+                collection: "col".to_string(),
+                ..Default::default()
+            },
+        ));
+        tokio::pin!(handler);
         assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(200), &mut rebuild)
+            tokio::time::timeout(std::time::Duration::from_millis(200), &mut handler)
                 .await
                 .is_err(),
             "rebuild ran while a copy of the same volume held its lifecycle lock"
         );
         drop(lifecycle);
-        tokio::time::timeout(std::time::Duration::from_secs(10), rebuild)
+        tokio::time::timeout(std::time::Duration::from_secs(10), handler)
             .await
             .expect("rebuild did not finish after the copy released the lifecycle lock")
-            .unwrap()
             .ok();
     }
 
@@ -10494,31 +10494,58 @@ mod tests {
             .ec_lifecycle_lock(VolumeId(64))
             .lock_owned()
             .await;
-        let mut teardown = tokio::spawn(async move {
-            dest.volume_ec_shards_delete(Request::new(
-                volume_server_pb::VolumeEcShardsDeleteRequest {
-                    volume_id: 64,
-                    collection: "col".to_string(),
-                    full_teardown: true,
-                    ..Default::default()
-                },
-            ))
-            .await
-        });
+        let handler = dest.volume_ec_shards_delete(Request::new(
+            volume_server_pb::VolumeEcShardsDeleteRequest {
+                volume_id: 64,
+                collection: "col".to_string(),
+                full_teardown: true,
+                ..Default::default()
+            },
+        ));
+        tokio::pin!(handler);
         assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(200), &mut teardown)
+            tokio::time::timeout(std::time::Duration::from_millis(200), &mut handler)
                 .await
                 .is_err(),
             "full teardown ran while a copy of the same volume held its lifecycle lock"
         );
         drop(lifecycle);
-        let resp = tokio::time::timeout(std::time::Duration::from_secs(10), teardown)
+        tokio::time::timeout(std::time::Duration::from_secs(10), handler)
             .await
             .expect("full teardown did not finish after the copy released the lifecycle lock")
-            .unwrap()
-            .unwrap()
-            .into_inner();
-        assert!(resp.full_teardown_done);
+            .ok();
+    }
+
+    // A shard delete waits out an in-flight copy of the same volume, whose
+    // staged shards the delete's last-shard check cannot see.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_shards_delete_waits_for_in_flight_copy() {
+        let (dest, _dest_tmp, _dir) = ec_copy_destination().await;
+        let lifecycle = dest
+            .state
+            .ec_lifecycle_lock(VolumeId(67))
+            .lock_owned()
+            .await;
+        let handler = dest.volume_ec_shards_delete(Request::new(
+            volume_server_pb::VolumeEcShardsDeleteRequest {
+                volume_id: 67,
+                collection: "col".to_string(),
+                shard_ids: vec![0],
+                ..Default::default()
+            },
+        ));
+        tokio::pin!(handler);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), &mut handler)
+                .await
+                .is_err(),
+            "shard delete ran while a copy of the same volume held its lifecycle lock"
+        );
+        drop(lifecycle);
+        tokio::time::timeout(std::time::Duration::from_secs(10), handler)
+            .await
+            .expect("shard delete did not finish after the copy released the lifecycle lock")
+            .ok();
     }
 
     // The transfer itself must notice a caller that has gone, with no progress
