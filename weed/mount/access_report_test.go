@@ -295,9 +295,16 @@ func TestStopCancelsTheReportInFlight(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("stop did not cancel the report in flight")
 	}
+}
+
+// TestReportAfterStopIsDropped uses a reporter without workers, so a report
+// that stop failed to refuse stays in the queue.
+func TestReportAfterStopIsDropped(t *testing.T) {
+	r := newAccessReporter(func(ctx context.Context, path util.FullPath, atimeNs int64) error { return nil })
+	r.stop()
 	r.report("/dir/b")
-	if n := len(r.queue); n != 0 {
-		t.Fatalf("queued %d reports after stop", n)
+	if got := queuedReports(r); len(got) != 0 {
+		t.Fatalf("queued %v after stop", got)
 	}
 }
 
@@ -351,8 +358,8 @@ func TestTouchAccessTimeFailsOverPastAStalledFiler(t *testing.T) {
 	if err := wfs.touchAccessTime(ctx, "/dir/a", time.Now().UnixNano()); err != nil {
 		t.Fatalf("report did not reach the healthy filer: %v", err)
 	}
-	if len(healthy.touches) != 1 {
-		t.Fatalf("healthy filer got %d reports, want 1", len(healthy.touches))
+	if len(stalled.touches) != 1 || len(healthy.touches) != 1 {
+		t.Fatalf("reports: stalled filer %d, healthy filer %d, want 1 and 1", len(stalled.touches), len(healthy.touches))
 	}
 	if i := atomic.LoadInt32(&wfs.option.filerIndex); i != 1 {
 		t.Fatalf("filerIndex = %d, want 1, the filer that answered", i)
