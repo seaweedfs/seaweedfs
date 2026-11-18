@@ -10314,16 +10314,8 @@ mod tests {
 
     // A copy failing after the .vif transferred keeps the existing holder's
     // .vif, which must stay paired with the index the failed copy left in place.
-    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_ec_shards_copy_failed_sidecar_keeps_existing_vif() {
-        use std::os::unix::fs::PermissionsExt;
-
-        // root reads a mode-000 file, so the sidecar transfer cannot be made to fail.
-        // SAFETY: `geteuid` takes no arguments, reads no memory and cannot fail.
-        if unsafe { libc::geteuid() } == 0 {
-            return;
-        }
         let (source_service, source_tmp) = make_local_service_with_volume("", None);
         let src = source_tmp.path().to_str().unwrap().to_string();
         std::fs::write(
@@ -10333,12 +10325,8 @@ mod tests {
         .unwrap();
         std::fs::write(format!("{}/60.ec00", src), vec![1u8; 4096]).unwrap();
         std::fs::write(format!("{}/60.vif", src), br#"{"version":3}"#).unwrap();
-        std::fs::write(format!("{}/60.ecsum", src), b"sum").unwrap();
-        std::fs::set_permissions(
-            format!("{}/60.ecsum", src),
-            std::fs::Permissions::from_mode(0),
-        )
-        .unwrap();
+        // A directory exists but cannot be read, even by root.
+        std::fs::create_dir(format!("{}/60.ecsum", src)).unwrap();
         let (port, _shutdown) = serve_source(source_service).await;
 
         let (dest, _dest_tmp, dir) = ec_copy_destination().await;
@@ -10377,12 +10365,15 @@ mod tests {
             vec![9u8; NEEDLE_MAP_ENTRY_SIZE as usize],
         )
         .unwrap();
-        let shard_len = 32u64 << 20;
+        let shard_len = 1u64 << 20;
         std::fs::write(format!("{}/61.ec00", src), vec![1u8; shard_len as usize]).unwrap();
         let (port, _shutdown) = serve_source(source_service).await;
 
         let (dest, _dest_tmp, dir) = ec_copy_destination().await;
         let state = dest.state.clone();
+        // The copy's first step reads the store, so it stays in flight until
+        // the handler has been cancelled.
+        let store_guard = state.store.write().unwrap();
         let copy = tokio::spawn(async move {
             dest.volume_ec_shards_copy(Request::new(volume_server_pb::VolumeEcShardsCopyRequest {
                 volume_id: 61,
@@ -10393,19 +10384,31 @@ mod tests {
             }))
             .await
         });
-        let ec00 = format!("{}/61.ec00", dir);
+        let lock = state.ec_lifecycle_lock(VolumeId(61));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while !std::path::Path::new(&ec00).exists() {
+        while lock.try_lock().is_ok() {
             assert!(
                 std::time::Instant::now() < deadline,
-                "shard transfer never started"
+                "copy never took the lifecycle lock"
             );
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
         copy.abort();
-        let _ = copy.await;
+        let joined = tokio::time::timeout(std::time::Duration::from_secs(10), copy)
+            .await
+            .expect("the cancelled handler did not return");
+        assert!(
+            joined.as_ref().is_err_and(|e| e.is_cancelled()),
+            "handler was not cancelled mid-copy: {:?}",
+            joined.map(|r| r.map(|_| ()))
+        );
+        drop(store_guard);
 
-        let _lifecycle = state.ec_lifecycle_lock(VolumeId(61)).lock_owned().await;
+        let _lifecycle =
+            tokio::time::timeout(std::time::Duration::from_secs(10), lock.lock_owned())
+                .await
+                .expect("the detached copy did not finish");
+        let ec00 = format!("{}/61.ec00", dir);
         assert_eq!(std::fs::metadata(&ec00).unwrap().len(), shard_len);
         assert!(std::path::Path::new(&format!("{}/61.ecx", dir)).exists());
     }
