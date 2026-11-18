@@ -490,7 +490,14 @@ func TestLookupPlaceholderKeepsLocalOwnerUnderIdMap(t *testing.T) {
 	fake.mu.Lock()
 	fake.entries[dir].Attributes.FileMode = uint32(0o777 | 1<<31)
 	fake.mu.Unlock()
-	createDeferredFile(t, wfs, dirInode, "mapped")
+	out := createDeferredFile(t, wfs, dirInode, "mapped")
+	cached, _, err := wfs.metaCache.FindEntry(context.Background(), dir.Child("mapped"))
+	if err != nil || cached == nil || cached.Attr.Inode != out.NodeId {
+		t.Fatalf("placeholder not cached: %v", err)
+	}
+	if cached.Attr.Uid != 123 || cached.Attr.Gid != 456 {
+		t.Fatalf("cached placeholder owner = %d:%d, want the caller's local 123:456", cached.Attr.Uid, cached.Attr.Gid)
+	}
 
 	entry, _, st := wfs.lookupEntry(context.Background(), dir.Child("mapped"))
 	if st != fuse.OK || entry == nil {
