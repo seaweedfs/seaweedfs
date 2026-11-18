@@ -4,3 +4,4 @@ compat-runner
 results.json
 weed-test.log
 weed-server.pid
+weed-server.started

@@ -17,9 +17,11 @@ WEBDAV_PORT ?= 7335
 ADMIN_PORT ?= 23647
 SERVER_DIR := ./test-volume-data
 S3_CONFIG := ./test_s3.json
-# Succeeds while weed-server.pid names the server start-server launched, matched
-# by its command line so that a process reusing the pid is left alone.
-OWN_SERVER_RUNNING = [ -f weed-server.pid ] && ps -p "$$(cat weed-server.pid)" -o args= 2>/dev/null | grep -qF -- '$(WEED_BINARY) mini -dir=$(SERVER_DIR) '
+# Succeeds while weed-server.pid names the server start-server launched: the
+# process at that pid must have the start time recorded with it, so a process
+# that reused the pid is left alone.
+OWN_SERVER_RUNNING = [ -f weed-server.pid ] && [ -s weed-server.started ] && \
+	[ "$$(ps -p "$$(cat weed-server.pid)" -o lstart= 2>/dev/null)" = "$$(cat weed-server.started)" ]
 
 .DEFAULT_GOAL := help
 
@@ -64,7 +66,7 @@ start-server: build-weed
 		echo "the server this Makefile started (pid $$(cat weed-server.pid)) is still running; run make stop-server first"; \
 		exit 1; \
 	fi
-	@rm -f weed-server.pid
+	@rm -f weed-server.pid weed-server.started
 	@$(WEED_BINARY) mini \
 		-dir=$(SERVER_DIR) \
 		-ip=127.0.0.1 \
@@ -78,7 +80,8 @@ start-server: build-weed
 		-s3.port=$(S3_PORT) \
 		-s3.config=$(S3_CONFIG) \
 		-master.peers=none \
-		> weed-test.log 2>&1 & echo $$! > weed-server.pid
+		> weed-test.log 2>&1 & echo $$! > weed-server.pid; \
+	ps -p $$! -o lstart= > weed-server.started
 	@for i in $$(seq 1 60); do \
 		kill -0 $$(cat weed-server.pid) 2>/dev/null || { \
 			echo "SeaweedFS server exited during startup"; \
@@ -102,7 +105,7 @@ stop-server:
 			kill $$(cat weed-server.pid) 2>/dev/null || true; \
 			sleep 2; \
 		fi; \
-		rm -f weed-server.pid; \
+		rm -f weed-server.pid weed-server.started; \
 	fi
 
 run-suite: build-suite
@@ -121,4 +124,4 @@ logs:
 	@test -f weed-test.log && tail -100 weed-test.log || echo "No log file found"
 
 clean: stop-server
-	@rm -rf $(SERVER_DIR) $(SUITE_DIR) compat-runner results.json weed-test.log weed-server.pid
+	@rm -rf $(SERVER_DIR) $(SUITE_DIR) compat-runner results.json weed-test.log weed-server.pid weed-server.started
