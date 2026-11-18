@@ -86,8 +86,17 @@ func TestUploadExpiryBudgetAndAssignmentFailure(t *testing.T) {
 				}
 				mu.Lock()
 				calls++
+				n := calls
 				payloads = append(payloads, data)
 				mu.Unlock()
+				// Terminal fallback: if the expiry budget regressed and did not
+				// stop at 3, end the run with an unmarked 409 so this test fails
+				// here instead of looping to the package timeout under RetryForever.
+				if n > 3 {
+					w.WriteHeader(409)
+					_, _ = io.WriteString(w, `{"error":"full"}`)
+					return
+				}
 				w.Header().Set(util_http.WriteOutcomeHeader, util_http.WriteOutcomeExpiredJwtBeforeAppend)
 				w.WriteHeader(401)
 				_, _ = io.WriteString(w, `{"error":"wrong jwt"}`)
@@ -115,6 +124,12 @@ func TestUploadExpiryBudgetAndAssignmentFailure(t *testing.T) {
 			} else {
 				require.Equal(t, 3, assigns)
 				require.Equal(t, 3, actual)
+				// The run must end on the 3rd marked 401 (the budget), not the
+				// 409 terminal fallback above.
+				var finalErr *uploadStatusError
+				require.ErrorAs(t, err, &finalErr)
+				require.Equal(t, http.StatusUnauthorized, finalErr.StatusCode)
+				require.True(t, finalErr.expiredBeforeAppend)
 			}
 			require.NotEmpty(t, got)
 			for _, data := range got {
@@ -122,6 +137,42 @@ func TestUploadExpiryBudgetAndAssignmentFailure(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A filer-proxy upload must retry a marked-expiry 401 on the SAME FID -- the
+// proxy mints a fresh volume JWT per forwarded request, so a same-FID replay
+// recovers without a reassignment it does not own.
+func TestUploadExpiryProxyRetriesSameFid(t *testing.T) {
+	const fid = "3,01637037d6"
+	var mu sync.Mutex
+	calls := 0
+	var seenFids []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		mu.Lock()
+		calls++
+		n := calls
+		seenFids = append(seenFids, r.URL.Query().Get(util_http.ProxyChunkIdParam))
+		mu.Unlock()
+		if n == 1 {
+			// The proxy-minted volume JWT expired in transit on the first try.
+			w.Header().Set(util_http.WriteOutcomeHeader, util_http.WriteOutcomeExpiredJwtBeforeAppend)
+			w.WriteHeader(401)
+			_, _ = io.WriteString(w, `{"error":"wrong jwt"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"size":5}`)
+	}))
+	defer srv.Close()
+	proxyURL := srv.URL + "/?" + util_http.ProxyChunkIdParam + "=" + fid
+	result, err := NewUploaderWithHttpClient(srv.Client()).UploadData(context.Background(), []byte("plain"), &UploadOption{UploadUrl: proxyURL})
+	require.NoError(t, err)
+	require.Equal(t, uint32(5), result.Size)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, 2, calls)
+	// Both forwarded requests used the same FID: a proxy upload never reassigns.
+	require.Equal(t, []string{fid, fid}, seenFids)
 }
 
 // Generic401 still uses the old RetryForever behavior. Only the explicitly

@@ -393,7 +393,13 @@ func (uploader *Uploader) retriedUploadData(ctx context.Context, prepared *prepa
 		}
 		var statusErr *uploadStatusError
 		if errors.As(err, &statusErr) {
-			if statusErr.StatusCode == http.StatusConflict || (statusErr.StatusCode == http.StatusUnauthorized && statusErr.expiredBeforeAppend) {
+			// A marked-expiry 401 is terminal here only for a direct volume
+			// upload: its assignment JWT is spent, so recovery needs a fresh
+			// assignment (uploadWithRetryData). A filer-proxy upload instead
+			// mints a fresh volume JWT on each forwarded request, so a bounded
+			// same-FID retry is enough and reassignment is both unnecessary and
+			// wrong (the proxy owns the FID). Keep that same-FID retry for it.
+			if statusErr.StatusCode == http.StatusConflict || (statusErr.StatusCode == http.StatusUnauthorized && statusErr.expiredBeforeAppend && !util_http.IsProxyChunkUrl(option.UploadUrl)) {
 				return nil, err
 			}
 			if statusErr.stalled {

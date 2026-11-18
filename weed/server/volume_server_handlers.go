@@ -330,19 +330,23 @@ func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Req
 }
 
 func (vs *VolumeServer) maybeCheckJwtAuthorization(r *http.Request, vid, fid string, isWrite bool) bool {
-
 	var signingKey security.SigningKey
-
 	if isWrite {
 		signingKey = vs.guard.SigningKey()
-		if len(signingKey) == 0 {
-			return true
-		}
 	} else {
 		signingKey = vs.guard.ReadSigningKey()
-		if len(signingKey) == 0 {
-			return true
-		}
+	}
+	return vs.checkJwtAuthorizationWithKey(r, vid, fid, signingKey)
+}
+
+// checkJwtAuthorizationWithKey authorizes against a caller-snapshotted signing
+// key, so a write handler can classify an expired-JWT refusal against the exact
+// key it authorized under rather than re-reading one that may have rotated
+// between the two reads.
+func (vs *VolumeServer) checkJwtAuthorizationWithKey(r *http.Request, vid, fid string, signingKey security.SigningKey) bool {
+
+	if len(signingKey) == 0 {
+		return true
 	}
 
 	tokenStr := security.GetJwt(r)

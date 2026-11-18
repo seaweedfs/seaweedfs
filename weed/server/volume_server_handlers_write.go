@@ -55,7 +55,10 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !vs.maybeCheckJwtAuthorization(r, vid, fid, true) {
+	// Snapshot the write signing key once, so the authorization check and the
+	// expired-JWT classification below read the same key even if it rotates.
+	writeSigningKey := vs.guard.SigningKey()
+	if !vs.checkJwtAuthorizationWithKey(r, vid, fid, writeSigningKey) {
 		// ParseForm does not read multipart bodies. Preserve its existing placement
 		// and status precedence for other content types, which get no retry marker.
 		contentType, _, typeErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
@@ -64,7 +67,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 			if sep := strings.LastIndex(baseFid, "_"); sep > 0 {
 				baseFid = baseFid[:sep]
 			}
-			if security.IsExpiredVolumeJwt(vs.guard.SigningKey(), security.GetJwt(r), vid+","+baseFid) {
+			if security.IsExpiredVolumeJwt(writeSigningKey, security.GetJwt(r), vid+","+baseFid) {
 				w.Header().Set(util_http.WriteOutcomeHeader, util_http.WriteOutcomeExpiredJwtBeforeAppend)
 			}
 		}
