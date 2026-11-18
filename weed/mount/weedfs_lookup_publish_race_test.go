@@ -30,6 +30,12 @@ type publishRaceFiler struct {
 	arrived  chan struct{}
 	release  chan struct{}
 
+	// The next create of holdCreateName waits for createRelease before it
+	// is stored and acknowledged: a publish in flight.
+	holdCreateName string
+	createArrived  chan struct{}
+	createRelease  chan struct{}
+
 	// dropCreates acknowledges creates without keeping them, as if a peer
 	// deleted each file right after it was published.
 	dropCreates bool
@@ -48,6 +54,13 @@ func (s *publishRaceFiler) hold(name string) (arrived, release chan struct{}) {
 	defer s.mu.Unlock()
 	s.holdName, s.arrived, s.release = name, make(chan struct{}), make(chan struct{})
 	return s.arrived, s.release
+}
+
+func (s *publishRaceFiler) holdCreate(name string) (arrived, release chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.holdCreateName, s.createArrived, s.createRelease = name, make(chan struct{}), make(chan struct{})
+	return s.createArrived, s.createRelease
 }
 
 func (s *publishRaceFiler) lookupCount(p util.FullPath) int {
@@ -85,6 +98,17 @@ func (s *publishRaceFiler) LookupDirectoryEntry(_ context.Context, r *filer_pb.L
 
 func (s *publishRaceFiler) CreateEntry(_ context.Context, r *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
 	s.creates.Add(1)
+	s.mu.Lock()
+	var arrived, release chan struct{}
+	if s.holdCreateName != "" && r.Entry.GetName() == s.holdCreateName {
+		arrived, release = s.createArrived, s.createRelease
+		s.holdCreateName = ""
+	}
+	s.mu.Unlock()
+	if arrived != nil {
+		close(arrived)
+		<-release
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.dropCreates {
@@ -261,5 +285,60 @@ func TestLookupNotFoundForDirtyHandleUsesLocalEntry(t *testing.T) {
 	}
 	if got := fake.creates.Load(); got != 0 {
 		t.Fatalf("CreateEntry calls = %d, want 0 before any flush", got)
+	}
+}
+
+// The not-found answer can also arrive while the publish is still in flight:
+// sent, but not yet acknowledged. The handle is then still the only copy the
+// mount can vouch for, so it answers, whenever the flush completes.
+func TestLookupAnswersFromHandleWhilePublishInFlight(t *testing.T) {
+	wfs, fake, dir, dirInode := newPublishRaceWFS(t)
+	out := createDeferredFile(t, wfs, dirInode, ".tmpSlow")
+	path := dir.Child(".tmpSlow")
+	before := fake.lookupCount(path)
+
+	lookupArrived, lookupRelease := fake.hold(".tmpSlow")
+	createArrived, createRelease := fake.holdCreate(".tmpSlow")
+	done := make(chan fuse.Status, 1)
+	go func() {
+		_, _, st := wfs.lookupEntry(context.Background(), path)
+		done <- st
+	}()
+	waitClosed(t, lookupArrived, "lookup never reached the filer")
+	flushed := make(chan fuse.Status, 1)
+	go func() { flushed <- flushHandle(wfs, out) }()
+	waitClosed(t, createArrived, "flush never sent its create")
+
+	close(lookupRelease)
+	select {
+	case st := <-done:
+		if st != fuse.OK {
+			close(createRelease)
+			t.Fatalf("lookupEntry = %v, want OK: the file is being published", st)
+		}
+	case <-time.After(10 * time.Second):
+		close(createRelease)
+		t.Fatal("lookup did not return while the publish was in flight")
+	}
+	close(createRelease)
+	select {
+	case st := <-flushed:
+		if st != fuse.OK {
+			t.Fatalf("Flush = %v, want OK", st)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("flush did not return")
+	}
+	if got := fake.lookupCount(path) - before; got != 1 {
+		t.Fatalf("LookupDirectoryEntry calls = %d, want 1", got)
+	}
+}
+
+func waitClosed(t *testing.T, ch chan struct{}, msg string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(10 * time.Second):
+		t.Fatal(msg)
 	}
 }
