@@ -996,6 +996,10 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, checkCook
 }
 
 func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (Size, error) {
+	return s.DeleteVolumeNeedleWithFsync(i, n, false)
+}
+
+func (s *Store) DeleteVolumeNeedleWithFsync(i needle.VolumeId, n *needle.Needle, fsync bool) (Size, error) {
 	if v := s.findVolume(i); v != nil {
 		v.noWriteLock.RLock()
 		noWriteOrDelete := v.noWriteOrDelete
@@ -1003,7 +1007,7 @@ func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (Size, e
 		if noWriteOrDelete {
 			return 0, fmt.Errorf("volume %d is read only", i)
 		}
-		return v.deleteNeedle2(n)
+		return v.deleteNeedleWithFsync(n, fsync)
 	}
 	return 0, fmt.Errorf("volume %d not found on %s:%d", i, s.Ip, s.Port)
 }

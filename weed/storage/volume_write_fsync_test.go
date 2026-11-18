@@ -608,3 +608,48 @@ func TestStoreWriteVolumeNeedleStaysDurableWhileStopping(t *testing.T) {
 	require.False(t, isUnchanged)
 	require.Equal(t, 1, counting.syncCount, "the accepted write must actually be on disk")
 }
+
+func TestDeleteNeedleWithFsyncSyncsTombstone(t *testing.T) {
+	v, counting := newCountingVolume(t)
+
+	for id := uint64(1); id <= 2; id++ {
+		_, _, _, err := v.writeNeedle2(fixedNeedle(id, "payload"), true, false, false)
+		require.NoError(t, err)
+	}
+	require.Equal(t, 0, counting.syncCount)
+
+	_, err := v.deleteNeedleWithFsync(fixedNeedle(1, ""), false)
+	require.NoError(t, err)
+	require.Equal(t, 0, counting.syncCount, "a delete that did not ask for fsync must not pay for one")
+
+	size, err := v.deleteNeedleWithFsync(fixedNeedle(2, ""), true)
+	require.NoError(t, err)
+	require.NotZero(t, size)
+	require.Equal(t, 1, counting.syncCount, "a durable delete must flush its tombstone before the ack")
+
+	reloaded := reopenCountingVolume(t, v)
+	nv, found := reloaded.nm.Get(types.Uint64ToNeedleId(2))
+	require.True(t, !found || nv.Size.IsDeleted(), "the durable delete must survive a reload")
+}
+
+func TestSyncDeleteTakesBackTombstoneWhenFsyncFails(t *testing.T) {
+	v, counting := newCountingVolume(t)
+
+	_, _, _, err := v.writeNeedle2(fixedNeedle(1, "payload"), true, true, true)
+	require.NoError(t, err)
+	before, _, err := v.DataBackend.GetStat()
+	require.NoError(t, err)
+	syncs := counting.syncCount
+
+	counting.syncErr = errors.New("disk went away")
+	_, err = v.syncDelete(fixedNeedle(1, ""), true)
+	require.Error(t, err, "a delete whose fsync failed must not be acked")
+	require.Equal(t, syncs+1, counting.syncCount)
+
+	after, _, err := v.DataBackend.GetStat()
+	require.NoError(t, err)
+	require.Equal(t, before, after, "the unflushed tombstone should be taken back off the .dat")
+	nv, found := v.nm.Get(types.Uint64ToNeedleId(1))
+	require.True(t, found)
+	require.False(t, nv.Size.IsDeleted(), "the needle must stay live when its delete was not acked")
+}

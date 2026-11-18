@@ -438,7 +438,7 @@ func (v *Volume) publishWriteRequest(n *needle.Needle, offset uint64, fsync bool
 	return
 }
 
-func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
+func (v *Volume) syncDelete(n *needle.Needle, fsync bool) (Size, error) {
 	// glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	v.dataFileSyncLock.Lock()
 	defer v.dataFileSyncLock.Unlock()
@@ -456,28 +456,67 @@ func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 		return 0, nil
 	}
 
-	return v.doDeleteRequest(n)
+	if !fsync {
+		return v.doDeleteRequest(n)
+	}
+
+	end, _, statErr := v.DataBackend.GetStat()
+	if statErr != nil {
+		return 0, fmt.Errorf("cannot read current volume position: %v", statErr)
+	}
+	lastAppendAtNs := v.lastAppendAtNs
+
+	size, offset, tombstoned, err := v.appendDeleteRequest(n)
+	if err != nil || !tombstoned {
+		return size, err
+	}
+	// Same order as a durable write: the tombstone is down before the map
+	// drops the needle, and its .idx row before the delete is acknowledged.
+	backend := v.DataBackend
+	v.dataFileAccessLock.Unlock()
+	syncErr := backend.Sync()
+	v.dataFileAccessLock.Lock()
+	if syncErr != nil {
+		v.checkReadWriteError(syncErr)
+		v.lastAppendAtNs = lastAppendAtNs
+		if !v.HasRemoteFile() {
+			if te := v.DataBackend.Truncate(end); te != nil {
+				v.markIoUnavailable(fmt.Errorf("truncate %s back to %d after a failed fsync: %w",
+					v.DataBackend.Name(), end, te))
+			}
+		}
+		return 0, syncErr
+	}
+	if err = v.publishDeleteRequest(n, offset); err != nil {
+		return size, err
+	}
+	v.dataFileAccessLock.Unlock()
+	err = v.syncIndex()
+	v.dataFileAccessLock.Lock()
+	return size, err
 }
 
 func (v *Volume) deleteNeedle2(n *needle.Needle) (Size, error) {
+	return v.deleteNeedleWithFsync(n, false)
+}
+
+// deleteNeedleWithFsync acknowledges a durable delete only once its tombstone
+// and .idx row are on disk, through the batch worker like a durable write.
+func (v *Volume) deleteNeedleWithFsync(n *needle.Needle, fsync bool) (Size, error) {
 	v.CancelPendingWrites(n.Id, n.Cookie)
 
-	// todo: delete info is always appended no fsync, it may need fsync in future
-	fsync := false
-
 	if !fsync {
-		return v.syncDelete(n)
-	} else {
-		asyncRequest := needle.NewAsyncRequest(n, false)
-		asyncRequest.ActualSize = needle.GetActualSize(0, v.Version())
-
-		if !v.asyncRequestAppend(asyncRequest) {
-			return v.syncDelete(n)
-		}
-		_, size, _, err := asyncRequest.WaitComplete()
-
-		return Size(size), err
+		return v.syncDelete(n, false)
 	}
+	asyncRequest := needle.NewAsyncRequest(n, false)
+	asyncRequest.ActualSize = needle.GetActualSize(0, v.Version())
+
+	if !v.asyncRequestAppend(asyncRequest) {
+		return v.syncDelete(n, true)
+	}
+	_, size, _, err := asyncRequest.WaitComplete()
+
+	return Size(size), err
 }
 
 func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
