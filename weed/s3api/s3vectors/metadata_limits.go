@@ -12,10 +12,7 @@ import (
 // metadata configuration, and on a query's filter, from
 // https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors-limitations.html.
 // Where AWS differs by index mode the ENHANCED value applies: this
-// implementation prefilters, as ENHANCED indexes do, and takes no indexMode. Without them a single PutVectors request can carry
-// metadata only the request body limit bounds, and every byte of it is stored,
-// indexed for filtering and returned by GetVectors, ListVectors and
-// QueryVectors.
+// implementation prefilters, as ENHANCED indexes do, and takes no indexMode.
 const (
 	// vectorKeyMaxLength is the PutInputVector key length limit.
 	vectorKeyMaxLength = 1024
