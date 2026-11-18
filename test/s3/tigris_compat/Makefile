@@ -57,6 +57,10 @@ start-server: build-weed
 		echo "port $(S3_PORT) is already served by another process; refusing to test against it"; \
 		exit 1; \
 	fi
+	@if [ -f weed-server.pid ] && ps -p $$(cat weed-server.pid) -o comm= 2>/dev/null | grep -q weed; then \
+		echo "the server this Makefile started (pid $$(cat weed-server.pid)) is still running; run make stop-server first"; \
+		exit 1; \
+	fi
 	@rm -f weed-server.pid
 	@$(WEED_BINARY) mini \
 		-dir=$(SERVER_DIR) \
