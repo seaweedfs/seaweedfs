@@ -293,7 +293,8 @@ func isCanceledStreamingError(err error) bool {
 // wrote a response. A canceled error is answered too: the idle timeout and a
 // shared lookup canceled by another request both cancel it while the client is
 // still connected, and returning silently would send that client an empty 200.
-// A client that has gone away never sees the write.
+// A client that has gone away never sees the write; it is answered
+// ClientDisconnected so that an aborted download does not count as a 5xx.
 func writeStreamErrorResponse(w http.ResponseWriter, r *http.Request, err error) {
 	var streamErr *StreamError
 	if errors.As(err, &streamErr) && streamErr.ResponseWritten {
@@ -301,6 +302,10 @@ func writeStreamErrorResponse(w http.ResponseWriter, r *http.Request, err error)
 	}
 	if errors.Is(err, util_http.ErrTooManyRequests) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrRequestBytesExceed)
+		return
+	}
+	if isCanceledStreamingError(err) && util.ClientGone(r.Context()) {
+		s3err.WriteErrorResponse(w, r, s3err.ErrClientDisconnected)
 		return
 	}
 	s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
