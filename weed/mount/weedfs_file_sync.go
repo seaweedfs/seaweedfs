@@ -226,7 +226,7 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 	if err := retryMetadataFlushIf(ctx, func() error {
 		return wfs.flushMetadataToFiler(ctx, fh, dir, name, uid, gid, commit, publication)
 	}, func(err error) bool {
-		return !commit.spent() && isRetryableFilerError(err)
+		return !commit.spent() && !isPageUploadError(err) && isRetryableFilerError(err)
 	}, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
 		glog.Warningf("%v fh %d flush: retrying metadata flush (attempt %d/%d) after %v: %v",
 			fileFullPath, fh.fh, nextAttempt, totalAttempts, backoff, err)
@@ -235,7 +235,7 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 			publication.retire(err)
 		}
 		glog.Errorf("%v fh %d flush: %v", fileFullPath, fh.fh, err)
-		return grpcErrorToFuseStatus(err)
+		return flushErrorToFuseStatus(err)
 	}
 
 	if IsDebugFileReadWrite {
@@ -243,6 +243,28 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 	}
 
 	return fuse.OK
+}
+
+// pageUploadError is a page upload failure a metadata flush found before it
+// published anything. doFlush reports it as a write error, as it does when its
+// own FlushData fails, instead of retrying it as a filer error.
+type pageUploadError struct{ err error }
+
+func (e *pageUploadError) Error() string { return e.err.Error() }
+func (e *pageUploadError) Unwrap() error { return e.err }
+
+func isPageUploadError(err error) bool {
+	var upload *pageUploadError
+	return errors.As(err, &upload)
+}
+
+// flushErrorToFuseStatus maps a failed metadata flush to a FUSE status.
+func flushErrorToFuseStatus(err error) fuse.Status {
+	var upload *pageUploadError
+	if errors.As(err, &upload) {
+		return writeErrorToFuseStatus(upload.err)
+	}
+	return grpcErrorToFuseStatus(err)
 }
 
 // flushMetadataToFiler sends the file's chunk references and attributes to the filer.
@@ -333,12 +355,11 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		// without the handle lock, and writes that landed after doFlush drained
 		// the pages may still be uploading: drain them while the lock holds
 		// writes off and take the chunks again, so that nothing attaches
-		// during the merge or after its chunks replace the list. FlushData
-		// returns once every upload has ended, failed ones too; a failure
-		// stays with the pages, and the next flush reports it as a write
-		// error, as it would without a merge.
+		// during the merge or after its chunks replace the list. A failed
+		// upload fails the flush as a write error, before anything claims
+		// the bytes it did not store.
 		if err := fh.dirtyPages.FlushData(); err != nil {
-			glog.V(1).Infof("%s: upload before merging chunks: %v", fileFullPath, err)
+			return &pageUploadError{err: err}
 		}
 		snapshot = entry.GetChunks()
 		manifestChunks, nonManifestChunks = filer.SeparateManifestChunks(snapshot)

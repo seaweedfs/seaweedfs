@@ -3,11 +3,14 @@ package mount
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -74,5 +77,21 @@ func TestMergeMovesReadViewOffReplacedChunks(t *testing.T) {
 	}
 	if got := string(buf[:n]); got != "aaaabbbbbbdddd" {
 		t.Fatalf("read %q after the merge, want %q", got, "aaaabbbbbbdddd")
+	}
+}
+
+// An upload that fails while a flush drains the pages before a merge is a
+// write error: it maps the way doFlush maps its own FlushData failure, and the
+// metadata flush does not retry it as a filer error.
+func TestPageUploadErrorIsAWriteError(t *testing.T) {
+	full := &pageUploadError{err: fmt.Errorf("flush data: %w", errors.New("assign volume: no free volumes left"))}
+	if got := flushErrorToFuseStatus(fmt.Errorf("flush /dir/file: %w", full)); got != fuse.Status(syscall.ENOSPC) {
+		t.Fatalf("a full cluster during the drain maps to %v, want ENOSPC", got)
+	}
+	if !isPageUploadError(fmt.Errorf("flush /dir/file: %w", full)) {
+		t.Fatal("a wrapped upload failure is not recognized, so the metadata flush would retry it")
+	}
+	if got := flushErrorToFuseStatus(errors.New("fh flush create /dir/file: refused")); got != fuse.EIO {
+		t.Fatalf("other flush failures map to %v, want EIO as before", got)
 	}
 }
