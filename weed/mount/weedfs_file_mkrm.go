@@ -172,7 +172,7 @@ func (wfs *WFS) openExistingForCreate(ctx context.Context, in *fuse.CreateIn, en
 	wfs.outputPbEntry(&out.EntryOut, inode, entry)
 	out.Fh = uint64(openFh)
 	out.OpenFlags = 0
-	wfs.reportOpen(in.Flags, fileHandle)
+	wfs.reportOpenPath(in.Flags, entryFullPath)
 	return fuse.OK
 }
 

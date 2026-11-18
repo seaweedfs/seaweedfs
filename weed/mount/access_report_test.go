@@ -148,6 +148,35 @@ func TestCreateOfAnExistingFileIsReported(t *testing.T) {
 	}
 }
 
+// TestCreateThroughAHardLinkReportsItsName checks that a create opening an
+// existing hard link reports the name it was given, not the inode's first
+// known name.
+func TestCreateThroughAHardLinkReportsItsName(t *testing.T) {
+	fake := newAccessReportTestFiler(nil)
+	for _, name := range []string{"h1", "h2"} {
+		fake.entries = append(fake.entries, &filer_pb.Entry{Name: name, HardLinkId: []byte("link"),
+			Attributes: &filer_pb.FuseAttributes{FileSize: 1, FileMode: 0100644, Inode: 4242}})
+	}
+	wfs := newAccessReportTestWFS(t, fake)
+	dir := wfs.inodeToPath.Lookup("/dir", time.Now().Unix(), true, false, 0, true)
+	wfs.inodeToPath.Lookup("/dir/h1", time.Now().Unix(), false, true, 4242, true)
+	if err := meta_cache.EnsureVisited(context.Background(), wfs.metaCache, wfs, "/dir", 0); err != nil {
+		t.Fatalf("EnsureVisited: %v", err)
+	}
+
+	out := &fuse.CreateOut{}
+	if code := wfs.Create(nil, &fuse.CreateIn{InHeader: fuse.InHeader{NodeId: dir}, Flags: syscall.O_RDWR | syscall.O_CREAT}, "h2", out); code != fuse.OK {
+		t.Fatalf("create: %v", code)
+	}
+	wfs.fhMap.ReleaseByHandle(FileHandleId(out.Fh))
+	if out.NodeId != 4242 {
+		t.Fatalf("create opened inode %d, want the hard link's 4242", out.NodeId)
+	}
+	if got, want := queuedReports(wfs.accessReporter), []string{"/dir/h2"}; !slices.Equal(got, want) {
+		t.Fatalf("reports = %v, want %v", got, want)
+	}
+}
+
 func TestNoReportsWithoutAccessReport(t *testing.T) {
 	fake := newAccessReportTestFiler(nil)
 	wfs := newAccessReportTestWFS(t, fake)

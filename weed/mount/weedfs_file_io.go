@@ -72,7 +72,7 @@ func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut)
 	if status == fuse.OK {
 		out.Fh = uint64(openFh)
 		out.OpenFlags = 0
-		wfs.reportOpen(in.Flags, fileHandle)
+		wfs.reportOpen(in.Flags, in.NodeId)
 
 		// For read-only opens, set FOPEN_KEEP_CACHE when the file's mtime
 		// has not changed since the last open.  This tells the kernel to

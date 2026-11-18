@@ -147,15 +147,23 @@ func (r *accessReporter) logLosses() {
 	}
 }
 
-// reportOpen reports an open of a file for reading. A write-only open reads
-// nothing and is not reported.
-func (wfs *WFS) reportOpen(flags uint32, fh *FileHandle) {
-	if wfs.accessReporter == nil || openFlagsToAccessMask(flags)&fuse.R_OK == 0 {
+// reportOpen reports an open of inode for reading under its current path.
+func (wfs *WFS) reportOpen(flags uint32, inode uint64) {
+	if wfs.accessReporter == nil {
 		return
 	}
-	if path := fh.FullPath(); path != "" {
-		wfs.accessReporter.report(path)
+	if path, status := wfs.inodeToPath.GetPath(inode); status == fuse.OK {
+		wfs.reportOpenPath(flags, path)
 	}
+}
+
+// reportOpenPath reports an open of path for reading. A write-only open reads
+// nothing and is not reported.
+func (wfs *WFS) reportOpenPath(flags uint32, path util.FullPath) {
+	if wfs.accessReporter == nil || openFlagsToAccessMask(flags)&fuse.R_OK == 0 || path == "" {
+		return
+	}
+	wfs.accessReporter.report(path)
 }
 
 // touchAccessTime sends one report to the filer this mount uses or, if that
