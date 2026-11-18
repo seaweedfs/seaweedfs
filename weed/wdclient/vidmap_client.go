@@ -27,12 +27,12 @@ type VolumeLocationProvider interface {
 	LookupVolumeIds(ctx context.Context, volumeIds []string) (map[string][]Location, error)
 }
 
-// vidMapClient provides volume location caching with pluggable lookup
-// It wraps the battle-tested vidMap with customizable volume lookup strategies
 // afterLookupRecheck, when set by a test, runs between a lookup's second cache
 // check and its provider query.
 var afterLookupRecheck func()
 
+// vidMapClient provides volume location caching with pluggable lookup
+// It wraps the battle-tested vidMap with customizable volume lookup strategies
 type vidMapClient struct {
 	vidMap         *vidMap
 	provider       VolumeLocationProvider
