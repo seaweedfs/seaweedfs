@@ -484,7 +484,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, prepared *preparedUp
 	option = &localOption
 	option.MimeType = prepared.mimeType
 
-	if option.Cipher {
+	if prepared.cipherKey != nil {
 		// upload data
 		uploadResult, err = uploader.upload_content(ctx, func(w io.Writer) (err error) {
 			_, err = w.Write(prepared.data)
