@@ -239,7 +239,7 @@ func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, ho
 			}
 		}
 
-		uploadResult, err = uploader.retriedPreparedUploadData(context.Background(), prepared, uploadOption)
+		uploadResult, err = uploader.retriedUploadData(context.Background(), prepared, uploadOption)
 		return err
 	}
 
@@ -319,9 +319,12 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 }
 
 // Upload sends a POST request to a volume server to upload the content with adjustable compression level
-func (uploader *Uploader) UploadData(ctx context.Context, data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
-	uploadResult, err = uploader.retriedUploadData(ctx, data, option)
-	return
+func (uploader *Uploader) UploadData(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+	prepared, err := uploader.prepareUploadData(data, option)
+	if err != nil {
+		return nil, err
+	}
+	return uploader.retriedUploadData(ctx, prepared, option)
 }
 
 // Upload sends a POST request to a volume server to upload the content with fast compression
@@ -341,19 +344,15 @@ func (uploader *Uploader) doUpload(ctx context.Context, reader io.Reader, option
 			return
 		}
 	}
-	uploadResult, uploadErr := uploader.retriedUploadData(ctx, data, option)
+	prepared, err := uploader.prepareUploadData(data, option)
+	if err != nil {
+		return nil, err, data
+	}
+	uploadResult, uploadErr := uploader.retriedUploadData(ctx, prepared, option)
 	return uploadResult, uploadErr, data
 }
 
-func (uploader *Uploader) retriedUploadData(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
-	return uploader.retryUploadData(ctx, data, nil, option)
-}
-
-func (uploader *Uploader) retriedPreparedUploadData(ctx context.Context, prepared *preparedUpload, option *UploadOption) (*UploadResult, error) {
-	return uploader.retryUploadData(ctx, nil, prepared, option)
-}
-
-func (uploader *Uploader) retryUploadData(ctx context.Context, data []byte, prepared *preparedUpload, option *UploadOption) (uploadResult *UploadResult, err error) {
+func (uploader *Uploader) retriedUploadData(ctx context.Context, prepared *preparedUpload, option *UploadOption) (uploadResult *UploadResult, err error) {
 	// A stall disarms the watchdog for this upload's remaining attempts only;
 	// keep that on a per-call option so a caller reusing UploadOption starts
 	// the next upload armed.
@@ -371,11 +370,7 @@ func (uploader *Uploader) retryUploadData(ctx context.Context, data []byte, prep
 			case <-time.After(time.Millisecond * time.Duration(237*(i+1))):
 			}
 		}
-		if prepared == nil {
-			uploadResult, err = uploader.doUploadData(ctx, data, option)
-		} else {
-			uploadResult, err = uploader.uploadPreparedData(ctx, prepared, option)
-		}
+		uploadResult, err = uploader.doUploadData(ctx, prepared, option)
 		if err == nil {
 			uploadResult.RetryCount = i
 			return
@@ -484,15 +479,7 @@ func (uploader *Uploader) prepareUploadData(data []byte, option *UploadOption) (
 	return prepareUploadData(data, option)
 }
 
-func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
-	prepared, err := uploader.prepareUploadData(data, option)
-	if err != nil {
-		return nil, err
-	}
-	return uploader.uploadPreparedData(ctx, prepared, option)
-}
-
-func (uploader *Uploader) uploadPreparedData(ctx context.Context, prepared *preparedUpload, option *UploadOption) (uploadResult *UploadResult, err error) {
+func (uploader *Uploader) doUploadData(ctx context.Context, prepared *preparedUpload, option *UploadOption) (uploadResult *UploadResult, err error) {
 	localOption := *option
 	option = &localOption
 	option.MimeType = prepared.mimeType

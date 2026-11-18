@@ -224,7 +224,7 @@ uploadLoop:
 			// every attempt against the same fid, so ask for a fresh assignment and
 			// retry there rather than losing the whole object to one bad volume.
 			for attempt := 1; ; attempt++ {
-				uploadResult, uploadResultErr = uploadPreparedChunk(ctx, assignResult, buf.Bytes(), jwt, chunkMd5B64, opt, prepared)
+				uploadResult, uploadResultErr = uploadChunk(ctx, assignResult, buf.Bytes(), prepared, jwt, chunkMd5B64, opt)
 				if uploadResultErr == nil {
 					break
 				}
@@ -322,14 +322,10 @@ const chunkAssignAttempts = 3
 // uploadChunk writes one chunk to its assigned volume. It fans out to every
 // holder, except for cipher: per-call encryption would give each replica
 // different bytes, so keep its relay path.
-func uploadChunk(ctx context.Context, assignResult *AssignResult, data []byte, jwt security.EncodedJwt, md5b64 string, opt *ChunkedUploadOption) (*UploadResult, error) {
-	return uploadPreparedChunk(ctx, assignResult, data, jwt, md5b64, opt, nil)
-}
-
-func uploadPreparedChunk(ctx context.Context, assignResult *AssignResult, data []byte, jwt security.EncodedJwt, md5b64 string, opt *ChunkedUploadOption, prepared *preparedUpload) (*UploadResult, error) {
+func uploadChunk(ctx context.Context, assignResult *AssignResult, data []byte, prepared *preparedUpload, jwt security.EncodedJwt, md5b64 string, opt *ChunkedUploadOption) (*UploadResult, error) {
 	holders := chunkHolders(assignResult)
 	if opt.UploadFunc == nil && !opt.Cipher && len(holders) > 1 {
-		return uploadPreparedChunkToHolders(ctx, holders, assignResult.Fid, data, jwt, md5b64, assignResult.Fsync, opt, prepared)
+		return uploadChunkToHolders(ctx, holders, assignResult.Fid, prepared, jwt, md5b64, assignResult.Fsync, opt)
 	}
 	uploadOption := &UploadOption{
 		UploadUrl:         fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid),
@@ -359,10 +355,7 @@ func uploadPreparedChunk(ctx context.Context, assignResult *AssignResult, data [
 	if err != nil {
 		return nil, fmt.Errorf("create uploader: %w", err)
 	}
-	if prepared != nil {
-		return uploader.retriedPreparedUploadData(ctx, prepared, uploadOption)
-	}
-	return uploader.UploadData(ctx, data, uploadOption)
+	return uploader.retriedUploadData(ctx, prepared, uploadOption)
 }
 
 // chunkHolders returns the assigned volume plus its replica holders.
@@ -380,11 +373,7 @@ func chunkHolders(assignResult *AssignResult) []string {
 // type=replicate). On the first failure it cancels the remaining uploads and
 // deletes any copies that already landed, so a partial fan-out leaves no
 // orphaned needle the caller cannot see.
-func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data []byte, jwt security.EncodedJwt, md5b64 string, fsync bool, opt *ChunkedUploadOption) (*UploadResult, error) {
-	return uploadPreparedChunkToHolders(ctx, hosts, fid, data, jwt, md5b64, fsync, opt, nil)
-}
-
-func uploadPreparedChunkToHolders(ctx context.Context, hosts []string, fid string, data []byte, jwt security.EncodedJwt, md5b64 string, fsync bool, opt *ChunkedUploadOption, prepared *preparedUpload) (*UploadResult, error) {
+func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, prepared *preparedUpload, jwt security.EncodedJwt, md5b64 string, fsync bool, opt *ChunkedUploadOption) (*UploadResult, error) {
 	uploader, err := NewUploader()
 	if err != nil {
 		return nil, fmt.Errorf("create uploader: %w", err)
@@ -413,13 +402,7 @@ func uploadPreparedChunkToHolders(ctx context.Context, hosts []string, fid strin
 				Jwt:               jwt,
 				Md5:               md5b64,
 			}
-			var r *UploadResult
-			var e error
-			if prepared != nil {
-				r, e = uploader.retriedPreparedUploadData(ctx, prepared, uploadOption)
-			} else {
-				r, e = uploader.UploadData(ctx, data, uploadOption)
-			}
+			r, e := uploader.retriedUploadData(ctx, prepared, uploadOption)
 			outcomes <- outcome{host, r, e}
 		}(host)
 	}
