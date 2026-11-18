@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
@@ -132,6 +133,40 @@ func TestPeerUnlinkedAliasReopensClosedInode(t *testing.T) {
 				t.Fatalf("reopened at %s, want %s", got, survivor)
 			}
 		})
+	}
+}
+
+// This mount renames another name of the closed file onto the one a peer
+// unlinked before the peer's delete arrives, so that name is live again.
+func TestDelayedPeerUnlinkKeepsRenamedOntoName(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	wfs.inodeToPath.MarkChildrenCached("/")
+	ctx := context.Background()
+	link := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, HardLinkId: []byte("link"), HardLinkCounter: 3, Attributes: &filer_pb.FuseAttributes{Inode: 42, FileMode: 0o600}}
+	}
+	for _, name := range []string{"tmp", "final", "third"} {
+		if err := wfs.metaCache.InsertEntry(ctx, filer.FromPbEntry("/", link(name)), 1); err != nil {
+			t.Fatalf("insert %s: %v", name, err)
+		}
+	}
+	inode := wfs.inodeToPath.Lookup("/tmp", 1, false, true, 42, true)
+	wfs.inodeToPath.AddPath(inode, "/final")
+	wfs.inodeToPath.AddPath(inode, "/third")
+
+	rename := &filer_pb.SubscribeMetadataResponse{Directory: "/", TsNs: 20, EventNotification: &filer_pb.EventNotification{OldEntry: link("final"), NewEntry: link("tmp"), NewParentPath: "/"}}
+	if err := wfs.applyLocalMetadataEvent(ctx, rename); err != nil {
+		t.Fatalf("apply local rename: %v", err)
+	}
+	wfs.inodeToPath.MovePath("/final", "/tmp")
+	del := &filer_pb.SubscribeMetadataResponse{Directory: "/", TsNs: 10, EventNotification: &filer_pb.EventNotification{OldEntry: link("tmp")}}
+	if err := wfs.metaCache.ApplyMetadataResponse(ctx, del, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply peer delete: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if got, found := wfs.inodeToPath.GetInode("/tmp"); !found || got != inode {
+		t.Fatalf("/tmp maps to %d (%v), want %d", got, found, inode)
 	}
 }
 

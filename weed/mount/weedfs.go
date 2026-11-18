@@ -949,8 +949,11 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 	if !handled && invalidation.RenamedTo != "" {
 		_, replacedInode = wfs.inodeToPath.MovePath(invalidation.Path, invalidation.RenamedTo)
 	} else if !handled && invalidation.Deleted && len(invalidation.LiveHardLinkId) > 0 {
-		// Otherwise the next open by nodeid resolves to the deleted name.
-		wfs.inodeToPath.RemoveAlias(invalidation.Path)
+		// Otherwise the next open by nodeid resolves to the deleted name. A
+		// newer stored entry means something has taken the name since.
+		if _, _, newer := wfs.cachedEntrySince(invalidation.Path, invalidation.TsNs); !newer {
+			wfs.inodeToPath.RemoveAlias(invalidation.Path)
+		}
 	}
 	// A rename over an existing file destroys it, so its handle must not flush
 	// the old content back over what took the name. Marked from here, holding
