@@ -278,7 +278,11 @@ func TestUploadChunkToHoldersRollsBackOnPartialFailure(t *testing.T) {
 	defer bad.Close()
 
 	hosts := []string{strings.TrimPrefix(good.URL, "http://"), strings.TrimPrefix(bad.URL, "http://")}
-	_, err := uploadChunkToHolders(context.Background(), hosts, fid, []byte("hello world"), "", "", false, &ChunkedUploadOption{})
+	prepared, err := prepareUploadData([]byte("hello world"), &UploadOption{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = uploadChunkToHolders(context.Background(), hosts, fid, prepared, "", "", false, &ChunkedUploadOption{})
 
 	if err == nil {
 		t.Fatal("expected error from a partial fan-out")
