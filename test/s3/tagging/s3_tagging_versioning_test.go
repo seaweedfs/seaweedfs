@@ -432,3 +432,55 @@ func createVersionedTestBucket(t *testing.T, client *s3.Client) string {
 
 	return bucketName
 }
+
+// TestTaggingReportsVersionId checks that tagging requests on a versioned
+// bucket answer with the version they acted on.
+func TestTaggingReportsVersionId(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := createVersionedTestBucket(t, client)
+	defer cleanupTestBucket(t, client, bucketName)
+
+	objectKey := "tagging-version-id"
+	put := func(body string) string {
+		resp, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String(objectKey),
+			Body:   strings.NewReader(body),
+		})
+		require.NoError(t, err)
+		return aws.ToString(resp.VersionId)
+	}
+	versionId1 := put("v1")
+	versionId2 := put("v2")
+	tagging := &types.Tagging{TagSet: []types.Tag{{Key: aws.String("k"), Value: aws.String("v")}}}
+
+	putResp, err := client.PutObjectTagging(context.TODO(), &s3.PutObjectTaggingInput{
+		Bucket: aws.String(bucketName), Key: aws.String(objectKey), VersionId: aws.String(versionId1), Tagging: tagging,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, versionId1, aws.ToString(putResp.VersionId))
+
+	putResp, err = client.PutObjectTagging(context.TODO(), &s3.PutObjectTaggingInput{
+		Bucket: aws.String(bucketName), Key: aws.String(objectKey), Tagging: tagging,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, versionId2, aws.ToString(putResp.VersionId))
+
+	getResp, err := client.GetObjectTagging(context.TODO(), &s3.GetObjectTaggingInput{
+		Bucket: aws.String(bucketName), Key: aws.String(objectKey), VersionId: aws.String(versionId1),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, versionId1, aws.ToString(getResp.VersionId))
+
+	getResp, err = client.GetObjectTagging(context.TODO(), &s3.GetObjectTaggingInput{
+		Bucket: aws.String(bucketName), Key: aws.String(objectKey),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, versionId2, aws.ToString(getResp.VersionId))
+
+	delResp, err := client.DeleteObjectTagging(context.TODO(), &s3.DeleteObjectTaggingInput{
+		Bucket: aws.String(bucketName), Key: aws.String(objectKey), VersionId: aws.String(versionId1),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, versionId1, aws.ToString(delResp.VersionId))
+}

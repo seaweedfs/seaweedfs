@@ -73,6 +73,7 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 				return
 			}
 		}
+		setTaggingVersionIdHeader(w, versionId, entry)
 	} else {
 		// Handle regular (non-versioned) object tagging retrieval
 		entry, err = s3a.getObjectEntryRoutedByKey(bucket, object)
@@ -195,6 +196,7 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 				return
 			}
 		}
+		setTaggingVersionIdHeader(w, versionId, entry)
 	} else {
 		// Handle regular (non-versioned) object tagging modification
 		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
@@ -335,6 +337,7 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 				return
 			}
 		}
+		setTaggingVersionIdHeader(w, versionId, entry)
 	} else {
 		// Handle regular (non-versioned) object tagging deletion
 		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
@@ -418,4 +421,14 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 	glog.V(3).Infof("DeleteObjectTaggingHandler: Successfully deleted tags for %s/%s", bucket, object)
 	w.WriteHeader(http.StatusNoContent)
 	s3err.PostLog(r, http.StatusNoContent, s3err.ErrNone)
+}
+
+// setTaggingVersionIdHeader reports the version the tagging request acted on,
+// "null" for an object written before versioning was enabled.
+func setTaggingVersionIdHeader(w http.ResponseWriter, versionId string, entry *filer_pb.Entry) {
+	versionId = resolvedSourceVersionId(versionId, entry)
+	if versionId == "" {
+		versionId = "null"
+	}
+	w.Header().Set("x-amz-version-id", versionId)
 }
