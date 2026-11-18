@@ -103,7 +103,11 @@ stop-server:
 	@if [ -f weed-server.pid ]; then \
 		if $(OWN_SERVER_RUNNING); then \
 			kill $$(cat weed-server.pid) 2>/dev/null || true; \
-			sleep 2; \
+			for i in $$(seq 1 30); do $(OWN_SERVER_RUNNING) || break; sleep 1; done; \
+			if $(OWN_SERVER_RUNNING); then \
+				echo "the server this Makefile started (pid $$(cat weed-server.pid)) is still running after 30s; keeping weed-server.pid"; \
+				exit 1; \
+			fi; \
 		fi; \
 		rm -f weed-server.pid weed-server.started; \
 	fi
