@@ -534,7 +534,7 @@ func TestToPutVectorDimensionCheck(t *testing.T) {
 		{"empty key", &PutInputVector{Data: &VectorData{Float32: []float32{1, 2, 3}}}, 3, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := toPutVector(tc.v, tc.dim); (err == nil) != tc.ok {
+			if _, err := toPutVector(tc.v, tc.dim, nil); (err == nil) != tc.ok {
 				t.Fatalf("toPutVector err = %v, want ok %v", err, tc.ok)
 			}
 		})

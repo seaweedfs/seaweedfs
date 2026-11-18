@@ -3,11 +3,12 @@ use std::collections::HashMap;
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
+use lance::Dataset;
 use lance::dataset::cleanup::{CleanupPolicy, cleanup_old_versions};
 use seaweed_worker_core::config_form::{form, int_or, int_value, number_field};
 use seaweed_worker_core::pb::{
-    ConfigValue, DetectionComplete, DetectionProposals, ExecuteJobRequest, JobCompleted,
-    JobProgressUpdate, JobProposal, JobResult, JobTypeCapability, JobTypeDescriptor,
+    AdminRuntimeDefaults, ConfigValue, DetectionComplete, DetectionProposals, ExecuteJobRequest,
+    JobCompleted, JobProgressUpdate, JobProposal, JobResult, JobTypeCapability, JobTypeDescriptor,
     RunDetectionRequest,
 };
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
@@ -15,6 +16,7 @@ use tracing::warn;
 
 use crate::catalog::{NamespaceClient, SigningKey, parse_id};
 use crate::dataset;
+use crate::jobs::purge::{self, Retention};
 use crate::jobs::{clamp, string_list, table_id};
 
 pub const JOB_TYPE: &str = "lance_cleanup_versions";
@@ -28,7 +30,9 @@ const MAX_MIN_VERSIONS: i64 = 1000;
 
 /// Lance keeps every version until something removes it. Lance can also do this
 /// itself through auto-cleanup, so this job is for deployments that would rather
-/// the cluster owned the policy than each writer.
+/// the cluster owned the policy than each writer. A table may override the
+/// retention in its own config, and may ask for a purge (see [`purge`]), which
+/// this job carries out ahead of the retention window.
 pub struct CleanupVersionsHandler {
     namespace_url: String,
     storage: dataset::Storage,
@@ -68,9 +72,8 @@ impl CleanupVersionsHandler {
 
 /// The oldest version that may be removed while still leaving `min_versions`
 /// behind, or None when the table has no more than the floor.
-async fn version_floor(table: &dataset::OpenTable, min_versions: usize) -> Result<Option<u64>> {
-    let mut versions: Vec<u64> = table
-        .dataset
+async fn version_floor(dataset: &Dataset, min_versions: usize) -> Result<Option<u64>> {
+    let mut versions: Vec<u64> = dataset
         .versions()
         .await?
         .iter()
@@ -81,6 +84,33 @@ async fn version_floor(table: &dataset::OpenTable, min_versions: usize) -> Resul
     }
     versions.sort_unstable();
     Ok(Some(versions[versions.len() - min_versions]))
+}
+
+/// The cleanup that keeps `min_versions` and every version younger than
+/// `retain_hours`, or None when the floor leaves nothing to remove. A purge
+/// cleans up through it too.
+pub async fn retention_policy(
+    dataset: &Dataset,
+    retain_hours: i64,
+    min_versions: usize,
+) -> Result<Option<CleanupPolicy>> {
+    let Some(floor) = version_floor(dataset, min_versions).await? else {
+        return Ok(None);
+    };
+    Ok(Some(CleanupPolicy {
+        before_timestamp: Some(Utc::now() - Duration::hours(retain_hours)),
+        // should_clean() ANDs its clauses, so a version has to be both older
+        // than the window and below the floor to go.
+        before_version: Some(floor),
+        // Files this dataset cannot account for are left alone: they may
+        // belong to a writer that has not committed yet, and deleting them
+        // would corrupt a commit in flight.
+        delete_unverified: false,
+        // A tagged version is pinned on purpose, so refuse rather than
+        // silently dropping what someone named.
+        error_if_tagged_old_versions: true,
+        ..Default::default()
+    }))
 }
 
 #[async_trait]
@@ -134,6 +164,12 @@ impl JobHandler for CleanupVersionsHandler {
                 defaults.clone(),
             )),
             worker_default_values: defaults,
+            // A purge compacts and retrains, so it gets a build's time.
+            admin_runtime_defaults: Some(AdminRuntimeDefaults {
+                job_type_max_runtime_seconds: super::vector_index::EXECUTION_TIMEOUT_SECONDS,
+                execution_timeout_seconds: super::vector_index::EXECUTION_TIMEOUT_SECONDS,
+                ..Default::default()
+            }),
             ..Default::default()
         }
     }
@@ -181,10 +217,23 @@ impl JobHandler for CleanupVersionsHandler {
                     continue;
                 }
             };
+            let config = table.dataset.config();
+            let pending_purge = purge::pending(config);
+            let floor = Retention::for_table(
+                config,
+                Retention {
+                    retain_hours: DEFAULT_RETAIN_HOURS,
+                    min_versions,
+                },
+                MAX_RETAIN_HOURS,
+                MAX_MIN_VERSIONS,
+            )
+            .min_versions;
             // Age is decided at execution against the retention window; a table
             // at or under the floor cannot lose a version whatever its age, so
-            // proposing one would only produce a job with nothing to do.
-            if stats.total_versions <= min_versions {
+            // proposing one would only produce a job with nothing to do. A
+            // requested purge ignores the floor: it keeps only the latest.
+            if pending_purge.is_none() && stats.total_versions <= floor {
                 continue;
             }
             let mut parameters: HashMap<String, ConfigValue> = HashMap::new();
@@ -193,12 +242,21 @@ impl JobHandler for CleanupVersionsHandler {
                 proposal_id: format!("{JOB_TYPE}:{encoded}"),
                 dedupe_key: format!("{JOB_TYPE}:{encoded}"),
                 job_type: JOB_TYPE.to_string(),
-                summary: format!("Clean up {encoded} ({} versions)", stats.total_versions),
-                detail: format!(
-                    "{} versions retained, above the {min_versions} floor; \
-                     those outside the retention window can go",
-                    stats.total_versions
-                ),
+                summary: match &pending_purge {
+                    Some(_) => format!("Purge {encoded} ({} versions)", stats.total_versions),
+                    None => format!("Clean up {encoded} ({} versions)", stats.total_versions),
+                },
+                detail: match &pending_purge {
+                    Some(token) => format!(
+                        "purge requested at {token}: rewrite fragments with deletions \
+                         and keep only the latest version"
+                    ),
+                    None => format!(
+                        "{} versions retained, above the {floor} floor; \
+                         those outside the retention window can go",
+                        stats.total_versions
+                    ),
+                },
                 parameters,
                 ..Default::default()
             });
@@ -254,14 +312,33 @@ impl JobHandler for CleanupVersionsHandler {
         ) as usize;
 
         let client = self.client();
-        let table = dataset::open(&client, &id, &self.storage).await?;
+        let mut table = dataset::open(&client, &id, &self.storage).await?;
         let before = table.stats().await?;
+
+        if let Some(token) = purge::pending(table.dataset.config()) {
+            return self
+                .execute_purge(request, sender, &job.job_id, &mut table, &token)
+                .await;
+        }
+        let Retention {
+            retain_hours,
+            min_versions,
+        } = Retention::for_table(
+            table.dataset.config(),
+            Retention {
+                retain_hours,
+                min_versions,
+            },
+            MAX_RETAIN_HOURS,
+            MAX_MIN_VERSIONS,
+        );
 
         // The floor is a promise about how much history survives, so it has to
         // be applied here and not only when the job was proposed: by the time it
         // runs, versions may have aged past the retention window, and age alone
         // would take the table below what the operator asked to keep.
-        let Some(floor) = version_floor(&table, min_versions).await? else {
+        let Some(policy) = retention_policy(&table.dataset, retain_hours, min_versions).await?
+        else {
             sender.send_completed(JobCompleted {
                 request_id: request.request_id.clone(),
                 job_id: job.job_id.clone(),
@@ -288,20 +365,6 @@ impl JobHandler for CleanupVersionsHandler {
             ..Default::default()
         })?;
 
-        let policy = CleanupPolicy {
-            before_timestamp: Some(Utc::now() - Duration::hours(retain_hours)),
-            // should_clean() ANDs its clauses, so a version has to be both older
-            // than the window and below the floor to go.
-            before_version: Some(floor),
-            // Files this dataset cannot account for are left alone: they may
-            // belong to a writer that has not committed yet, and deleting them
-            // would corrupt a commit in flight.
-            delete_unverified: false,
-            // A tagged version is pinned on purpose, so refuse rather than
-            // silently dropping what someone named.
-            error_if_tagged_old_versions: true,
-            ..Default::default()
-        };
         let stats = cleanup_old_versions(&table.dataset, policy)
             .await
             .with_context(|| format!("clean up versions of {}", table.location))?;
@@ -341,5 +404,75 @@ impl JobHandler for CleanupVersionsHandler {
             ..Default::default()
         })?;
         Ok(())
+    }
+}
+
+impl CleanupVersionsHandler {
+    async fn execute_purge(
+        &self,
+        request: &ExecuteJobRequest,
+        sender: &dyn ExecutionSender,
+        job_id: &str,
+        table: &mut dataset::OpenTable,
+        token: &str,
+    ) -> Result<()> {
+        let stats = purge::purge(&mut table.dataset, token)
+            .await
+            .with_context(|| format!("purge {}", table.location))?;
+        if let Some(counters) = &self.metrics {
+            counters.versions_removed.inc_by(stats.old_versions);
+            counters.bytes_reclaimed.inc_by(stats.bytes_removed);
+        }
+        let mut output: HashMap<String, ConfigValue> = HashMap::new();
+        output.insert(
+            "fragments_rewritten".to_string(),
+            int_value(stats.fragments_rewritten as i64),
+        );
+        output.insert(
+            "old_versions_removed".to_string(),
+            int_value(stats.old_versions as i64),
+        );
+        output.insert(
+            "bytes_removed".to_string(),
+            int_value(stats.bytes_removed as i64),
+        );
+        sender.send_completed(JobCompleted {
+            request_id: request.request_id.clone(),
+            job_id: job_id.to_string(),
+            job_type: JOB_TYPE.to_string(),
+            success: true,
+            result: Some(JobResult {
+                output_values: output,
+                summary: if stats.served {
+                    format!(
+                        "purged: rewrote {} fragments, removed {} versions and {} bytes",
+                        stats.fragments_rewritten, stats.old_versions, stats.bytes_removed
+                    )
+                } else {
+                    format!(
+                        "purge pending: rewrote {} fragments, removed {} versions and {} bytes; \
+                         versions from before the rebuild are still retained",
+                        stats.fragments_rewritten, stats.old_versions, stats.bytes_removed
+                    )
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        })?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_purge_gets_a_builds_execution_timeout() {
+        let descriptor = CleanupVersionsHandler::new(String::new()).descriptor();
+        let defaults = descriptor.admin_runtime_defaults.unwrap();
+        assert_eq!(defaults.execution_timeout_seconds, 3600);
+        assert_eq!(defaults.job_type_max_runtime_seconds, 3600);
+        assert!(!defaults.enabled);
     }
 }

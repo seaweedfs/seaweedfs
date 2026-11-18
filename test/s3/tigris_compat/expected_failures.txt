@@ -1,6 +1,8 @@
 # Tests from s3-api-compat-tests that SeaweedFS is expected to fail.
 # check_results.py fails CI on any other failure, and on any test listed here
 # that passes, so remove an entry together with the fix that makes it pass.
+# An entry expects the test to fail; "<name> error" expects its setup to fail
+# before the call it checks, and any other status is a regression.
 
 # AWS answers GetBucketPolicyStatus on a bucket without a policy with
 # NoSuchBucketPolicy, and so does SeaweedFS; the suite expects a status.
@@ -14,7 +16,3 @@ RestoreObject
 # starts with the request's bucket, as bucket/key, because AWS documents both
 # spellings. A leading slash is dropped since filer paths cannot hold it.
 RenameObject_SourceIsLiteralKey
-
-# Not yet fixed in SeaweedFS.
-DeleteBucketOwnershipControls
-PutObjectTagging_VersionId

@@ -367,6 +367,7 @@ type shouldSkipVolume struct {
 	b                 VolumeReplica
 	pulseTimeAtSecond int64
 	syncDeletions     bool
+	resurrect         bool
 	shouldSkipVolume  bool
 }
 
@@ -573,7 +574,7 @@ func TestShouldSkipVolume(t *testing.T) {
 		},
 		// Edge case: Both volumes modified AFTER pulse cutoff time
 		// When ModifiedAtSecond >= pulseTimeAtSecond for both volumes with same counts,
-		// the condition (a.info.FileCount != b.info.FileCount) is false, so we skip
+		// countsDiffer is false, so we skip
 		// without calling eqVolumeFileCount
 		{
 			name: "both volumes modified after pulse cutoff with same file counts should be skipped",
@@ -591,15 +592,153 @@ func TestShouldSkipVolume(t *testing.T) {
 			syncDeletions:     true,
 			shouldSkipVolume:  true, // Same counts = skip without calling eqVolumeFileCount
 		},
+		{
+			name: "replicas differing only in vacuum state should be skipped",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583300},
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        900,
+				DeleteCount:      0,
+				CompactRevision:  1,
+				ModifiedAtSecond: 1696583300},
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     false,
+			shouldSkipVolume:  true,
+		},
+		{
+			name: "replicas at different revisions with equal live counts should be checked with syncDeletions enabled",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583300},
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        900,
+				DeleteCount:      0,
+				CompactRevision:  1,
+				ModifiedAtSecond: 1696583300},
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     true,
+			shouldSkipVolume:  false,
+		},
+		{
+			name: "vacuumed replica with a different live count should not be skipped",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583300},
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        899,
+				DeleteCount:      0,
+				CompactRevision:  1,
+				ModifiedAtSecond: 1696583300},
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     false,
+			shouldSkipVolume:  false,
+		},
+		{
+			name: "missed write and missed delete at the same revision should not be skipped",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1001,
+				DeleteCount:      101,
+				ModifiedAtSecond: 1696583300},
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583300},
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     true,
+			shouldSkipVolume:  false,
+		},
+		{
+			name: "missed write and missed delete at the same revision should not be skipped without syncDeletions",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        2,
+				DeleteCount:      1,
+				CompactRevision:  3,
+				ModifiedAtSecond: 1696583300},
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1,
+				DeleteCount:      0,
+				CompactRevision:  3,
+				ModifiedAtSecond: 1696583300},
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     false,
+			shouldSkipVolume:  false,
+		},
+		{
+			name: "vacuumed replica that missed a write and a delete should be checked with syncDeletions enabled",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        3,
+				DeleteCount:      2,
+				ModifiedAtSecond: 1696583300},
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1,
+				DeleteCount:      0,
+				CompactRevision:  1,
+				ModifiedAtSecond: 1696583300},
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     true,
+			shouldSkipVolume:  false,
+		},
+		{
+			name: "never-vacuumed replica should be checked when resurrection is enabled",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583300},
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        900,
+				DeleteCount:      0,
+				CompactRevision:  1,
+				ModifiedAtSecond: 1696583300},
+			},
+			pulseTimeAtSecond: 1696583400,
+			resurrect:         true,
+			shouldSkipVolume:  false,
+		},
+		{
+			name: "vacuumed replicas at different revisions should be skipped when resurrection is enabled",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				CompactRevision:  1,
+				ModifiedAtSecond: 1696583300},
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        900,
+				DeleteCount:      0,
+				CompactRevision:  2,
+				ModifiedAtSecond: 1696583300},
+			},
+			pulseTimeAtSecond: 1696583400,
+			resurrect:         true,
+			shouldSkipVolume:  true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			vcd := &volumeCheckDisk{
-				writer:        &buf,
-				now:           time.Unix(tt.pulseTimeAtSecond, 0),
-				verbose:       false, // reduce noise in tests
-				syncDeletions: tt.syncDeletions,
+				writer:                  &buf,
+				now:                     time.Unix(tt.pulseTimeAtSecond, 0),
+				verbose:                 false, // reduce noise in tests
+				syncDeletions:           tt.syncDeletions,
+				resurrectMissingNeedles: tt.resurrect,
 			}
 			result, err := vcd.shouldSkipVolume(&tt.a, &tt.b)
 			if err != nil {

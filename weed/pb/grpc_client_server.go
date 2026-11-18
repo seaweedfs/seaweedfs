@@ -496,6 +496,12 @@ func shouldInvalidateConnection(ctx context.Context, err error) bool {
 			// in-flight RPC with "the client connection is closing"; keep it and let
 			// the caller retry.
 			return false
+		case codes.InvalidArgument, codes.NotFound, codes.AlreadyExists,
+			codes.FailedPrecondition, codes.OutOfRange, codes.DataLoss:
+			// gRPC never raises these itself, so the peer answered. Its
+			// message can name a path such as /transport, which must not
+			// reach the string matching below.
+			return false
 		case codes.Canceled, codes.DeadlineExceeded:
 			// Ambiguous: a stale cached channel rejects RPCs this way (a peer
 			// restart behind a k8s Service VIP), and so does the RPC's own context

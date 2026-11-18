@@ -908,14 +908,9 @@ impl VectorService for VectorServer {
             0 => DEFAULT_PAGE,
             n => n.min(MAX_PAGE),
         };
+        // A purge keeps only the latest version, so lease the one this page reads.
+        let _lease = self.leases.try_pin(&dataset).await.map_err(internal)?;
         if segments > 1 {
-            // Data and metadata come from a second read of this version, so
-            // lease it as get_vectors does.
-            let _lease = if columns.len() > 1 {
-                self.leases.try_pin(&dataset).await.map_err(internal)?
-            } else {
-                None
-            };
             let (vectors, next) = list_segment(
                 &dataset,
                 &columns,

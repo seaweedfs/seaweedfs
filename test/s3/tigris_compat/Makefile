@@ -6,6 +6,7 @@
 SUITE_REPO := https://github.com/tigrisdata-community/s3-api-compat-tests.git
 SUITE_COMMIT := e846275e489ec30b324344d462e698252c3a1f67
 SUITE_DIR := s3-api-compat-tests
+SUITE_STAMP := $(SUITE_DIR)/.seaweedfs-prepared
 
 WEED_BINARY := ../../../weed/weed_binary
 S3_PORT ?= 8335
@@ -16,6 +17,11 @@ WEBDAV_PORT ?= 7335
 ADMIN_PORT ?= 23647
 SERVER_DIR := ./test-volume-data
 S3_CONFIG := ./test_s3.json
+# Succeeds while weed-server.pid names the server start-server launched: the
+# process at that pid must have the start time recorded with it, so a process
+# that reused the pid is left alone.
+OWN_SERVER_RUNNING = [ -f weed-server.pid ] && [ -s weed-server.started ] && \
+	[ "$$(ps -p "$$(cat weed-server.pid)" -o lstart= 2>/dev/null)" = "$$(cat weed-server.started)" ]
 
 .DEFAULT_GOAL := help
 
@@ -39,22 +45,28 @@ build-weed:
 	@cd ../../../weed && go build -o weed_binary .
 
 build-suite:
-	@if [ "$$(git -C $(SUITE_DIR) rev-parse HEAD 2>/dev/null)" != "$(SUITE_COMMIT)" ]; then \
+	@want="$(SUITE_COMMIT) $$(git hash-object seaweedfs-provider.patch)"; \
+	if [ "$$(cat $(SUITE_STAMP) 2>/dev/null)" != "$$want" ]; then \
 		rm -rf $(SUITE_DIR) && mkdir -p $(SUITE_DIR) && \
 		git -C $(SUITE_DIR) init -q && \
 		git -C $(SUITE_DIR) fetch -q --depth 1 $(SUITE_REPO) $(SUITE_COMMIT) && \
 		git -C $(SUITE_DIR) checkout -q FETCH_HEAD && \
-		git -C $(SUITE_DIR) apply ../seaweedfs-provider.patch; \
+		git -C $(SUITE_DIR) apply ../seaweedfs-provider.patch && \
+		echo "$$want" > $(SUITE_STAMP); \
 	fi
 	@cd $(SUITE_DIR) && go build -o ../compat-runner .
 
 start-server: build-weed
-	@rm -f weed-server.pid
-	@mkdir -p $(SERVER_DIR)
-	@if curl -sS -o /dev/null http://127.0.0.1:$(S3_PORT)/ >/dev/null 2>&1; then \
+	@if curl -sS --max-time 2 -o /dev/null http://127.0.0.1:$(S3_PORT)/ >/dev/null 2>&1; then \
 		echo "port $(S3_PORT) is already served by another process; refusing to test against it"; \
 		exit 1; \
 	fi
+	@if $(OWN_SERVER_RUNNING); then \
+		echo "the server this Makefile started (pid $$(cat weed-server.pid)) is still running; run make stop-server first"; \
+		exit 1; \
+	fi
+	@rm -rf weed-server.pid weed-server.started $(SERVER_DIR)
+	@mkdir -p $(SERVER_DIR)
 	@$(WEED_BINARY) mini \
 		-dir=$(SERVER_DIR) \
 		-ip=127.0.0.1 \
@@ -68,14 +80,15 @@ start-server: build-weed
 		-s3.port=$(S3_PORT) \
 		-s3.config=$(S3_CONFIG) \
 		-master.peers=none \
-		> weed-test.log 2>&1 & echo $$! > weed-server.pid
+		> weed-test.log 2>&1 & echo $$! > weed-server.pid; \
+	ps -p $$! -o lstart= > weed-server.started
 	@for i in $$(seq 1 60); do \
 		kill -0 $$(cat weed-server.pid) 2>/dev/null || { \
 			echo "SeaweedFS server exited during startup"; \
 			cat weed-test.log; \
 			exit 1; \
 		}; \
-		if curl -sS -o /dev/null http://127.0.0.1:$(S3_PORT)/ >/dev/null 2>&1; then \
+		if curl -sS --max-time 2 -o /dev/null http://127.0.0.1:$(S3_PORT)/ >/dev/null 2>&1; then \
 			echo "SeaweedFS S3 server is ready on port $(S3_PORT)"; \
 			exit 0; \
 		fi; \
@@ -88,12 +101,15 @@ start-server: build-weed
 
 stop-server:
 	@if [ -f weed-server.pid ]; then \
-		pid=$$(cat weed-server.pid); \
-		if ps -p $$pid -o comm= 2>/dev/null | grep -q weed; then \
-			kill $$pid 2>/dev/null || true; \
-			sleep 2; \
+		if $(OWN_SERVER_RUNNING); then \
+			kill $$(cat weed-server.pid) 2>/dev/null || true; \
+			for i in $$(seq 1 30); do $(OWN_SERVER_RUNNING) || break; sleep 1; done; \
+			if $(OWN_SERVER_RUNNING); then \
+				echo "the server this Makefile started (pid $$(cat weed-server.pid)) is still running after 30s; keeping weed-server.pid"; \
+				exit 1; \
+			fi; \
 		fi; \
-		rm -f weed-server.pid; \
+		rm -f weed-server.pid weed-server.started; \
 	fi
 
 run-suite: build-suite
@@ -104,12 +120,12 @@ run-suite: build-suite
 	python3 check_results.py results.json expected_failures.txt
 
 test-with-server:
-	@$(MAKE) start-server; START_RESULT=$$?; \
-	if [ $$START_RESULT -eq 0 ]; then $(MAKE) run-suite; TEST_RESULT=$$?; else TEST_RESULT=$$START_RESULT; fi; \
+	@$(MAKE) start-server || exit $$?; \
+	$(MAKE) run-suite; TEST_RESULT=$$?; \
 	$(MAKE) stop-server; exit $$TEST_RESULT
 
 logs:
 	@test -f weed-test.log && tail -100 weed-test.log || echo "No log file found"
 
 clean: stop-server
-	@rm -rf $(SERVER_DIR) $(SUITE_DIR) compat-runner results.json weed-test.log weed-server.pid
+	@rm -rf $(SERVER_DIR) $(SUITE_DIR) compat-runner results.json weed-test.log weed-server.pid weed-server.started

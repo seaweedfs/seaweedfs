@@ -377,34 +377,50 @@ func (vcd *volumeCheckDisk) getVolumeStatusFileCount(vid uint32, dn *master_pb.D
 }
 
 // eqVolumeFileCount compares the real-time file counts of two volume replicas
-// by making sequential gRPC calls to their volume servers.
-//
-// Returns:
-//   - bool: true if file counts match
-//   - bool: true if deleted file counts match
-//   - error: any error from volume server communication
-//
-// Error Handling: Errors from getVolumeStatusFileCount are wrapped with context
-// (volume ID and server) and propagated up. Uses fmt.Errorf with %w to maintain
-// error chain for errors.Is() and errors.As().
-func (vcd *volumeCheckDisk) eqVolumeFileCount(a, b *VolumeReplica) (bool, bool, error) {
+// by making sequential gRPC calls to their volume servers, and reports whether
+// they agree as countsDiffer judges them.
+func (vcd *volumeCheckDisk) eqVolumeFileCount(a, b *VolumeReplica) (bool, error) {
 	fileCountA, fileDeletedCountA, errA := vcd.getVolumeStatusFileCount(a.info.Id, a.location.dataNode)
 	if errA != nil {
-		return false, false, fmt.Errorf("getting volume %d status from %s: %w", a.info.Id, a.location.dataNode.Id, errA)
+		return false, fmt.Errorf("getting volume %d status from %s: %w", a.info.Id, a.location.dataNode.Id, errA)
 	}
 
 	fileCountB, fileDeletedCountB, errB := vcd.getVolumeStatusFileCount(b.info.Id, b.location.dataNode)
 	if errB != nil {
-		return false, false, fmt.Errorf("getting volume %d status from %s: %w", b.info.Id, b.location.dataNode.Id, errB)
+		return false, fmt.Errorf("getting volume %d status from %s: %w", b.info.Id, b.location.dataNode.Id, errB)
 	}
 
-	return fileCountA == fileCountB, fileDeletedCountA == fileDeletedCountB, nil
+	// VolumeStatus reports no compaction revision to pair with these counts.
+	return !vcd.countsDiffer(fileCountA, fileDeletedCountA, fileCountB, fileDeletedCountB, false), nil
+}
+
+// countsDiffer reports whether two replicas' needle counters suggest a needle
+// is missing on one side. FileCount counts every write and DeleteCount every
+// delete or overwrite until a vacuum drops them; with liveCountsSuffice, equal
+// live counts are taken as a vacuum-state difference.
+func (vcd *volumeCheckDisk) countsDiffer(fileCountA, deleteCountA, fileCountB, deleteCountB uint64, liveCountsSuffice bool) bool {
+	if liveCountsSuffice && int64(fileCountA)-int64(deleteCountA) == int64(fileCountB)-int64(deleteCountB) {
+		return false
+	}
+	return fileCountA != fileCountB || (vcd.syncDeletions && deleteCountA != deleteCountB)
+}
+
+// liveCountsSuffice reports whether equal live counts are enough to skip two
+// replicas at different compaction revisions. Equal live counts can also hide
+// a missed write plus a missed delete, so this holds only when no repair this
+// run could make depends on them: deletes are not synced and neither replica
+// can take a resurrected needle.
+func (vcd *volumeCheckDisk) liveCountsSuffice(a, b *VolumeReplica) bool {
+	if vcd.syncDeletions || a.info.CompactRevision == b.info.CompactRevision {
+		return false
+	}
+	return !vcd.resurrectMissingNeedles || (a.info.CompactRevision > 0 && b.info.CompactRevision > 0)
 }
 
 // shouldSkipVolume determines whether two volume replicas should skip synchronization.
 //
 // Logic:
-//  1. If file counts and delete counts match (when syncDeletions enabled), skip sync
+//  1. If countsDiffer finds no missing needle, skip sync
 //  2. If counts differ AND both volumes were modified recently (>= pulseTimeAtSecond),
 //     they may still be actively receiving writes, so we return true to skip sync and
 //     avoid false positives
@@ -424,29 +440,21 @@ func (vcd *volumeCheckDisk) shouldSkipVolume(a, b *VolumeReplica) (bool, error) 
 	}
 
 	pulseTimeAtSecond := vcd.now.Add(-constants.VolumePulsePeriod * 2).Unix()
-	doSyncDeletedCount := false
-	if vcd.syncDeletions && a.info.DeleteCount != b.info.DeleteCount {
-		doSyncDeletedCount = true
-	}
-	if (a.info.FileCount != b.info.FileCount) || doSyncDeletedCount {
+	if vcd.countsDiffer(a.info.FileCount, a.info.DeleteCount, b.info.FileCount, b.info.DeleteCount, vcd.liveCountsSuffice(a, b)) {
 		// Do synchronization of volumes, if the modification time was before the last pulsation time
 		if a.info.ModifiedAtSecond < pulseTimeAtSecond || b.info.ModifiedAtSecond < pulseTimeAtSecond {
 			return false, nil
 		}
-		eqFileCount, eqDeletedFileCount, err := vcd.eqVolumeFileCount(a, b)
+		eqFileCount, err := vcd.eqVolumeFileCount(a, b)
 		if err != nil {
 			return false, fmt.Errorf("comparing volume %d file counts on %s and %s: %w",
 				a.info.Id, a.location.dataNode.Id, b.location.dataNode.Id, err)
 		}
-		if eqFileCount {
-			if doSyncDeletedCount && !eqDeletedFileCount {
-				return false, nil
-			}
-			vcd.writeVerbose("skipping active volumes %d with the same file counts on %s and %s",
-				a.info.Id, a.location.dataNode.Id, b.location.dataNode.Id)
-		} else {
+		if !eqFileCount {
 			return false, nil
 		}
+		vcd.writeVerbose("skipping active volumes %d with the same file counts on %s and %s",
+			a.info.Id, a.location.dataNode.Id, b.location.dataNode.Id)
 	}
 	return true, nil
 }
