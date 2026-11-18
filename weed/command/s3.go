@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -88,6 +89,7 @@ type S3Options struct {
 	allowUntrustedRemoteEndpoints *bool
 	allowBackslashInKey           *bool
 	iamSelfServiceRequiresGrant   *bool
+	preStopSeconds                *int
 	// shutdownCtx, when non-nil, tells startS3Server to gracefully shut down
 	// its HTTP/gRPC servers once the ctx is cancelled, in addition to on
 	// interrupt. Used by weed mini to orchestrate an ordered shutdown.
@@ -148,6 +150,7 @@ func init() {
 	s3StandaloneOptions.allowUntrustedRemoteEndpoints = cmdS3.Flag.Bool("allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 	s3StandaloneOptions.allowBackslashInKey = cmdS3.Flag.Bool("allowBackslashInKey", false, allowBackslashInKeyUsage)
 	s3StandaloneOptions.iamSelfServiceRequiresGrant = cmdS3.Flag.Bool("iam.selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
+	s3StandaloneOptions.preStopSeconds = cmdS3.Flag.Int("preStopSeconds", 0, s3PreStopSecondsUsage)
 }
 
 var cmdS3 = &Command{
@@ -602,14 +605,45 @@ func (s3opt *S3Options) startS3Server() bool {
 
 func (s3opt *S3Options) newShutdown(stopGrpc func(), s3ApiServer *s3api.S3ApiServer, httpServers []*http.Server) func() {
 	shutdown := newGracefulShutdown(stopGrpc, s3ApiServer.Shutdown, httpServers...)
-	grace.OnInterrupt(shutdown)
+	var cancelled <-chan struct{}
 	if s3opt.shutdownCtx != nil {
+		cancelled = s3opt.shutdownCtx.Done()
 		go func() {
-			<-s3opt.shutdownCtx.Done()
+			<-cancelled
 			shutdown()
 		}()
 	}
+	preStop := sync.OnceFunc(preStopWait(s3ApiServer.StartDraining, s3opt.preStopDelay(), cancelled))
+	// The wait has to finish before weed mini cancels shutdownCtx, and before
+	// weed server shuts down the filer and volume server, whose hooks may be
+	// registered after this one.
+	beforeMiniClientsShutdown(preStop)
+	grace.OnInterruptFirst(preStop)
+	grace.OnInterrupt(shutdown)
 	return shutdown
+}
+
+func (s3opt *S3Options) preStopDelay() time.Duration {
+	if s3opt.preStopSeconds == nil || *s3opt.preStopSeconds <= 0 {
+		return 0
+	}
+	return time.Duration(*s3opt.preStopSeconds) * time.Second
+}
+
+func preStopWait(startDraining func(), delay time.Duration, cancelled <-chan struct{}) func() {
+	return func() {
+		if delay <= 0 {
+			return
+		}
+		startDraining()
+		glog.V(0).Infof("S3 API Server failing health checks for %s before shutdown", delay)
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-cancelled:
+		}
+	}
 }
 
 // vendsCredentials reports whether -iceberg.credentialRole is set, which

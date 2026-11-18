@@ -15,6 +15,7 @@ import (
 
 var signalChan chan os.Signal
 var interruptHooks = make([]func(), 0)
+var firstInterruptHooks = make([]func(), 0)
 var interruptHookLock sync.RWMutex
 var reloadHooks = make([]func(), 0)
 var reloadHookLock sync.RWMutex
@@ -43,19 +44,27 @@ func init() {
 				}
 				reloadHookLock.RUnlock()
 			} else {
-				interruptHookLock.RLock()
-				// Execute hooks in reverse registration order (LIFO/defer-style) so
-				// later-started services shut down before the services they depend on.
-				for i := len(interruptHooks) - 1; i >= 0; i-- {
-					hook := interruptHooks[i]
-					glog.V(4).Infof("exec interrupt hook func name:%s", GetFunctionName(hook))
-					hook()
-				}
-				interruptHookLock.RUnlock()
+				runInterruptHooks()
 				os.Exit(0)
 			}
 		}
 	}()
+}
+
+// runInterruptHooks runs the OnInterruptFirst hooks in registration order,
+// then the OnInterrupt hooks in reverse registration order (LIFO/defer-style)
+// so later-started services shut down before the services they depend on.
+func runInterruptHooks() {
+	interruptHookLock.RLock()
+	defer interruptHookLock.RUnlock()
+	for _, hook := range firstInterruptHooks {
+		hook()
+	}
+	for i := len(interruptHooks) - 1; i >= 0; i-- {
+		hook := interruptHooks[i]
+		glog.V(4).Infof("exec interrupt hook func name:%s", GetFunctionName(hook))
+		hook()
+	}
 }
 
 func OnReload(fn func()) {
@@ -73,4 +82,12 @@ func OnInterrupt(fn func()) {
 	// deal with control+c,etc
 	// controlling terminal close, daemon not exit
 	interruptHooks = append(interruptHooks, fn)
+}
+
+// OnInterruptFirst registers fn to run before every OnInterrupt hook,
+// whenever those were registered.
+func OnInterruptFirst(fn func()) {
+	interruptHookLock.Lock()
+	defer interruptHookLock.Unlock()
+	firstInterruptHooks = append(firstInterruptHooks, fn)
 }

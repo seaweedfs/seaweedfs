@@ -1070,6 +1070,10 @@ filer:
     httpsPort: 0
     # Suffix of the host name, {bucket}.{domainName}
     domainName: ""
+    # Seconds the gateway keeps serving after SIGTERM while its health checks
+    # return 503 (see s3.preStopSeconds). Added to the filer pod's 60s
+    # termination grace period.
+    preStopSeconds: 0
     # enable user & permission to s3 (need to inject to all services)
     enableAuth: false
     # set to the name of an existing kubernetes Secret with the s3 json config file
@@ -1118,8 +1122,17 @@ s3:
   #     maxUnavailable: 0
   #     maxSurge: 25%
   updateStrategy: {}
-  # Time the s3 pod is given to shut down, including any preStop hook
+  # Time the s3 pod is given to shut down, including any preStop hook.
+  # With preStopSeconds set, it must be at least preStopSeconds + 15 (the
+  # in-flight request drain), or the chart refuses to render. A lifecycle
+  # preStop hook runs before SIGTERM, so add its duration on top; the chart
+  # cannot tell how long an exec hook takes. preStopSeconds replaces a
+  # preStop sleep hook.
   terminationGracePeriodSeconds: 10
+  # Seconds the gateway keeps serving after SIGTERM while its health checks
+  # return 503, so the pod leaves the Service endpoints before it stops
+  # listening. 0 stops at once.
+  preStopSeconds: 0
   bindAddress: 0.0.0.0
   port: 8333
   # add additional https port
@@ -1318,7 +1331,8 @@ s3:
 
   # Lifecycle hooks for the s3 container. A preStop sleep lets the pod leave
   # the Service endpoints before it receives SIGTERM; keep it shorter than
-  # terminationGracePeriodSeconds.
+  # terminationGracePeriodSeconds. s3.preStopSeconds does the same from
+  # inside the gateway and also fails its health checks.
   # ref: https://kubernetes.io/docs/concepts/containers/container-lifecycle-hooks/
   # Example:
   # lifecycle:
@@ -2011,6 +2025,7 @@ allInOne:
     # The s3-secret.yaml template only reads from .Values.s3.credentials.
     # See: s3.credentials.admin.accessKey, s3.credentials.read.accessKey
     auditLogConfig: null  # S3 audit log configuration (null inherits from s3.auditLogConfig)
+    preStopSeconds: null  # Seconds to keep serving after SIGTERM, added to the pod's 60s grace period (null inherits from s3.preStopSeconds, 0 disables)
     trafficDistribution: null  # Service traffic distribution (e.g., "PreferClose"); auto-converts to "PreferSameZone" on k8s >=1.35
     # You may specify buckets to be created during the install process.
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`

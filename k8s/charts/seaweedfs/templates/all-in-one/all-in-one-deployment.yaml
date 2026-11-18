@@ -1,5 +1,13 @@
 {{- include "seaweedfs.compat" . -}}
 {{- if .Values.allInOne.enabled }}
+{{- $s3PreStopSeconds := 0 }}
+{{- if .Values.allInOne.s3.enabled }}
+{{- $s3PreStopSeconds = .Values.allInOne.s3.preStopSeconds }}
+{{- if kindIs "invalid" $s3PreStopSeconds }}
+{{- $s3PreStopSeconds = .Values.s3.preStopSeconds }}
+{{- end }}
+{{- $s3PreStopSeconds = $s3PreStopSeconds | int }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -64,7 +72,7 @@ spec:
         {{- tpl .Values.allInOne.tolerations . | nindent 8 }}
       {{- end }}
       {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
-      terminationGracePeriodSeconds: 60
+      terminationGracePeriodSeconds: {{ add 60 (max $s3PreStopSeconds 0) }}
       enableServiceLinks: false
       {{- if .Values.allInOne.priorityClassName }}
       priorityClassName: {{ .Values.allInOne.priorityClassName | quote }}
@@ -259,6 +267,9 @@ spec:
               {{- $auditLogConfig := .Values.allInOne.s3.auditLogConfig | default .Values.s3.auditLogConfig }}
               {{- if $auditLogConfig }}
               -s3.auditLogConfig=/etc/sw/s3/s3_auditLogConfig.json \
+              {{- end }}
+              {{- if gt $s3PreStopSeconds 0 }}
+              -s3.preStopSeconds={{ $s3PreStopSeconds }} \
               {{- end }}
               {{- end }}
               {{- if .Values.allInOne.sftp.enabled }}
