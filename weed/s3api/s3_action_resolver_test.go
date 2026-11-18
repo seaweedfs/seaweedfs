@@ -282,6 +282,7 @@ func TestResolveS3Action_AdminBucketSubresources(t *testing.T) {
 		{"put requestPayment", http.MethodPut, "requestPayment", s3_constants.S3_ACTION_PUT_BUCKET_REQUEST_PAYMENT},
 		{"get accelerate", http.MethodGet, "accelerate", s3_constants.S3_ACTION_GET_BUCKET_ACCELERATE},
 		{"put accelerate", http.MethodPut, "accelerate", s3_constants.S3_ACTION_PUT_BUCKET_ACCELERATE},
+		{"put notification", http.MethodPut, "notification", s3_constants.S3_ACTION_PUT_BUCKET_NOTIFICATION},
 		{"get publicAccessBlock", http.MethodGet, "publicAccessBlock", s3_constants.S3_ACTION_GET_BUCKET_PUBLIC_ACCESS_BLOCK},
 		{"put publicAccessBlock", http.MethodPut, "publicAccessBlock", s3_constants.S3_ACTION_PUT_BUCKET_PUBLIC_ACCESS_BLOCK},
 		{"delete publicAccessBlock", http.MethodDelete, "publicAccessBlock", s3_constants.S3_ACTION_PUT_BUCKET_PUBLIC_ACCESS_BLOCK},

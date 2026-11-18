@@ -38,6 +38,13 @@ type accelerateConfigurationRequest struct {
 	Status string `xml:"Status"`
 }
 
+type notificationConfigurationRequest struct {
+	Topics      []struct{} `xml:"TopicConfiguration"`
+	Queues      []struct{} `xml:"QueueConfiguration"`
+	Functions   []struct{} `xml:"CloudFunctionConfiguration"`
+	EventBridge []struct{} `xml:"EventBridgeConfiguration"`
+}
+
 // GetBucketPolicyStatusHandler reports whether the bucket policy grants public access.
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketPolicyStatus.html
 func (s3a *S3ApiServer) GetBucketPolicyStatusHandler(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +164,35 @@ func (s3a *S3ApiServer) PutBucketAccelerateConfigurationHandler(w http.ResponseW
 	default:
 		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
 	}
+}
+
+// PutBucketNotificationConfigurationHandler accepts an empty configuration, the
+// one GetBucketNotificationConfigurationHandler always reports; any destination
+// is not implemented.
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketNotificationConfiguration.html
+func (s3a *S3ApiServer) PutBucketNotificationConfigurationHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+
+	defer r.Body.Close()
+	body, err := readRequestBody(r, putBucketMiscConfigMaxBodyBytes)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
+		return
+	}
+	var cfg notificationConfigurationRequest
+	if err := xml.Unmarshal(body, &cfg); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
+		return
+	}
+	if len(cfg.Topics)+len(cfg.Queues)+len(cfg.Functions)+len(cfg.EventBridge) > 0 {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+		return
+	}
+	writeSuccessResponseEmpty(w, r)
 }
 
 // GetBucketLoggingHandler returns an empty BucketLoggingStatus (logging disabled).

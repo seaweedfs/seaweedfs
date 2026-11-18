@@ -1164,6 +1164,8 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketLoggingHandler, ACTION_READ)), "GET")).Queries("logging", "")
 		// GetBucketNotificationConfiguration
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketNotificationConfigurationHandler, ACTION_READ)), "GET")).Queries("notification", "")
+		// PutBucketNotificationConfiguration
+		bucket.Methods(http.MethodPut).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutBucketNotificationConfigurationHandler, ACTION_ADMIN)), "PUT")).Queries("notification", "")
 		// GetBucketReplication
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetBucketReplicationHandler, ACTION_READ)), "GET")).Queries("replication", "")
 		// GetBucketWebsite
