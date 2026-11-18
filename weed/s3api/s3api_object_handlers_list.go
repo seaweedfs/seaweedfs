@@ -69,6 +69,10 @@ type listBucketResultV1 struct {
 }
 
 func toListBucketResultV1(in ListBucketResult) listBucketResultV1 {
+	if in.EncodingType == s3.EncodingTypeUrl {
+		in.Prefix = urlPathEscape(in.Prefix)
+		in.Delimiter = urlPathEscape(in.Delimiter)
+	}
 	return listBucketResultV1{
 		Metadata:       in.Metadata,
 		Name:           in.Name,
@@ -155,6 +159,8 @@ func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Requ
 	if encodingTypeUrl {
 		responseV2.EncodingType = s3.EncodingTypeUrl
 		responseV2.StartAfter = urlPathEscape(startAfter)
+		responseV2.Prefix = urlPathEscape(response.Prefix)
+		responseV2.Delimiter = urlPathEscape(response.Delimiter)
 	}
 
 	glog.V(3).Infof("ListObjectsV2Handler response: %+v", responseV2)
