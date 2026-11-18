@@ -567,7 +567,8 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 
 		for _, shardId := range stagedShards {
 			shardPath := dataBaseFileName + erasure_coding.ToExt(int(shardId))
-			if _, err := os.Stat(shardPath); err != nil {
+			// A mounted shard reads the file once reopened, so it is not ours to remove.
+			if _, mounted := location.FindEcShard(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId)); !mounted {
 				created.track(shardPath)
 			}
 			if err := os.Rename(shardPath+".copying", shardPath); err != nil {

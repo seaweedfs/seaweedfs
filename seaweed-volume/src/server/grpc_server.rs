@@ -6496,7 +6496,18 @@ impl VolumeGrpcService {
 
         for (shard_id, mut staged) in staged_shards {
             let shard_path = format!("{}.ec{:02}", data_base, shard_id);
-            if std::fs::metadata(&shard_path).is_err() {
+            // A mounted shard reads the file once reopened, so it is not ours to remove.
+            let mounted = self
+                .state
+                .store
+                .read()
+                .unwrap()
+                .locations
+                .iter()
+                .find(|l| l.directory == dest_dir)
+                .and_then(|l| l.find_ec_volume(vid))
+                .is_some_and(|v| v.has_shard(shard_id));
+            if !mounted {
                 track_ec_copy_created(&mut created, &shard_path);
             }
             tokio::fs::rename(format!("{}.copying", shard_path), &shard_path)
