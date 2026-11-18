@@ -1399,9 +1399,14 @@ func (s3a *S3ApiServer) GetBucketLocationHandler(w http.ResponseWriter, r *http.
 	writeSuccessResponseXML(w, r, CreateBucketConfiguration{})
 }
 
-// GetBucketRequestPaymentHandler Get bucket location
+// GetBucketRequestPaymentHandler Get bucket request payment
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketRequestPayment.html
 func (s3a *S3ApiServer) GetBucketRequestPaymentHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
 	writeSuccessResponseXML(w, r, RequestPaymentConfiguration{Payer: "BucketOwner"})
 }
 
