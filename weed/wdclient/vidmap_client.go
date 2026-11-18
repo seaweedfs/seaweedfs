@@ -27,6 +27,10 @@ type VolumeLocationProvider interface {
 	LookupVolumeIds(ctx context.Context, volumeIds []string) (map[string][]Location, error)
 }
 
+// afterLookupRecheck, when set by a test, runs between a lookup's second cache
+// check and its provider query.
+var afterLookupRecheck func()
+
 // vidMapClient provides volume location caching with pluggable lookup
 // It wraps the battle-tested vidMap with customizable volume lookup strategies
 type vidMapClient struct {
@@ -210,6 +214,11 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 	batchKey := strings.Join(needsLookup, ",")
 
 	sfResult, err := vc.doSharedLookup(ctx, batchKey, func(ctx context.Context) (interface{}, error) {
+		// The epoch is taken before the cache is checked again: a confirmation
+		// or reset that lands after it either shows up in that check or stops
+		// the provider's answer from being cached.
+		fillEpoch := vc.mapEpoch()
+
 		// Double-check cache for volumes that might have been populated while waiting
 		stillNeedLookup := make([]string, 0, len(needsLookup))
 		batchResult := make(map[string][]Location)
@@ -223,6 +232,10 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 			}
 		}
 
+		if afterLookupRecheck != nil {
+			afterLookupRecheck()
+		}
+
 		if len(stillNeedLookup) == 0 {
 			return batchResult, nil
 		}
@@ -230,7 +243,6 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 		// Query provider with batched volume IDs
 		glog.V(2).Infof("Looking up %d volumes from provider: %v", len(stillNeedLookup), stillNeedLookup)
 
-		fillEpoch := vc.mapEpoch()
 		providerResults, err := vc.provider.LookupVolumeIds(ctx, stillNeedLookup)
 		if err != nil {
 			return batchResult, fmt.Errorf("provider lookup failed: %w", err)
@@ -243,13 +255,7 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 				continue
 			}
 
-			var live []Location
-			for _, loc := range locations {
-				if vc.fillLocation(uint32(vid), loc, fillEpoch) {
-					live = append(live, loc)
-				}
-			}
-
+			live := vc.fillLocations(uint32(vid), locations, fillEpoch)
 			if len(live) > 0 {
 				batchResult[vidString] = live
 			}
@@ -438,20 +444,36 @@ func (vc *vidMapClient) untombstone(vid uint32, loc Location) {
 	}
 }
 
-// fillLocation reports whether a provider answer may be served, and caches it
-// unless a reset or clear happened since epoch. Holding recentDeletesMu across
-// the check and the add keeps a concurrent removal from being undone.
-func (vc *vidMapClient) fillLocation(vid uint32, loc Location, epoch uint64) bool {
+// fillLocations returns the locations of a provider answer for vid that may
+// be served, and caches them unless a reset, clear or confirmation happened
+// since epoch. Holding recentDeletesMu across the check and the add keeps a
+// concurrent removal or confirmation from being undone, and caches the
+// answer for vid whole or not at all.
+func (vc *vidMapClient) fillLocations(vid uint32, locations []Location, epoch uint64) (live []Location) {
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
 	vc.expireRecentDeletes(time.Now())
-	if _, found := vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}]; found {
-		return false
+	for _, loc := range locations {
+		if _, found := vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}]; found {
+			continue
+		}
+		live = append(live, loc)
+		if vc.vidMapEpoch == epoch {
+			vc.vidMap.addLocation(vid, loc)
+		}
 	}
-	if vc.vidMapEpoch == epoch {
-		vc.vidMap.addLocation(vid, loc)
-	}
-	return true
+	return live
+}
+
+// confirmLocations caches what a master stream reports vid at now in place of
+// what lookups cached for it, which may have come from a source that had not
+// caught up with the master yet. Lookups already in flight answer from that
+// same source, so the epoch moves on and they do not cache what they fetched.
+func (vc *vidMapClient) confirmLocations(vid uint32, locations []Location) {
+	vc.recentDeletesMu.Lock()
+	defer vc.recentDeletesMu.Unlock()
+	vc.vidMapEpoch++
+	vc.vidMap.setLocations(vid, locations)
 }
 
 // InvalidateCache removes all cached locations for a volume ID

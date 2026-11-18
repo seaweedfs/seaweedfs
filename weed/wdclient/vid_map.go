@@ -225,6 +225,41 @@ func (vc *vidMap) hasLocation(vid uint32, url string) bool {
 	return false
 }
 
+// currentLocations returns what vid was learned at since the last reset,
+// leaving out anything only an earlier generation reported. When both a
+// regular and an ec entry are current, the regular copies serve, as in
+// GetLocations.
+func (vc *vidMap) currentLocations(vid uint32) ([]Location, bool) {
+	vc.RLock()
+	defer vc.RUnlock()
+	for _, vid2Locations := range []map[uint32]*locationsEntry{vc.vid2Locations, vc.ecVid2Locations} {
+		if entry, found := lookupEntry(vid2Locations, vid); found && entry.generation == vc.generation {
+			return entry.locations, true
+		}
+	}
+	return nil, false
+}
+
+// setLocations makes locations vid's regular entry in the current
+// generation, in place of whatever the entry held.
+func (vc *vidMap) setLocations(vid uint32, locations []Location) {
+	vc.Lock()
+	defer vc.Unlock()
+	if entry, found := vc.vid2Locations[vid]; found {
+		vc.releaseEntry(entry)
+	}
+	if len(locations) == 0 {
+		delete(vc.vid2Locations, vid)
+		return
+	}
+	stored := make([]Location, len(locations))
+	copy(stored, locations)
+	vc.vid2Locations[vid] = &locationsEntry{locations: stored, generation: vc.generation}
+	for _, loc := range stored {
+		vc.incrementServerRef(locationServerKey(loc))
+	}
+}
+
 // lookupEntry returns vid's entry when it still holds locations. Callers must
 // hold the lock.
 func lookupEntry(vid2Locations map[uint32]*locationsEntry, vid uint32) (*locationsEntry, bool) {
