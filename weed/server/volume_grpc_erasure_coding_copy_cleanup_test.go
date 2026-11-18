@@ -250,6 +250,9 @@ func TestVolumeEcShardsCopy_ExistingEcxUpdatedInPlace(t *testing.T) {
 // A copy failing after the .vif transferred keeps the existing holder's .vif,
 // which must stay paired with the index the failed copy left in place.
 func TestVolumeEcShardsCopy_FailedSidecarKeepsExistingVif(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-000 file, so the sidecar transfer cannot be made to fail")
+	}
 	const collection = "col"
 	vid := needle.VolumeId(60)
 
@@ -259,8 +262,9 @@ func TestVolumeEcShardsCopy_FailedSidecarKeepsExistingVif(t *testing.T) {
 	writeFile(t, srcBase+".ecx", bytes.Repeat([]byte{9}, types.NeedleMapEntrySize))
 	writeFile(t, srcBase+".ec00", bytes.Repeat([]byte{1}, 4096))
 	writeFile(t, srcBase+".vif", []byte(`{"version":3}`))
-	if err := os.Mkdir(srcBase+erasure_coding.BitrotSidecarExt, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	writeFile(t, srcBase+erasure_coding.BitrotSidecarExt, []byte("sum"))
+	if err := os.Chmod(srcBase+erasure_coding.BitrotSidecarExt, 0); err != nil {
+		t.Fatalf("chmod: %v", err)
 	}
 
 	dstDir := filepath.Join(t.TempDir(), "dst")

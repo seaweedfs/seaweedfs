@@ -10254,8 +10254,16 @@ mod tests {
 
     // A copy failing after the .vif transferred keeps the existing holder's
     // .vif, which must stay paired with the index the failed copy left in place.
+    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_ec_shards_copy_failed_sidecar_keeps_existing_vif() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // root reads a mode-000 file, so the sidecar transfer cannot be made to fail.
+        // SAFETY: `geteuid` takes no arguments, reads no memory and cannot fail.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
         let (source_service, source_tmp) = make_local_service_with_volume("", None);
         let src = source_tmp.path().to_str().unwrap().to_string();
         std::fs::write(
@@ -10265,7 +10273,12 @@ mod tests {
         .unwrap();
         std::fs::write(format!("{}/60.ec00", src), vec![1u8; 4096]).unwrap();
         std::fs::write(format!("{}/60.vif", src), br#"{"version":3}"#).unwrap();
-        std::fs::create_dir(format!("{}/60.ecsum", src)).unwrap();
+        std::fs::write(format!("{}/60.ecsum", src), b"sum").unwrap();
+        std::fs::set_permissions(
+            format!("{}/60.ecsum", src),
+            std::fs::Permissions::from_mode(0),
+        )
+        .unwrap();
         let (port, _shutdown) = serve_source(source_service).await;
 
         let (dest, _dest_tmp, dir) = ec_copy_destination().await;
