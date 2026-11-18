@@ -4,6 +4,7 @@ package mount
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
@@ -103,6 +104,34 @@ func TestPeerUnlinkedAliasWithUnknownSurvivorStops(t *testing.T) {
 	}
 	if fake.stored("tmp") != nil {
 		t.Fatal("the flush recreated tmp")
+	}
+}
+
+// The kernel keeps the nodeid of a closed hard link after a peer unlinks the
+// name it was opened by, and the next open must reach the surviving name.
+func TestPeerUnlinkedAliasReopensClosedInode(t *testing.T) {
+	for _, removed := range []string{"tmp", "final"} {
+		t.Run(removed, func(t *testing.T) {
+			wfs, fake, fh, inode := openLinkTestFile(t)
+			wfs.openMtimeCache = map[uint64][2]int64{}
+			linkInRoot(t, wfs, inode, "final")
+			wfs.ReleaseHandle(fh.fh)
+			if _, found := wfs.fhMap.FindFileHandle(inode); found {
+				t.Fatal("handle still open")
+			}
+			peerUnlink(t, wfs, fake, removed)
+			survivor := map[string]string{"tmp": "/final", "final": "/tmp"}[removed]
+			in := &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: inode, Caller: fuse.Caller{Owner: fuse.Owner{Uid: 1000, Gid: 20}}}, Flags: uint32(os.O_RDONLY)}
+			out := &fuse.OpenOut{}
+			if code := wfs.Open(make(chan struct{}), in, out); code != fuse.OK {
+				t.Fatalf("open after the peer unlinked %s: %v", removed, code)
+			}
+			reopened := wfs.GetHandle(FileHandleId(out.Fh))
+			t.Cleanup(func() { wfs.ReleaseHandle(reopened.fh) })
+			if got := reopened.FullPath(); string(got) != survivor {
+				t.Fatalf("reopened at %s, want %s", got, survivor)
+			}
+		})
 	}
 }
 
