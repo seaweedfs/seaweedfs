@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -496,7 +497,10 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		// replaced only once the whole copy succeeds, so a failed transfer
 		// leaves it as is.
 		var replacedShards []uint32
-		for _, shardId := range req.ShardIds {
+		for i, shardId := range req.ShardIds {
+			if slices.Contains(req.ShardIds[:i], shardId) {
+				continue
+			}
 			ext := erasure_coding.ToExt(int(shardId))
 			shardPath := dataBaseFileName + ext
 			if _, err := os.Stat(shardPath); err == nil {

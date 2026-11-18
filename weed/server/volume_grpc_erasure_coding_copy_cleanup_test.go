@@ -247,6 +247,39 @@ func TestVolumeEcShardsCopy_ExistingEcxUpdatedInPlace(t *testing.T) {
 	}
 }
 
+// A shard listed twice is copied once, and replacing one already held here
+// still succeeds.
+func TestVolumeEcShardsCopy_DuplicateShardIdCopiedOnce(t *testing.T) {
+	const collection = "col"
+	vid := needle.VolumeId(62)
+
+	srcDir := filepath.Join(t.TempDir(), "src")
+	source := startEcCopySource(t, srcDir)
+	srcBase := erasure_coding.EcShardFileName(collection, srcDir, int(vid))
+	writeFile(t, srcBase+".ecx", bytes.Repeat([]byte{9}, types.NeedleMapEntrySize))
+	srcEc05 := bytes.Repeat([]byte{2}, 4096)
+	writeFile(t, srcBase+".ec05", srcEc05)
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	receiver := newEcCopyReceiver(t, dstDir)
+	dstBase := erasure_coding.EcShardFileName(collection, dstDir, int(vid))
+	writeFile(t, dstBase+".ecx", make([]byte, types.NeedleMapEntrySize))
+	writeFile(t, dstBase+".ec05", bytes.Repeat([]byte{5}, 4096))
+
+	if _, err := receiver.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
+		VolumeId:       uint32(vid),
+		Collection:     collection,
+		ShardIds:       []uint32{5, 5},
+		CopyEcxFile:    true,
+		SourceDataNode: source,
+	}); err != nil {
+		t.Fatalf("VolumeEcShardsCopy: %v", err)
+	}
+	if got, _ := os.ReadFile(dstBase + ".ec05"); !bytes.Equal(got, srcEc05) {
+		t.Errorf("existing .ec05 not replaced by the source's")
+	}
+}
+
 // A copy failing after the .vif transferred keeps the existing holder's .vif,
 // which must stay paired with the index the failed copy left in place.
 func TestVolumeEcShardsCopy_FailedSidecarKeepsExistingVif(t *testing.T) {

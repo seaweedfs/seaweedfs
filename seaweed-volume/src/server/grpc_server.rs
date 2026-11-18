@@ -3888,7 +3888,10 @@ impl VolumeServer for VolumeGrpcService {
         // and 270 (would alias 14).
         let mut shard_ids: Vec<ShardId> = Vec::with_capacity(req.shard_ids.len());
         for &sid in &req.shard_ids {
-            shard_ids.push(shard_id_try_from(sid).map_err(Status::invalid_argument)?);
+            let sid = shard_id_try_from(sid).map_err(Status::invalid_argument)?;
+            if !shard_ids.contains(&sid) {
+                shard_ids.push(sid);
+            }
         }
 
         // Overlapping copies of one vid would share the staged index, and a
@@ -10250,6 +10253,41 @@ mod tests {
             "{:?}",
             sorted_dir_names(&dir)
         );
+    }
+
+    // A shard listed twice is copied once, and replacing one already held here
+    // still succeeds.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_shards_copy_duplicate_shard_id_copied_once() {
+        let (source_service, source_tmp) = make_local_service_with_volume("", None);
+        let src = source_tmp.path().to_str().unwrap().to_string();
+        std::fs::write(
+            format!("{}/62.ecx", src),
+            vec![9u8; NEEDLE_MAP_ENTRY_SIZE as usize],
+        )
+        .unwrap();
+        let src_ec05 = vec![2u8; 4096];
+        std::fs::write(format!("{}/62.ec05", src), &src_ec05).unwrap();
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest, _dest_tmp, dir) = ec_copy_destination().await;
+        std::fs::write(
+            format!("{}/62.ecx", dir),
+            vec![0u8; NEEDLE_MAP_ENTRY_SIZE as usize],
+        )
+        .unwrap();
+        std::fs::write(format!("{}/62.ec05", dir), vec![5u8; 4096]).unwrap();
+
+        dest.volume_ec_shards_copy(Request::new(volume_server_pb::VolumeEcShardsCopyRequest {
+            volume_id: 62,
+            shard_ids: vec![5, 5],
+            copy_ecx_file: true,
+            source_data_node: format!("127.0.0.1:1.{}", port),
+            ..Default::default()
+        }))
+        .await
+        .expect("a duplicated shard id copies once");
+        assert_eq!(std::fs::read(format!("{}/62.ec05", dir)).unwrap(), src_ec05);
     }
 
     // A copy failing after the .vif transferred keeps the existing holder's
