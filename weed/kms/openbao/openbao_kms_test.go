@@ -32,6 +32,7 @@ type fakeBao struct {
 	failedLogins int
 	failLogins   int           // how many of the next logins to refuse
 	hangLogins   bool          // logins after the first hang until their client leaves
+	loginDelay   time.Duration // logins after the first answer this late; the token's TTL runs from the request
 	loginHung    chan struct{} // signalled when such a login is given up
 	expiry       map[string]time.Time
 }
@@ -66,7 +67,12 @@ func (f *fakeBao) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.expiry[token] = time.Now().Add(time.Duration(f.ttl) * time.Second)
 		}
 		ttl := f.ttl
+		delay := time.Duration(0)
+		if f.logins > 1 {
+			delay = f.loginDelay
+		}
 		f.mu.Unlock()
+		time.Sleep(delay)
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"auth": map[string]interface{}{"client_token": token, "lease_duration": ttl},
 		})
@@ -154,6 +160,40 @@ func TestAppRoleTokenIsRefreshedBeforeItExpires(t *testing.T) {
 	if logins, _ := bao.counts(); logins < 3 {
 		t.Fatalf("logins = %d, want at least 3 in 3.5 s of 2 s tokens", logins)
 	}
+}
+
+func TestRefreshIsTimedFromTheLoginStart(t *testing.T) {
+	// 3 s tokens whose login answers after 0.75 s: timed from the response, the second
+	// refresh would start at 4.75 s and its token arrive at 5.5 s, after the token issued at
+	// 2 s expired at 5 s; timed from the login start it arrives at 4.75 s.
+	bao := &fakeBao{ttl: 3, loginDelay: 750 * time.Millisecond}
+	provider := newTestProvider(t, bao, appRoleConfig())
+
+	keepRequesting(t, provider, 6*time.Second)
+}
+
+func TestRefreshSurvivesAConfigurationReload(t *testing.T) {
+	t.Setenv("VAULT_AGENT_ADDR", "")
+	bao := &fakeBao{ttl: 2}
+	server := httptest.NewServer(bao)
+	t.Cleanup(server.Close)
+	manager := seaweedkms.InitializeKMSManager()
+	t.Cleanup(func() { manager.RemoveKMSProvider("reload-test") })
+	config := &seaweedkms.KMSConfig{Provider: "openbao", Config: map[string]interface{}{
+		"address": server.URL, "role_id": "role", "secret_id": "secret",
+	}}
+
+	// A reload closes the provider it replaces; the one that stays must keep refreshing.
+	for i := 0; i < 2; i++ {
+		if err := manager.AddKMSProvider("reload-test", config); err != nil {
+			t.Fatalf("AddKMSProvider: %v", err)
+		}
+	}
+	provider, err := manager.GetKMSProviderByName("reload-test")
+	if err != nil {
+		t.Fatalf("GetKMSProviderByName: %v", err)
+	}
+	keepRequesting(t, provider, 3500*time.Millisecond)
 }
 
 func TestFailedRefreshIsRetried(t *testing.T) {

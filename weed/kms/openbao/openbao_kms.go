@@ -114,6 +114,7 @@ func NewOpenBaoKMSProvider(config util.Configuration) (seaweedkms.KMSProvider, e
 
 	// Authenticate
 	var ttl time.Duration
+	loginStart := time.Now() // the token's TTL runs from when OpenBao issues it, not from its response
 	if token != "" {
 		client.SetToken(token)
 		glog.V(1).Infof("OpenBao KMS: Using token authentication")
@@ -135,7 +136,7 @@ func NewOpenBaoKMSProvider(config util.Configuration) (seaweedkms.KMSProvider, e
 		ctx, stop := context.WithCancel(context.Background())
 		provider.stopRefresh = stop
 		provider.refreshDone = make(chan struct{})
-		go provider.refreshAppRoleToken(ctx, roleID, secretID, ttl)
+		go provider.refreshAppRoleToken(ctx, roleID, secretID, loginStart, ttl)
 	}
 
 	glog.V(1).Infof("OpenBao/Vault KMS provider initialized at %s", address)
@@ -162,16 +163,17 @@ func authenticateAppRole(ctx context.Context, client *vault.Client, roleID, secr
 	return time.Duration(secret.Auth.LeaseDuration) * time.Second, nil
 }
 
-// refreshAppRoleToken logs in again once two thirds of the token's TTL have passed, and
-// retries a failed login every refreshRetryInterval, until ctx is cancelled. Nothing renews
-// an AppRole token, so without this every request fails once it expires.
-func (p *OpenBaoKMSProvider) refreshAppRoleToken(ctx context.Context, roleID, secretID string, ttl time.Duration) {
+// refreshAppRoleToken logs in again once two thirds of the token's TTL have passed since the
+// login that issued it started, and retries a failed login every refreshRetryInterval, until
+// ctx is cancelled. Nothing renews an AppRole token, so without this every request fails
+// once it expires.
+func (p *OpenBaoKMSProvider) refreshAppRoleToken(ctx context.Context, roleID, secretID string, issued time.Time, ttl time.Duration) {
 	defer close(p.refreshDone)
 	timeout := p.client.ClientTimeout()
 	if timeout <= 0 {
 		timeout = refreshLoginTimeout
 	}
-	timer := time.NewTimer(ttl * 2 / 3)
+	timer := time.NewTimer(time.Until(issued.Add(ttl * 2 / 3)))
 	defer timer.Stop()
 	for {
 		select {
@@ -180,6 +182,7 @@ func (p *OpenBaoKMSProvider) refreshAppRoleToken(ctx context.Context, roleID, se
 		case <-timer.C:
 		}
 		loginCtx, cancel := context.WithTimeout(ctx, timeout)
+		issued = time.Now()
 		newTTL, err := authenticateAppRole(loginCtx, p.client, roleID, secretID)
 		cancel()
 		switch {
@@ -192,7 +195,7 @@ func (p *OpenBaoKMSProvider) refreshAppRoleToken(ctx context.Context, roleID, se
 		case newTTL <= 0:
 			return // the new token does not expire
 		default:
-			timer.Reset(newTTL * 2 / 3)
+			timer.Reset(time.Until(issued.Add(newTTL * 2 / 3)))
 		}
 	}
 }

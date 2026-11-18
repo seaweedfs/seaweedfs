@@ -73,6 +73,28 @@ func (r *ProviderRegistry) GetProvider(name string, config util.Configuration) (
 	return instance, nil
 }
 
+// NewProvider creates a new instance of a registered KMS provider. Unlike GetProvider it
+// neither caches nor shares the instance: the caller owns it and closes it.
+func NewProvider(name string, config util.Configuration) (KMSProvider, error) {
+	return defaultRegistry.NewProvider(name, config)
+}
+
+// NewProvider creates a new, unshared instance of a registered KMS provider
+func (r *ProviderRegistry) NewProvider(name string, config util.Configuration) (KMSProvider, error) {
+	r.mu.RLock()
+	factory, exists := r.providers[name]
+	r.mu.RUnlock()
+	if !exists {
+		return nil, fmt.Errorf("KMS provider '%s' not registered", name)
+	}
+
+	instance, err := factory(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create KMS provider '%s': %v", name, err)
+	}
+	return instance, nil
+}
+
 // ListProviders returns the names of all registered providers
 func ListProviders() []string {
 	return defaultRegistry.ListProviders()

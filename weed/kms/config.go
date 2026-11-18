@@ -124,7 +124,7 @@ func InitializeGlobalKMS(config *KMSConfig) error {
 		providerConfig = &configAdapter{config: config.Config}
 	}
 
-	provider, err := GetProvider(config.Provider, providerConfig)
+	provider, err := NewProvider(config.Provider, providerConfig)
 	if err != nil {
 		return err
 	}
@@ -211,16 +211,11 @@ func (km *KMSManager) AddKMSProvider(name string, config *KMSConfig) error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
-	// Close existing provider if it exists
-	if existingProvider, exists := km.providers[name]; exists {
-		if err := existingProvider.Close(); err != nil {
-			glog.Errorf("Failed to close existing KMS provider %s: %v", name, err)
-		}
-	}
-
-	// Create new provider instance
+	// Create a new provider instance of its own: a cached registry instance would be the
+	// one closed below and then handed back still in use. It is created first, so a
+	// configuration that fails leaves the current provider working.
 	configAdapter := &configAdapter{config: config.Config}
-	provider, err := GetProvider(config.Provider, configAdapter)
+	provider, err := NewProvider(config.Provider, configAdapter)
 	if err != nil {
 		return fmt.Errorf("failed to create KMS provider %s: %w", name, err)
 	}
@@ -228,6 +223,13 @@ func (km *KMSManager) AddKMSProvider(name string, config *KMSConfig) error {
 	// Wrap with a decrypted-data-key cache when enabled so repeated reads of
 	// the same SSE-KMS object avoid a KMS round-trip per read.
 	provider = wrapWithCacheIfEnabled(provider, config)
+
+	// Close existing provider if it exists
+	if existingProvider, exists := km.providers[name]; exists {
+		if err := existingProvider.Close(); err != nil {
+			glog.Errorf("Failed to close existing KMS provider %s: %v", name, err)
+		}
+	}
 
 	// Store provider and configuration
 	km.providers[name] = provider
