@@ -114,6 +114,19 @@ func TestShouldInvalidateConnection_ResourceExhaustedIsPerRequest(t *testing.T) 
 	}
 }
 
+func TestShouldInvalidateConnection_PeerAnswerNamingTransportKeepsChannel(t *testing.T) {
+	for _, code := range []codes.Code{codes.InvalidArgument, codes.NotFound, codes.AlreadyExists,
+		codes.FailedPrecondition, codes.OutOfRange, codes.DataLoss} {
+		answer := status.Error(code, "invalid path /transport/dns: connection refused")
+		if shouldInvalidateConnection(context.Background(), answer) {
+			t.Errorf("%v answer from the peer must not invalidate the shared connection", code)
+		}
+		if shouldInvalidateConnection(context.Background(), fmt.Errorf("touch: %w", answer)) {
+			t.Errorf("wrapped %v answer from the peer must not invalidate the shared connection", code)
+		}
+	}
+}
+
 // TestShouldInvalidateConnection_GenuineInternalStillInvalidates ensures the
 // marshal-error carve-out does not swallow real server-side Internal errors,
 // which previously caused — and should continue to cause — connection

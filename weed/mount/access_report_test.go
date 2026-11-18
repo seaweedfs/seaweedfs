@@ -339,6 +339,35 @@ func TestTouchAccessTimeDoesNotFailOverOnAnAnswer(t *testing.T) {
 	}
 }
 
+// TestRejectedReportKeepsTheFilerChannel checks that a filer rejecting a
+// report with a message that reads like a transport failure does not close
+// the channel other calls to that filer are still using.
+func TestRejectedReportKeepsTheFilerChannel(t *testing.T) {
+	fake := newAccessReportTestFiler(status.Error(codes.InvalidArgument, "invalid path /transport"))
+	inFlight, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	fake.onTouch = func() {
+		if calls.Add(1) == 1 {
+			close(inFlight)
+			<-release
+		}
+	}
+	wfs := newAccessReportTestWFS(t, fake)
+
+	ctx, cancel := context.WithTimeout(context.Background(), accessReportTimeout)
+	defer cancel()
+	first := make(chan error, 1)
+	go func() { first <- wfs.touchAccessTime(ctx, "/dir/a", time.Now().UnixNano()) }()
+	<-inFlight
+	if err := wfs.touchAccessTime(ctx, "/dir/transport", time.Now().UnixNano()); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("rejected report: err = %v, want InvalidArgument", err)
+	}
+	close(release)
+	if err := <-first; status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("call in flight on the same channel: err = %v, want the filer's InvalidArgument", err)
+	}
+}
+
 // TestTouchAccessTimeFailsOverPastAStalledFiler checks that a filer that never
 // answers uses up one attempt, not the whole report, even though one filer
 // call may otherwise take longer than a report, and that the mount then keeps
