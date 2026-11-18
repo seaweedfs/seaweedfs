@@ -390,15 +390,17 @@ func (vcd *volumeCheckDisk) eqVolumeFileCount(a, b *VolumeReplica) (bool, error)
 		return false, fmt.Errorf("getting volume %d status from %s: %w", b.info.Id, b.location.dataNode.Id, errB)
 	}
 
-	return !vcd.countsDiffer(fileCountA, fileDeletedCountA, fileCountB, fileDeletedCountB), nil
+	return !vcd.countsDiffer(fileCountA, fileDeletedCountA, fileCountB, fileDeletedCountB, a.info.CompactRevision == b.info.CompactRevision), nil
 }
 
 // countsDiffer reports whether two replicas' needle counters suggest a needle
 // is missing on one side. FileCount counts every write and DeleteCount every
 // delete or overwrite until a vacuum drops them, so replicas holding the same
-// live needles in different vacuum states differ in both by the same amount.
-func (vcd *volumeCheckDisk) countsDiffer(fileCountA, deleteCountA, fileCountB, deleteCountB uint64) bool {
-	if int64(fileCountA)-int64(deleteCountA) == int64(fileCountB)-int64(deleteCountB) {
+// live needles at different compaction revisions differ in both by the same
+// amount. At the same revision such a difference is a missed write and a
+// missed delete, which still need a check.
+func (vcd *volumeCheckDisk) countsDiffer(fileCountA, deleteCountA, fileCountB, deleteCountB uint64, sameRevision bool) bool {
+	if !sameRevision && int64(fileCountA)-int64(deleteCountA) == int64(fileCountB)-int64(deleteCountB) {
 		return false
 	}
 	return fileCountA != fileCountB || (vcd.syncDeletions && deleteCountA != deleteCountB)
@@ -407,7 +409,7 @@ func (vcd *volumeCheckDisk) countsDiffer(fileCountA, deleteCountA, fileCountB, d
 // shouldSkipVolume determines whether two volume replicas should skip synchronization.
 //
 // Logic:
-//  1. If countsDiffer finds no difference in live counts, skip sync
+//  1. If countsDiffer finds no missing needle, skip sync
 //  2. If counts differ AND both volumes were modified recently (>= pulseTimeAtSecond),
 //     they may still be actively receiving writes, so we return true to skip sync and
 //     avoid false positives
@@ -427,7 +429,7 @@ func (vcd *volumeCheckDisk) shouldSkipVolume(a, b *VolumeReplica) (bool, error) 
 	}
 
 	pulseTimeAtSecond := vcd.now.Add(-constants.VolumePulsePeriod * 2).Unix()
-	if vcd.countsDiffer(a.info.FileCount, a.info.DeleteCount, b.info.FileCount, b.info.DeleteCount) {
+	if vcd.countsDiffer(a.info.FileCount, a.info.DeleteCount, b.info.FileCount, b.info.DeleteCount, a.info.CompactRevision == b.info.CompactRevision) {
 		// Do synchronization of volumes, if the modification time was before the last pulsation time
 		if a.info.ModifiedAtSecond < pulseTimeAtSecond || b.info.ModifiedAtSecond < pulseTimeAtSecond {
 			return false, nil

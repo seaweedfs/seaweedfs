@@ -601,6 +601,7 @@ func TestShouldSkipVolume(t *testing.T) {
 			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
 				FileCount:        900,
 				DeleteCount:      0,
+				CompactRevision:  1,
 				ModifiedAtSecond: 1696583300},
 			},
 			pulseTimeAtSecond: 1696583400,
@@ -617,6 +618,7 @@ func TestShouldSkipVolume(t *testing.T) {
 			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
 				FileCount:        900,
 				DeleteCount:      0,
+				CompactRevision:  1,
 				ModifiedAtSecond: 1696583300},
 			},
 			pulseTimeAtSecond: 1696583400,
@@ -633,6 +635,41 @@ func TestShouldSkipVolume(t *testing.T) {
 			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
 				FileCount:        899,
 				DeleteCount:      0,
+				CompactRevision:  1,
+				ModifiedAtSecond: 1696583300},
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     false,
+			shouldSkipVolume:  false,
+		},
+		{
+			name: "missed write and missed delete at the same revision should not be skipped",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1001,
+				DeleteCount:      101,
+				ModifiedAtSecond: 1696583300},
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1000,
+				DeleteCount:      100,
+				ModifiedAtSecond: 1696583300},
+			},
+			pulseTimeAtSecond: 1696583400,
+			syncDeletions:     true,
+			shouldSkipVolume:  false,
+		},
+		{
+			name: "missed write and missed delete at the same revision should not be skipped without syncDeletions",
+			a: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        2,
+				DeleteCount:      1,
+				CompactRevision:  3,
+				ModifiedAtSecond: 1696583300},
+			},
+			b: VolumeReplica{nil, &master_pb.VolumeInformationMessage{
+				FileCount:        1,
+				DeleteCount:      0,
+				CompactRevision:  3,
 				ModifiedAtSecond: 1696583300},
 			},
 			pulseTimeAtSecond: 1696583400,
