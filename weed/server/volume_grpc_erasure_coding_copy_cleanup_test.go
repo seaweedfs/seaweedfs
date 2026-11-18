@@ -122,7 +122,12 @@ func waitForLockWaiter(t *testing.T, handler string) {
 	buf := make([]byte, 1<<20)
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		for _, g := range strings.Split(string(buf[:runtime.Stack(buf, true)]), "\n\n") {
+		n := runtime.Stack(buf, true)
+		if n == len(buf) {
+			buf = make([]byte, 2*len(buf))
+			continue
+		}
+		for _, g := range strings.Split(string(buf[:n]), "\n\n") {
 			if strings.Contains(g, "sync.(*Mutex).lockSlow") && strings.Contains(g, handler) {
 				return
 			}
