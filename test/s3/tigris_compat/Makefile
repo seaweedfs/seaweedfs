@@ -17,6 +17,9 @@ WEBDAV_PORT ?= 7335
 ADMIN_PORT ?= 23647
 SERVER_DIR := ./test-volume-data
 S3_CONFIG := ./test_s3.json
+# Succeeds while weed-server.pid names the server start-server launched, matched
+# by its command line so that a process reusing the pid is left alone.
+OWN_SERVER_RUNNING = [ -f weed-server.pid ] && ps -p "$$(cat weed-server.pid)" -o args= 2>/dev/null | grep -qF -- '$(WEED_BINARY) mini -dir=$(SERVER_DIR) '
 
 .DEFAULT_GOAL := help
 
@@ -57,7 +60,7 @@ start-server: build-weed
 		echo "port $(S3_PORT) is already served by another process; refusing to test against it"; \
 		exit 1; \
 	fi
-	@if [ -f weed-server.pid ] && ps -p $$(cat weed-server.pid) -o comm= 2>/dev/null | grep -q weed; then \
+	@if $(OWN_SERVER_RUNNING); then \
 		echo "the server this Makefile started (pid $$(cat weed-server.pid)) is still running; run make stop-server first"; \
 		exit 1; \
 	fi
@@ -95,9 +98,8 @@ start-server: build-weed
 
 stop-server:
 	@if [ -f weed-server.pid ]; then \
-		pid=$$(cat weed-server.pid); \
-		if ps -p $$pid -o comm= 2>/dev/null | grep -q weed; then \
-			kill $$pid 2>/dev/null || true; \
+		if $(OWN_SERVER_RUNNING); then \
+			kill $$(cat weed-server.pid) 2>/dev/null || true; \
 			sleep 2; \
 		fi; \
 		rm -f weed-server.pid; \
