@@ -188,7 +188,7 @@ func (a *DiskUsageCounts) snapshot() DiskUsageCounts {
 
 func (a *DiskUsageCounts) FreeSpace() int64 {
 	u := a.snapshot()
-	return u.maxVolumeCount + u.remoteVolumeCount - u.volumeCount - erasure_coding.VolumeSlots(u.ecShardCount)
+	return max(0, u.maxVolumeCount+u.remoteVolumeCount-u.volumeCount-erasure_coding.VolumeSlots(u.ecShardCount))
 }
 
 func (du *DiskUsages) getOrCreateDisk(diskType types.DiskType) *DiskUsageCounts {

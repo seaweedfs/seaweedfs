@@ -310,9 +310,7 @@ func (n *NodeImpl) getOrCreateDisk(diskType types.DiskType) *DiskUsageCounts {
 }
 
 // inMaintenanceMode is true for a data node whose volume server is in
-// maintenance mode. Racks and data centers never are: their rolled-up counters
-// still include such a node, so their free-slot totals may exceed what their
-// children will actually hand out; see reserveOneVolumeInternal.
+// maintenance mode. Racks and data centers never are.
 func (n *NodeImpl) inMaintenanceMode() bool {
 	dn, ok := n.value.(*DataNode)
 	return ok && dn.InMaintenanceMode()
@@ -320,10 +318,21 @@ func (n *NodeImpl) inMaintenanceMode() bool {
 
 // AvailableSpaceFor is the free volume slots on this node for the option's disk
 // type. A data node in maintenance mode reports none: it is being drained, so
-// it is neither a volume-growth candidate nor reservable.
+// it is neither a volume-growth candidate nor reservable. A data node with more
+// volumes than slots also reports none, and racks, data centers and the
+// topology sum their children, so it cannot hide the free slots of others.
 func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
 	if n.inMaintenanceMode() {
 		return 0
+	}
+	if !n.IsDataNode() {
+		n.RLock()
+		defer n.RUnlock()
+		var free int64
+		for _, child := range n.children {
+			free += child.AvailableSpaceFor(option)
+		}
+		return free
 	}
 	t := n.diskUsages.getDisk(option.DiskType)
 	if t == nil {
@@ -331,7 +340,7 @@ func (n *NodeImpl) AvailableSpaceFor(option *VolumeGrowOption) int64 {
 	}
 	freeVolumeSlotCount := atomic.LoadInt64(&t.maxVolumeCount) + atomic.LoadInt64(&t.remoteVolumeCount) - atomic.LoadInt64(&t.volumeCount)
 	freeVolumeSlotCount -= erasure_coding.VolumeSlots(atomic.LoadInt64(&t.ecShardCount))
-	return freeVolumeSlotCount
+	return max(0, freeVolumeSlotCount)
 }
 
 // CapacityFor is the total registered volume slots for the option's disk type;
@@ -438,11 +447,10 @@ func (n *NodeImpl) reserveOneVolumeInternal(r int64, option *VolumeGrowOption, u
 		}
 		return node.AvailableSpaceFor(option)
 	}
-	// The caller draws r from this node's rolled-up free slots, which still
-	// count children the walk below skips: a data node in maintenance mode
-	// reports no space, and an over-committed one reports less than zero. Fold
-	// r into the space that is actually on offer so it cannot walk off the end
-	// and fail with slots still free.
+	// The caller drew r from this node's free slots, which can exceed what the
+	// children offer once their reservations or a newer heartbeat are counted.
+	// Fold r into the space that is actually on offer so it cannot walk off the
+	// end and fail with slots still free.
 	var eligible int64
 	for _, node := range n.children {
 		if freeSpace := freeSpaceOf(node); freeSpace > 0 {
