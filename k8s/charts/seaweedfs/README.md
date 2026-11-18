@@ -569,7 +569,7 @@ s3:
 
 With `rules` left empty the route sends all traffic to the component's own Service and port. A rule may set `matches`, `filters`, `timeouts` and `backendRefs`, and a rule without `backendRefs` still routes to that Service. In all-in-one mode the master, volume, filer and s3 routes target the all-in-one Service. When S3 runs only on the filer (`filer.s3.enabled` without `s3.enabled`), the s3 route uses `filer.s3.port`.
 
-The volume route and Ingress target the `<fullname>-client-volume` Service, which lists only Ready volume pods. The `<fullname>-volume` Service also lists pods that are not Ready yet, so their DNS names resolve as soon as the master hands them out. A `backendRefs` entry that names `<fullname>-volume` can therefore reach a volume server before it is Ready; name `<fullname>-client-volume` with `volume.port` instead.
+Outside all-in-one mode, the volume Ingress and the default volume route target the `client-volume` Service, which lists only Ready volume pods. The `volume` Service also publishes pods that are not Ready yet, so their DNS records can exist before readiness. An explicit `backendRefs` entry that names the `volume` Service can therefore reach a volume server before it is Ready. Name the `client-volume` Service instead, with `volume.port`, and copy its `metadata.name` from `helm template` because long release names are truncated.
 
 ## Network Policies
 
