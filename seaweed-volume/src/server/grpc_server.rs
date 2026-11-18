@@ -5622,6 +5622,16 @@ impl VolumeServer for VolumeGrpcService {
             .map_err(|e| {
                 Status::internal(format!("read from remote {:?}: {}", remote_location, e))
             })?;
+        // The chunk is recorded with the requested size, so a short or long
+        // read would cache silently corrupt content.
+        if data.len() as i64 != req.size {
+            return Err(Status::internal(format!(
+                "read from remote {:?}: got {} bytes, want {}",
+                remote_location,
+                data.len(),
+                req.size
+            )));
+        }
 
         // Build needle and write locally
         let mut n = Needle {
@@ -8537,6 +8547,67 @@ mod tests {
         ttl: Option<crate::storage::needle::ttl::TTL>,
     ) -> (VolumeGrpcService, TempDir) {
         make_local_service_with_volume_and_trust(collection, ttl, true, NeedleMapKind::InMemory)
+    }
+
+    #[tokio::test]
+    async fn fetch_and_write_needle_rejects_size_mismatch() {
+        use crate::pb::remote_pb::{RemoteConf, RemoteStorageLocation};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let http = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                axum::Router::new().fallback(|| async { "remote payload" }),
+            )
+            .await
+            .unwrap();
+        });
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        for (needle_id, size, ok) in [(777u64, 14i64, true), (778, 20, false), (779, 4, false)] {
+            let result = service
+                .fetch_and_write_needle(Request::new(
+                    volume_server_pb::FetchAndWriteNeedleRequest {
+                        volume_id: 1,
+                        needle_id,
+                        cookie: 0xaa,
+                        size,
+                        remote_conf: Some(RemoteConf {
+                            r#type: "s3".into(),
+                            name: format!("size-{}", needle_id),
+                            s3_endpoint: endpoint.clone(),
+                            s3_force_path_style: true,
+                            s3_access_key: "fixture".into(),
+                            s3_secret_key: "fixture".into(),
+                            ..Default::default()
+                        }),
+                        remote_location: Some(RemoteStorageLocation {
+                            bucket: "bucket".into(),
+                            path: "object".into(),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                ))
+                .await;
+            let store = service.state.store.read().unwrap();
+            let volume = store.find_volume(VolumeId(1)).unwrap().1;
+            let mut stored = Needle {
+                id: NeedleId(needle_id),
+                cookie: Cookie(0xaa),
+                ..Default::default()
+            };
+            let read = volume.read_needle(&mut stored);
+            if ok {
+                result.unwrap();
+                read.unwrap();
+                assert_eq!(stored.data, b"remote payload");
+            } else {
+                let err = result.unwrap_err();
+                assert!(err.message().contains("bytes, want"), "{}", err.message());
+                assert!(read.is_err(), "size {size} left a local write");
+            }
+        }
+        http.abort();
     }
 
     fn make_local_service_with_volume_and_trust(
