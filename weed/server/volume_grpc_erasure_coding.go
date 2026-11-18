@@ -492,10 +492,23 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			defer os.Remove(stagedEcx)
 		}
 
-		// copy ec data slices
+		// copy ec data slices. A shard already on this disk is staged and
+		// replaced only once the whole copy succeeds, so a failed transfer
+		// leaves it as is.
+		var replacedShards []uint32
 		for _, shardId := range req.ShardIds {
 			ext := erasure_coding.ToExt(int(shardId))
-			created.track(dataBaseFileName + ext)
+			shardPath := dataBaseFileName + ext
+			if _, err := os.Stat(shardPath); err == nil {
+				staged, err := vs.stageEcCopyFile(client, req.Collection, req.VolumeId, ext, shardPath, throttler)
+				if err != nil {
+					return err
+				}
+				defer os.Remove(staged)
+				replacedShards = append(replacedShards, shardId)
+				continue
+			}
+			created.track(shardPath)
 			if _, err := vs.doCopyFileWithThrottler(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, dataBaseFileName, ext, false, false, nil, throttler); err != nil {
 				return err
 			}
@@ -527,6 +540,17 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			created.track(dataBaseFileName + erasure_coding.BitrotSidecarExt)
 			if _, err := vs.doCopyFileWithThrottler(client, true, req.Collection, req.VolumeId, math.MaxUint32, math.MaxInt64, dataBaseFileName, erasure_coding.BitrotSidecarExt, false, true, nil, throttler); err != nil {
 				return fmt.Errorf("VolumeEcShardsCopy volume %d: copy %s sidecar: %w", req.VolumeId, erasure_coding.BitrotSidecarExt, err)
+			}
+		}
+
+		for _, shardId := range replacedShards {
+			shardPath := dataBaseFileName + erasure_coding.ToExt(int(shardId))
+			if err := os.Rename(shardPath+".copying", shardPath); err != nil {
+				return fmt.Errorf("VolumeEcShardsCopy volume %d: commit copied %s: %w", req.VolumeId, shardPath, err)
+			}
+			// A mounted shard keeps reading the replaced inode until reopened.
+			if _, err := location.ReopenEcShard(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId)); err != nil {
+				glog.Warningf("VolumeEcShardsCopy volume %d: reopen replaced shard %d: %v", req.VolumeId, shardId, err)
 			}
 		}
 
@@ -569,20 +593,9 @@ func (c ecCopyCreatedFiles) remove(vid uint32) {
 // holding a 0-byte index neither lands a stub nor truncates an .ecx this disk
 // already has.
 func (vs *VolumeServer) stageEcxFile(client volume_server_pb.VolumeServerClient, collection string, vid uint32, ecxPath string, throttler *util.WriteThrottler) (string, error) {
-	stream, err := client.CopyFile(context.Background(), &volume_server_pb.CopyFileRequest{
-		VolumeId:           vid,
-		Ext:                ".ecx",
-		CompactionRevision: math.MaxUint32,
-		StopOffset:         math.MaxInt64,
-		Collection:         collection,
-		IsEcVolume:         true,
-	})
+	staging, err := vs.stageEcCopyFile(client, collection, vid, ".ecx", ecxPath, throttler)
 	if err != nil {
-		return "", fmt.Errorf("failed to start copying volume %d .ecx file: %v", vid, err)
-	}
-	staging := ecxPath + ".copying"
-	if _, err := writeToFile(stream, staging, throttler, false, false, nil); err != nil {
-		return "", fmt.Errorf("failed to copy %s file: %v", ecxPath, err)
+		return "", err
 	}
 	// Stat failure must not silently pass: at mount time the operator would
 	// only see "no .ecx found" with no context about which step failed.
@@ -598,6 +611,27 @@ func (vs *VolumeServer) stageEcxFile(client volume_server_pb.VolumeServerClient,
 			glog.Warningf("VolumeEcShardsCopy volume %d: remove 0-byte .ecx %s: %v", vid, staging, removeErr)
 		}
 		return "", fmt.Errorf("VolumeEcShardsCopy volume %d: source .ecx is 0 bytes", vid)
+	}
+	return staging, nil
+}
+
+// stageEcCopyFile copies the source's ext file of vid to path+".copying" and
+// returns the staged path; the caller renames it into place.
+func (vs *VolumeServer) stageEcCopyFile(client volume_server_pb.VolumeServerClient, collection string, vid uint32, ext, path string, throttler *util.WriteThrottler) (string, error) {
+	stream, err := client.CopyFile(context.Background(), &volume_server_pb.CopyFileRequest{
+		VolumeId:           vid,
+		Ext:                ext,
+		CompactionRevision: math.MaxUint32,
+		StopOffset:         math.MaxInt64,
+		Collection:         collection,
+		IsEcVolume:         true,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to start copying volume %d %s file: %v", vid, ext, err)
+	}
+	staging := path + ".copying"
+	if _, err := writeToFile(stream, staging, throttler, false, false, nil); err != nil {
+		return "", fmt.Errorf("failed to copy %s file: %v", path, err)
 	}
 	return staging, nil
 }

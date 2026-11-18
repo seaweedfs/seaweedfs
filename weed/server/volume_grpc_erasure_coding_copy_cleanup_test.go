@@ -156,10 +156,12 @@ func TestVolumeEcShardsCopy_FailedShardRemovesCopiedShards(t *testing.T) {
 	writeFile(t, dstBase+".ecx", ecx)
 	ec05 := bytes.Repeat([]byte{5}, 4096)
 	writeFile(t, dstBase+".ec05", ec05)
+	ec01 := bytes.Repeat([]byte{6}, 4096)
+	writeFile(t, dstBase+".ec01", ec01)
 	before := listDir(t, dstDir)
 
-	// Shard 0 copies, shard 5 overwrites the existing holder's copy, shard 1
-	// is missing on the source and fails the request.
+	// Shard 0 copies, shard 5 replaces the existing holder's copy, shard 1 is
+	// held here but missing on the source and fails the request.
 	_, err := receiver.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
 		VolumeId:       uint32(vid),
 		Collection:     collection,
@@ -176,6 +178,12 @@ func TestVolumeEcShardsCopy_FailedShardRemovesCopiedShards(t *testing.T) {
 	if got, _ := os.ReadFile(dstBase + ".ecx"); !bytes.Equal(got, ecx) {
 		t.Errorf("pre-existing .ecx changed: %x, want %x", got, ecx)
 	}
+	if got, _ := os.ReadFile(dstBase + ".ec05"); !bytes.Equal(got, ec05) {
+		t.Errorf("pre-existing .ec05 changed")
+	}
+	if got, _ := os.ReadFile(dstBase + ".ec01"); !bytes.Equal(got, ec01) {
+		t.Errorf("pre-existing .ec01 changed by its failed transfer")
+	}
 }
 
 // A copied index replaces an existing holder's in place, so a mounted
@@ -189,12 +197,14 @@ func TestVolumeEcShardsCopy_ExistingEcxUpdatedInPlace(t *testing.T) {
 	srcBase := erasure_coding.EcShardFileName(collection, srcDir, int(vid))
 	srcEcx := bytes.Repeat([]byte{9}, 2*types.NeedleMapEntrySize)
 	writeFile(t, srcBase+".ecx", srcEcx)
-	writeFile(t, srcBase+".ec00", bytes.Repeat([]byte{1}, 4096))
+	srcEc00 := bytes.Repeat([]byte{1}, 4096)
+	writeFile(t, srcBase+".ec00", srcEc00)
 
 	dstDir := filepath.Join(t.TempDir(), "dst")
 	receiver := newEcCopyReceiver(t, dstDir)
 	dstBase := erasure_coding.EcShardFileName(collection, dstDir, int(vid))
 	writeFile(t, dstBase+".ecx", make([]byte, 2*types.NeedleMapEntrySize))
+	writeFile(t, dstBase+".ec00", bytes.Repeat([]byte{3}, 1024))
 	held, err := os.Open(dstBase + ".ecx")
 	if err != nil {
 		t.Fatalf("open .ecx: %v", err)
@@ -216,6 +226,9 @@ func TestVolumeEcShardsCopy_ExistingEcxUpdatedInPlace(t *testing.T) {
 	}
 	if !bytes.Equal(got, srcEcx) {
 		t.Fatalf("open .ecx handle reads %x after the copy, want the source index %x", got, srcEcx)
+	}
+	if got, _ := os.ReadFile(dstBase + ".ec00"); !bytes.Equal(got, srcEc00) {
+		t.Errorf("existing .ec00 not replaced by the source's")
 	}
 	for _, name := range listDir(t, dstDir) {
 		if strings.HasSuffix(name, ".copying") {

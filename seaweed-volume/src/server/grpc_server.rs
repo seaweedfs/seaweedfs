@@ -4032,11 +4032,24 @@ impl VolumeServer for VolumeGrpcService {
             staged_ecx = Some(staged);
         }
 
-        // Copy each shard
+        // Copy each shard. A shard already on this disk is staged and replaced
+        // only once the whole copy succeeds, so a failed transfer leaves it as is.
+        let mut replaced_shards: Vec<(ShardId, crate::server::store_ec::RemoveIncomplete)> =
+            Vec::new();
         for &shard_id in &shard_ids {
             let ext = format!(".ec{:02}", shard_id);
-            let file_path = format!("{}{}", data_base, ext);
-            track_ec_copy_created(&mut created, &file_path);
+            let shard_path = format!("{}{}", data_base, ext);
+            let file_path = if std::fs::metadata(&shard_path).is_ok() {
+                let staging = format!("{}.copying", shard_path);
+                replaced_shards.push((
+                    shard_id,
+                    crate::server::store_ec::RemoveIncomplete::new(&staging),
+                ));
+                staging
+            } else {
+                track_ec_copy_created(&mut created, &shard_path);
+                shard_path
+            };
 
             let copy_req = volume_server_pb::CopyFileRequest {
                 volume_id: req.volume_id,
@@ -4166,6 +4179,26 @@ impl VolumeServer for VolumeGrpcService {
             let file_path = format!("{}.ecsum", data_base);
             track_ec_copy_created(&mut created, &file_path);
             drain_optional_copy_to_file(&mut stream, &file_path, ".ecsum").await?;
+        }
+
+        for (shard_id, mut staged) in replaced_shards {
+            let shard_path = format!("{}.ec{:02}", data_base, shard_id);
+            tokio::fs::rename(format!("{}.copying", shard_path), &shard_path)
+                .await
+                .map_err(|e| Status::internal(format!("commit {}: {}", shard_path, e)))?;
+            staged.committed();
+            // A mounted shard keeps reading the replaced inode until reopened.
+            let mut store = self.state.store.write().unwrap();
+            if let Some(loc) = store.locations.iter_mut().find(|l| l.directory == dest_dir) {
+                if let Err(e) = loc.reopen_ec_shard(vid, shard_id) {
+                    tracing::warn!(
+                        "VolumeEcShardsCopy volume {}: reopen replaced shard {}: {}",
+                        vid,
+                        shard_id,
+                        e
+                    );
+                }
+            }
         }
 
         if let Some(_staged) = staged_ecx {
@@ -10109,11 +10142,14 @@ mod tests {
         let (dest, _dest_tmp, dir) = ec_copy_destination().await;
         let ecx = vec![7u8; NEEDLE_MAP_ENTRY_SIZE as usize];
         std::fs::write(format!("{}/58.ecx", dir), &ecx).unwrap();
-        std::fs::write(format!("{}/58.ec05", dir), vec![5u8; 4096]).unwrap();
+        let ec05 = vec![5u8; 4096];
+        std::fs::write(format!("{}/58.ec05", dir), &ec05).unwrap();
+        let ec01 = vec![6u8; 4096];
+        std::fs::write(format!("{}/58.ec01", dir), &ec01).unwrap();
         let before = sorted_dir_names(&dir);
 
-        // Shard 0 copies, shard 5 overwrites the existing holder's copy, shard 1
-        // is missing on the source and fails the request.
+        // Shard 0 copies, shard 5 replaces the existing holder's copy, shard 1 is
+        // held here but missing on the source and fails the request.
         dest.volume_ec_shards_copy(Request::new(volume_server_pb::VolumeEcShardsCopyRequest {
             volume_id: 58,
             shard_ids: vec![0, 5, 1],
@@ -10125,6 +10161,8 @@ mod tests {
         .expect_err("shard 1 is missing on the source");
         assert_eq!(sorted_dir_names(&dir), before);
         assert_eq!(std::fs::read(format!("{}/58.ecx", dir)).unwrap(), ecx);
+        assert_eq!(std::fs::read(format!("{}/58.ec05", dir)).unwrap(), ec05);
+        assert_eq!(std::fs::read(format!("{}/58.ec01", dir)).unwrap(), ec01);
     }
 
     // A copied index replaces an existing holder's in place, so a mounted EC
@@ -10136,7 +10174,8 @@ mod tests {
         let src = source_tmp.path().to_str().unwrap().to_string();
         let src_ecx = vec![9u8; 2 * NEEDLE_MAP_ENTRY_SIZE as usize];
         std::fs::write(format!("{}/59.ecx", src), &src_ecx).unwrap();
-        std::fs::write(format!("{}/59.ec00", src), vec![1u8; 4096]).unwrap();
+        let src_ec00 = vec![1u8; 4096];
+        std::fs::write(format!("{}/59.ec00", src), &src_ec00).unwrap();
         let (port, _shutdown) = serve_source(source_service).await;
 
         let (dest, _dest_tmp, dir) = ec_copy_destination().await;
@@ -10145,6 +10184,7 @@ mod tests {
             vec![0u8; 2 * NEEDLE_MAP_ENTRY_SIZE as usize],
         )
         .unwrap();
+        std::fs::write(format!("{}/59.ec00", dir), vec![3u8; 1024]).unwrap();
         let held = std::fs::File::open(format!("{}/59.ecx", dir)).unwrap();
 
         dest.volume_ec_shards_copy(Request::new(volume_server_pb::VolumeEcShardsCopyRequest {
@@ -10159,6 +10199,7 @@ mod tests {
         let mut got = vec![0u8; src_ecx.len()];
         std::os::unix::fs::FileExt::read_exact_at(&held, &mut got, 0).unwrap();
         assert_eq!(got, src_ecx, "open .ecx handle must read the source index");
+        assert_eq!(std::fs::read(format!("{}/59.ec00", dir)).unwrap(), src_ec00);
         assert!(
             sorted_dir_names(&dir)
                 .iter()
