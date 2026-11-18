@@ -274,7 +274,7 @@ def main():
             print("warning: files of #%d: %s" % (num, e.stderr.strip()), file=sys.stderr)
             failed.append(num)
             return []
-        return out.split()
+        return out.splitlines()
 
     try:
         notes = regroup(body, pr_files)
