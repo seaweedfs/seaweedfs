@@ -280,9 +280,10 @@ def main():
         notes = regroup(body, pr_files)
     except ValueError as e:
         sys.exit("release %s: %s" % (args.tag, e))
+    sys.stdout.write(notes)
     if notes.strip() == body.replace("\r\n", "\n").strip():
         print("release %s: notes already grouped, nothing to change" % args.tag, file=sys.stderr)
-    sys.stdout.write(notes)
+        return
     if failed and args.write:
         sys.exit("release %s: not writing, could not read the files of %s"
                  % (args.tag, ", ".join("#%d" % n for n in failed)))
