@@ -24,7 +24,7 @@ func ecTopo(node1Collection string) *master_pb.TopologyInfo {
 		Id: "node1",
 		DiskInfos: map[string]*master_pb.DiskInfo{
 			"": {Type: "", MaxVolumeCount: 100, EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
-				{Id: 100, Collection: node1Collection, DiskId: 0, EcIndexBits: 0x3FFF}, // 14 shards
+				{Id: 100, FileCount: 1, Collection: node1Collection, DiskId: 0, EcIndexBits: 0x3FFF}, // 14 shards
 			}},
 		},
 	}
@@ -64,7 +64,7 @@ func TestBuildBalancerTopologyGroupsByHost(t *testing.T) {
 	mkNode := func(id string, bits uint32) *master_pb.DataNodeInfo {
 		di := &master_pb.DiskInfo{Type: "", MaxVolumeCount: 100}
 		if bits != 0 {
-			di.EcShardInfos = []*master_pb.VolumeEcShardInformationMessage{{Id: 100, Collection: "col1", DiskId: 0, EcIndexBits: bits}}
+			di.EcShardInfos = []*master_pb.VolumeEcShardInformationMessage{{Id: 100, FileCount: 1, Collection: "col1", DiskId: 0, EcIndexBits: bits}}
 		}
 		return &master_pb.DataNodeInfo{Id: id, DiskInfos: map[string]*master_pb.DiskInfo{"": di}}
 	}
@@ -209,13 +209,13 @@ func TestDetectionKeepsGlobalMovesUnderTheCap(t *testing.T) {
 	// server (global moves).
 	var loaded []*master_pb.VolumeEcShardInformationMessage
 	for vid := uint32(1); vid <= 20; vid++ {
-		loaded = append(loaded, &master_pb.VolumeEcShardInformationMessage{Id: vid, Collection: "col1", EcIndexBits: 1})
+		loaded = append(loaded, &master_pb.VolumeEcShardInformationMessage{Id: vid, FileCount: 1, Collection: "col1", EcIndexBits: 1})
 	}
 	topoInfo := &master_pb.TopologyInfo{
 		DataCenterInfos: []*master_pb.DataCenterInfo{{
 			Id: "dc1",
 			RackInfos: []*master_pb.RackInfo{{Id: "rack1", DataNodeInfos: []*master_pb.DataNodeInfo{
-				{Id: "10.0.0.1:8080", DiskInfos: disk(&master_pb.VolumeEcShardInformationMessage{Id: 100, Collection: "col1", EcIndexBits: 0x3FFF})},
+				{Id: "10.0.0.1:8080", DiskInfos: disk(&master_pb.VolumeEcShardInformationMessage{Id: 100, FileCount: 1, Collection: "col1", EcIndexBits: 0x3FFF})},
 				{Id: "10.0.0.2:8080", DiskInfos: disk(loaded...)},
 				{Id: "10.0.0.3:8080", DiskInfos: disk()},
 				{Id: "10.0.0.4:8080", DiskInfos: disk()},
@@ -262,7 +262,7 @@ func TestDetectionUsesConfiguredGlobalCap(t *testing.T) {
 	}
 	var loaded []*master_pb.VolumeEcShardInformationMessage
 	for vid := uint32(1); vid <= 40; vid++ {
-		loaded = append(loaded, &master_pb.VolumeEcShardInformationMessage{Id: vid, Collection: "col1", EcIndexBits: 1})
+		loaded = append(loaded, &master_pb.VolumeEcShardInformationMessage{Id: vid, FileCount: 1, Collection: "col1", EcIndexBits: 1})
 	}
 	topoInfo := &master_pb.TopologyInfo{
 		DataCenterInfos: []*master_pb.DataCenterInfo{{

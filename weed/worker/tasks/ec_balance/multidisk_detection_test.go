@@ -50,6 +50,7 @@ func buildMasterTopology(collection string, vid uint32, maxVolPerDisk int, specs
 			ecShards = append(ecShards, &master_pb.VolumeEcShardInformationMessage{
 				Id:          vid,
 				Collection:  collection,
+				FileCount:   1,
 				DiskId:      diskID,
 				EcIndexBits: uint32(bits),
 			})
@@ -354,7 +355,7 @@ func TestBuildBalancerTopologyKeepsSlotRemainder(t *testing.T) {
 			MaxVolumeCount: 10,
 			VolumeCount:    1,
 			EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
-				{Id: 100, Collection: "col1", DiskId: 0, EcIndexBits: all},
+				{Id: 100, FileCount: 1, Collection: "col1", DiskId: 0, EcIndexBits: all},
 			},
 			VolumeInfos: []*master_pb.VolumeInformationMessage{{Id: 90000, DiskId: 0}},
 		}},
@@ -366,8 +367,8 @@ func TestBuildBalancerTopologyKeepsSlotRemainder(t *testing.T) {
 			MaxVolumeCount: 7,
 			VolumeCount:    6,
 			EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
-				{Id: 200, Collection: "other", DiskId: 0, EcIndexBits: 0x1F},
-				{Id: 200, Collection: "other", DiskId: 1, EcIndexBits: 0x1E0},
+				{Id: 200, FileCount: 1, Collection: "other", DiskId: 0, EcIndexBits: 0x1F},
+				{Id: 200, FileCount: 1, Collection: "other", DiskId: 1, EcIndexBits: 0x1E0},
 			},
 			VolumeInfos: []*master_pb.VolumeInformationMessage{
 				{Id: 90001, DiskId: 0}, {Id: 90002, DiskId: 0}, {Id: 90003, DiskId: 0},
@@ -398,5 +399,44 @@ func TestBuildBalancerTopologyKeepsSlotRemainder(t *testing.T) {
 	}
 	if toN2 != 1 {
 		t.Errorf("volume 100 moves to n2 = %d, want 1 (the node's one free slot divided across two disks must not floor to zero)", toN2)
+	}
+}
+
+// TestEmptyIndexVolumeIsNotMoved: a concentrated volume whose holders all
+// report an empty .ecx gets no moves, since every shard copy of it fails; one
+// holder with needles is enough to keep it balanced.
+func TestEmptyIndexVolumeIsNotMoved(t *testing.T) {
+	cfg := NewDefaultConfig()
+	cfg.ImbalanceThreshold = 0.0
+	specs := []nodeSpec{
+		{id: "n1", rack: "rack1", disks: map[uint32][]int{0: {0, 1, 2}, 1: {3, 4, 5}, 2: {6, 7}, 3: {8, 9}, 4: {10, 11}, 5: {12}}},
+		{id: "n2", rack: "rack2", disks: map[uint32][]int{0: {13}}},
+		{id: "n3", rack: "rack3", disks: map[uint32][]int{}},
+	}
+	withFileCounts := func(fileCount func(node string) uint64) *master_pb.TopologyInfo {
+		topo := buildMasterTopology("col1", 28, 50, specs)
+		for _, rack := range topo.DataCenterInfos[0].RackInfos {
+			for _, dn := range rack.DataNodeInfos {
+				for _, info := range dn.DiskInfos[""].EcShardInfos {
+					info.FileCount = fileCount(dn.Id)
+				}
+			}
+		}
+		return topo
+	}
+
+	empty := withFileCounts(func(string) uint64 { return 0 })
+	if results := runDetection(t, empty, cfg); len(results) != 0 {
+		t.Errorf("moved %d shards of a volume whose every .ecx is empty", len(results))
+	}
+
+	partly := withFileCounts(func(node string) uint64 {
+		if node == "n2" {
+			return 3
+		}
+		return 0
+	})
+	if len(runDetection(t, partly, cfg)) == 0 {
+		t.Error("expected moves for a volume one of whose holders reports needles")
 	}
 }
