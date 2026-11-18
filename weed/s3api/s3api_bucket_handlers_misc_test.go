@@ -746,6 +746,7 @@ func TestPutBucketNotificationConfiguration(t *testing.T) {
 		{"queue", `<NotificationConfiguration><QueueConfiguration><Queue>arn:aws:sqs:us-east-1:1:q</Queue><Event>s3:ObjectCreated:*</Event></QueueConfiguration></NotificationConfiguration>`, http.StatusNotImplemented},
 		{"eventbridge", `<NotificationConfiguration><EventBridgeConfiguration/></NotificationConfiguration>`, http.StatusNotImplemented},
 		{"malformed", `<NotificationConfiguration>`, http.StatusBadRequest},
+		{"unknown child", `<NotificationConfiguration><LambdaFunctionConfiguration/></NotificationConfiguration>`, http.StatusBadRequest},
 		{"wrong root", `<NotAConfiguration/>`, http.StatusBadRequest},
 	}
 	for _, tc := range cases {

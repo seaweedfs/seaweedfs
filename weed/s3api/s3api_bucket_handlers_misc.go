@@ -45,6 +45,7 @@ type notificationConfigurationRequest struct {
 	Queues      []struct{} `xml:"QueueConfiguration"`
 	Functions   []struct{} `xml:"CloudFunctionConfiguration"`
 	EventBridge []struct{} `xml:"EventBridgeConfiguration"`
+	Unknown     []struct{} `xml:",any"`
 }
 
 // GetBucketPolicyStatusHandler reports whether the bucket policy grants public access.
@@ -186,7 +187,7 @@ func (s3a *S3ApiServer) PutBucketNotificationConfigurationHandler(w http.Respons
 		return
 	}
 	var cfg notificationConfigurationRequest
-	if err := xml.Unmarshal(body, &cfg); err != nil {
+	if err := xml.Unmarshal(body, &cfg); err != nil || len(cfg.Unknown) > 0 {
 		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
 		return
 	}
