@@ -1991,6 +1991,10 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 	versionIdMarker := query.Get("version-id-marker")
 	delimiter := query.Get("delimiter")
 
+	if _, errCode := parseEncodingType(query); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 	maxKeys, errCode := parseMaxKeys(query.Get("max-keys"))
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)

@@ -657,6 +657,9 @@ func getBucketMultipartResources(values url.Values) (prefix, keyMarker, uploadID
 		maxUploads = maxUploadsList
 	}
 	encodingType = values.Get("encoding-type")
+	if _, encodingErr := parseEncodingType(values); encodingErr != s3err.ErrNone && errCode == s3err.ErrNone {
+		errCode = encodingErr
+	}
 	return
 }
 
@@ -680,6 +683,9 @@ func getObjectResources(values url.Values) (uploadID string, partNumberMarker, m
 		maxParts = maxPartsList
 	}
 	encodingType = values.Get("encoding-type")
+	if _, encodingErr := parseEncodingType(values); encodingErr != s3err.ErrNone && errCode == s3err.ErrNone {
+		errCode = encodingErr
+	}
 	return
 }
 

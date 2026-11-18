@@ -68,6 +68,7 @@ const (
 	ErrInvalidMaxKeys
 	ErrInvalidMaxBuckets
 	ErrInvalidContinuationToken
+	ErrInvalidEncodingMethod
 	ErrInvalidMaxUploads
 	ErrInvalidMaxParts
 	ErrInvalidMaxDeleteObjects
@@ -255,6 +256,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidContinuationToken: {
 		Code:           "InvalidArgument",
 		Description:    "The continuation token provided is incorrect",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidEncodingMethod: {
+		Code:           "InvalidArgument",
+		Description:    "Invalid Encoding Method specified in Request",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 	ErrInvalidMaxParts: {
