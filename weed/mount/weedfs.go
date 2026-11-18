@@ -157,6 +157,7 @@ type WFS struct {
 	writeBufferAccountant *page_writer.WriteBufferAccountant
 	signature             int32
 	filerCallTimeout      time.Duration // bounds one filer call; tests only, 0 = filerRPCTimeout
+	lookupRebuildWait     time.Duration // bounds a lookup's wait on a directory rebuild; tests only, 0 = lookupRebuildTimeout
 	concurrentWriters     *util.LimitedConcurrentExecutor
 	copyBufferPool        sync.Pool
 	concurrentCopiersSem  chan struct{}
@@ -633,6 +634,23 @@ func (wfs *WFS) maybeLoadEntry(ctx context.Context, fullpath util.FullPath) (*fi
 // still allowing recovery once the filer is healthy again.
 const expiredDirRebuildCooldown = 30 * time.Second
 
+// lookupRebuildTimeout bounds how long a lookup waits on the rebuild it starts.
+// The rebuild lists the parent and every expired ancestor up to the mount root,
+// and every lookup beneath them joins the same builds, so a slow listing would
+// hold a plain stat for as long as it takes. The shared build does not run on
+// the requester's context and keeps going after a waiter gives up: this lookup
+// falls back to one LookupEntry RPC and later ones find the directory cached.
+const lookupRebuildTimeout = 2 * time.Second
+
+// lookupRebuildWaitTime is lookupRebuildTimeout unless a test set
+// lookupRebuildWait on the WFS.
+func (wfs *WFS) lookupRebuildWaitTime() time.Duration {
+	if wfs.lookupRebuildWait > 0 {
+		return wfs.lookupRebuildWait
+	}
+	return lookupRebuildTimeout
+}
+
 // lookupEntry looks up an entry by path, checking the local cache first.
 // Cached metadata is only authoritative when the parent directory itself is cached.
 // For uncached/read-through directories, always consult the filer directly so stale
@@ -658,10 +676,14 @@ func (wfs *WFS) lookupEntry(ctx context.Context, fullpath util.FullPath) (*filer
 				return nil, entryVersion{}, fuse.EINTR
 			}
 		}
-		if err := wfs.ensureDirectoryVisited(ctx, dirPath); err != nil {
+		waitCtx, cancelWait := context.WithTimeout(ctx, wfs.lookupRebuildWaitTime())
+		err := wfs.ensureDirectoryVisited(waitCtx, dirPath)
+		cancelWait()
+		if err != nil {
 			// Record the attempt so the cooldown suppresses repeated rebuilds
-			// while the listing keeps failing; once it elapses a later lookup
-			// retries. Oversized dirs are already marked read-through.
+			// while the listing keeps failing, and repeated waits while a slow
+			// one is still running; once it elapses a later lookup retries.
+			// Oversized dirs are already marked read-through.
 			var tooLarge *meta_cache.DirectoryTooLargeError
 			if !errors.As(err, &tooLarge) {
 				wfs.inodeToPath.MarkRebuildAttempt(dirPath, time.Now())
