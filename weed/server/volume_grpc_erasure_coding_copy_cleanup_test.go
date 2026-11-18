@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -112,6 +113,24 @@ func writeFile(t *testing.T, path string, data []byte) {
 // A source whose .ecx is 0 bytes must fail the copy without stranding a shard,
 // index or sidecar on the destination, and without touching what an existing
 // holder of the same volume already has there.
+// waitForLockWaiter waits until a goroutine running handler is blocked on a
+// mutex. The test holds the lifecycle lock and nothing else, so that is the
+// lock the handler waits for.
+func waitForLockWaiter(t *testing.T, handler string) {
+	t.Helper()
+	buf := make([]byte, 1<<20)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, g := range strings.Split(string(buf[:runtime.Stack(buf, true)]), "\n\n") {
+			if strings.Contains(g, "sync.(*Mutex).lockSlow") && strings.Contains(g, handler) {
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("%s never waited for the lifecycle lock", handler)
+}
+
 func TestVolumeEcShardsCopy_EmptySourceEcxLeavesNoFiles(t *testing.T) {
 	const collection = "col"
 	vid := needle.VolumeId(57)
@@ -414,7 +433,7 @@ func TestVolumeEcShardsMount_WaitsForInFlightCopy(t *testing.T) {
 		})
 		done <- err
 	}()
-	time.Sleep(200 * time.Millisecond)
+	waitForLockWaiter(t, "VolumeEcShardsMount")
 	_, _, mountedEarly := receiver.store.FindEcShard(vid, 0)
 	lifecycle.Unlock()
 	if mountedEarly {
@@ -455,7 +474,7 @@ func TestVolumeEcShardsDelete_FullTeardownWaitsForInFlightCopy(t *testing.T) {
 		})
 		done <- err
 	}()
-	time.Sleep(200 * time.Millisecond)
+	waitForLockWaiter(t, "VolumeEcShardsDelete")
 	_, statErr := os.Stat(dstBase + ".ecx")
 	lifecycle.Unlock()
 	if statErr != nil {
@@ -527,11 +546,12 @@ func TestVolumeEcShardsRebuild_WaitsForInFlightCopy(t *testing.T) {
 			Collection: "col",
 		})
 	}()
+	waitForLockWaiter(t, "VolumeEcShardsRebuild")
 	select {
 	case <-done:
 		lifecycle.Unlock()
 		t.Fatal("rebuild ran while a copy of the same volume held its lifecycle lock")
-	case <-time.After(200 * time.Millisecond):
+	default:
 	}
 	lifecycle.Unlock()
 	select {
@@ -563,7 +583,7 @@ func TestVolumeEcShardsDelete_WaitsForInFlightCopy(t *testing.T) {
 		})
 		done <- err
 	}()
-	time.Sleep(200 * time.Millisecond)
+	waitForLockWaiter(t, "VolumeEcShardsDelete")
 	_, statErr := os.Stat(dstBase + ".ec00")
 	lifecycle.Unlock()
 	if statErr != nil {
