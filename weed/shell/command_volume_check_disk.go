@@ -390,7 +390,8 @@ func (vcd *volumeCheckDisk) eqVolumeFileCount(a, b *VolumeReplica) (bool, error)
 		return false, fmt.Errorf("getting volume %d status from %s: %w", b.info.Id, b.location.dataNode.Id, errB)
 	}
 
-	return !vcd.countsDiffer(fileCountA, fileDeletedCountA, fileCountB, fileDeletedCountB, a.info.CompactRevision == b.info.CompactRevision), nil
+	// VolumeStatus reports no compaction revision, so these counts never count as a vacuum-state difference.
+	return !vcd.countsDiffer(fileCountA, fileDeletedCountA, fileCountB, fileDeletedCountB, true), nil
 }
 
 // countsDiffer reports whether two replicas' needle counters suggest a needle
