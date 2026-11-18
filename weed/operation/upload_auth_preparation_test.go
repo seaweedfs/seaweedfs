@@ -283,3 +283,88 @@ func TestUploadChunksPreserveCustomUploadContract(t *testing.T) {
 		t.Fatal("custom upload did not complete")
 	}
 }
+
+func TestUploadChunksReassignReusesPreparedPayload(t *testing.T) {
+	for _, cipher := range []bool{false, true} {
+		t.Run(map[bool]string{false: "relay", true: "cipher"}[cipher], func(t *testing.T) {
+			payload := bytes.Repeat([]byte{0}, 128*1024)
+			sum := md5.Sum(payload)
+			digest := base64.StdEncoding.EncodeToString(sum[:])
+			fids := []string{"3,01637037d6", "4,02637037d6"}
+			key := []byte("disposable reassign test")
+			var mu sync.Mutex
+			var bodies [][]byte
+			var postedFids, deletedFids []string
+			var preparations, assignments atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fid := strings.TrimPrefix(r.URL.Path, "/")
+				if r.Method == http.MethodDelete {
+					mu.Lock()
+					deletedFids = append(deletedFids, fid)
+					mu.Unlock()
+					w.WriteHeader(http.StatusAccepted)
+					return
+				}
+				claims := &security.SeaweedFileIdClaims{}
+				if _, err := jwt.ParseWithClaims(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), claims, func(*jwt.Token) (interface{}, error) { return key, nil }); err != nil || claims.Fid != fid {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
+				n, _, _, err := needle.CreateNeedleFromRequest(r, false, 1024*1024, &bytes.Buffer{})
+				if err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				mu.Lock()
+				bodies = append(bodies, n.Data)
+				postedFids = append(postedFids, fid)
+				mu.Unlock()
+				if fid == fids[0] {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = io.WriteString(w, `{"error":"volume unavailable"}`)
+					return
+				}
+				w.Header().Set("Content-MD5", digest)
+				w.WriteHeader(http.StatusCreated)
+				_, _ = io.WriteString(w, `{"size":131072}`)
+			}))
+			defer server.Close()
+			option := &ChunkedUploadOption{ChunkSize: 256 * 1024, Cipher: cipher, MimeType: "application/octet-stream", AssignFunc: func(context.Context, int, uint64) (*VolumeAssignRequest, *AssignResult, error) {
+				fid := fids[assignments.Add(1)-1]
+				encoded, err := jwt.NewWithClaims(jwt.SigningMethodHS256, security.SeaweedFileIdClaims{Fid: fid}).SignedString(key)
+				if err != nil {
+					return nil, nil, err
+				}
+				return nil, &AssignResult{Fid: fid, Url: strings.TrimPrefix(server.URL, "http://"), Auth: security.EncodedJwt(encoded)}, nil
+			}}
+			result, err := uploadReaderInChunks(context.Background(), bytes.NewReader(payload), option, func(data []byte, opt *UploadOption) (*preparedUpload, error) {
+				preparations.Add(1)
+				return prepareUploadData(data, opt)
+			})
+			if err != nil {
+				t.Fatalf("upload after reassignment: %v", err)
+			}
+			if preparations.Load() != 1 || assignments.Load() != 2 {
+				t.Fatalf("preparations=%d assignments=%d, want 1 and 2", preparations.Load(), assignments.Load())
+			}
+			if len(bodies) != 2 || !bytes.Equal(bodies[0], bodies[1]) || postedFids[0] != fids[0] || postedFids[1] != fids[1] {
+				t.Fatalf("posted fids %v; want the same prepared bytes on both assignments", postedFids)
+			}
+			if len(deletedFids) != 1 || deletedFids[0] != fids[0] {
+				t.Fatalf("deleted fids %v, want only the failed %s", deletedFids, fids[0])
+			}
+			if len(result.FileChunks) != 1 || result.FileChunks[0].FileId != fids[1] {
+				t.Fatal("chunk does not name the reassigned fid")
+			}
+			wire := bodies[1]
+			if cipher {
+				if wire, err = util.Decrypt(wire, util.CipherKey(result.FileChunks[0].CipherKey)); err != nil {
+					t.Fatalf("decrypt reassigned chunk: %v", err)
+				}
+			}
+			if decoded, err := util.DecompressData(wire); err != nil || !bytes.Equal(decoded, payload) {
+				t.Fatal("reassigned chunk differs from clear input")
+			}
+		})
+	}
+}
