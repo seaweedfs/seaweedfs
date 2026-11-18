@@ -233,6 +233,82 @@ func TestPeerUnlinkedAliasOpensOriginalAfterNameReused(t *testing.T) {
 	requireClosedLinkOpensAt(t, wfs, inode, "/final")
 }
 
+func TestPeerUnlinkedAliasCanBeCreatedAgain(t *testing.T) {
+	wfs, fake, inode := closedLinkTestFile(t, "final")
+	peerUnlink(t, wfs, fake, "tmp")
+	peerUnlink(t, wfs, fake, "final")
+
+	parent := fuse.InHeader{NodeId: 1}
+	if status := wfs.Lookup(nil, &parent, "tmp", &fuse.EntryOut{}); status != fuse.ENOENT {
+		t.Errorf("lookup vacant name: %v, want ENOENT", status)
+	}
+	wfs.option.DefaultPermissions = true
+	wfs.option.EagerFilerCreate = true
+	var created fuse.CreateOut
+	if status := wfs.Create(nil, &fuse.CreateIn{InHeader: parent, Mode: 0o600}, "tmp", &created); status != fuse.OK {
+		t.Fatalf("create vacant name: %v", status)
+	}
+	defer wfs.ReleaseHandle(FileHandleId(created.Fh))
+	if created.NodeId == inode {
+		t.Fatal("create reused the old node ID")
+	}
+	if status := wfs.Open(nil, &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: inode}}, &fuse.OpenOut{}); status != fuse.ENOENT {
+		t.Fatalf("open old inode: %v, want ENOENT", status)
+	}
+}
+
+func TestPeerUnlinkedAliasCanNameNewHardLinkGroup(t *testing.T) {
+	wfs, fake, inode := closedLinkTestFile(t, "final", "other")
+	wfs.inodeToPath.RemovePath("/other", nil)
+	peerUnlink(t, wfs, fake, "tmp")
+	peerUnlink(t, wfs, fake, "final")
+	fake.mu.Lock()
+	for _, name := range []string{"tmp", "final"} {
+		fake.store(&filer_pb.Entry{
+			Name: name, HardLinkId: []byte("replacement"), HardLinkCounter: 2,
+			Attributes: &filer_pb.FuseAttributes{Inode: inode, FileMode: 0o600},
+		})
+	}
+	fake.mu.Unlock()
+
+	if status := wfs.Open(nil, &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: inode}}, &fuse.OpenOut{}); status != fuse.ENOENT {
+		t.Errorf("open old inode before pathname lookup: %v, want ENOENT", status)
+	}
+	parent := fuse.InHeader{NodeId: 1}
+	var replacement fuse.EntryOut
+	if status := wfs.Lookup(nil, &parent, "tmp", &replacement); status != fuse.OK {
+		t.Fatalf("lookup replacement: %v", status)
+	}
+	if replacement.NodeId == inode {
+		t.Fatal("replacement reused the old node ID")
+	}
+}
+
+func TestPeerUnlinkedAliasRecoversDelayedRenameAfterNameLookup(t *testing.T) {
+	wfs, fake, inode := closedLinkTestFile(t, "final")
+	peerUnlink(t, wfs, fake, "tmp")
+	fake.mu.Lock()
+	oldEntry := fake.resolve("final")
+	fake.records["renamed"] = fake.records["final"]
+	delete(fake.records, "final")
+	newEntry := fake.resolve("renamed")
+	fake.stamp++
+	ts := fake.stamp
+	fake.mu.Unlock()
+
+	if status := wfs.Lookup(nil, &fuse.InHeader{NodeId: 1}, "tmp", &fuse.EntryOut{}); status != fuse.ENOENT {
+		t.Fatalf("lookup vacant name before rename event: %v, want ENOENT", status)
+	}
+	event := &filer_pb.SubscribeMetadataResponse{Directory: "/", TsNs: ts, EventNotification: &filer_pb.EventNotification{
+		OldEntry: oldEntry, NewEntry: newEntry, NewParentPath: "/",
+	}}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), event, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply peer rename: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+	requireClosedLinkOpensAt(t, wfs, inode, "/renamed")
+}
+
 func TestPeerUnlinkedAliasListingWaitsForLookup(t *testing.T) {
 	dir := util.FullPath("/d")
 	wfs := newPagingWFS(t, dir, []string{"tmp", "final"}, 0)

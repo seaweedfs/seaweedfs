@@ -584,9 +584,8 @@ func (wfs *WFS) resolvePeerUnlink(ctx context.Context, inode uint64, name util.F
 		var survivor util.FullPath
 		var survivingEntry *filer_pb.Entry
 		var survivingVersion entryVersion
-		currentID := string(current.GetHardLinkId())
-		if currentID != binding.event.id {
-			sameGroup := false
+		currentMatches := string(current.GetHardLinkId()) == binding.event.id
+		if !currentMatches {
 			for _, sibling := range binding.paths {
 				if sibling == path {
 					continue
@@ -595,29 +594,20 @@ func (wfs *WFS) resolvePeerUnlink(ctx context.Context, inode uint64, name util.F
 				if status != fuse.OK {
 					return path, nil, entryVersion{}, status
 				}
-				id := string(entry.GetHardLinkId())
-				if id == binding.event.id {
+				if string(entry.GetHardLinkId()) == binding.event.id {
 					survivor, survivingEntry, survivingVersion = sibling, entry, version
 					break
 				}
-				sameGroup = sameGroup || (id != "" && id == currentID)
-			}
-			if survivor == "" && !sameGroup {
-				// A delayed rename can still move this inode. Keep its path.
-				if !wfs.inodeToPath.finishPeerUnlink(path, "", binding, false) {
-					continue
-				}
-				if inode == 0 {
-					return path, nil, entryVersion{}, fuse.EAGAIN
-				}
-				return path, nil, entryVersion{}, fuse.ENOENT
 			}
 		}
-		if !wfs.inodeToPath.finishPeerUnlink(path, survivor, binding, true) {
+		if !wfs.inodeToPath.finishPeerUnlink(path, survivor, binding, currentMatches, inode == 0) {
 			continue
 		}
-		if survivor != "" && inode != 0 {
-			return survivor, survivingEntry, survivingVersion, fuse.OK
+		if inode != 0 && !currentMatches {
+			if survivor != "" {
+				return survivor, survivingEntry, survivingVersion, fuse.OK
+			}
+			return path, nil, entryVersion{}, fuse.ENOENT
 		}
 		if current == nil {
 			return path, nil, entryVersion{}, fuse.ENOENT
@@ -977,6 +967,9 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 		listener(invalidation)
 	}
 	wfs.invalidateKernelDirListing(invalidation.Path)
+	if invalidation.RenamedTo != "" && wfs.inodeToPath.restoreDetachedRename(invalidation.Path, invalidation.RenamedTo, invalidation.RenamedHardLinkId) {
+		return
+	}
 	// An inode with an open handle has its rename applied above, together with
 	// the handle's own path bookkeeping. This is for the rest: the kernel goes
 	// on addressing a moved inode by nodeid whether or not anything holds it

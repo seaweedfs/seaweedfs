@@ -17,6 +17,7 @@ type InodeToPath struct {
 	inode2path      map[uint64]*InodeEntry
 	path2inode      map[util.FullPath]uint64
 	peerUnlinks     map[util.FullPath]*peerUnlinkEventRecord // allocated only after a peer unlink with known aliases
+	detachedLinks   map[uint64]peerUnlinkBinding             // old names kept for a delayed rename, outside the live path index
 	// dirStates holds directory-only readdir-cache state, keyed by inode. An
 	// inode is a directory iff it has an entry here, registered at creation.
 	dirStates map[uint64]*dirState
@@ -205,9 +206,12 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 		} else {
 			inode = possibleInode
 		}
-		if !isHardlink {
-			for _, found := i.inode2path[inode]; found; inode++ {
-				_, found = i.inode2path[inode+1]
+		// Detached inodes are still referenced by the kernel. A replacement
+		// must get a free node ID even if its persisted inode matches.
+		detached := i.detachedLinks[inode].event != nil && i.inode2path[inode].path == ""
+		if !isHardlink || detached {
+			for i.inode2path[inode] != nil {
+				inode++
 			}
 		}
 	}
@@ -674,7 +678,7 @@ func (i *InodeToPath) hasPendingPeerUnlink(path util.FullPath) bool {
 
 // finishPeerUnlink applies the result only to the bindings checked on the
 // filer. A nonempty survivor must still be a known alias of the same inode.
-func (i *InodeToPath) finishPeerUnlink(path, survivor util.FullPath, binding peerUnlinkBinding, confirmed bool) bool {
+func (i *InodeToPath) finishPeerUnlink(path, survivor util.FullPath, binding peerUnlinkBinding, currentMatches, byName bool) bool {
 	i.Lock()
 	defer i.Unlock()
 	inode := binding.event.inode
@@ -692,10 +696,57 @@ func (i *InodeToPath) finishPeerUnlink(path, survivor util.FullPath, binding pee
 			extra[0], extra[index] = extra[index], extra[0]
 		}
 		i.removePathLocked(path, nil)
-	} else if confirmed {
+	} else if currentMatches {
 		delete(i.peerUnlinks, path)
+	} else if byName {
+		// The filer checked every known alias and none still names the
+		// original group. Release the names while keeping the old node ID
+		// and enough history for a delayed rename to find it.
+		if i.detachedLinks == nil {
+			i.detachedLinks = make(map[uint64]peerUnlinkBinding)
+		}
+		i.detachedLinks[inode] = binding
+		for _, alias := range binding.paths {
+			i.removePathLocked(alias, nil)
+		}
+		entry.path = ""
+		entry.extraPaths = nil
 	}
 	return true
+}
+
+func (i *InodeToPath) restoreDetachedRename(source, target util.FullPath, hardLinkID []byte) bool {
+	if len(hardLinkID) == 0 {
+		return false
+	}
+	i.Lock()
+	defer i.Unlock()
+	for inode, binding := range i.detachedLinks {
+		if binding.event.id != string(hardLinkID) {
+			continue
+		}
+		index := slices.Index(binding.paths, source)
+		if index < 0 {
+			continue
+		}
+		// A lookup may already have registered the destination. Keep that
+		// binding and never move a replacement now registered at source.
+		if _, found := i.path2inode[target]; !found {
+			i.path2inode[target] = inode
+			i.inode2path[inode].addPath(target)
+			// The rename may itself have been delayed. Check the target's
+			// identity before opening it under the recovered node ID.
+			i.peerUnlinks[target] = binding.event
+		}
+		binding.paths = slices.Delete(binding.paths, index, index+1)
+		if len(binding.paths) == 0 {
+			delete(i.detachedLinks, inode)
+		} else {
+			i.detachedLinks[inode] = binding
+		}
+		return true
+	}
+	return false
 }
 
 func (i *InodeToPath) peerUnlinkPaths(inode uint64) []util.FullPath {
@@ -807,6 +858,7 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onRelease func(inode uint64)
 				}
 			}
 			delete(i.inode2path, inode)
+			delete(i.detachedLinks, inode)
 			i.dropDirPath(inode)
 			delete(i.dirStates, inode)
 		} else {
