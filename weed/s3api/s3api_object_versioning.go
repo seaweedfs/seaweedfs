@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -492,6 +493,26 @@ func (s3a *S3ApiServer) truncateAndSetMarkers(combinedList []versionListItem, ma
 		combinedList = combinedList[:maxKeys]
 	}
 	return combinedList, nextKeyMarker, nextVersionIdMarker, isTruncated
+}
+
+// encodeURL applies encoding-type=url to every key-bearing field, the form
+// ListObjects uses for its keys; clients decode them once.
+func (result *S3ListObjectVersionsResult) encodeURL() {
+	result.EncodingType = s3.EncodingTypeUrl
+	result.Prefix = urlPathEscape(result.Prefix)
+	result.Delimiter = urlPathEscape(result.Delimiter)
+	result.KeyMarker = urlPathEscape(result.KeyMarker)
+	result.NextKeyMarker = urlPathEscape(result.NextKeyMarker)
+	for _, e := range result.Entries {
+		switch {
+		case e.Version != nil:
+			e.Version.Key = urlPathEscape(e.Version.Key)
+		case e.DeleteMarker != nil:
+			e.DeleteMarker.Key = urlPathEscape(e.DeleteMarker.Key)
+		case e.Prefix != nil:
+			e.Prefix.Prefix = urlPathEscape(e.Prefix.Prefix)
+		}
+	}
 }
 
 // splitIntoResult builds the final S3ListObjectVersionsResult from the combined list.
@@ -1991,6 +2012,11 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 	versionIdMarker := query.Get("version-id-marker")
 	delimiter := query.Get("delimiter")
 
+	encodingTypeUrl, errCode := parseEncodingType(query)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 	maxKeys, errCode := parseMaxKeys(query.Get("max-keys"))
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -2007,6 +2033,9 @@ func (s3a *S3ApiServer) ListObjectVersionsHandler(w http.ResponseWriter, r *http
 
 	// Set the original prefix in the response (not the normalized internal prefix)
 	result.Prefix = originalPrefix
+	if encodingTypeUrl {
+		result.encodeURL()
+	}
 
 	glog.V(3).Infof("ListObjectVersionsHandler response: %+v", result)
 	writeSuccessResponseXML(w, r, result)
