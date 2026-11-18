@@ -828,6 +828,12 @@ func (vs *VolumeServer) VolumeEcShardsDelete(ctx context.Context, req *volume_se
 
 	glog.V(0).Infof("ec volume %s shard delete %v", bName, req.ShardIds)
 
+	// A copy's staged shards are invisible to the last-shard check below, so
+	// wait for it rather than remove the index it is about to need.
+	lifecycle := vs.store.EcLifecycleLock(needle.VolumeId(req.VolumeId))
+	lifecycle.Lock()
+	defer lifecycle.Unlock()
+
 	// Pass 1: delete the requested shard files (and any now-orphaned per-disk bitrot
 	// sidecars) on every disk.
 	for diskId, location := range vs.store.Locations {

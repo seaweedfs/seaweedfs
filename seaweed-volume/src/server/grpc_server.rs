@@ -4042,6 +4042,9 @@ impl VolumeServer for VolumeGrpcService {
             ));
         }
 
+        // A copy's staged shards are invisible to the last-shard check, so wait
+        // for it rather than remove the index it is about to need.
+        let _lifecycle = self.state.ec_lifecycle_lock(vid).lock_owned().await;
         let mut store = self.state.store.write().unwrap();
         let mut shard_ids: Vec<ShardId> = Vec::with_capacity(req.shard_ids.len());
         for &sid in &req.shard_ids {

@@ -490,3 +490,44 @@ func TestVolumeEcShardsRebuild_WaitsForInFlightCopy(t *testing.T) {
 		t.Fatal("rebuild did not finish after the copy released the lifecycle lock")
 	}
 }
+
+// A shard delete waits out an in-flight copy of the same volume, whose staged
+// shards the delete's last-shard check cannot see.
+func TestVolumeEcShardsDelete_WaitsForInFlightCopy(t *testing.T) {
+	const collection = "col"
+	vid := needle.VolumeId(67)
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	receiver := newEcCopyReceiver(t, dstDir)
+	dstBase := erasure_coding.EcShardFileName(collection, dstDir, int(vid))
+	writeFile(t, dstBase+".ecx", make([]byte, types.NeedleMapEntrySize))
+	writeFile(t, dstBase+".ec00", bytes.Repeat([]byte{1}, 4096))
+
+	lifecycle := receiver.store.EcLifecycleLock(vid)
+	lifecycle.Lock()
+	done := make(chan error, 1)
+	go func() {
+		_, err := receiver.VolumeEcShardsDelete(context.Background(), &volume_server_pb.VolumeEcShardsDeleteRequest{
+			VolumeId:   uint32(vid),
+			Collection: collection,
+			ShardIds:   []uint32{0},
+		})
+		done <- err
+	}()
+	time.Sleep(200 * time.Millisecond)
+	_, statErr := os.Stat(dstBase + ".ec00")
+	lifecycle.Unlock()
+	if statErr != nil {
+		t.Fatalf("shard deleted while a copy of the same volume held its lifecycle lock: %v", statErr)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("shard delete: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("shard delete did not finish after the copy released the lifecycle lock")
+	}
+	if _, err := os.Stat(dstBase + ".ec00"); !os.IsNotExist(err) {
+		t.Fatalf(".ec00 after the delete: %v, want it removed", err)
+	}
+}
