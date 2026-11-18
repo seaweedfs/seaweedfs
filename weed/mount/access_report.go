@@ -168,8 +168,8 @@ func (wfs *WFS) reportOpenPath(flags uint32, path util.FullPath) {
 
 // touchAccessTime sends one report to the filer this mount uses or, if that
 // filer cannot be reached in time, to the next one, which the mount then
-// keeps using unless another call moved it meanwhile. Any answer,
-// Unimplemented included, ends the walk.
+// keeps using if its selection is still the filer the report started from.
+// Any answer, Unimplemented included, ends the walk.
 func (wfs *WFS) touchAccessTime(ctx context.Context, path util.FullPath, atimeNs int64) error {
 	dir, name := path.DirAndName()
 	req := &filer_pb.TouchAccessTimeRequest{
