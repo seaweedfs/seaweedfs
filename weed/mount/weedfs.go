@@ -128,6 +128,11 @@ type Option struct {
 	// When false (default), directories report nlink=2.
 	PosixDirNlink bool
 
+	// AccessReport reports each open of a file for reading to the filer with
+	// TouchAccessTime, so a filer that tracks access also sees the reads
+	// answered from the metadata cache.
+	AccessReport bool
+
 	uniqueCacheDirForRead  string
 	uniqueCacheDirForWrite string
 }
@@ -156,6 +161,7 @@ type WFS struct {
 	dhMap                 *DirectoryHandleToInode
 	fuseServer            *fuse.Server
 	IsOverQuota           bool
+	accessReporter        *accessReporter // nil unless -accessReport
 	// Handle lock nesting order is defined at FileHandle.entryLock.
 	fhLockTable       *util.LockTable[FileHandleId]
 	hardLinkLockTable *util.LockTable[string]
@@ -297,6 +303,10 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		glog.V(0).Infof("distributed lock manager enabled for mount")
 	} else if option.EnableDistributedLock && option.WritebackCache {
 		glog.V(0).Infof("distributed lock manager disabled: writeback cache implies single-writer mode")
+	}
+
+	if option.AccessReport {
+		wfs.accessReporter = newAccessReporter(wfs.touchAccessTime)
 	}
 
 	wfs.option.filerIndex = int32(rand.IntN(len(option.FilerAddresses)))
