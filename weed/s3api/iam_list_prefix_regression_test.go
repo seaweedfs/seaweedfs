@@ -86,6 +86,50 @@ func TestEvaluateIAMPolicies_ListBucketPrefixCondition(t *testing.T) {
 		"prefix outside the s3:prefix condition must be denied")
 }
 
+// A listing without ?prefix is the empty prefix, so the home-directory policy
+// that grants s3:prefix "" for the root level matches it in attached and
+// bucket policies alike.
+func TestListBucketWithoutPrefixMatchesEmptyPrefix(t *testing.T) {
+	const bucket = "test-bucket"
+	statement := map[string]any{
+		"Effect":   "Allow",
+		"Action":   "s3:ListBucket",
+		"Resource": "arn:aws:s3:::" + bucket,
+		"Condition": map[string]any{"StringEquals": map[string]any{
+			"s3:prefix":    []string{"", "home/"},
+			"s3:delimiter": "/",
+		}},
+	}
+	iam := &IdentityAccessManagement{}
+	require.NoError(t, iam.PutPolicy("home-root", mustPolicy(t, map[string]any{
+		"Version": "2012-10-17", "Statement": []map[string]any{statement},
+	})))
+	identity := &Identity{Name: "carol", Account: &AccountAdmin, PolicyNames: []string{"home-root"}}
+
+	statement["Principal"] = "*"
+	engine := NewBucketPolicyEngine()
+	require.NoError(t, engine.engine.SetBucketPolicy(bucket, mustPolicy(t, map[string]any{
+		"Version": "2012-10-17", "Statement": []map[string]any{statement},
+	})))
+
+	for _, tt := range []struct {
+		query   string
+		allowed bool
+	}{
+		{"list-type=2&delimiter=/", true},
+		{"list-type=2&prefix=&delimiter=/", true},
+		{"list-type=2&prefix=home/&delimiter=/", true},
+		{"list-type=2&prefix=other/&delimiter=/", false},
+		{"list-type=2", false},
+	} {
+		req := httptest.NewRequest("GET", "/"+bucket+"?"+tt.query, nil)
+		require.Equal(t, tt.allowed, iam.evaluateIAMPolicies(req, identity, s3_constants.ACTION_LIST, bucket, ""), "attached policy, %s", tt.query)
+		allowed, evaluated, err := engine.EvaluatePolicy(bucket, "", string(s3_constants.ACTION_LIST), "arn:aws:iam::000000000000:user/carol", req, nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, tt.allowed, evaluated && allowed, "bucket policy, %s", tt.query)
+	}
+}
+
 // Listing variants keep their specific action even when a prefix is promoted
 // into object: ?versions resolves to s3:ListBucketVersions, not s3:ListBucket.
 func TestEvaluateIAMPolicies_ListBucketVersionsWithPrefix(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -139,4 +140,33 @@ func TestRouteQueryKeysAreClassified(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+}
+
+// mux matches Queries() on the raw query, splitting pairs on ';', before any
+// router middleware runs, while handlers and the IAM resolver read the escaped
+// query. The server escapes ahead of the router so both see one operation.
+func TestSemicolonQueryRoutesAsAuthorized(t *testing.T) {
+	router := mux.NewRouter().SkipClean(true)
+	setupRoutingTestServer(t).registerRouter(router)
+	match := func(r *http.Request) *mux.Route {
+		var m mux.RouteMatch
+		require.True(t, router.Match(r, &m))
+		return m.Route
+	}
+	raw := func(query string) *mux.Route {
+		return match(httptest.NewRequest(http.MethodGet, "/bucket?"+query, nil))
+	}
+	escaped := func(query string) (route *mux.Route) {
+		util_http.EscapeSemicolonsInQuery(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.False(t, r.URL.Query().Has("uploads"))
+			route = match(r)
+		})).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/bucket?"+query, nil))
+		return route
+	}
+
+	uploads, listing := raw("uploads"), raw("x=1")
+	require.NotSame(t, uploads, listing)
+	assert.Same(t, uploads, raw("uploads;x=1"), "unescaped, mux reads the ';' pair as uploads")
+	assert.Same(t, listing, escaped("uploads;x=1"))
+	assert.Same(t, listing, escaped("x=1;uploads"))
 }
