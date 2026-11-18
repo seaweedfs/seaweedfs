@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -170,8 +171,8 @@ func TestVolumeEcShardsCopy_FailedShardRemovesCopiedShards(t *testing.T) {
 		CopyEcxFile:    true,
 		SourceDataNode: source,
 	})
-	if err == nil {
-		t.Fatalf("VolumeEcShardsCopy succeeded although shard 1 is missing on the source")
+	if err == nil || !strings.Contains(err.Error(), ".ec01") {
+		t.Fatalf("VolumeEcShardsCopy error = %v, want the .ec01 transfer to fail", err)
 	}
 	if after := listDir(t, dstDir); strings.Join(after, ",") != strings.Join(before, ",") {
 		t.Fatalf("destination files after failed copy = %v, want %v", after, before)
@@ -284,8 +285,8 @@ func TestVolumeEcShardsCopy_DuplicateShardIdCopiedOnce(t *testing.T) {
 // A copy failing after the .vif transferred keeps the existing holder's .vif,
 // which must stay paired with the index the failed copy left in place.
 func TestVolumeEcShardsCopy_FailedSidecarKeepsExistingVif(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads a mode-000 file, so the sidecar transfer cannot be made to fail")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("root and Windows read a mode-000 file, so the sidecar transfer cannot be made to fail")
 	}
 	const collection = "col"
 	vid := needle.VolumeId(60)
@@ -310,7 +311,7 @@ func TestVolumeEcShardsCopy_FailedSidecarKeepsExistingVif(t *testing.T) {
 	writeFile(t, dstBase+".vif", vif)
 	before := listDir(t, dstDir)
 
-	if _, err := receiver.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
+	_, err := receiver.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
 		VolumeId:       uint32(vid),
 		Collection:     collection,
 		ShardIds:       []uint32{0},
@@ -318,8 +319,9 @@ func TestVolumeEcShardsCopy_FailedSidecarKeepsExistingVif(t *testing.T) {
 		CopyVifFile:    true,
 		CopyEcsumFile:  true,
 		SourceDataNode: source,
-	}); err == nil {
-		t.Fatalf("VolumeEcShardsCopy succeeded although the source .ecsum is unreadable")
+	})
+	if err == nil || !strings.Contains(err.Error(), "copy "+erasure_coding.BitrotSidecarExt+" sidecar") {
+		t.Fatalf("VolumeEcShardsCopy error = %v, want the %s transfer to fail", err, erasure_coding.BitrotSidecarExt)
 	}
 	if after := listDir(t, dstDir); strings.Join(after, ",") != strings.Join(before, ",") {
 		t.Fatalf("destination files after failed copy = %v, want %v", after, before)

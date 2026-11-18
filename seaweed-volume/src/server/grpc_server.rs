@@ -10191,15 +10191,17 @@ mod tests {
 
         // Shard 0 copies, shard 5 replaces the existing holder's copy, shard 1 is
         // held here but missing on the source and fails the request.
-        dest.volume_ec_shards_copy(Request::new(volume_server_pb::VolumeEcShardsCopyRequest {
-            volume_id: 58,
-            shard_ids: vec![0, 5, 1],
-            copy_ecx_file: true,
-            source_data_node: format!("127.0.0.1:1.{}", port),
-            ..Default::default()
-        }))
-        .await
-        .expect_err("shard 1 is missing on the source");
+        let err = dest
+            .volume_ec_shards_copy(Request::new(volume_server_pb::VolumeEcShardsCopyRequest {
+                volume_id: 58,
+                shard_ids: vec![0, 5, 1],
+                copy_ecx_file: true,
+                source_data_node: format!("127.0.0.1:1.{}", port),
+                ..Default::default()
+            }))
+            .await
+            .expect_err("shard 1 is missing on the source");
+        assert!(err.message().contains(".ec01"), "{}", err);
         assert_eq!(sorted_dir_names(&dir), before);
         assert_eq!(std::fs::read(format!("{}/58.ecx", dir)).unwrap(), ecx);
         assert_eq!(std::fs::read(format!("{}/58.ec05", dir)).unwrap(), ec05);
@@ -10327,17 +10329,19 @@ mod tests {
         std::fs::write(format!("{}/60.vif", dir), &vif).unwrap();
         let before = sorted_dir_names(&dir);
 
-        dest.volume_ec_shards_copy(Request::new(volume_server_pb::VolumeEcShardsCopyRequest {
-            volume_id: 60,
-            shard_ids: vec![0],
-            copy_ecx_file: true,
-            copy_vif_file: true,
-            copy_ecsum_file: true,
-            source_data_node: format!("127.0.0.1:1.{}", port),
-            ..Default::default()
-        }))
-        .await
-        .expect_err("the source .ecsum is unreadable");
+        let err = dest
+            .volume_ec_shards_copy(Request::new(volume_server_pb::VolumeEcShardsCopyRequest {
+                volume_id: 60,
+                shard_ids: vec![0],
+                copy_ecx_file: true,
+                copy_vif_file: true,
+                copy_ecsum_file: true,
+                source_data_node: format!("127.0.0.1:1.{}", port),
+                ..Default::default()
+            }))
+            .await
+            .expect_err("the source .ecsum is unreadable");
+        assert!(err.message().contains(".ecsum"), "{}", err);
         assert_eq!(sorted_dir_names(&dir), before);
         assert_eq!(std::fs::read(format!("{}/60.vif", dir)).unwrap(), vif);
         assert_eq!(std::fs::read(format!("{}/60.ecx", dir)).unwrap(), ecx);
