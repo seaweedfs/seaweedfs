@@ -71,6 +71,10 @@ func (pages *ChunkedDirtyPages) HasWrites() bool {
 	return pages.hasWrites
 }
 
+func (pages *ChunkedDirtyPages) HasPendingUploads() bool {
+	return pages.hasWrites && pages.uploadPipeline.HasPendingUploads()
+}
+
 func (pages *ChunkedDirtyPages) FlushData() error {
 	if !pages.hasWrites {
 		return nil

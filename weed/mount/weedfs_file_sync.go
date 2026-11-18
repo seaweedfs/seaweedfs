@@ -226,7 +226,7 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 	if err := retryMetadataFlushIf(ctx, func() error {
 		return wfs.flushMetadataToFiler(ctx, fh, dir, name, uid, gid, commit, publication)
 	}, func(err error) bool {
-		return !commit.spent() && isRetryableFilerError(err)
+		return !commit.spent() && !isPageUploadError(err) && isRetryableFilerError(err)
 	}, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
 		glog.Warningf("%v fh %d flush: retrying metadata flush (attempt %d/%d) after %v: %v",
 			fileFullPath, fh.fh, nextAttempt, totalAttempts, backoff, err)
@@ -235,7 +235,7 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 			publication.retire(err)
 		}
 		glog.Errorf("%v fh %d flush: %v", fileFullPath, fh.fh, err)
-		return grpcErrorToFuseStatus(err)
+		return flushErrorToFuseStatus(err)
 	}
 
 	if IsDebugFileReadWrite {
@@ -243,6 +243,28 @@ func (wfs *WFS) doFlush(ctx context.Context, fh *FileHandle, uid, gid uint32, al
 	}
 
 	return fuse.OK
+}
+
+// pageUploadError is a page upload failure a metadata flush found before it
+// published anything. doFlush reports it as a write error, as it does when its
+// own FlushData fails, instead of retrying it as a filer error.
+type pageUploadError struct{ err error }
+
+func (e *pageUploadError) Error() string { return e.err.Error() }
+func (e *pageUploadError) Unwrap() error { return e.err }
+
+func isPageUploadError(err error) bool {
+	var upload *pageUploadError
+	return errors.As(err, &upload)
+}
+
+// flushErrorToFuseStatus maps a failed metadata flush to a FUSE status.
+func flushErrorToFuseStatus(err error) fuse.Status {
+	var upload *pageUploadError
+	if errors.As(err, &upload) {
+		return writeErrorToFuseStatus(upload.err)
+	}
+	return grpcErrorToFuseStatus(err)
 }
 
 // flushMetadataToFiler sends the file's chunk references and attributes to the filer.
@@ -320,19 +342,48 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 
 	glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.GetChunks()))
 
-	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.GetChunks())
+	snapshot := entry.GetChunks()
+	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(snapshot)
 
 	chunks, _, err := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
 	if err != nil {
 		return fmt.Errorf("compact chunks of %s: %w", fileFullPath, err)
 	}
 
-	if mergedChunks, mergeErr := wfs.maybeMergeChunks(fileFullPath, chunks, manifestChunks); mergeErr != nil {
+	deferMerge := false
+	if _, _, bloated := shouldMergeChunks(chunks, manifestChunks); bloated {
+		// The merge replaces every chunk it reads. Uploads attach their chunks
+		// without the handle lock, and writes that landed after doFlush drained
+		// the pages may still be uploading. A writeback upload retries until
+		// storage recovers, so leave the merge to a later flush rather than
+		// wait for it under these locks. With none pending, the lock holds
+		// writes off and nothing attaches during the merge: take the chunks
+		// again. A failed upload fails the flush as a write error, before
+		// anything claims the bytes it did not store.
+		if fh.dirtyPages.HasPendingUploads() {
+			deferMerge = true
+		} else {
+			if err := fh.dirtyPages.FlushData(); err != nil {
+				return &pageUploadError{err: err}
+			}
+			snapshot = entry.GetChunks()
+			manifestChunks, nonManifestChunks = filer.SeparateManifestChunks(snapshot)
+			if chunks, _, err = filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks); err != nil {
+				return fmt.Errorf("compact chunks of %s: %w", fileFullPath, err)
+			}
+		}
+	}
+
+	rewrote := false
+	if deferMerge {
+		glog.V(3).Infof("%s: uploads pending, leaving the chunk merge to a later flush", fileFullPath)
+	} else if mergedChunks, mergeErr := wfs.maybeMergeChunks(fileFullPath, chunks, manifestChunks); mergeErr != nil {
 		glog.V(0).Infof("maybeMergeChunks %s: %v", fileFullPath, mergeErr)
 	} else if mergedChunks != nil {
 		chunks = mergedChunks
 		manifestChunks = nil
 		fh.noteRewrite()
+		rewrote = true
 	}
 
 	// no chunk deleter here: a failed fold reports the blobs it saved
@@ -341,13 +392,21 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		// not good, but should be ok
 		glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
 	}
-	entry.Chunks = append(chunks, manifestChunks...)
+	if rewrote {
+		fh.installRewrittenChunks(snapshot, append(chunks, manifestChunks...))
+	} else {
+		fh.UpdateEntry(func(e *filer_pb.Entry) {
+			e.Chunks = withChunksAttachedSince(snapshot, append(chunks, manifestChunks...), e.Chunks)
+		})
+	}
 
 	// Clone the proto entry for the filer request so that mapPbIdFromLocalToFiler
 	// does not mutate the file handle's live entry. Without the clone, a concurrent
 	// Lookup can observe filer-side uid/gid on the file handle entry and return it
 	// to the kernel, which caches it and then rejects opens by the local user.
-	requestEntry := proto.Clone(entry.GetEntry()).(*filer_pb.Entry)
+	// Uploads attach chunks without the handle lock, so clone under the entry lock.
+	var requestEntry *filer_pb.Entry
+	fh.UpdateEntry(func(e *filer_pb.Entry) { requestEntry = proto.Clone(e).(*filer_pb.Entry) })
 	request := &filer_pb.CreateEntryRequest{
 		Directory:                string(dir),
 		Entry:                    requestEntry,
@@ -362,8 +421,11 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 
 	// The chunk merge and the manifest above read and upload chunks, which can
 	// take longer than the whole commit budget. It is charged only from here.
+	// Writes that landed before the lock may still be uploading, so a merge onto a
+	// moved entry must keep room for them.
+	buffered := fh.dirtyPages.HasPendingUploads()
 	commitCtx, end := commit.begin(ctx)
-	resp, merged, err := wfs.createContentEntry(commitCtx, fh, request, baseSnapshot, false, publication)
+	resp, merged, err := wfs.createContentEntry(commitCtx, fh, request, baseSnapshot, buffered, publication)
 	end()
 	if err != nil {
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
