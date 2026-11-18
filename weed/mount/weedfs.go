@@ -1048,12 +1048,9 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	// hit there is a stale leftover — use the event entry instead.
 	var candidate *filer_pb.Entry
 	candidateTsNs := eventTsNs
-	dir, _ := filePath.DirAndName()
-	if wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
-		if storeEntry, storeVersionTsNs, findErr := wfs.metaCache.FindEntry(context.Background(), filePath); findErr == nil && storeEntry != nil && storeVersionTsNs >= eventTsNs {
-			candidate = storeEntry.ToProtoEntry()
-			candidateTsNs = storeVersionTsNs
-		}
+	if storeEntry, storeVersionTsNs, found := wfs.cachedEntrySince(filePath, eventTsNs); found {
+		candidate = storeEntry.ToProtoEntry()
+		candidateTsNs = storeVersionTsNs
 	}
 	if candidate == nil && eventEntry != nil {
 		candidate = proto.Clone(eventEntry).(*filer_pb.Entry)
@@ -1120,6 +1117,20 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	fh.baseEntry.Store(proto.Clone(candidate).(*filer_pb.Entry))
 	fh.advanceEntryVersion(candidateTsNs, 0)
 	return
+}
+
+// cachedEntrySince returns the meta cache's entry at path when its directory is
+// cached and the entry is no older than tsNs.
+func (wfs *WFS) cachedEntrySince(path util.FullPath, tsNs int64) (*filer.Entry, int64, bool) {
+	dir, _ := path.DirAndName()
+	if !wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
+		return nil, 0, false
+	}
+	entry, versionTsNs, err := wfs.metaCache.FindEntry(context.Background(), path)
+	if err != nil || entry == nil || versionTsNs < tsNs {
+		return nil, 0, false
+	}
+	return entry, versionTsNs, true
 }
 
 // followSurvivingLink drops a hard link name another client deleted and
