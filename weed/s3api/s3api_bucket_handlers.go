@@ -1529,10 +1529,12 @@ func (s3a *S3ApiServer) DeleteBucketOwnershipControls(w http.ResponseWriter, r *
 		return
 	}
 
-	delete(bucketEntry.Extended, s3_constants.ExtOwnershipKey)
-	err = s3a.updateEntry(s3a.option.BucketsPath, bucketEntry)
-	if err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+	if errCode := s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
+		config.Ownership = ""
+		config.OwnershipDeleted = true
+		return nil
+	}); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 

@@ -68,7 +68,14 @@ func TestBucketOwnershipControlsLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, types.ObjectOwnershipBucketOwnerEnforced, getObjectOwnership(t, client, bucketName))
+	_, err = client.GetBucketOwnershipControls(context.TODO(), &s3.GetBucketOwnershipControlsInput{
+		Bucket: aws.String(bucketName),
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "OwnershipControlsNotFoundError")
+
+	putObjectOwnership(t, client, bucketName, types.ObjectOwnershipBucketOwnerPreferred)
+	assert.Equal(t, types.ObjectOwnershipBucketOwnerPreferred, getObjectOwnership(t, client, bucketName))
 }
 
 // A bucket with nothing stored already reports BucketOwnerEnforced, so this put has

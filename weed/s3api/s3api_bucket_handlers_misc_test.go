@@ -207,6 +207,55 @@ func TestGetBucketOwnershipControlsDefaultsToBucketOwnerEnforced(t *testing.T) {
 	}
 }
 
+func TestGetBucketOwnershipControlsAfterDelete(t *testing.T) {
+	ownerID := AccountAdmin.Id
+	s3a := newMiscTestServer(t, "b")
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b", OwnershipDeleted: true})
+	s3a.bucketRegistry = NewBucketRegistry(nil)
+	s3a.bucketRegistry.setMetadataCache(&BucketMetaData{
+		Name:  "b",
+		Owner: &s3.Owner{ID: &ownerID},
+	})
+	req := newBucketRequest(http.MethodGet, "b", "ownershipControls=", "")
+	req.Header.Set(s3_constants.AmzAccountId, AccountAdmin.Id)
+	req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), &Identity{
+		Name:    "admin",
+		Account: &AccountAdmin,
+		Actions: []Action{s3_constants.ACTION_ADMIN},
+	}))
+	rec := httptest.NewRecorder()
+
+	s3a.GetBucketOwnershipControls(rec, req)
+
+	if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "OwnershipControlsNotFoundError") {
+		t.Fatalf("status = %d, body=%s, want 404 OwnershipControlsNotFoundError", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBucketConfigOwnershipDeletedRoundTrip(t *testing.T) {
+	s3a := &S3ApiServer{}
+	ext := map[string][]byte{s3_constants.ExtOwnershipKey: []byte(s3_constants.OwnershipObjectWriter)}
+
+	deleted := &BucketConfig{OwnershipDeleted: true}
+	if err := applyBucketConfigToExtended(deleted, ext); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ext[s3_constants.ExtOwnershipKey]; ok {
+		t.Fatalf("ownership still stored after delete: %v", ext)
+	}
+	if got := s3a.newBucketConfigFromEntry("b", &filer_pb.Entry{Extended: ext}); !got.OwnershipDeleted || got.Ownership != "" {
+		t.Fatalf("reloaded config = %+v, want deleted ownership", got)
+	}
+
+	put := &BucketConfig{Ownership: s3_constants.OwnershipBucketOwnerEnforced, OwnershipDeleted: true}
+	if err := applyBucketConfigToExtended(put, ext); err != nil {
+		t.Fatal(err)
+	}
+	if got := s3a.newBucketConfigFromEntry("b", &filer_pb.Entry{Extended: ext}); got.OwnershipDeleted || got.Ownership != s3_constants.OwnershipBucketOwnerEnforced {
+		t.Fatalf("reloaded config = %+v, want stored BucketOwnerEnforced", got)
+	}
+}
+
 func TestGetBucketAccelerateConfiguration(t *testing.T) {
 	s3a := newMiscTestServer(t, "b")
 	req := newBucketRequest(http.MethodGet, "b", "accelerate=", "")
