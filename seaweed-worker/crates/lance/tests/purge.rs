@@ -228,3 +228,56 @@ async fn purge_refuses_while_a_tag_pins_old_data() {
     dataset.checkout_latest().await.unwrap();
     assert_eq!(purge::pending(dataset.config()), Some(token));
 }
+
+/// A retrain builds every index name over the whole table, so shards of one
+/// vector index would end up overlapping: the purge refuses before touching
+/// the table and leaves the request pending.
+#[tokio::test]
+async fn purge_refuses_a_sharded_vector_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = dir.path().join("index.lance");
+    let uri = uri.to_str().unwrap();
+    let (schema, batch) = batch();
+    let params = lance::dataset::WriteParams {
+        max_rows_per_file: ROWS / 2,
+        ..Default::default()
+    };
+    let mut dataset = Dataset::write(
+        RecordBatchIterator::new(vec![Ok(batch)], schema),
+        uri,
+        Some(params),
+    )
+    .await
+    .unwrap();
+    let fragments: Vec<u32> = dataset
+        .get_fragments()
+        .iter()
+        .map(|f| f.id() as u32)
+        .collect();
+    assert_eq!(fragments.len(), 2);
+    for (shard, fragment) in fragments.iter().enumerate() {
+        dataset
+            .create_index_builder(
+                &["vector"],
+                IndexType::Vector,
+                &VectorIndexParams::ivf_flat(2, DistanceType::L2),
+            )
+            .name(format!("shard-{shard}"))
+            .fragments(vec![*fragment])
+            .await
+            .unwrap();
+        dataset.checkout_latest().await.unwrap();
+    }
+    dataset
+        .delete(&format!("key = '{KEY_MARKER}'"))
+        .await
+        .unwrap();
+    let token = purge::request_purge(&mut dataset).await.unwrap();
+    let version = dataset.version().version;
+
+    let err = purge::purge(&mut dataset, &token).await.unwrap_err();
+    assert!(format!("{err:#}").contains("sharded"), "{err:#}");
+    dataset.checkout_latest().await.unwrap();
+    assert_eq!(dataset.version().version, version, "the table was changed");
+    assert_eq!(purge::pending(dataset.config()), Some(token));
+}

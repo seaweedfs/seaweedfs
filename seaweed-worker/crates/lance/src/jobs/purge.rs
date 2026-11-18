@@ -12,15 +12,16 @@
 //!   writes the current time); a purge is pending while it differs from
 //!   `seaweedfs.purge.completed`, which the purge sets to the token it served.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use lance::Dataset;
 use lance::dataset::cleanup::{CleanupPolicy, cleanup_old_versions};
 use lance::dataset::optimize::{CompactionOptions, compact_files};
 use lance::index::DatasetIndexExt;
 use lance_index::optimize::OptimizeOptions;
+use lance_table::format::IndexMetadata;
 use tracing::warn;
 
 pub const RETAIN_HOURS_KEY: &str = "seaweedfs.cleanup.retain_hours";
@@ -101,6 +102,7 @@ pub struct PurgeStats {
 /// query lease, or one someone named) still holds the deleted rows, so the
 /// purge fails without marking the request served and the next run retries.
 pub async fn purge(dataset: &mut Dataset, token: &str) -> Result<PurgeStats> {
+    let vector_indices = vector_index_names(dataset).await?;
     let options = CompactionOptions {
         materialize_deletions: true,
         // Zero materializes every fragment with any deletion.
@@ -111,9 +113,11 @@ pub async fn purge(dataset: &mut Dataset, token: &str) -> Result<PurgeStats> {
         .await
         .context("rewrite fragments with deletions")?;
     dataset.checkout_latest().await?;
-    if !dataset.load_indices().await?.is_empty() {
+    if !vector_indices.is_empty() {
+        let mut options = OptimizeOptions::retrain();
+        options.index_names = Some(vector_indices);
         dataset
-            .optimize_indices(&OptimizeOptions::retrain())
+            .optimize_indices(&options)
             .await
             .context("rebuild indices without the deleted rows")?;
     }
@@ -138,6 +142,41 @@ pub async fn purge(dataset: &mut Dataset, token: &str) -> Result<PurgeStats> {
         old_versions: cleanup.old_versions,
         bytes_removed: cleanup.bytes_removed,
     })
+}
+
+/// Names of the vector indices. A retrain builds each name over the whole
+/// table, so a column whose index is sharded over several names is refused:
+/// its shards would overlap.
+async fn vector_index_names(dataset: &Dataset) -> Result<Vec<String>> {
+    let mut by_column: BTreeMap<Vec<i32>, BTreeSet<String>> = BTreeMap::new();
+    for index in dataset
+        .load_indices()
+        .await?
+        .iter()
+        .filter(|i| is_vector(i))
+    {
+        by_column
+            .entry(index.fields.clone())
+            .or_default()
+            .insert(index.name.clone());
+    }
+    let mut names = Vec::new();
+    for shards in by_column.into_values() {
+        if shards.len() > 1 {
+            bail!(
+                "the vector index is sharded over {shards:?}; a purge would rebuild each over the whole table"
+            );
+        }
+        names.extend(shards);
+    }
+    Ok(names)
+}
+
+fn is_vector(index: &IndexMetadata) -> bool {
+    index
+        .index_details
+        .as_ref()
+        .is_some_and(|details| details.type_url.ends_with("VectorIndexDetails"))
 }
 
 #[cfg(test)]
