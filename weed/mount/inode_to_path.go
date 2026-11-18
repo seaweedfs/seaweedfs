@@ -615,6 +615,19 @@ func (i *InodeToPath) AddPath(inode uint64, path util.FullPath) {
 func (i *InodeToPath) RemovePath(path util.FullPath, onStillReferenced func(inode uint64)) {
 	i.Lock()
 	defer i.Unlock()
+	i.removePathLocked(path, onStillReferenced)
+}
+
+// removePathIfInode ignores a stale event after another inode takes the name.
+func (i *InodeToPath) removePathIfInode(path util.FullPath, inode uint64) {
+	i.Lock()
+	defer i.Unlock()
+	if i.path2inode[path] == inode {
+		i.removePathLocked(path, nil)
+	}
+}
+
+func (i *InodeToPath) removePathLocked(path util.FullPath, onStillReferenced func(inode uint64)) {
 	inode, found := i.path2inode[path]
 	if found {
 		delete(i.path2inode, path)

@@ -151,3 +151,33 @@ func TestPeerUnlinkedAliasKeepsPeriodicFlushPublishing(t *testing.T) {
 		t.Fatal("the periodic flush recreated tmp")
 	}
 }
+
+// A peer unlink rotates the preferred name even when the mount has no open
+// handle. A subsequent Open by inode then finds the surviving name.
+func TestPeerUnlinkedAliasKeepsClosedInodeReadable(t *testing.T) {
+	wfs, fake, fh, inode := openLinkTestFile(t)
+	linkInRoot(t, wfs, inode, "final")
+	wfs.fhMap.ReleaseByHandle(fh.fh)
+	peerUnlink(t, wfs, fake, "tmp")
+	if path, status := wfs.inodeToPath.GetPath(inode); status != fuse.OK || path != "/final" {
+		t.Fatalf("surviving inode resolved to %q (%v), want /final", path, status)
+	}
+	wfs.openMtimeCache = make(map[uint64][2]int64)
+	var opened fuse.OpenOut
+	if status := wfs.Open(nil, &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: inode}}, &opened); status != fuse.OK {
+		t.Fatalf("open survivor: %v", status)
+	}
+	wfs.ReleaseHandle(FileHandleId(opened.Fh))
+}
+
+func TestPeerUnlinkedAliasLeavesReplacementInode(t *testing.T) {
+	wfs, fake, fh, inode := openLinkTestFile(t)
+	linkInRoot(t, wfs, inode, "final")
+	wfs.fhMap.ReleaseByHandle(fh.fh)
+	wfs.inodeToPath.RemovePath("/tmp", nil)
+	replacement := wfs.inodeToPath.Lookup("/tmp", 2, false, false, 43, true)
+	peerUnlink(t, wfs, fake, "tmp")
+	if got, found := wfs.inodeToPath.GetInode("/tmp"); !found || got != replacement {
+		t.Fatalf("replacement inode = %d (%t), want %d", got, found, replacement)
+	}
+}

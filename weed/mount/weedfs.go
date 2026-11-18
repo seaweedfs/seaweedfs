@@ -902,8 +902,14 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 	// on addressing a moved inode by nodeid whether or not anything holds it
 	// open.
 	handled, replacedInode := wfs.invalidateOpenFileHandle(invalidation)
-	if !handled && invalidation.RenamedTo != "" {
-		_, replacedInode = wfs.inodeToPath.MovePath(invalidation.Path, invalidation.RenamedTo)
+	if !handled {
+		if invalidation.RenamedTo != "" {
+			_, replacedInode = wfs.inodeToPath.MovePath(invalidation.Path, invalidation.RenamedTo)
+		} else if invalidation.UnlinkedHardLinkInode != 0 {
+			// A closed inode can still have kernel lookup references. Drop the
+			// deleted name so a later open resolves through a surviving link.
+			wfs.inodeToPath.removePathIfInode(invalidation.Path, invalidation.UnlinkedHardLinkInode)
+		}
 	}
 	// A rename over an existing file destroys it, so its handle must not flush
 	// the old content back over what took the name. Marked from here, holding
