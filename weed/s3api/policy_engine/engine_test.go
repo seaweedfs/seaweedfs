@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -416,6 +417,22 @@ func TestExtractConditionValuesFromRequest(t *testing.T) {
 	// Check that aws:RequestTime is still available for backward compatibility
 	if len(values["aws:RequestTime"]) != 1 {
 		t.Errorf("Expected aws:RequestTime to be set for backward compatibility, got %v", values["aws:RequestTime"])
+	}
+}
+
+func TestExtractConditionValuesFromRequestMaxKeys(t *testing.T) {
+	for _, tt := range []struct {
+		query string
+		want  []string
+	}{
+		{"list-type=2&max-keys=5", []string{"5"}},
+		{"versions&max-keys=5", []string{"5"}},
+		{"uploads&max-uploads=1000&max-keys=5", nil},
+	} {
+		req := &http.Request{Method: "GET", URL: &url.URL{Path: "/test-bucket", RawQuery: tt.query}, RemoteAddr: "10.0.0.5:54321"}
+		if got := NewPolicyEngine().ExtractConditionValuesFromRequest(req)["s3:max-keys"]; !slices.Equal(got, tt.want) {
+			t.Errorf("%s: s3:max-keys = %v, want %v", tt.query, got, tt.want)
+		}
 	}
 }
 
