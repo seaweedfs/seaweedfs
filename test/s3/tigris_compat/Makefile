@@ -122,7 +122,8 @@ run-suite: build-suite
 test-with-server:
 	@$(MAKE) start-server || exit $$?; \
 	$(MAKE) run-suite; TEST_RESULT=$$?; \
-	$(MAKE) stop-server; exit $$TEST_RESULT
+	$(MAKE) stop-server; STOP_RESULT=$$?; \
+	if [ $$TEST_RESULT -ne 0 ]; then exit $$TEST_RESULT; fi; exit $$STOP_RESULT
 
 logs:
 	@test -f weed-test.log && tail -100 weed-test.log || echo "No log file found"
