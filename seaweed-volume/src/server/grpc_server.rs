@@ -4082,7 +4082,10 @@ impl VolumeServer for VolumeGrpcService {
         // Mount one shard at a time, returning error on first failure.
         // Matches Go: for _, shardId := range req.ShardIds { err = vs.store.MountEcShards(...) }
         // A failed shard stops the batch, but the shards mounted before it still
-        // get the sidecar reload and the heartbeat notify below.
+        // get the sidecar reload and the heartbeat notify below. Like Go's
+        // MountEcShards, wait out an in-flight copy, whose failure cleanup would
+        // remove a shard mounted meanwhile.
+        let _lifecycle = self.state.ec_lifecycle_lock(vid).lock_owned().await;
         let mut store = self.state.store.write().unwrap();
         let mut mount_err = None;
         for &shard_id in &validated {
@@ -10384,6 +10387,35 @@ mod tests {
         let _lifecycle = state.ec_lifecycle_lock(VolumeId(61)).lock_owned().await;
         assert_eq!(std::fs::metadata(&ec00).unwrap().len(), shard_len);
         assert!(std::path::Path::new(&format!("{}/61.ecx", dir)).exists());
+    }
+
+    // A mount waits out an in-flight copy of the same volume, whose failure
+    // cleanup would remove a shard mounted meanwhile.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_shards_mount_waits_for_in_flight_copy() {
+        let (dest, _dest_tmp, _dir) = ec_copy_destination().await;
+        let lifecycle = dest.state.ec_lifecycle_lock(VolumeId(63)).lock_owned().await;
+        let mut mount = tokio::spawn(async move {
+            dest.volume_ec_shards_mount(Request::new(volume_server_pb::VolumeEcShardsMountRequest {
+                volume_id: 63,
+                collection: "col".to_string(),
+                shard_ids: vec![0],
+                ..Default::default()
+            }))
+            .await
+        });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), &mut mount)
+                .await
+                .is_err(),
+            "mount ran while a copy of the same volume held its lifecycle lock"
+        );
+        drop(lifecycle);
+        tokio::time::timeout(std::time::Duration::from_secs(10), mount)
+            .await
+            .expect("mount did not finish after the copy released the lifecycle lock")
+            .unwrap()
+            .ok();
     }
 
     // The transfer itself must notice a caller that has gone, with no progress

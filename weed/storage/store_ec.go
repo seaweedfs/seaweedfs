@@ -253,6 +253,14 @@ func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 }
 
 func (s *Store) MountEcShards(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, sourceDiskType string) error {
+	// Serialize against full teardown and the other canonical-EC-file writers for
+	// this vid (which all hold the per-vid lifecycle lock) so a fresh generation
+	// cannot be installed while a teardown is path-wiping this vid's files — otherwise
+	// the identity-blind wipe could clobber the freshly mounted shards.
+	lifecycle := s.EcLifecycleLock(vid)
+	lifecycle.Lock()
+	defer lifecycle.Unlock()
+
 	ownersBefore := s.EcShardOwnerDisks(vid, []erasure_coding.ShardId{shardId})
 	ecVolume, diskId, err := s.LoadEcShardAcrossDisks(collection, vid, shardId)
 	if err != nil {

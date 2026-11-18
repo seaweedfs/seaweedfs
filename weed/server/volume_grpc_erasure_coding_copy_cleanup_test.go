@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -328,5 +329,35 @@ func TestVolumeEcShardsCopy_FailedSidecarKeepsExistingVif(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(dstBase + ".ecx"); !bytes.Equal(got, ecx) {
 		t.Errorf("pre-existing .ecx changed")
+	}
+}
+
+// A mount waits out an in-flight copy of the same volume, whose failure cleanup
+// would remove a shard mounted meanwhile.
+func TestVolumeEcShardsMount_WaitsForInFlightCopy(t *testing.T) {
+	vid := needle.VolumeId(63)
+	receiver := newEcCopyReceiver(t, filepath.Join(t.TempDir(), "dst"))
+	lifecycle := receiver.store.EcLifecycleLock(vid)
+	lifecycle.Lock()
+	mounted := make(chan struct{})
+	go func() {
+		defer close(mounted)
+		_, _ = receiver.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
+			VolumeId:   uint32(vid),
+			Collection: "col",
+			ShardIds:   []uint32{0},
+		})
+	}()
+	select {
+	case <-mounted:
+		lifecycle.Unlock()
+		t.Fatal("mount ran while a copy of the same volume held its lifecycle lock")
+	case <-time.After(200 * time.Millisecond):
+	}
+	lifecycle.Unlock()
+	select {
+	case <-mounted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("mount did not finish after the copy released the lifecycle lock")
 	}
 }
