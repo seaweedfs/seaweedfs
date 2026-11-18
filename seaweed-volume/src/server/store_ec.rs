@@ -2397,7 +2397,7 @@ pub(crate) async fn recover_missing_ec_indexes(
             .unwrap()
             .collect_ec_volumes_missing_index_only(Some(m.vid))
             .into_iter()
-            .find(|x| x.vid == m.vid);
+            .find(|x| x.vid == m.vid && x.collection == m.collection);
         // A copy holding the lock may have installed the index meanwhile: skip
         // the fetch, but its shards still need the mount.
         if let Some(current) = &current {
