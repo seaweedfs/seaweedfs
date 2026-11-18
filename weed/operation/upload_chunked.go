@@ -59,6 +59,10 @@ var chunkBufferPool = sync.Pool{
 // This prevents OOM by processing the stream in fixed-size chunks
 // Returns file chunks, MD5 hash, total size, and any small content stored inline
 func UploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUploadOption) (*ChunkedUploadResult, error) {
+	return uploadReaderInChunks(ctx, reader, opt, prepareUploadData)
+}
+
+func uploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUploadOption, prepare func([]byte, *UploadOption) (*preparedUpload, error)) (*ChunkedUploadResult, error) {
 
 	md5Hash := md5.New()
 	var partReader = io.TeeReader(reader, md5Hash)
@@ -178,6 +182,23 @@ uploadLoop:
 				wg.Done()
 			}()
 
+			// Hash and prepare only this bounded chunk before minting its volume JWT.
+			chunkMd5 := md5.Sum(buf.Bytes())
+			chunkMd5B64 := base64.StdEncoding.EncodeToString(chunkMd5[:])
+			var prepared *preparedUpload
+			if opt.UploadFunc == nil {
+				var prepareErr error
+				prepared, prepareErr = prepare(buf.Bytes(), &UploadOption{Cipher: opt.Cipher, MimeType: opt.MimeType})
+				if prepareErr != nil {
+					uploadErrLock.Lock()
+					if uploadErr == nil {
+						uploadErr = fmt.Errorf("prepare chunk: %w", prepareErr)
+					}
+					uploadErrLock.Unlock()
+					return
+				}
+			}
+
 			// Assign volume for this chunk
 			_, assignResult, assignErr := opt.AssignFunc(ctx, 1, uint64(size))
 			if assignErr != nil {
@@ -196,10 +217,6 @@ uploadLoop:
 				jwt = assignResult.Auth
 			}
 
-			// Calculate MD5 for the chunk
-			chunkMd5 := md5.Sum(buf.Bytes())
-			chunkMd5B64 := base64.StdEncoding.EncodeToString(chunkMd5[:])
-
 			var uploadResult *UploadResult
 			var uploadResultErr error
 
@@ -207,7 +224,7 @@ uploadLoop:
 			// every attempt against the same fid, so ask for a fresh assignment and
 			// retry there rather than losing the whole object to one bad volume.
 			for attempt := 1; ; attempt++ {
-				uploadResult, uploadResultErr = uploadChunk(ctx, assignResult, buf.Bytes(), jwt, chunkMd5B64, opt)
+				uploadResult, uploadResultErr = uploadPreparedChunk(ctx, assignResult, buf.Bytes(), jwt, chunkMd5B64, opt, prepared)
 				if uploadResultErr == nil {
 					break
 				}
@@ -306,9 +323,13 @@ const chunkAssignAttempts = 3
 // holder, except for cipher: per-call encryption would give each replica
 // different bytes, so keep its relay path.
 func uploadChunk(ctx context.Context, assignResult *AssignResult, data []byte, jwt security.EncodedJwt, md5b64 string, opt *ChunkedUploadOption) (*UploadResult, error) {
+	return uploadPreparedChunk(ctx, assignResult, data, jwt, md5b64, opt, nil)
+}
+
+func uploadPreparedChunk(ctx context.Context, assignResult *AssignResult, data []byte, jwt security.EncodedJwt, md5b64 string, opt *ChunkedUploadOption, prepared *preparedUpload) (*UploadResult, error) {
 	holders := chunkHolders(assignResult)
 	if opt.UploadFunc == nil && !opt.Cipher && len(holders) > 1 {
-		return uploadChunkToHolders(ctx, holders, assignResult.Fid, data, jwt, md5b64, assignResult.Fsync, opt)
+		return uploadPreparedChunkToHolders(ctx, holders, assignResult.Fid, data, jwt, md5b64, assignResult.Fsync, opt, prepared)
 	}
 	uploadOption := &UploadOption{
 		UploadUrl:         fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid),
@@ -338,6 +359,9 @@ func uploadChunk(ctx context.Context, assignResult *AssignResult, data []byte, j
 	if err != nil {
 		return nil, fmt.Errorf("create uploader: %w", err)
 	}
+	if prepared != nil {
+		return uploader.retriedPreparedUploadData(ctx, prepared, uploadOption)
+	}
 	return uploader.UploadData(ctx, data, uploadOption)
 }
 
@@ -357,6 +381,10 @@ func chunkHolders(assignResult *AssignResult) []string {
 // deletes any copies that already landed, so a partial fan-out leaves no
 // orphaned needle the caller cannot see.
 func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data []byte, jwt security.EncodedJwt, md5b64 string, fsync bool, opt *ChunkedUploadOption) (*UploadResult, error) {
+	return uploadPreparedChunkToHolders(ctx, hosts, fid, data, jwt, md5b64, fsync, opt, nil)
+}
+
+func uploadPreparedChunkToHolders(ctx context.Context, hosts []string, fid string, data []byte, jwt security.EncodedJwt, md5b64 string, fsync bool, opt *ChunkedUploadOption, prepared *preparedUpload) (*UploadResult, error) {
 	uploader, err := NewUploader()
 	if err != nil {
 		return nil, fmt.Errorf("create uploader: %w", err)
@@ -385,7 +413,13 @@ func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, data 
 				Jwt:               jwt,
 				Md5:               md5b64,
 			}
-			r, e := uploader.UploadData(ctx, data, uploadOption)
+			var r *UploadResult
+			var e error
+			if prepared != nil {
+				r, e = uploader.retriedPreparedUploadData(ctx, prepared, uploadOption)
+			} else {
+				r, e = uploader.UploadData(ctx, data, uploadOption)
+			}
 			outcomes <- outcome{host, r, e}
 		}(host)
 	}

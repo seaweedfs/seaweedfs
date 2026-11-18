@@ -166,6 +166,8 @@ type HTTPClient interface {
 // Uploader
 type Uploader struct {
 	httpClient HTTPClient
+	// prepareData permits deterministic CPU-work timing at the preparation boundary.
+	prepareData func([]byte, *UploadOption) (*preparedUpload, error)
 	// fastUploadHosts records the wire rate of the last sizeable upload to
 	// each host, so a later upload stalling far below it can be blamed on
 	// that one connection rather than the link and get cancelled for a retry
@@ -204,6 +206,10 @@ func NewUploaderWithHttpClient(httpClient HTTPClient) *Uploader {
 }
 
 func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, host string, auth security.EncodedJwt, fsync bool, err error), uploadOption *UploadOption, data []byte) (fileId string, uploadResult *UploadResult, err error) {
+	prepared, err := uploader.prepareUploadData(data, uploadOption)
+	if err != nil {
+		return "", nil, err
+	}
 	doUploadFunc := func() error {
 		var host string
 		var auth security.EncodedJwt
@@ -233,7 +239,7 @@ func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, ho
 			}
 		}
 
-		uploadResult, err = uploader.retriedUploadData(context.Background(), data, uploadOption)
+		uploadResult, err = uploader.retriedPreparedUploadData(context.Background(), prepared, uploadOption)
 		return err
 	}
 
@@ -339,7 +345,15 @@ func (uploader *Uploader) doUpload(ctx context.Context, reader io.Reader, option
 	return uploadResult, uploadErr, data
 }
 
-func (uploader *Uploader) retriedUploadData(ctx context.Context, data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
+func (uploader *Uploader) retriedUploadData(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+	return uploader.retryUploadData(ctx, data, nil, option)
+}
+
+func (uploader *Uploader) retriedPreparedUploadData(ctx context.Context, prepared *preparedUpload, option *UploadOption) (*UploadResult, error) {
+	return uploader.retryUploadData(ctx, nil, prepared, option)
+}
+
+func (uploader *Uploader) retryUploadData(ctx context.Context, data []byte, prepared *preparedUpload, option *UploadOption) (uploadResult *UploadResult, err error) {
 	// A stall disarms the watchdog for this upload's remaining attempts only;
 	// keep that on a per-call option so a caller reusing UploadOption starts
 	// the next upload armed.
@@ -357,7 +371,11 @@ func (uploader *Uploader) retriedUploadData(ctx context.Context, data []byte, op
 			case <-time.After(time.Millisecond * time.Duration(237*(i+1))):
 			}
 		}
-		uploadResult, err = uploader.doUploadData(ctx, data, option)
+		if prepared == nil {
+			uploadResult, err = uploader.doUploadData(ctx, data, option)
+		} else {
+			uploadResult, err = uploader.uploadPreparedData(ctx, prepared, option)
+		}
 		if err == nil {
 			uploadResult.RetryCount = i
 			return
@@ -390,7 +408,19 @@ func isGenericBinaryMimeType(mimeType string) bool {
 	return false
 }
 
-func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
+// preparedUpload owns the transformed bytes for one buffered chunk. Reusing it
+// across attempts keeps compression and encryption outside assigned JWT lifetimes.
+type preparedUpload struct {
+	mimeType  string
+	data      []byte
+	clearSize int
+	gzip      bool
+	cipherKey []byte
+}
+
+func prepareUploadData(data []byte, option *UploadOption) (prepared *preparedUpload, err error) {
+	localOption := *option
+	option = &localOption
 	contentIsGzipped := option.IsInputCompressed
 	shouldGzipNow := false
 	if !option.IsInputCompressed && !option.IsReplication {
@@ -407,7 +437,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 			var compressed []byte
 			compressed, err = util.GzipData(data[0:128])
 			if err != nil {
-				return
+				return nil, err
 			}
 			shouldGzipNow = len(compressed)*10 < 128*9 // can not compress to less than 90%
 		}
@@ -436,22 +466,43 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 		}
 	}
 
+	prepared = &preparedUpload{data: data, clearSize: clearDataLen, gzip: contentIsGzipped, mimeType: option.MimeType}
 	if option.Cipher {
-		// encrypt(gzip(data))
-
-		// encrypt
-		cipherKey := util.GenCipherKey()
-		encryptedData, encryptionErr := util.Encrypt(data, cipherKey)
-		if encryptionErr != nil {
-			err = fmt.Errorf("encrypt input: %w", encryptionErr)
-			return
+		prepared.cipherKey = util.GenCipherKey()
+		prepared.data, err = util.Encrypt(data, prepared.cipherKey)
+		if err != nil {
+			return nil, fmt.Errorf("encrypt input: %w", err)
 		}
+	}
+	return prepared, nil
+}
 
+func (uploader *Uploader) prepareUploadData(data []byte, option *UploadOption) (*preparedUpload, error) {
+	if uploader.prepareData != nil {
+		return uploader.prepareData(data, option)
+	}
+	return prepareUploadData(data, option)
+}
+
+func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+	prepared, err := uploader.prepareUploadData(data, option)
+	if err != nil {
+		return nil, err
+	}
+	return uploader.uploadPreparedData(ctx, prepared, option)
+}
+
+func (uploader *Uploader) uploadPreparedData(ctx context.Context, prepared *preparedUpload, option *UploadOption) (uploadResult *UploadResult, err error) {
+	localOption := *option
+	option = &localOption
+	option.MimeType = prepared.mimeType
+
+	if option.Cipher {
 		// upload data
 		uploadResult, err = uploader.upload_content(ctx, func(w io.Writer) (err error) {
-			_, err = w.Write(encryptedData)
+			_, err = w.Write(prepared.data)
 			return
-		}, len(encryptedData), &UploadOption{
+		}, len(prepared.data), &UploadOption{
 			UploadUrl:             option.UploadUrl,
 			Filename:              "",
 			Cipher:                false,
@@ -467,24 +518,24 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 		}
 		uploadResult.Name = option.Filename
 		uploadResult.Mime = option.MimeType
-		uploadResult.CipherKey = cipherKey
+		uploadResult.CipherKey = prepared.cipherKey
 		// The volume server only ever hashes the ciphertext it stored, so the
 		// chunk ETag has to come from the caller's plaintext digest.
 		uploadResult.ContentMd5 = option.Md5
-		uploadResult.Size = uint32(clearDataLen)
-		if contentIsGzipped {
+		uploadResult.Size = uint32(prepared.clearSize)
+		if prepared.gzip {
 			uploadResult.Gzip = 1
 		}
 	} else {
 		// upload data
 		uploadResult, err = uploader.upload_content(ctx, func(w io.Writer) (err error) {
-			_, err = w.Write(data)
+			_, err = w.Write(prepared.data)
 			return
-		}, len(data), &UploadOption{
+		}, len(prepared.data), &UploadOption{
 			UploadUrl:             option.UploadUrl,
 			Filename:              option.Filename,
 			Cipher:                false,
-			IsInputCompressed:     contentIsGzipped,
+			IsInputCompressed:     prepared.gzip,
 			IsReplication:         option.IsReplication,
 			MimeType:              option.MimeType,
 			PairMap:               option.PairMap,
@@ -496,8 +547,8 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 		if uploadResult == nil {
 			return
 		}
-		uploadResult.Size = uint32(clearDataLen)
-		if contentIsGzipped {
+		uploadResult.Size = uint32(prepared.clearSize)
+		if prepared.gzip {
 			uploadResult.Gzip = 1
 		}
 	}
