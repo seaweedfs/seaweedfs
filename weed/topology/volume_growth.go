@@ -70,6 +70,10 @@ var (
 )
 
 type VolumeGrowOption struct {
+	// layoutLoad is set only during one grow request: the writable
+	// volumes of the layout being grown on each data node. See lessLoaded.
+	layoutLoad map[*DataNode]int
+
 	Collection         string                        `json:"collection,omitempty"`
 	ReplicaPlacement   *super_block.ReplicaPlacement `json:"replication,omitempty"`
 	Ttl                *needle.TTL                   `json:"ttl,omitempty"`
@@ -80,10 +84,6 @@ type VolumeGrowOption struct {
 	DataNode           string                        `json:"dataNode,omitempty"`
 	MemoryMapMaxSizeMb uint32                        `json:"memoryMapMaxSizeMb,omitempty"`
 	Version            uint32                        `json:"version,omitempty"`
-
-	// layoutLoad is set only while one volume is being placed: the writable
-	// volumes of the layout being grown on each data node. See lessLoaded.
-	layoutLoad map[*DataNode]int
 }
 
 type VolumeGrowth struct {
