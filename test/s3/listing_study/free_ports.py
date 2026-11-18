@@ -16,8 +16,11 @@ def free(port: int) -> bool:
 
 
 picked: list[int] = []
+taken: list[int] = []
 while len(picked) < int(sys.argv[1]):
     port = random.randrange(20000, 55000)
-    if all(abs(port - p) > 20 for p in picked) and free(port) and free(port + 10000):
+    pair = (port, port + 10000)
+    if all(abs(p - t) > 20 for p in pair for t in taken) and all(free(p) for p in pair):
         picked.append(port)
+        taken += pair
 print(*picked)
