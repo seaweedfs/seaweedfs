@@ -6,6 +6,7 @@
 SUITE_REPO := https://github.com/tigrisdata-community/s3-api-compat-tests.git
 SUITE_COMMIT := e846275e489ec30b324344d462e698252c3a1f67
 SUITE_DIR := s3-api-compat-tests
+SUITE_STAMP := $(SUITE_DIR)/.seaweedfs-prepared
 
 WEED_BINARY := ../../../weed/weed_binary
 S3_PORT ?= 8335
@@ -39,12 +40,14 @@ build-weed:
 	@cd ../../../weed && go build -o weed_binary .
 
 build-suite:
-	@if [ "$$(git -C $(SUITE_DIR) rev-parse HEAD 2>/dev/null)" != "$(SUITE_COMMIT)" ]; then \
+	@want="$(SUITE_COMMIT) $$(git hash-object seaweedfs-provider.patch)"; \
+	if [ "$$(cat $(SUITE_STAMP) 2>/dev/null)" != "$$want" ]; then \
 		rm -rf $(SUITE_DIR) && mkdir -p $(SUITE_DIR) && \
 		git -C $(SUITE_DIR) init -q && \
 		git -C $(SUITE_DIR) fetch -q --depth 1 $(SUITE_REPO) $(SUITE_COMMIT) && \
 		git -C $(SUITE_DIR) checkout -q FETCH_HEAD && \
-		git -C $(SUITE_DIR) apply ../seaweedfs-provider.patch; \
+		git -C $(SUITE_DIR) apply ../seaweedfs-provider.patch && \
+		echo "$$want" > $(SUITE_STAMP); \
 	fi
 	@cd $(SUITE_DIR) && go build -o ../compat-runner .
 
