@@ -107,6 +107,9 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
+	if versioningConfigured {
+		setTaggingVersionIdHeader(w, versionId, entry)
+	}
 	writeSuccessResponseXML(w, r, FromTags(tags))
 
 }
@@ -273,6 +276,7 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 	}
 
 	glog.V(3).Infof("PutObjectTaggingHandler: Successfully updated tags for %s/%s", bucket, object)
+	setTaggingVersionIdHeader(w, versionId, entry)
 	w.WriteHeader(http.StatusOK)
 	s3err.PostLog(r, http.StatusOK, s3err.ErrNone)
 }
@@ -391,6 +395,7 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 
 	if !hasDeletion {
 		// No tags to delete - success
+		setTaggingVersionIdHeader(w, versionId, entry)
 		w.WriteHeader(http.StatusNoContent)
 		s3err.PostLog(r, http.StatusNoContent, s3err.ErrNone)
 		return
@@ -416,6 +421,17 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 	}
 
 	glog.V(3).Infof("DeleteObjectTaggingHandler: Successfully deleted tags for %s/%s", bucket, object)
+	setTaggingVersionIdHeader(w, versionId, entry)
 	w.WriteHeader(http.StatusNoContent)
 	s3err.PostLog(r, http.StatusNoContent, s3err.ErrNone)
+}
+
+// setTaggingVersionIdHeader reports the version the tagging request acted on,
+// "null" for an object written before versioning was enabled.
+func setTaggingVersionIdHeader(w http.ResponseWriter, versionId string, entry *filer_pb.Entry) {
+	versionId = resolvedSourceVersionId(versionId, entry)
+	if versionId == "" {
+		versionId = "null"
+	}
+	w.Header().Set("x-amz-version-id", versionId)
 }
