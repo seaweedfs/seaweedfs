@@ -421,8 +421,11 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 
 	// The chunk merge and the manifest above read and upload chunks, which can
 	// take longer than the whole commit budget. It is charged only from here.
+	// Writes that landed before the lock may still be uploading, so a merge onto a
+	// moved entry must keep room for them.
+	buffered := fh.dirtyPages.HasPendingUploads()
 	commitCtx, end := commit.begin(ctx)
-	resp, merged, err := wfs.createContentEntry(commitCtx, fh, request, baseSnapshot, false, publication)
+	resp, merged, err := wfs.createContentEntry(commitCtx, fh, request, baseSnapshot, buffered, publication)
 	end()
 	if err != nil {
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)

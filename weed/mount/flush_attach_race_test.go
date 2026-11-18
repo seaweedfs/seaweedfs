@@ -5,6 +5,7 @@ package mount
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"testing"
@@ -100,12 +101,12 @@ func TestFlushClonesRequestWhileUploadsAttach(t *testing.T) {
 	}
 }
 
-// A flush that finds its chunks bloated while an upload is still in flight
-// leaves the merge to a later flush instead of waiting for the upload under
-// the handle and publication locks: a writeback upload retries until storage
-// recovers, and every operation on the handle would wait with it.
-func TestFlushLeavesMergeWhileUploadPending(t *testing.T) {
-	base := attributeAppendEntry(1)
+// bloatedHandleWithPendingUpload opens a handle over chunks bloated enough to
+// merge and starts uploading a write past them. The upload blocks until
+// release is closed; drained reports its result.
+func bloatedHandleWithPendingUpload(t *testing.T) (w *WFS, fh *FileHandle, peer *g6ConditionalPeer, base *filer_pb.Entry, release chan struct{}, drained chan error) {
+	t.Helper()
+	base = attributeAppendEntry(1)
 	base.Chunks = nil
 	for i := 0; i < 8; i++ {
 		base.Chunks = append(base.Chunks, &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: uint64(i + 1), Cookie: 1}, Offset: int64(i * 64), Size: 256, ModifiedTsNs: int64(i + 1)})
@@ -115,9 +116,9 @@ func TestFlushLeavesMergeWhileUploadPending(t *testing.T) {
 	if _, _, bloated := shouldMergeChunks(base.Chunks, nil); !bloated {
 		t.Fatal("the test entry is not bloated enough to merge")
 	}
-	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
+	peer = &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
 	w, handle := g6AppendHandle(t, peer, base, 1000)
-	fh := w.GetHandle(FileHandleId(handle))
+	fh = w.GetHandle(FileHandleId(handle))
 
 	started, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
@@ -135,9 +136,18 @@ func TestFlushLeavesMergeWhileUploadPending(t *testing.T) {
 	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: base.Attributes.FileSize, Size: 256}, bytes.Repeat([]byte{'W'}, 256)); n != 256 || code != fuse.OK {
 		t.Fatalf("write: %d %v", n, code)
 	}
-	drained := make(chan error, 1)
+	drained = make(chan error, 1)
 	go func() { drained <- fh.dirtyPages.FlushData() }()
 	<-started
+	return w, fh, peer, base, release, drained
+}
+
+// A flush that finds its chunks bloated while an upload is still in flight
+// leaves the merge to a later flush instead of waiting for the upload under
+// the handle and publication locks: a writeback upload retries until storage
+// recovers, and every operation on the handle would wait with it.
+func TestFlushLeavesMergeWhileUploadPending(t *testing.T) {
+	w, fh, peer, base, release, drained := bloatedHandleWithPendingUpload(t)
 
 	flushed := make(chan error, 1)
 	go func() { flushed <- w.flushMetadataToFiler(context.Background(), fh, "/dir", "file", 0, 0, nil) }()
@@ -160,5 +170,38 @@ func TestFlushLeavesMergeWhileUploadPending(t *testing.T) {
 	defer peer.mu.Unlock()
 	if len(peer.entry.Chunks) != len(base.Chunks) {
 		t.Fatalf("published %d chunks, want the %d unmerged ones", len(peer.entry.Chunks), len(base.Chunks))
+	}
+}
+
+// A flush that publishes while an upload is pending must not adopt a peer's
+// inline content: the upload attaches its chunk next to it, and reads stop at
+// the inline bytes, so the completed write would never be read.
+func TestFlushWithUploadPendingRefusesPeerInlineContent(t *testing.T) {
+	w, fh, peer, _, release, drained := bloatedHandleWithPendingUpload(t)
+	defer func() {
+		close(release)
+		if err := <-drained; err != nil {
+			t.Fatalf("drain: %v", err)
+		}
+	}()
+
+	inline := bytes.Repeat([]byte{'P'}, int(filer.FileSize(fh.GetEntry().GetEntry())))
+	peer.mu.Lock()
+	peer.entry.Chunks = nil
+	peer.entry.Content = inline
+	peer.entry.Attributes.FileSize = uint64(len(inline))
+	peer.entry.CommitTsNs = 200
+	peer.mu.Unlock()
+
+	if err := w.flushMetadataToFiler(context.Background(), fh, "/dir", "file", 0, 0, nil); !errors.Is(err, filer_pb.ErrPreconditionFailed) {
+		t.Fatalf("flush over a peer's inline content with an upload pending: %v, want a refused merge", err)
+	}
+	if content := fh.GetEntry().GetEntry().GetContent(); len(content) != 0 {
+		t.Fatalf("the handle adopted %d bytes of the peer's inline content", len(content))
+	}
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	if !bytes.Equal(peer.entry.Content, inline) || len(peer.entry.Chunks) != 0 {
+		t.Fatal("the flush published over the peer's inline content")
 	}
 }
