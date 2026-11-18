@@ -52,12 +52,12 @@ build-suite:
 	@cd $(SUITE_DIR) && go build -o ../compat-runner .
 
 start-server: build-weed
-	@rm -f weed-server.pid
 	@mkdir -p $(SERVER_DIR)
 	@if curl -sS -o /dev/null http://127.0.0.1:$(S3_PORT)/ >/dev/null 2>&1; then \
 		echo "port $(S3_PORT) is already served by another process; refusing to test against it"; \
 		exit 1; \
 	fi
+	@rm -f weed-server.pid
 	@$(WEED_BINARY) mini \
 		-dir=$(SERVER_DIR) \
 		-ip=127.0.0.1 \
@@ -107,8 +107,8 @@ run-suite: build-suite
 	python3 check_results.py results.json expected_failures.txt
 
 test-with-server:
-	@$(MAKE) start-server; START_RESULT=$$?; \
-	if [ $$START_RESULT -eq 0 ]; then $(MAKE) run-suite; TEST_RESULT=$$?; else TEST_RESULT=$$START_RESULT; fi; \
+	@$(MAKE) start-server || exit $$?; \
+	$(MAKE) run-suite; TEST_RESULT=$$?; \
 	$(MAKE) stop-server; exit $$TEST_RESULT
 
 logs:
