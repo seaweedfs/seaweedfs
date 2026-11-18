@@ -80,9 +80,9 @@ func TestPeerSubscribeLoopNotesUnreachablePeer(t *testing.T) {
 	ma.OnPeerUpdate(&master_pb.ClusterNodeUpdate{Address: string(peer), IsAdd: true}, time.Now())
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		ma.peerWatermarksLock.Lock()
+		ma.peerChansLock.Lock()
 		_, noted := ma.peerUnreachableSinceNs[peer]
-		ma.peerWatermarksLock.Unlock()
+		ma.peerChansLock.Unlock()
 		if noted {
 			return
 		}

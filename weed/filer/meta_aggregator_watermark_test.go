@@ -237,13 +237,13 @@ func TestUnreachablePeerStopsPinningAfterTheGrace(t *testing.T) {
 	ma.peerChans[b] = stopB
 
 	t0 := time.Now().UnixNano()
-	if ma.notePeerUnreachable(b, t0) || ma.notePeerUnreachable(b, t0+int64(peerUnreachableRemovalAfter)-1) {
+	if ma.notePeerUnreachable(b, stopB, t0) || ma.notePeerUnreachable(b, stopB, t0+int64(peerUnreachableRemovalAfter)-1) {
 		t.Fatal("a peer unreachable for less than the bound must not be marked")
 	}
-	if !ma.notePeerUnreachable(b, t0+int64(peerUnreachableRemovalAfter)) {
+	if !ma.notePeerUnreachable(b, stopB, t0+int64(peerUnreachableRemovalAfter)) {
 		t.Fatal("a peer unreachable for the bound must be marked removed")
 	}
-	if ma.notePeerUnreachable(b, t0+int64(peerUnreachableRemovalAfter)+1) {
+	if ma.notePeerUnreachable(b, stopB, t0+int64(peerUnreachableRemovalAfter)+1) {
 		t.Fatal("the mark must be reported once")
 	}
 	if got := ma.PeerLowWatermarkTsNs(); got != 0 {
@@ -265,7 +265,7 @@ func TestUnreachablePeerStopsPinningAfterTheGrace(t *testing.T) {
 	if got := ma.PeerLowWatermarkTsNs(); got != 70 {
 		t.Fatalf("after its claim: low=%d want 70", got)
 	}
-	if ma.notePeerUnreachable(b, t0+10*int64(peerUnreachableRemovalAfter)) {
+	if ma.notePeerUnreachable(b, stopB, t0+10*int64(peerUnreachableRemovalAfter)) {
 		t.Fatal("a fresh outage must start a fresh clock")
 	}
 }
@@ -295,5 +295,29 @@ func TestStaleSubscriptionDoesNotUndoMasterRemoval(t *testing.T) {
 	}
 	if got := ma.PeerLowWatermarkTsNs(); got != 100 {
 		t.Fatalf("the removed peer still pins past the grace: low=%d want 100", got)
+	}
+}
+
+// A master removal forgets the peer's unreachable clock, and the removed
+// peer's exiting loop cannot start a new one: departed addresses do not
+// accumulate, and a re-added peer starts a fresh outage clock.
+func TestMasterRemovalForgetsUnreachableClock(t *testing.T) {
+	ma := newTestAggregator()
+	ma.peerSubscribeLoop = func(_ *Filer, _, _ pb.ServerAddress, _ time.Time, _ chan struct{}) {}
+	b := pb.ServerAddress("filer-b:8888")
+	ma.OnPeerUpdate(&master_pb.ClusterNodeUpdate{Address: string(b), IsAdd: true}, time.Now())
+	stopB := ma.peerChans[b]
+	t0 := time.Now().UnixNano()
+	ma.notePeerUnreachable(b, stopB, t0)
+
+	ma.OnPeerUpdate(&master_pb.ClusterNodeUpdate{Address: string(b), IsAdd: false}, time.Now())
+	ma.notePeerUnreachable(b, stopB, t0+1)
+	if n := len(ma.peerUnreachableSinceNs); n != 0 {
+		t.Fatalf("removed peer still has an unreachable clock: %d entries", n)
+	}
+
+	ma.OnPeerUpdate(&master_pb.ClusterNodeUpdate{Address: string(b), IsAdd: true}, time.Now())
+	if ma.notePeerUnreachable(b, ma.peerChans[b], t0+int64(peerUnreachableRemovalAfter)) {
+		t.Fatal("a re-added peer inherited the previous outage clock")
 	}
 }

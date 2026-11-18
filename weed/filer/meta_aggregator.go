@@ -51,8 +51,9 @@ type MetaAggregator struct {
 	// gone past the grace is dropped so it cannot pin the low-watermarks.
 	// The mark itself stays until the peer's resume point is forgotten.
 	peerRemovedAtNs map[pb.ServerAddress]int64
-	// peerUnreachableSinceNs is when each peer's subscription last started
-	// failing to connect; see notePeerUnreachable.
+	// peerUnreachableSinceNs is when each followed peer's subscription last
+	// started failing to connect; see notePeerUnreachable. Guarded by
+	// peerChansLock, so a removed peer's exiting loop cannot recreate it.
 	peerUnreachableSinceNs map[pb.ServerAddress]int64
 	// lowWatermarkTsNs and lowFlushWatermarkTsNs are the last minima signalled
 	// on deliveryAdvanced and flushAdvanced, each closed and replaced when its
@@ -145,6 +146,7 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 			close(prevChan)
 			delete(ma.peerChans, address)
 		}
+		delete(ma.peerUnreachableSinceNs, address)
 		// Only mark: dropping the watermarks at once would let subscribers
 		// advance past a flapping peer's unflushed events (see peerRemovedAtNs).
 		ma.markPeerWatermarkRemoved(address)
@@ -174,16 +176,18 @@ var errPeerUnreachable = errors.New("connecting to peer filer")
 // that saw the peer go, so a peer that died across a leader change is
 // otherwise followed forever and its zero watermark holds every aggregated
 // subscriber at the settled horizon. Reports true the one time it marks.
-func (ma *MetaAggregator) notePeerUnreachable(peer pb.ServerAddress, nowNs int64) bool {
-	ma.peerWatermarksLock.Lock()
-	if ma.peerUnreachableSinceNs == nil {
-		ma.peerUnreachableSinceNs = make(map[pb.ServerAddress]int64)
+func (ma *MetaAggregator) notePeerUnreachable(peer pb.ServerAddress, stopChan <-chan struct{}, nowNs int64) bool {
+	ma.peerChansLock.Lock()
+	defer ma.peerChansLock.Unlock()
+	if ma.peerChans[peer] != stopChan {
+		return false
 	}
 	since, found := ma.peerUnreachableSinceNs[peer]
 	if !found {
 		ma.peerUnreachableSinceNs[peer] = nowNs
 		since = nowNs
 	}
+	ma.peerWatermarksLock.Lock()
 	_, alreadyMarked := ma.peerRemovedAtNs[peer]
 	ma.peerWatermarksLock.Unlock()
 	if nowNs-since < int64(peerUnreachableRemovalAfter) {
@@ -202,9 +206,7 @@ func (ma *MetaAggregator) notePeerReachable(peer pb.ServerAddress, stopChan <-ch
 	if ma.peerChans[peer] != stopChan {
 		return
 	}
-	ma.peerWatermarksLock.Lock()
 	delete(ma.peerUnreachableSinceNs, peer)
-	ma.peerWatermarksLock.Unlock()
 	ma.initPeerWatermark(peer)
 }
 
@@ -546,7 +548,7 @@ func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddres
 				errLvl = glog.Level(4)
 			}
 			glog.V(errLvl).Infof("subscribing remote %s meta change: %v", peer, err)
-			if errors.Is(err, errPeerUnreachable) && ma.notePeerUnreachable(peer, time.Now().UnixNano()) {
+			if errors.Is(err, errPeerUnreachable) && ma.notePeerUnreachable(peer, stopChan, time.Now().UnixNano()) {
 				glog.V(0).Infof("peer %s unreachable for %v, treating it as removed until it answers", peer, peerUnreachableRemovalAfter)
 			}
 		}
