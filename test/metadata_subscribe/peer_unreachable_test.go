@@ -68,7 +68,8 @@ func TestAggregatedSubscriberNotHeldByPeerThatDiedUnnoticed(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	events := make(chan *filer_pb.SubscribeMetadataResponse, 1000)
-	go subscribeToMetadata(ctx, filer1Address, peerEntryDir, events)
+	sinceNs := time.Now().UnixNano()
+	go subscribeToMetadataWithOptions(ctx, filer1Address, peerEntryDir, sinceNs, events)
 	arrived := make(map[string]time.Time)
 	waitArrival := func(name string, within time.Duration) bool {
 		deadline := time.After(within)
