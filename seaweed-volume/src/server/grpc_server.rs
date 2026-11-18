@@ -6494,14 +6494,12 @@ impl VolumeGrpcService {
             // A mounted shard keeps reading the replaced inode until reopened.
             let mut store = self.state.store.write().unwrap();
             if let Some(loc) = store.locations.iter_mut().find(|l| l.directory == dest_dir) {
-                if let Err(e) = loc.reopen_ec_shard(vid, shard_id) {
-                    tracing::warn!(
+                loc.reopen_ec_shard(vid, shard_id).map_err(|e| {
+                    Status::internal(format!(
                         "VolumeEcShardsCopy volume {}: reopen replaced shard {}: {}",
-                        vid,
-                        shard_id,
-                        e
-                    );
-                }
+                        vid, shard_id, e
+                    ))
+                })?;
             }
         }
 
