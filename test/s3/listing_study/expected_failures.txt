@@ -1,0 +1,29 @@
+# Cases that fail for reasons outside SeaweedFS. A listed case that passes is
+# reported as XPASS and fails the run, so this list has to shrink with fixes.
+# Format: <case name>  # reason
+
+# aws-cli prints "None" for a --query over a page with no Contents (the canary
+# has no root-level keys); the capsule normalizer reads it as a malformed row.
+aws-cli:s3api-v2-remainder:canary:/  # capsule normalizer cannot parse aws-cli's "None"
+
+# The edge bucket holds zero-byte directory markers (markers/dir/, markers/empty/).
+# These modes list them as directories, not objects: rclone's --files-only and
+# lsf --files-only drop them, s5cmd types any key ending in "/" as DIR and the
+# capsule normalizer drops DIR rows from its recursive modes. The reference
+# probes check that SeaweedFS returns both markers as Contents.
+rclone:recursive-fastlist:edge:/  # tool hides directory marker objects
+rclone:recursive-hierarchical:edge:/  # tool hides directory marker objects
+rclone:recursive-walk:edge:/  # tool hides directory marker objects
+rclone:listv1:edge:/  # tool hides directory marker objects
+rclone:lsf:edge:/  # tool hides directory marker objects
+s5cmd:recursive:edge:/  # tool hides directory marker objects
+s5cmd:listv1:edge:/  # tool hides directory marker objects
+s5cmd:allversions:edge:/  # tool hides directory marker objects
+
+# Deleting the last key under a prefix leaves its filer directory behind, and an
+# empty directory is still listed as a CommonPrefix until the filer's empty-folder
+# cleanup removes it (2 minutes by default). This is deliberate: directories made
+# through mount or the filer stay visible to S3 clients (dirHoldsOnlyHiddenEntries
+# in weed/s3api/s3api_object_handlers_list.go). AWS derives CommonPrefixes from
+# keys only, so prefix-discovery tools briefly see the deleted prefix.
+reference:study-churn:deleted-prefixes  # empty directories are listed until cleanup
