@@ -234,14 +234,14 @@ func TestLookupRecordsHardLinkNames(t *testing.T) {
 func TestRemoveAliasKeepsSoleName(t *testing.T) {
 	table := NewInodeToPath(util.FullPath("/"), 0)
 	inode := table.Lookup("/a", 1, false, true, 42, true)
-	if _, ok := table.RemoveAlias("/a", 0); ok || !table.HasPath("/a") {
+	if _, ok := table.RemoveAlias("/a", 0, nil); ok || !table.HasPath("/a") {
 		t.Fatal("removed the only name")
 	}
 	table.AddPath(inode, "/b")
-	if survivor, ok := table.RemoveAlias("/a", 0); !ok || survivor != "/b" || table.HasPath("/a") {
+	if survivor, ok := table.RemoveAlias("/a", 0, nil); !ok || survivor != "/b" || table.HasPath("/a") {
 		t.Fatalf("RemoveAlias(/a) = %q, %v, want /b", survivor, ok)
 	}
-	if _, ok := table.RemoveAlias("/b", 0); ok || !table.HasPath("/b") {
+	if _, ok := table.RemoveAlias("/b", 0, nil); ok || !table.HasPath("/b") {
 		t.Fatal("removed the surviving name")
 	}
 }
@@ -250,15 +250,25 @@ func TestRemoveAliasKeepsNameGivenLocallySinceTheDelete(t *testing.T) {
 	table := NewInodeToPath(util.FullPath("/"), 0)
 	inode := table.Lookup("/a", 1, false, true, 42, true)
 	table.AddPath(inode, "/b")
-	table.NameLocally(inode, "/a", 20)
-	if _, ok := table.RemoveAlias("/a", 10); ok || !table.HasPath("/a") {
+	table.NameLocally(inode, "/a", 20, 7)
+	if _, ok := table.RemoveAlias("/a", 10, []int32{7}); ok || !table.HasPath("/a") {
 		t.Fatal("a delete older than the local rename removed the name it gave")
 	}
-	if _, ok := table.RemoveAlias("/b", 10); !ok || table.HasPath("/b") {
+	if _, ok := table.RemoveAlias("/b", 10, []int32{7}); !ok || table.HasPath("/b") {
 		t.Fatal("the local rename of /a kept the unrelated name /b")
 	}
 	table.AddPath(inode, "/b")
-	if _, ok := table.RemoveAlias("/a", 30); !ok || table.HasPath("/a") {
+	if _, ok := table.RemoveAlias("/a", 30, []int32{7}); !ok || table.HasPath("/a") {
 		t.Fatal("a delete newer than the local rename kept the name")
+	}
+	table.AddPath(inode, "/a")
+	table.NameLocally(inode, "/a", 40, 7)
+	if _, ok := table.RemoveAlias("/a", 10, []int32{9}); !ok || table.HasPath("/a") {
+		t.Fatal("a delete stamped by another filer was ordered against the local rename")
+	}
+	table.AddPath(inode, "/a")
+	table.NameLocally(inode, "/a", 50, 0)
+	if _, ok := table.RemoveAlias("/a", 10, []int32{0}); !ok || table.HasPath("/a") {
+		t.Fatal("an unsigned local rename fenced the delete")
 	}
 }

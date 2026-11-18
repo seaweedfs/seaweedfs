@@ -38,8 +38,9 @@ type InodeToPath struct {
 }
 
 type localName struct {
-	path util.FullPath
-	tsNs int64
+	path      util.FullPath
+	tsNs      int64
+	signature int32
 }
 
 // wasCachedEntry pairs a queued path with the insertion generation that put
@@ -637,25 +638,28 @@ func (i *InodeToPath) RemovePath(path util.FullPath, onStillReferenced func(inod
 	delete(i.wasCachedDirs, path)
 }
 
-// NameLocally records that a local rename or link at filer stamp tsNs gives
-// inode the name path.
-func (i *InodeToPath) NameLocally(inode uint64, path util.FullPath, tsNs int64) {
+// NameLocally records that a local rename or link stamped tsNs by the filer
+// with signature gives inode the name path.
+func (i *InodeToPath) NameLocally(inode uint64, path util.FullPath, tsNs int64, signature int32) {
 	i.Lock()
 	defer i.Unlock()
-	if _, found := i.inode2path[inode]; !found || tsNs < i.localNames[inode].tsNs {
+	if _, found := i.inode2path[inode]; !found {
+		return
+	}
+	if prev, found := i.localNames[inode]; found && prev.signature == signature && tsNs < prev.tsNs {
 		return
 	}
 	if i.localNames == nil {
 		i.localNames = make(map[uint64]localName)
 	}
-	i.localNames[inode] = localName{path: path, tsNs: tsNs}
+	i.localNames[inode] = localName{path: path, tsNs: tsNs, signature: signature}
 }
 
 // RemoveAlias drops a name only while its inode keeps another one, returning
 // the inode's primary path afterwards. A sole name stays for a delayed rename
-// to move. A nonzero deleteTsNs also keeps a name a local rename or link gave
-// the inode at or after it.
-func (i *InodeToPath) RemoveAlias(path util.FullPath, deleteTsNs int64) (util.FullPath, bool) {
+// to move. A delete stamped deleteTsNs also keeps a name a local rename or
+// link gave the inode at or after it, when the same filer stamped both.
+func (i *InodeToPath) RemoveAlias(path util.FullPath, deleteTsNs int64, deleteSignatures []int32) (util.FullPath, bool) {
 	i.Lock()
 	defer i.Unlock()
 	inode, found := i.path2inode[path]
@@ -666,7 +670,8 @@ func (i *InodeToPath) RemoveAlias(path util.FullPath, deleteTsNs int64) (util.Fu
 	if ie == nil {
 		return "", false
 	}
-	if named, found := i.localNames[inode]; found && deleteTsNs != 0 && named.path == path && named.tsNs >= deleteTsNs {
+	if named, found := i.localNames[inode]; found && deleteTsNs != 0 && named.signature != 0 && named.path == path &&
+		named.tsNs >= deleteTsNs && sameClockDomain(named.signature, deleteSignatures) {
 		return "", false
 	}
 	survives := false
