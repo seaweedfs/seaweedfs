@@ -163,11 +163,17 @@ func removeVolumeFiles(filename string, keepVif bool) {
 // asyncRequestAppend queues a request for the batch worker, starting it on the
 // first one. It reports false for a destroyed volume, so the caller writes
 // inline rather than wait on a worker that will never answer.
-func (v *Volume) asyncRequestAppend(request *needle.AsyncRequest) bool {
+func (v *Volume) asyncRequestAppend(request *needle.AsyncRequest) (queued bool) {
 	requests := v.startWorker()
 	if requests == nil {
 		return false
 	}
+	// stopWorker may close the channel between startWorker and the send.
+	defer func() {
+		if recover() != nil {
+			queued = false
+		}
+	}()
 	requests <- request
 	return true
 }

@@ -683,3 +683,16 @@ func TestSyncDeleteWithFsyncSyncsAfterUnsyncedDelete(t *testing.T) {
 	require.Zero(t, size)
 	require.Equal(t, 1, counting.syncCount, "an earlier unsynced delete must still be flushed before a durable ack")
 }
+
+func TestAsyncRequestAppendRefusesAfterChannelClosed(t *testing.T) {
+	v, _ := newCountingVolume(t)
+
+	closed := make(chan *needle.AsyncRequest)
+	close(closed)
+	v.asyncWorkerLock.Lock()
+	v.asyncRequestsChan = closed
+	v.asyncWorkerLock.Unlock()
+
+	require.False(t, v.asyncRequestAppend(needle.NewAsyncRequest(fixedNeedle(1, "payload"), true)),
+		"a request racing stopWorker must be refused, not panic")
+}
