@@ -209,6 +209,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		return fuse.EIO
 	}
 
+	wfs.inodeToPath.NameLocally(sourceInode, newEntryPath, linkVersionTsNs)
 	wfs.inodeToPath.AddPath(sourceInode, newEntryPath)
 	if fh, found := wfs.fhMap.FindFileHandle(sourceInode); found {
 		fh.adoptLinkChange(linkedEntry, linkVersionTsNs, linkSignature)

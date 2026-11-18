@@ -32,6 +32,14 @@ type InodeToPath struct {
 	wasCachedDirs  map[util.FullPath]uint64
 	wasCachedOrder []wasCachedEntry
 	wasCachedGen   uint64
+	// localNames holds, per hard-linked inode, the newest name a local rename
+	// or link gave it, so an older peer delete of that name keeps it.
+	localNames map[uint64]localName
+}
+
+type localName struct {
+	path util.FullPath
+	tsNs int64
 }
 
 // wasCachedEntry pairs a queued path with the insertion generation that put
@@ -629,10 +637,25 @@ func (i *InodeToPath) RemovePath(path util.FullPath, onStillReferenced func(inod
 	delete(i.wasCachedDirs, path)
 }
 
+// NameLocally records that a local rename or link at filer stamp tsNs gives
+// inode the name path.
+func (i *InodeToPath) NameLocally(inode uint64, path util.FullPath, tsNs int64) {
+	i.Lock()
+	defer i.Unlock()
+	if _, found := i.inode2path[inode]; !found || tsNs < i.localNames[inode].tsNs {
+		return
+	}
+	if i.localNames == nil {
+		i.localNames = make(map[uint64]localName)
+	}
+	i.localNames[inode] = localName{path: path, tsNs: tsNs}
+}
+
 // RemoveAlias drops a name only while its inode keeps another one, returning
 // the inode's primary path afterwards. A sole name stays for a delayed rename
-// to move.
-func (i *InodeToPath) RemoveAlias(path util.FullPath) (util.FullPath, bool) {
+// to move. A nonzero deleteTsNs also keeps a name a local rename or link gave
+// the inode at or after it.
+func (i *InodeToPath) RemoveAlias(path util.FullPath, deleteTsNs int64) (util.FullPath, bool) {
 	i.Lock()
 	defer i.Unlock()
 	inode, found := i.path2inode[path]
@@ -641,6 +664,9 @@ func (i *InodeToPath) RemoveAlias(path util.FullPath) (util.FullPath, bool) {
 	}
 	ie := i.inode2path[inode]
 	if ie == nil {
+		return "", false
+	}
+	if named, found := i.localNames[inode]; found && deleteTsNs != 0 && named.path == path && named.tsNs >= deleteTsNs {
 		return "", false
 	}
 	survives := false
@@ -739,6 +765,7 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onRelease func(inode uint64)
 				}
 			}
 			delete(i.inode2path, inode)
+			delete(i.localNames, inode)
 			i.dropDirPath(inode)
 			delete(i.dirStates, inode)
 		} else {
