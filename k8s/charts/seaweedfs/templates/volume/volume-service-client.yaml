@@ -1,0 +1,42 @@
+{{- /* Ready-only backend for the volume ingress and HTTPRoute; the volume Service publishes not-ready pods for DNS.
+       Not named volume-client: every volume-<key> name belongs to a group under .Values.volumes. */}}
+{{- if and .Values.volume.enabled (not .Values.allInOne.enabled) (or .Values.volume.ingress.enabled .Values.volume.httpRoute.enabled) }}
+{{- $name := include "seaweedfs.componentName" (list . "client-volume") }}
+{{- $volumes := deepCopy .Values.volumes | mergeOverwrite (dict "" .Values.volume) }}
+{{- range $vname, $volume := $volumes }}
+{{-   $volumeName := trimSuffix "-" (printf "volume-%s" $vname) }}
+{{-   $volume := mergeOverwrite (deepCopy $.Values.volume) (dict "enabled" true) $volume }}
+{{-   if and $volume.enabled (eq (include "seaweedfs.componentName" (list $ $volumeName)) $name) }}
+{{-     fail (printf "The volume Ingress/HTTPRoute Service %q has the same name as the %s Service after truncation. Shorten fullnameOverride or the release name." $name $volumeName) }}
+{{-   end }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ include "seaweedfs.namespace" . | quote }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: volume
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    {{- with include "seaweedfs.commonLabels" $ }}{{ . | nindent 4 }}{{ end }}
+{{- if .Values.volume.annotations }}
+  annotations:
+    {{- toYaml .Values.volume.annotations | nindent 4 }}
+{{- end }}
+spec:
+  clusterIP: None
+  internalTrafficPolicy: {{ .Values.volume.internalTrafficPolicy | default "Cluster" }}
+  {{- /* No metrics port, so the volume ServiceMonitor does not scrape each pod twice */}}
+  ports:
+  - name: "swfs-volume"
+    port: {{ .Values.volume.port }}
+    targetPort: {{ .Values.volume.port }}
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: volume
+{{- end }}

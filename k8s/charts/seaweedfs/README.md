@@ -569,6 +569,8 @@ s3:
 
 With `rules` left empty the route sends all traffic to the component's own Service and port. A rule may set `matches`, `filters`, `timeouts` and `backendRefs`, and a rule without `backendRefs` still routes to that Service. In all-in-one mode the master, volume, filer and s3 routes target the all-in-one Service. When S3 runs only on the filer (`filer.s3.enabled` without `s3.enabled`), the s3 route uses `filer.s3.port`.
 
+Outside all-in-one mode, the volume Ingress and the default volume route target the `client-volume` Service, which lists only Ready volume pods. The `volume` Service also publishes pods that are not Ready yet, so their DNS records can exist before readiness. An explicit `backendRefs` entry that names the `volume` Service can therefore reach a volume server before it is Ready. Name the `client-volume` Service instead, with `volume.port`, and copy its `metadata.name` from `helm template` because long release names are truncated.
+
 ## Network Policies
 
 In a namespace with a default-deny policy the install hangs: the components cannot resolve each other, and the post-install bucket hook waits on the master and filer until it gives up. `networkPolicy.enabled` renders one `NetworkPolicy` per component, selecting its pods by the standard `app.kubernetes.io/{name,instance,component}` labels and admitting traffic from the other pods of the release on the ports that component listens on.

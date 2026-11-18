@@ -23,6 +23,9 @@ metadata:
 {{- end }}
 spec:
   clusterIP: None
+  {{- /* The master hands out ${POD_NAME}.<this service> as soon as a volume server heartbeats, before it is Ready.
+         Ingress and HTTPRoute use the client-volume Service instead, which publishes only Ready pods. */}}
+  publishNotReadyAddresses: true
   internalTrafficPolicy: {{ $volume.internalTrafficPolicy | default "Cluster" }}
   ports:
   - name: "swfs-volume"
