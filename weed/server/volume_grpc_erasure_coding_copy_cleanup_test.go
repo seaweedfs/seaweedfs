@@ -6,14 +6,17 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -26,17 +29,49 @@ import (
 // address a VolumeEcShardsCopy names as its source.
 func startEcCopySource(t *testing.T, srcDir string) string {
 	t.Helper()
-	srcStore := newRecoverTestStore(t, srcDir)
+	return serveEcCopySource(t, &VolumeServer{store: newRecoverTestStore(t, srcDir)})
+}
+
+func serveEcCopySource(t *testing.T, srv volume_server_pb.VolumeServerServer) string {
+	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 	grpcServer := grpc.NewServer()
-	volume_server_pb.RegisterVolumeServerServer(grpcServer, &VolumeServer{store: srcStore})
+	volume_server_pb.RegisterVolumeServerServer(grpcServer, srv)
 	go grpcServer.Serve(lis)
 	t.Cleanup(grpcServer.Stop)
 	port := lis.Addr().(*net.TCPAddr).Port
 	return string(pb.NewServerAddress("127.0.0.1", port-10000, port))
+}
+
+// failingExtCopySource fails CopyFile for one extension and records the
+// extensions it served.
+type failingExtCopySource struct {
+	*VolumeServer
+	failExt string
+	mu      sync.Mutex
+	served  []string
+}
+
+func (s *failingExtCopySource) CopyFile(req *volume_server_pb.CopyFileRequest, stream volume_server_pb.VolumeServer_CopyFileServer) error {
+	if req.Ext == s.failExt {
+		return status.Errorf(codes.Unavailable, "injected %s failure", req.Ext)
+	}
+	if err := s.VolumeServer.CopyFile(req, stream); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.served = append(s.served, req.Ext)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *failingExtCopySource) servedExts() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.served...)
 }
 
 func newEcCopyReceiver(t *testing.T, dstDir string) *VolumeServer {
@@ -285,22 +320,20 @@ func TestVolumeEcShardsCopy_DuplicateShardIdCopiedOnce(t *testing.T) {
 // A copy failing after the .vif transferred keeps the existing holder's .vif,
 // which must stay paired with the index the failed copy left in place.
 func TestVolumeEcShardsCopy_FailedSidecarKeepsExistingVif(t *testing.T) {
-	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
-		t.Skip("root and Windows read a mode-000 file, so the sidecar transfer cannot be made to fail")
-	}
 	const collection = "col"
 	vid := needle.VolumeId(60)
 
 	srcDir := filepath.Join(t.TempDir(), "src")
-	source := startEcCopySource(t, srcDir)
+	src := &failingExtCopySource{
+		VolumeServer: &VolumeServer{store: newRecoverTestStore(t, srcDir)},
+		failExt:      erasure_coding.BitrotSidecarExt,
+	}
+	source := serveEcCopySource(t, src)
 	srcBase := erasure_coding.EcShardFileName(collection, srcDir, int(vid))
 	writeFile(t, srcBase+".ecx", bytes.Repeat([]byte{9}, types.NeedleMapEntrySize))
 	writeFile(t, srcBase+".ec00", bytes.Repeat([]byte{1}, 4096))
 	writeFile(t, srcBase+".vif", []byte(`{"version":3}`))
 	writeFile(t, srcBase+erasure_coding.BitrotSidecarExt, []byte("sum"))
-	if err := os.Chmod(srcBase+erasure_coding.BitrotSidecarExt, 0); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
 
 	dstDir := filepath.Join(t.TempDir(), "dst")
 	receiver := newEcCopyReceiver(t, dstDir)
@@ -322,6 +355,9 @@ func TestVolumeEcShardsCopy_FailedSidecarKeepsExistingVif(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "copy "+erasure_coding.BitrotSidecarExt+" sidecar") {
 		t.Fatalf("VolumeEcShardsCopy error = %v, want the %s transfer to fail", err, erasure_coding.BitrotSidecarExt)
+	}
+	if served := src.servedExts(); !slices.Contains(served, ".vif") {
+		t.Fatalf("source served %v before the %s failure, want .vif among them", served, erasure_coding.BitrotSidecarExt)
 	}
 	if after := listDir(t, dstDir); strings.Join(after, ",") != strings.Join(before, ",") {
 		t.Fatalf("destination files after failed copy = %v, want %v", after, before)
