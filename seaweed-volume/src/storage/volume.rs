@@ -3894,7 +3894,7 @@ impl Volume {
         if let Some((offset, _)) = staged {
             let _guard = self.data_file_access_control.write_lock();
             let mut io = self.io.write().unwrap();
-            self.publish_delete_request(&mut io, n, offset)?;
+            self.publish_delete_request(&mut io, n, offset, true)?;
         }
         self.flush_idx(&self.io.read().unwrap())?;
         let Some((_, size)) = staged else {
@@ -3912,7 +3912,7 @@ impl Volume {
         let Some((offset, size)) = self.append_delete_request(io, n)? else {
             return Ok(Size(0));
         };
-        self.publish_delete_request(io, n, offset)?;
+        self.publish_delete_request(io, n, offset, false)?;
         let checkpoint_ok = self.maybe_checkpoint_index(io, false);
 
         // Clear the EIO streak after a successful delete (tombstone append +
@@ -3972,12 +3972,28 @@ impl Volume {
         io: &mut VolumeIo,
         n: &Needle,
         offset: u64,
+        fsync: bool,
     ) -> Result<(), VolumeError> {
         io.last_append_at_ns = n.append_at_ns;
 
         // Update index
-        if let Some(nm) = &mut io.nm {
-            nm.delete(n.id, Offset::from_actual_offset(offset as i64))?;
+        if let Some(nm) = &mut io.nm
+            && let Err(e) = nm.delete(n.id, Offset::from_actual_offset(offset as i64))
+        {
+            if fsync {
+                // The map already dropped the needle, so a retry would ack
+                // without the missing .idx row. Stop taking writes, as
+                // publish_write does.
+                self.set_no_write_flag(NO_WRITE_OR_DELETE, true);
+                tracing::error!(
+                    "volume {}: failed to index a durable delete at {}, \
+                     marking read only: {}",
+                    self.id.0,
+                    offset,
+                    e
+                );
+            }
+            return Err(VolumeError::Io(e));
         }
         if n.id == io.last_write_needle_key {
             io.last_write_append_at_ns = 0;
@@ -8939,6 +8955,75 @@ mod tests {
         // The second row was never appended behind the torn bytes.
         let size = std::fs::metadata(format!("{dir}/1.idx")).unwrap().len();
         assert_eq!(size, idx_len + 8);
+    }
+
+    /// A durable delete whose .idx row fails has already dropped the needle
+    /// from the map, so a retry would find nothing to delete and ack. The
+    /// volume stops taking writes instead: nothing is appended past the
+    /// tombstone, so a reload re-indexes it from the .dat tail rather than
+    /// resurrect the needle.
+    #[test]
+    fn test_durable_delete_index_failure_refuses_writes() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+        v.write_needle(&mut batch_needle(1, 0xaa, b"payload"), true, true)
+            .unwrap();
+
+        {
+            let mut io = v.io.write().unwrap();
+            let nm = io.nm.as_mut().unwrap();
+            let idx_len = nm.index_file_size();
+            let file = OpenOptions::new()
+                .write(true)
+                .open(format!("{dir}/1.idx"))
+                .unwrap();
+            nm.set_idx_file(
+                Box::new(TornIdxWriter {
+                    file,
+                    writes: 0,
+                    tear_at: 1,
+                    fail_truncates: false,
+                }),
+                idx_len,
+            );
+        }
+
+        assert!(
+            v.delete_needle_with_fsync(&mut batch_needle(1, 0xaa, b""), true)
+                .is_err()
+        );
+        assert!(
+            v.write_needle(&mut batch_needle(2, 0xbb, b"later"), true, true)
+                .is_err(),
+            "nothing may be appended past the unindexed tombstone"
+        );
+        assert!(
+            v.delete_needle_with_fsync(&mut batch_needle(1, 0xaa, b""), true)
+                .is_err(),
+            "a retry must not ack a delete whose .idx row never landed"
+        );
+        drop(v);
+
+        let reopened = match Volume::new(
+            dir,
+            dir,
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            &VolumeSpec::default(),
+        ) {
+            Ok(v) => v,
+            Err(e) => panic!("the volume does not reload: {e}"),
+        };
+        let mut got = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        let read = reopened.read_needle(&mut got);
+        assert!(
+            !(read.is_ok() && got.data == b"payload"),
+            "the deleted needle must not come back on reload"
+        );
     }
 
     /// The I/O error streak after writing four durable needles, the ones in
