@@ -668,3 +668,18 @@ func TestDeleteNeedleWithFsyncOnFullVolume(t *testing.T) {
 	nv, found := v.nm.Get(types.Uint64ToNeedleId(1))
 	require.True(t, !found || nv.Size.IsDeleted())
 }
+
+func TestSyncDeleteWithFsyncSyncsAfterUnsyncedDelete(t *testing.T) {
+	v, counting := newCountingVolume(t)
+
+	_, _, _, err := v.writeNeedle2(fixedNeedle(1, "payload"), true, false, false)
+	require.NoError(t, err)
+	_, err = v.syncDelete(fixedNeedle(1, ""), false)
+	require.NoError(t, err)
+	require.Equal(t, 0, counting.syncCount)
+
+	size, err := v.syncDelete(fixedNeedle(1, ""), true)
+	require.NoError(t, err)
+	require.Zero(t, size)
+	require.Equal(t, 1, counting.syncCount, "an earlier unsynced delete must still be flushed before a durable ack")
+}

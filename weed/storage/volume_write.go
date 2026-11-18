@@ -467,11 +467,12 @@ func (v *Volume) syncDelete(n *needle.Needle, fsync bool) (Size, error) {
 	lastAppendAtNs := v.lastAppendAtNs
 
 	size, offset, tombstoned, err := v.appendDeleteRequest(n)
-	if err != nil || !tombstoned {
+	if err != nil {
 		return size, err
 	}
 	// Same order as a durable write: the tombstone is down before the map
 	// drops the needle, and its .idx row before the delete is acknowledged.
+	// An already-deleted needle still syncs: an earlier delete may have skipped it.
 	backend := v.DataBackend
 	v.dataFileAccessLock.Unlock()
 	syncErr := backend.Sync()
@@ -487,8 +488,10 @@ func (v *Volume) syncDelete(n *needle.Needle, fsync bool) (Size, error) {
 		}
 		return 0, syncErr
 	}
-	if err = v.publishDeleteRequest(n, offset); err != nil {
-		return size, err
+	if tombstoned {
+		if err = v.publishDeleteRequest(n, offset); err != nil {
+			return size, err
+		}
 	}
 	v.dataFileAccessLock.Unlock()
 	err = v.syncIndex()
