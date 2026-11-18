@@ -1,0 +1,23 @@
+# Tests from s3-api-compat-tests that SeaweedFS is expected to fail.
+# check_results.py fails CI on any other failure, and on any test listed here
+# that passes, so remove an entry together with the fix that makes it pass.
+
+# AWS answers GetBucketPolicyStatus on a bucket without a policy with
+# NoSuchBucketPolicy, and so does SeaweedFS; the suite expects a status.
+GetBucketPolicyStatus
+
+# Glacier restore: SeaweedFS has no archive storage class to restore from, and
+# AWS also refuses RestoreObject on a STANDARD object (InvalidObjectState).
+RestoreObject
+
+# SeaweedFS reads x-amz-rename-source as a literal key first and then, when it
+# starts with the request's bucket, as bucket/key, because AWS documents both
+# spellings. A leading slash is dropped since filer paths cannot hold it.
+RenameObject_SourceIsLiteralKey
+
+# Not yet fixed in SeaweedFS.
+PutBucketAccelerateConfiguration
+GetBucketAccelerateConfiguration
+DeleteBucketOwnershipControls
+PutBucketNotificationConfiguration
+PutObjectTagging_VersionId

@@ -1,0 +1,57 @@
+name: "S3 Tigris Compatibility Tests"
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/server/filer_server_handlers_*.go'
+      - 'test/s3/tigris_compat/**'
+      - '.github/workflows/s3-tigris-compat-tests.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/server/filer_server_handlers_*.go'
+      - 'test/s3/tigris_compat/**'
+      - '.github/workflows/s3-tigris-compat-tests.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
+
+permissions:
+  contents: read
+
+jobs:
+  s3-tigris-compat-tests:
+    name: s3-api-compat-tests (Tigris)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+
+      - name: Run s3-api-compat-tests
+        working-directory: test/s3/tigris_compat
+        run: make test
+
+      - name: Show server log on failure
+        if: failure()
+        working-directory: test/s3/tigris_compat
+        run: tail -200 weed-test.log || true
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: s3-tigris-compat-results
+          path: test/s3/tigris_compat/results.json
+          if-no-files-found: ignore
+          retention-days: 7
