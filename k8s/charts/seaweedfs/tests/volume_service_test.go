@@ -2,6 +2,8 @@ package tests
 
 import (
 	"fmt"
+	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -75,6 +77,17 @@ func TestVolumeRoutingServiceDoesNotCollideWithVolumeGroups(t *testing.T) {
 	}
 	if !seen["Service/vector-test-seaweedfs-volume-client"] || !seen["Service/vector-test-seaweedfs-client-volume"] {
 		t.Fatal("volumes.client group Service and the routing Service must both render")
+	}
+}
+
+func TestVolumeRoutingServiceRejectsTruncatedCollision(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm is not installed")
+	}
+	fullname := strings.Repeat("a", 49) + "-client"
+	output, err := exec.Command("helm", "template", "test", "..", "--set", "fullnameOverride="+fullname, "--set", "volume.ingress.enabled=true").CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "same name as the volume Service") {
+		t.Fatalf("colliding routing Service accepted: %v %s", err, output)
 	}
 }
 
