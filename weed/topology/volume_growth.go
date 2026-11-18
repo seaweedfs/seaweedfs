@@ -79,6 +79,10 @@ type VolumeGrowOption struct {
 	DataNode           string                        `json:"dataNode,omitempty"`
 	MemoryMapMaxSizeMb uint32                        `json:"memoryMapMaxSizeMb,omitempty"`
 	Version            uint32                        `json:"version,omitempty"`
+
+	// layoutLoad is set only while one volume is being placed: the writable
+	// volumes of the layout being grown on each data node. See lessLoaded.
+	layoutLoad map[*DataNode]int
 }
 
 type VolumeGrowth struct {
@@ -201,6 +205,8 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 // 2. find rest data nodes
 // If useReservations is true, reserves capacity on each server and returns reservation info
 func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption, useReservations bool) (servers []*DataNode, reservation *VolumeGrowReservation, err error) {
+	option = option.withLayoutLoad(topo)
+
 	//find main datacenter and other data centers
 	rp := option.ReplicaPlacement
 

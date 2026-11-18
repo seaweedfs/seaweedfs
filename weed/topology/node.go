@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -244,6 +245,11 @@ func (n *NodeImpl) PickNodesByWeight(numberOfNodes int, option *VolumeGrowOption
 			lastWeights += weights
 		}
 	}
+	// Servers holding fewer writable volumes of the layout come first; the
+	// weighted order above only breaks ties among them.
+	sort.SliceStable(sortedCandidates, func(i, j int) bool {
+		return option.lessLoaded(sortedCandidates[i], sortedCandidates[j])
+	})
 
 	restNodes = make([]Node, 0, numberOfNodes-1)
 	ret := false
@@ -446,6 +452,9 @@ func (n *NodeImpl) reserveOneVolumeInternal(r int64, option *VolumeGrowOption, u
 			return node.AvailableSpaceForReservation(option)
 		}
 		return node.AvailableSpaceFor(option)
+	}
+	if option.layoutLoad != nil && n.IsRack() {
+		return n.reserveLeastLoaded(r, option, freeSpaceOf)
 	}
 	// The caller drew r from this node's free slots, which can exceed what the
 	// children offer once their reservations or a newer heartbeat are counted.
