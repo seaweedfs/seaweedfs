@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
+use lance::Dataset;
 use lance::dataset::cleanup::{CleanupPolicy, cleanup_old_versions};
 use seaweed_worker_core::config_form::{form, int_or, int_value, number_field};
 use seaweed_worker_core::pb::{
@@ -71,9 +72,8 @@ impl CleanupVersionsHandler {
 
 /// The oldest version that may be removed while still leaving `min_versions`
 /// behind, or None when the table has no more than the floor.
-async fn version_floor(table: &dataset::OpenTable, min_versions: usize) -> Result<Option<u64>> {
-    let mut versions: Vec<u64> = table
-        .dataset
+async fn version_floor(dataset: &Dataset, min_versions: usize) -> Result<Option<u64>> {
+    let mut versions: Vec<u64> = dataset
         .versions()
         .await?
         .iter()
@@ -84,6 +84,33 @@ async fn version_floor(table: &dataset::OpenTable, min_versions: usize) -> Resul
     }
     versions.sort_unstable();
     Ok(Some(versions[versions.len() - min_versions]))
+}
+
+/// The cleanup that keeps `min_versions` and every version younger than
+/// `retain_hours`, or None when the floor leaves nothing to remove. A purge
+/// cleans up through it too.
+pub async fn retention_policy(
+    dataset: &Dataset,
+    retain_hours: i64,
+    min_versions: usize,
+) -> Result<Option<CleanupPolicy>> {
+    let Some(floor) = version_floor(dataset, min_versions).await? else {
+        return Ok(None);
+    };
+    Ok(Some(CleanupPolicy {
+        before_timestamp: Some(Utc::now() - Duration::hours(retain_hours)),
+        // should_clean() ANDs its clauses, so a version has to be both older
+        // than the window and below the floor to go.
+        before_version: Some(floor),
+        // Files this dataset cannot account for are left alone: they may
+        // belong to a writer that has not committed yet, and deleting them
+        // would corrupt a commit in flight.
+        delete_unverified: false,
+        // A tagged version is pinned on purpose, so refuse rather than
+        // silently dropping what someone named.
+        error_if_tagged_old_versions: true,
+        ..Default::default()
+    }))
 }
 
 #[async_trait]
@@ -304,7 +331,8 @@ impl JobHandler for CleanupVersionsHandler {
         // be applied here and not only when the job was proposed: by the time it
         // runs, versions may have aged past the retention window, and age alone
         // would take the table below what the operator asked to keep.
-        let Some(floor) = version_floor(&table, min_versions).await? else {
+        let Some(policy) = retention_policy(&table.dataset, retain_hours, min_versions).await?
+        else {
             sender.send_completed(JobCompleted {
                 request_id: request.request_id.clone(),
                 job_id: job.job_id.clone(),
@@ -331,20 +359,6 @@ impl JobHandler for CleanupVersionsHandler {
             ..Default::default()
         })?;
 
-        let policy = CleanupPolicy {
-            before_timestamp: Some(Utc::now() - Duration::hours(retain_hours)),
-            // should_clean() ANDs its clauses, so a version has to be both older
-            // than the window and below the floor to go.
-            before_version: Some(floor),
-            // Files this dataset cannot account for are left alone: they may
-            // belong to a writer that has not committed yet, and deleting them
-            // would corrupt a commit in flight.
-            delete_unverified: false,
-            // A tagged version is pinned on purpose, so refuse rather than
-            // silently dropping what someone named.
-            error_if_tagged_old_versions: true,
-            ..Default::default()
-        };
         let stats = cleanup_old_versions(&table.dataset, policy)
             .await
             .with_context(|| format!("clean up versions of {}", table.location))?;
@@ -423,10 +437,18 @@ impl CleanupVersionsHandler {
             success: true,
             result: Some(JobResult {
                 output_values: output,
-                summary: format!(
-                    "purged: rewrote {} fragments, removed {} versions and {} bytes",
-                    stats.fragments_rewritten, stats.old_versions, stats.bytes_removed
-                ),
+                summary: if stats.served {
+                    format!(
+                        "purged: rewrote {} fragments, removed {} versions and {} bytes",
+                        stats.fragments_rewritten, stats.old_versions, stats.bytes_removed
+                    )
+                } else {
+                    format!(
+                        "purge pending: rewrote {} fragments, removed {} versions and {} bytes; \
+                         versions from before the rebuild are still retained",
+                        stats.fragments_rewritten, stats.old_versions, stats.bytes_removed
+                    )
+                },
                 ..Default::default()
             }),
             ..Default::default()

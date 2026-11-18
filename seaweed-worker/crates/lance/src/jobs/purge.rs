@@ -11,13 +11,14 @@
 //! - `seaweedfs.purge.requested` holds a request token ([`request_purge`]
 //!   writes the current time); a purge is pending while it differs from
 //!   `seaweedfs.purge.completed`, which the purge sets to the token it served.
+//!   `seaweedfs.purge.rebuilt` records the token whose rebuild is done.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use lance::Dataset;
-use lance::dataset::cleanup::{CleanupPolicy, cleanup_old_versions};
+use lance::dataset::cleanup::{RemovalStats, cleanup_old_versions};
 use lance::dataset::optimize::{CompactionOptions, compact_files};
 use lance::index::{DatasetIndexExt, DatasetIndexInternalExt};
 use lance_index::metrics::NoOpMetricsCollector;
@@ -26,10 +27,13 @@ use lance_index::{IndexType, is_system_index};
 use lance_table::format::IndexMetadata;
 use tracing::warn;
 
+use crate::jobs::cleanup::retention_policy;
+
 pub const RETAIN_HOURS_KEY: &str = "seaweedfs.cleanup.retain_hours";
 pub const MIN_VERSIONS_KEY: &str = "seaweedfs.cleanup.min_versions";
 pub const PURGE_REQUESTED_KEY: &str = "seaweedfs.purge.requested";
 pub const PURGE_COMPLETED_KEY: &str = "seaweedfs.purge.completed";
+pub const PURGE_REBUILT_KEY: &str = "seaweedfs.purge.rebuilt";
 
 /// The retention cleanup applies to one table: the worker's, unless the
 /// table's config overrides a value with one inside the worker's range.
@@ -94,16 +98,45 @@ pub struct PurgeStats {
     pub fragments_rewritten: usize,
     pub old_versions: u64,
     pub bytes_removed: u64,
+    /// False while versions from before the rebuild remain.
+    pub served: bool,
 }
 
-/// Rewrites every fragment that has deleted rows, rebuilds the indices from
-/// the rows that remain, then removes every version but the latest, and marks
-/// `token` served. The rebuild is needed because compaction only remaps an
-/// index: an IVF_FLAT index keeps the deleted vector's values in its
-/// partitions under a remapped row address. A version pinned by a tag (a
-/// query lease, or one someone named) still holds the deleted rows, so the
-/// purge fails without marking the request served and the next run retries.
+/// Rewrites every fragment that has deleted rows and rebuilds the indices from
+/// the rows that remain, then removes the versions from before that through
+/// the cleanup job's retention policy with only the latest version kept, and
+/// marks `token` served once none of them is left. The rebuild is needed
+/// because compaction only remaps an index: an IVF_FLAT index keeps the
+/// deleted vector's values in its partitions under a remapped row address. It
+/// runs once per request, so a purge that has to wait for its cleanup (a
+/// version pinned by a tag, a query lease or one someone named, fails it)
+/// retries only the cleanup. Files no version references stay while Lance
+/// cannot tell them from a writer's uncommitted ones, which is up to seven
+/// days for an abandoned write.
 pub async fn purge(dataset: &mut Dataset, token: &str) -> Result<PurgeStats> {
+    let fragments_rewritten = rebuild(dataset, token).await?;
+    let cleanup = match retention_policy(dataset, 0, 1).await? {
+        Some(policy) => cleanup_old_versions(dataset, policy)
+            .await
+            .context("remove versions older than the purge")?,
+        None => RemovalStats::default(),
+    };
+    let served = finish(dataset, token).await?;
+    Ok(PurgeStats {
+        fragments_rewritten,
+        old_versions: cleanup.old_versions,
+        bytes_removed: cleanup.bytes_removed,
+        served,
+    })
+}
+
+/// Rewrites the fragments with deletions and rebuilds the indices for
+/// `token`, unless that was done already, and returns how many fragments it
+/// rewrote.
+pub async fn rebuild(dataset: &mut Dataset, token: &str) -> Result<usize> {
+    if dataset.config().get(PURGE_REBUILT_KEY).map(|s| s.trim()) == Some(token) {
+        return Ok(0);
+    }
     let vector_indices = vector_index_names(dataset).await?;
     let options = CompactionOptions {
         materialize_deletions: true,
@@ -124,27 +157,33 @@ pub async fn purge(dataset: &mut Dataset, token: &str) -> Result<PurgeStats> {
             .context("rebuild indices without the deleted rows")?;
     }
     rebuild_scalar_indices(dataset).await?;
-    let latest = dataset.latest_version_id().await?;
     dataset.checkout_latest().await?;
-    let policy = CleanupPolicy {
-        before_timestamp: Some(Utc::now()),
-        before_version: Some(latest),
-        delete_unverified: false,
-        error_if_tagged_old_versions: true,
-        ..Default::default()
-    };
-    let cleanup = cleanup_old_versions(dataset, policy)
+    dataset
+        .update_config([(PURGE_REBUILT_KEY, token)])
         .await
-        .context("remove versions older than the purge")?;
+        .context("record purge rebuild")?;
+    Ok(compaction.fragments_removed)
+}
+
+/// Marks `token` served when the oldest version left is one the rebuild for
+/// it wrote, so no version from before the rebuild remains.
+pub async fn finish(dataset: &mut Dataset, token: &str) -> Result<bool> {
+    let oldest = dataset
+        .versions()
+        .await?
+        .iter()
+        .map(|v| v.version)
+        .min()
+        .context("the table has no versions")?;
+    let oldest = dataset.checkout_version(oldest).await?;
+    if oldest.config().get(PURGE_REBUILT_KEY).map(|s| s.trim()) != Some(token) {
+        return Ok(false);
+    }
     dataset
         .update_config([(PURGE_COMPLETED_KEY, token)])
         .await
         .context("record purge completion")?;
-    Ok(PurgeStats {
-        fragments_rewritten: compaction.fragments_removed,
-        old_versions: cleanup.old_versions,
-        bytes_removed: cleanup.bytes_removed,
-    })
+    Ok(true)
 }
 
 /// Names of the vector indices. A retrain builds each name over the whole

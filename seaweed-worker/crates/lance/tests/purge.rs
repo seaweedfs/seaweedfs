@@ -9,7 +9,7 @@ use arrow_array::types::Float32Type;
 use arrow_array::{FixedSizeListArray, RecordBatch, RecordBatchIterator, StringArray};
 use arrow_schema::{DataType, Field, Schema};
 use lance::Dataset;
-use lance::dataset::cleanup::{CleanupPolicy, cleanup_old_versions};
+use lance::dataset::cleanup::{CleanupPolicy, RemovalStats, cleanup_old_versions};
 use lance::index::DatasetIndexExt;
 use lance::index::vector::VectorIndexParams;
 use lance_index::IndexType;
@@ -118,6 +118,24 @@ fn markers_in(dir: &Path) -> Vec<String> {
     found
 }
 
+/// A purge whose cleanup nothing holds back, so only the latest version
+/// stays. [`purge::purge`] cleans up through the cleanup job's retention
+/// policy, which a deployment may have keep more.
+async fn purge_to_latest(
+    dataset: &mut Dataset,
+    token: &str,
+) -> anyhow::Result<(usize, RemovalStats, bool)> {
+    let rewritten = purge::rebuild(dataset, token).await?;
+    let policy = CleanupPolicy {
+        before_timestamp: Some(chrono::Utc::now()),
+        before_version: Some(dataset.latest_version_id().await?),
+        error_if_tagged_old_versions: true,
+        ..Default::default()
+    };
+    let removed = cleanup_old_versions(dataset, policy).await?;
+    Ok((rewritten, removed, purge::finish(dataset, token).await?))
+}
+
 #[tokio::test]
 async fn purge_removes_a_deleted_vectors_bytes() {
     purge_leaves_no_trace(false).await;
@@ -213,9 +231,10 @@ async fn purge_leaves_no_trace(stable_row_ids: bool) {
 
     let token = purge::request_purge(&mut dataset).await.unwrap();
     assert_eq!(purge::pending(dataset.config()), Some(token.clone()));
-    let stats = purge::purge(&mut dataset, &token).await.unwrap();
-    assert!(stats.fragments_rewritten >= 1, "{stats:?}");
-    assert!(stats.old_versions >= 1, "{stats:?}");
+    let (rewritten, removed, served) = purge_to_latest(&mut dataset, &token).await.unwrap();
+    assert!(served);
+    assert!(rewritten >= 1);
+    assert!(removed.old_versions >= 1, "{removed:?}");
 
     assert_eq!(
         markers_in(dir.path()),
@@ -233,6 +252,8 @@ async fn purge_leaves_no_trace(stable_row_ids: bool) {
 
 /// A version a query lease (a tag) pins still holds the deleted row, so the
 /// purge must fail and leave the request pending rather than report success.
+/// Once the tag goes, the next purge only cleans up: the rebuild is not done
+/// again.
 #[tokio::test]
 async fn purge_refuses_while_a_tag_pins_old_data() {
     let dir = tempfile::tempdir().unwrap();
@@ -240,6 +261,16 @@ async fn purge_refuses_while_a_tag_pins_old_data() {
     let uri = uri.to_str().unwrap();
     let (schema, batch) = batch();
     let mut dataset = Dataset::write(RecordBatchIterator::new(vec![Ok(batch)], schema), uri, None)
+        .await
+        .unwrap();
+    dataset
+        .create_index(
+            &["vector"],
+            IndexType::Vector,
+            Some("vector_idx".to_string()),
+            &VectorIndexParams::ivf_flat(2, DistanceType::L2),
+            false,
+        )
         .await
         .unwrap();
     let pinned = dataset.version().version;
@@ -256,9 +287,57 @@ async fn purge_refuses_while_a_tag_pins_old_data() {
         .await
         .unwrap();
     let token = purge::request_purge(&mut dataset).await.unwrap();
-    assert!(purge::purge(&mut dataset, &token).await.is_err());
+    assert!(purge_to_latest(&mut dataset, &token).await.is_err());
     dataset.checkout_latest().await.unwrap();
-    assert_eq!(purge::pending(dataset.config()), Some(token));
+    assert_eq!(purge::pending(dataset.config()), Some(token.clone()));
+
+    let index = |dataset: &Dataset| {
+        let dataset = dataset.clone();
+        async move { dataset.load_indices().await.unwrap()[0].uuid }
+    };
+    let rebuilt = index(&dataset).await;
+    dataset
+        .tags()
+        .delete("weed-vector-query-lease")
+        .await
+        .unwrap();
+    let (rewritten, _, served) = purge_to_latest(&mut dataset, &token).await.unwrap();
+    assert!(served);
+    assert_eq!(rewritten, 0);
+    assert_eq!(
+        index(&dataset).await,
+        rebuilt,
+        "the index was rebuilt again"
+    );
+    assert_eq!(purge::pending(dataset.config()), None);
+    assert_eq!(markers_in(dir.path()), Vec::<String>::new());
+}
+
+/// The request is served only once no version from before the rebuild is
+/// left, whatever kept one.
+#[tokio::test]
+async fn purge_is_served_once_older_versions_are_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = dir.path().join("index.lance");
+    let uri = uri.to_str().unwrap();
+    let (schema, batch) = batch();
+    let mut dataset = Dataset::write(RecordBatchIterator::new(vec![Ok(batch)], schema), uri, None)
+        .await
+        .unwrap();
+    dataset
+        .delete(&format!("key = '{KEY_MARKER}'"))
+        .await
+        .unwrap();
+    let token = purge::request_purge(&mut dataset).await.unwrap();
+    assert_eq!(purge::rebuild(&mut dataset, &token).await.unwrap(), 1);
+    assert!(!purge::finish(&mut dataset, &token).await.unwrap());
+    assert_eq!(purge::pending(dataset.config()), Some(token.clone()));
+
+    let (rewritten, removed, served) = purge_to_latest(&mut dataset, &token).await.unwrap();
+    assert!(served);
+    assert_eq!(rewritten, 0);
+    assert!(removed.old_versions >= 1, "{removed:?}");
+    assert_eq!(purge::pending(dataset.config()), None);
 }
 
 /// A retrain builds every index name over the whole table, so shards of one
