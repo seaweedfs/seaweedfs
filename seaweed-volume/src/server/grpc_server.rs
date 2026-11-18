@@ -3420,6 +3420,12 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
         let collection = &req.collection;
 
+        // Lifecycle lock OUTERMOST: rebuild writes canonical .ecNN/.ecx for this vid;
+        // serialize it against a concurrent copy/generate/teardown for the same vid so
+        // a teardown wipe cannot clobber rebuilt files (and vice versa). Held across the
+        // rebuild IO.
+        let _lifecycle = self.state.ec_lifecycle_lock(vid).lock_owned().await;
+
         // Search ALL locations for shards, pick the best rebuild location
         // (most shards + has .ecx), collect additional dirs.
         // Matches Go's multi-location search in VolumeEcShardsRebuild.
@@ -10435,6 +10441,40 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(10), mount)
             .await
             .expect("mount did not finish after the copy released the lifecycle lock")
+            .unwrap()
+            .ok();
+    }
+
+    // A rebuild waits out an in-flight copy of the same volume, which would
+    // otherwise overwrite the index the rebuild folded tombstones into.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_shards_rebuild_waits_for_in_flight_copy() {
+        let (dest, _dest_tmp, _dir) = ec_copy_destination().await;
+        let lifecycle = dest
+            .state
+            .ec_lifecycle_lock(VolumeId(66))
+            .lock_owned()
+            .await;
+        let mut rebuild = tokio::spawn(async move {
+            dest.volume_ec_shards_rebuild(Request::new(
+                volume_server_pb::VolumeEcShardsRebuildRequest {
+                    volume_id: 66,
+                    collection: "col".to_string(),
+                    ..Default::default()
+                },
+            ))
+            .await
+        });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), &mut rebuild)
+                .await
+                .is_err(),
+            "rebuild ran while a copy of the same volume held its lifecycle lock"
+        );
+        drop(lifecycle);
+        tokio::time::timeout(std::time::Duration::from_secs(10), rebuild)
+            .await
+            .expect("rebuild did not finish after the copy released the lifecycle lock")
             .unwrap()
             .ok();
     }

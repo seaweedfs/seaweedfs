@@ -474,3 +474,32 @@ func TestVolumeEcShardsCopy_FailedCopyKeepsShardWrittenMeanwhile(t *testing.T) {
 		t.Fatalf(".ec00 written during the copy = %d bytes, %v; want it kept", len(got), err)
 	}
 }
+
+// A rebuild waits out an in-flight copy of the same volume, which would
+// otherwise overwrite the index the rebuild folded tombstones into.
+func TestVolumeEcShardsRebuild_WaitsForInFlightCopy(t *testing.T) {
+	vid := needle.VolumeId(66)
+	receiver := newEcCopyReceiver(t, filepath.Join(t.TempDir(), "dst"))
+	lifecycle := receiver.store.EcLifecycleLock(vid)
+	lifecycle.Lock()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = receiver.VolumeEcShardsRebuild(context.Background(), &volume_server_pb.VolumeEcShardsRebuildRequest{
+			VolumeId:   uint32(vid),
+			Collection: "col",
+		})
+	}()
+	select {
+	case <-done:
+		lifecycle.Unlock()
+		t.Fatal("rebuild ran while a copy of the same volume held its lifecycle lock")
+	case <-time.After(200 * time.Millisecond):
+	}
+	lifecycle.Unlock()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("rebuild did not finish after the copy released the lifecycle lock")
+	}
+}

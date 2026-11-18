@@ -210,6 +210,14 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	}
 
 	glog.V(0).Infof("VolumeEcShardsRebuild: %v", req)
+
+	// Serialize against full teardown and the other canonical-EC-file writers for this
+	// vid so a concurrent teardown wipe cannot clobber the rebuilt .ecNN/.ecx, and vice
+	// versa. Held across the rebuild IO.
+	lifecycle := vs.store.EcLifecycleLock(needle.VolumeId(req.VolumeId))
+	lifecycle.Lock()
+	defer lifecycle.Unlock()
+
 	baseFileName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId))
 
 	var rebuiltShardIds []uint32
