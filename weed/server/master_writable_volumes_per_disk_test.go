@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -81,5 +82,39 @@ func assertSeries(t *testing.T, got, want map[string]float64) {
 		if g, ok := got[k]; !ok || g != v {
 			t.Errorf("series[%s] = %v (present %v), want %v", k, g, ok, v)
 		}
+	}
+}
+
+func TestResetLeaderLayoutGaugesClearsFollowerValues(t *testing.T) {
+	const collection = "follower"
+	topo := topology.NewTopology("follower", nil, 10000, 5, false)
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, 18080, "", "", map[string]uint32{"": 100})
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{
+		{Id: 1, Collection: collection, Version: 3},
+	}, dn)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	vl := topo.GetVolumeLayout(collection, rp, needle.EMPTY_TTL, types.HardDriveType)
+
+	series := make(writableDiskSeries)
+	series.update(vl, collection, "hdd", "000", "")
+	stats.MasterVolumeLayoutWritable.WithLabelValues(collection, "hdd", "000", "").Set(1)
+	stats.MasterVolumeLayoutCrowded.WithLabelValues(collection, "hdd", "000", "").Set(1)
+	stats.MasterUnderReplicatedVolumes.WithLabelValues(collection, "hdd", "000", "").Set(1)
+
+	resetLeaderLayoutGauges(series)
+
+	for name, gauge := range map[string]*prometheus.GaugeVec{
+		"volume_layout_writable":    stats.MasterVolumeLayoutWritable,
+		"volume_layout_crowded":     stats.MasterVolumeLayoutCrowded,
+		"under_replicated_volumes":  stats.MasterUnderReplicatedVolumes,
+		"writable_volumes_per_disk": stats.MasterWritableVolumesPerDisk,
+	} {
+		if n := testutil.CollectAndCount(gauge); n != 0 {
+			t.Errorf("%s still exports %d series after the reset", name, n)
+		}
+	}
+	if len(series) != 0 {
+		t.Errorf("series still tracks %d layouts", len(series))
 	}
 }

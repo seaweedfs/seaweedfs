@@ -105,6 +105,14 @@ func (s writableDiskSeries) retain(layouts []*topology.VolumeLayoutCollection) {
 	}
 }
 
+func resetLeaderLayoutGauges(diskSeries writableDiskSeries) {
+	stats.MasterVolumeLayoutWritable.Reset()
+	stats.MasterVolumeLayoutCrowded.Reset()
+	stats.MasterUnderReplicatedVolumes.Reset()
+	stats.MasterWritableVolumesPerDisk.Reset()
+	clear(diskSeries)
+}
+
 func (ms *MasterServer) ProcessGrowRequest() {
 	go func() {
 		ctx := context.Background()
@@ -117,6 +125,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				time.Sleep(5*time.Minute + time.Duration(30*rand.Float32())*time.Second)
 			}
 			if !ms.Topo.IsLeader() {
+				resetLeaderLayoutGauges(diskSeries)
 				continue
 			}
 			dcs := ms.Topo.ListDCAndRacks()
