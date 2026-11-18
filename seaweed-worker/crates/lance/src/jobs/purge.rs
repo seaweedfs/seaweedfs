@@ -19,8 +19,10 @@ use chrono::Utc;
 use lance::Dataset;
 use lance::dataset::cleanup::{CleanupPolicy, cleanup_old_versions};
 use lance::dataset::optimize::{CompactionOptions, compact_files};
-use lance::index::DatasetIndexExt;
+use lance::index::{DatasetIndexExt, DatasetIndexInternalExt};
+use lance_index::metrics::NoOpMetricsCollector;
 use lance_index::optimize::OptimizeOptions;
+use lance_index::{IndexType, is_system_index};
 use lance_table::format::IndexMetadata;
 use tracing::warn;
 
@@ -121,6 +123,7 @@ pub async fn purge(dataset: &mut Dataset, token: &str) -> Result<PurgeStats> {
             .await
             .context("rebuild indices without the deleted rows")?;
     }
+    rebuild_scalar_indices(dataset).await?;
     let latest = dataset.latest_version_id().await?;
     dataset.checkout_latest().await?;
     let policy = CleanupPolicy {
@@ -170,6 +173,38 @@ async fn vector_index_names(dataset: &Dataset) -> Result<Vec<String>> {
         names.extend(shards);
     }
     Ok(names)
+}
+
+/// Builds every scalar index again from the rows that remain. Compaction only
+/// remaps them: a bitmap index keeps a deleted key, and under stable row ids
+/// no scalar index is rewritten at all.
+async fn rebuild_scalar_indices(dataset: &mut Dataset) -> Result<()> {
+    let indices = dataset.load_indices().await?;
+    let mut rebuilt = BTreeSet::new();
+    for index in indices.iter() {
+        if is_system_index(index) || is_vector(index) || !rebuilt.insert(index.name.clone()) {
+            continue;
+        }
+        let [field] = index.fields[..] else {
+            bail!("index {} covers {} columns", index.name, index.fields.len());
+        };
+        let column = dataset.schema().field_path(field)?;
+        let params = dataset
+            .open_scalar_index(&column, &index.uuid, &NoOpMetricsCollector)
+            .await?
+            .derive_index_params()?;
+        dataset
+            .create_index(
+                &[column.as_str()],
+                IndexType::Scalar,
+                Some(index.name.clone()),
+                &params,
+                true,
+            )
+            .await
+            .with_context(|| format!("rebuild index {}", index.name))?;
+    }
+    Ok(())
 }
 
 fn is_vector(index: &IndexMetadata) -> bool {

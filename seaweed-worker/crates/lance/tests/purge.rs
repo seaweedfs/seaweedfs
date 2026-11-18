@@ -120,13 +120,32 @@ fn markers_in(dir: &Path) -> Vec<String> {
 
 #[tokio::test]
 async fn purge_removes_a_deleted_vectors_bytes() {
+    purge_leaves_no_trace(false).await;
+}
+
+/// Under stable row ids compaction leaves scalar indices as they are, so only
+/// a rebuild takes the key out of them.
+#[tokio::test]
+async fn purge_removes_a_deleted_vectors_bytes_under_stable_row_ids() {
+    purge_leaves_no_trace(true).await;
+}
+
+async fn purge_leaves_no_trace(stable_row_ids: bool) {
     let dir = tempfile::tempdir().unwrap();
     let uri = dir.path().join("index.lance");
     let uri = uri.to_str().unwrap();
     let (schema, batch) = batch();
-    let mut dataset = Dataset::write(RecordBatchIterator::new(vec![Ok(batch)], schema), uri, None)
-        .await
-        .unwrap();
+    let params = lance::dataset::WriteParams {
+        enable_stable_row_ids: stable_row_ids,
+        ..Default::default()
+    };
+    let mut dataset = Dataset::write(
+        RecordBatchIterator::new(vec![Ok(batch)], schema),
+        uri,
+        Some(params),
+    )
+    .await
+    .unwrap();
     dataset
         .create_index(
             &["vector"],
@@ -143,6 +162,19 @@ async fn purge_removes_a_deleted_vectors_bytes() {
             IndexType::BTree,
             Some("key_idx".to_string()),
             &lance_index::scalar::ScalarIndexParams::default(),
+            false,
+        )
+        .await
+        .unwrap();
+    // A remapped bitmap index still lists the deleted row's value.
+    dataset
+        .create_index(
+            &["metadata"],
+            IndexType::Bitmap,
+            Some("metadata_idx".to_string()),
+            &lance_index::scalar::ScalarIndexParams::for_builtin(
+                lance_index::scalar::BuiltinIndexType::Bitmap,
+            ),
             false,
         )
         .await
@@ -196,7 +228,7 @@ async fn purge_removes_a_deleted_vectors_bytes() {
     let reopened = Dataset::open(uri).await.unwrap();
     assert_eq!(reopened.count_rows(None).await.unwrap(), ROWS - 1);
     assert_eq!(purge::pending(reopened.config()), None);
-    assert_eq!(reopened.load_indices().await.unwrap().len(), 2);
+    assert_eq!(reopened.load_indices().await.unwrap().len(), 3);
 }
 
 /// A version a query lease (a tag) pins still holds the deleted row, so the
