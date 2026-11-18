@@ -328,6 +328,22 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		return fmt.Errorf("compact chunks of %s: %w", fileFullPath, err)
 	}
 
+	if _, _, bloated := shouldMergeChunks(chunks, manifestChunks); bloated {
+		// The merge replaces every chunk it reads. Uploads attach their chunks
+		// without the handle lock, and writes that landed after doFlush drained
+		// the pages may still be uploading: drain them while the lock holds
+		// writes off and take the chunks again, so that nothing attaches
+		// during the merge or after its chunks replace the list.
+		if err := fh.dirtyPages.FlushData(); err != nil {
+			return fmt.Errorf("flush data of %s before merging its chunks: %w", fileFullPath, err)
+		}
+		snapshot = entry.GetChunks()
+		manifestChunks, nonManifestChunks = filer.SeparateManifestChunks(snapshot)
+		if chunks, _, err = filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks); err != nil {
+			return fmt.Errorf("compact chunks of %s: %w", fileFullPath, err)
+		}
+	}
+
 	rewrote := false
 	if mergedChunks, mergeErr := wfs.maybeMergeChunks(fileFullPath, chunks, manifestChunks); mergeErr != nil {
 		glog.V(0).Infof("maybeMergeChunks %s: %v", fileFullPath, mergeErr)
