@@ -452,6 +452,9 @@ func TestTaggingReportsVersionId(t *testing.T) {
 	}
 	versionId1 := put("v1")
 	versionId2 := put("v2")
+	require.NotEmpty(t, versionId1)
+	require.NotEmpty(t, versionId2)
+	require.NotEqual(t, versionId1, versionId2)
 	tagging := &types.Tagging{TagSet: []types.Tag{{Key: aws.String("k"), Value: aws.String("v")}}}
 
 	putResp, err := client.PutObjectTagging(context.TODO(), &s3.PutObjectTaggingInput{
@@ -483,4 +486,46 @@ func TestTaggingReportsVersionId(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, versionId1, aws.ToString(delResp.VersionId))
+}
+
+// TestTaggingReportsNullVersionId checks that tagging an object written before
+// versioning was enabled reports the "null" version.
+func TestTaggingReportsNullVersionId(t *testing.T) {
+	client := getS3Client(t)
+	bucketName := createTestBucket(t, client)
+	defer cleanupTestBucket(t, client, bucketName)
+
+	objectKey := "tagging-null-version-id"
+	_, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(objectKey),
+		Body:   strings.NewReader("before versioning"),
+	})
+	require.NoError(t, err)
+	_, err = client.PutBucketVersioning(context.TODO(), &s3.PutBucketVersioningInput{
+		Bucket:                  aws.String(bucketName),
+		VersioningConfiguration: &types.VersioningConfiguration{Status: types.BucketVersioningStatusEnabled},
+	})
+	require.NoError(t, err)
+	tagging := &types.Tagging{TagSet: []types.Tag{{Key: aws.String("k"), Value: aws.String("v")}}}
+
+	for _, versionId := range []*string{nil, aws.String("null")} {
+		putResp, err := client.PutObjectTagging(context.TODO(), &s3.PutObjectTaggingInput{
+			Bucket: aws.String(bucketName), Key: aws.String(objectKey), VersionId: versionId, Tagging: tagging,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "null", aws.ToString(putResp.VersionId))
+
+		getResp, err := client.GetObjectTagging(context.TODO(), &s3.GetObjectTaggingInput{
+			Bucket: aws.String(bucketName), Key: aws.String(objectKey), VersionId: versionId,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "null", aws.ToString(getResp.VersionId))
+
+		delResp, err := client.DeleteObjectTagging(context.TODO(), &s3.DeleteObjectTaggingInput{
+			Bucket: aws.String(bucketName), Key: aws.String(objectKey), VersionId: versionId,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "null", aws.ToString(delResp.VersionId))
+	}
 }

@@ -73,7 +73,6 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 				return
 			}
 		}
-		setTaggingVersionIdHeader(w, versionId, entry)
 	} else {
 		// Handle regular (non-versioned) object tagging retrieval
 		entry, err = s3a.getObjectEntryRoutedByKey(bucket, object)
@@ -108,6 +107,9 @@ func (s3a *S3ApiServer) GetObjectTaggingHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
+	if versioningConfigured {
+		setTaggingVersionIdHeader(w, versionId, entry)
+	}
 	writeSuccessResponseXML(w, r, FromTags(tags))
 
 }
@@ -196,7 +198,6 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 				return
 			}
 		}
-		setTaggingVersionIdHeader(w, versionId, entry)
 	} else {
 		// Handle regular (non-versioned) object tagging modification
 		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
@@ -275,6 +276,7 @@ func (s3a *S3ApiServer) PutObjectTaggingHandler(w http.ResponseWriter, r *http.R
 	}
 
 	glog.V(3).Infof("PutObjectTaggingHandler: Successfully updated tags for %s/%s", bucket, object)
+	setTaggingVersionIdHeader(w, versionId, entry)
 	w.WriteHeader(http.StatusOK)
 	s3err.PostLog(r, http.StatusOK, s3err.ErrNone)
 }
@@ -337,7 +339,6 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 				return
 			}
 		}
-		setTaggingVersionIdHeader(w, versionId, entry)
 	} else {
 		// Handle regular (non-versioned) object tagging deletion
 		target := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object))
@@ -394,6 +395,7 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 
 	if !hasDeletion {
 		// No tags to delete - success
+		setTaggingVersionIdHeader(w, versionId, entry)
 		w.WriteHeader(http.StatusNoContent)
 		s3err.PostLog(r, http.StatusNoContent, s3err.ErrNone)
 		return
@@ -419,6 +421,7 @@ func (s3a *S3ApiServer) DeleteObjectTaggingHandler(w http.ResponseWriter, r *htt
 	}
 
 	glog.V(3).Infof("DeleteObjectTaggingHandler: Successfully deleted tags for %s/%s", bucket, object)
+	setTaggingVersionIdHeader(w, versionId, entry)
 	w.WriteHeader(http.StatusNoContent)
 	s3err.PostLog(r, http.StatusNoContent, s3err.ErrNone)
 }
