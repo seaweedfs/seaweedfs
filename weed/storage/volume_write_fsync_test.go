@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
@@ -652,4 +653,18 @@ func TestSyncDeleteTakesBackTombstoneWhenFsyncFails(t *testing.T) {
 	nv, found := v.nm.Get(types.Uint64ToNeedleId(1))
 	require.True(t, found)
 	require.False(t, nv.Size.IsDeleted(), "the needle must stay live when its delete was not acked")
+}
+
+func TestDeleteNeedleWithFsyncOnFullVolume(t *testing.T) {
+	v, counting := newCountingVolume(t)
+
+	_, _, _, err := v.writeNeedle2(fixedNeedle(1, "payload"), true, false, false)
+	require.NoError(t, err)
+	atomic.StoreUint64(&v.nm.(*NeedleMap).FileByteCounter, types.MaxPossibleVolumeSize)
+
+	_, err = v.deleteNeedleWithFsync(fixedNeedle(1, ""), true)
+	require.NoError(t, err, "a full volume must still take a durable delete")
+	require.Equal(t, 1, counting.syncCount)
+	nv, found := v.nm.Get(types.Uint64ToNeedleId(1))
+	require.True(t, !found || nv.Size.IsDeleted())
 }

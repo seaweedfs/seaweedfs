@@ -808,7 +808,7 @@ func (v *Volume) startWorker() chan *needle.AsyncRequest {
 				if request == nil {
 					break
 				}
-				if MaxPossibleVolumeSize < v.ContentSize()+uint64(currentBytesToWrite+request.ActualSize) {
+				if request.IsWriteRequest && MaxPossibleVolumeSize < v.ContentSize()+uint64(currentBytesToWrite+request.ActualSize) {
 					request.Complete(0, 0, false,
 						fmt.Errorf("volume size limit %d exceeded! current size is %d", MaxPossibleVolumeSize, v.ContentSize()))
 					break
