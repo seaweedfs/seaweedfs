@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	"os"
 	"sync/atomic"
 	"testing"
 
@@ -695,4 +696,45 @@ func TestAsyncRequestAppendRefusesAfterChannelClosed(t *testing.T) {
 
 	require.False(t, v.asyncRequestAppend(needle.NewAsyncRequest(fixedNeedle(1, "payload"), true)),
 		"a request racing stopWorker must be refused, not panic")
+}
+
+// A durable delete whose .idx row fails has already dropped the needle from
+// the map, so a retry would find nothing to delete and ack. The volume stops
+// taking writes instead: nothing is appended past the tombstone, so a reload
+// re-indexes it from the .dat tail rather than resurrect the needle.
+func TestDurableDeleteIndexFailureStopsWrites(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		delete func(*Volume, *needle.Needle) (types.Size, error)
+	}{
+		{"batch", func(v *Volume, n *needle.Needle) (types.Size, error) { return v.deleteNeedleWithFsync(n, true) }},
+		{"inline", func(v *Volume, n *needle.Needle) (types.Size, error) { return v.syncDeleteWithFsync(n, true) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v, _ := newCountingVolume(t)
+			_, _, _, err := v.writeNeedle2(fixedNeedle(1, "payload"), true, true, true)
+			require.NoError(t, err)
+
+			nm := v.nm.(*NeedleMap)
+			indexFile := nm.indexFile
+			readOnlyIndex, err := os.Open(indexFile.Name())
+			require.NoError(t, err)
+			defer readOnlyIndex.Close()
+			nm.indexFile = readOnlyIndex
+			_, err = tc.delete(v, fixedNeedle(1, ""))
+			nm.indexFile = indexFile
+			require.Error(t, err)
+
+			_, _, _, err = v.writeNeedle2(fixedNeedle(2, "later"), true, true, true)
+			require.Error(t, err, "nothing may be appended past the unindexed tombstone")
+			_, err = tc.delete(v, fixedNeedle(1, ""))
+			require.Error(t, err, "a retry must not ack a delete whose .idx row never landed")
+
+			reloaded := reopenCountingVolume(t, v)
+			readBack := fixedNeedle(1, "")
+			_, err = reloaded.readNeedle(readBack, nil, nil)
+			require.False(t, err == nil && string(readBack.Data) == "payload",
+				"the deleted needle must not come back on reload")
+		})
+	}
 }
