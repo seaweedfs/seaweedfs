@@ -416,6 +416,7 @@ async fn run(
                 .to_string_lossy()
                 .into_owned()
         },
+        ec_lifecycle_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
         ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
         volume_copies_in_flight,
         ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),

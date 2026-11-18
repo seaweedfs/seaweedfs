@@ -1538,3 +1538,9 @@ func (s *Store) EcVolumes() (ecVolumes []*erasure_coding.EcVolume) {
 	})
 	return ecVolumes
 }
+
+// EcLifecycleLock returns the per-vid EC lifecycle mutex, creating it on first use.
+func (s *Store) EcLifecycleLock(vid needle.VolumeId) *sync.Mutex {
+	actual, _ := s.ecLifecycleLocks.LoadOrStore(vid, &sync.Mutex{})
+	return actual.(*sync.Mutex)
+}

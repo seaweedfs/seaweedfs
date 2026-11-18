@@ -399,6 +399,12 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 
 	glog.V(0).Infof("VolumeEcShardsCopy: %v", req)
 
+	// Overlapping copies of one vid would share the staged index, and a failed
+	// one's cleanup would remove shards another already committed.
+	lifecycle := vs.store.EcLifecycleLock(needle.VolumeId(req.VolumeId))
+	lifecycle.Lock()
+	defer lifecycle.Unlock()
+
 	var location *storage.DiskLocation
 
 	// Select the target location for storing EC shard files.

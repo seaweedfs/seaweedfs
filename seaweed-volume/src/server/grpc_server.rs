@@ -3891,6 +3891,10 @@ impl VolumeServer for VolumeGrpcService {
             shard_ids.push(shard_id_try_from(sid).map_err(Status::invalid_argument)?);
         }
 
+        // Overlapping copies of one vid would share the staged index, and a
+        // failed one's cleanup guards would remove shards another committed.
+        let _lifecycle = self.state.ec_lifecycle_lock(vid).lock_owned().await;
+
         // Select target location:
         //   When disk_id > 0: use that specific location.
         //   When disk_id == 0 (unset): auto-select via
@@ -8528,6 +8532,7 @@ mod tests {
             security_file: String::new(),
             cli_white_list: vec![],
             state_file_path: String::new(),
+            ec_lifecycle_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
             volume_copies_in_flight: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
@@ -8646,6 +8651,7 @@ mod tests {
             security_file: String::new(),
             cli_white_list: vec![],
             state_file_path: String::new(),
+            ec_lifecycle_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
             volume_copies_in_flight: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
@@ -11970,6 +11976,7 @@ mod tests {
             security_file: String::new(),
             cli_white_list: vec![],
             state_file_path: String::new(),
+            ec_lifecycle_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
             volume_copies_in_flight: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
@@ -14196,6 +14203,7 @@ mod tests {
             security_file: String::new(),
             cli_white_list: vec![],
             state_file_path: String::new(),
+            ec_lifecycle_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
             ec_decodes_in_flight: std::sync::Mutex::new(std::collections::HashSet::new()),
             volume_copies_in_flight: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             ec_decode_tail: std::sync::Mutex::new(std::collections::HashSet::new()),
