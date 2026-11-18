@@ -952,7 +952,7 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 		// Otherwise the next open by nodeid resolves to the deleted name. A
 		// newer stored entry means something has taken the name since.
 		if _, _, newer := wfs.cachedEntrySince(invalidation.Path, invalidation.TsNs); !newer {
-			wfs.inodeToPath.RemoveAlias(invalidation.Path, invalidation.TsNs, invalidation.Signatures)
+			wfs.inodeToPath.RemoveAlias(invalidation.Path)
 		}
 	}
 	// A rename over an existing file destroys it, so its handle must not flush
@@ -1140,7 +1140,7 @@ func (wfs *WFS) cachedEntrySince(path util.FullPath, tsNs int64) (*filer.Entry, 
 // keeps the handle on a name of the inode this mount still knows, reporting
 // false when it knows none.
 func (wfs *WFS) followSurvivingLink(fh *FileHandle, removed util.FullPath) bool {
-	survivor, ok := wfs.inodeToPath.RemoveAlias(removed, 0, nil)
+	survivor, ok := wfs.inodeToPath.RemoveAlias(removed)
 	if ok {
 		fh.RememberPath(survivor)
 	}

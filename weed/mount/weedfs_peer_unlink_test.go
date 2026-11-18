@@ -137,78 +137,36 @@ func TestPeerUnlinkedAliasReopensClosedInode(t *testing.T) {
 }
 
 // This mount renames another name of the closed file onto the one a peer
-// unlinked before the peer's delete arrives, so that name is live again and
-// must outlast a later peer delete of the third name.
+// unlinked before the peer's delete arrives, so that name is live again.
 func TestDelayedPeerUnlinkKeepsRenamedOntoName(t *testing.T) {
-	for _, cached := range []bool{true, false} {
-		t.Run(map[bool]string{true: "cached", false: "uncached"}[cached], func(t *testing.T) {
-			wfs := newInvalidateTestWFS(t)
-			ctx := context.Background()
-			link := func(name string) *filer_pb.Entry {
-				return &filer_pb.Entry{Name: name, HardLinkId: []byte("link"), HardLinkCounter: 3, Attributes: &filer_pb.FuseAttributes{Inode: 42, FileMode: 0o600}}
-			}
-			if cached {
-				wfs.inodeToPath.MarkChildrenCached("/")
-				for _, name := range []string{"tmp", "final", "third"} {
-					if err := wfs.metaCache.InsertEntry(ctx, filer.FromPbEntry("/", link(name)), 1); err != nil {
-						t.Fatalf("insert %s: %v", name, err)
-					}
-				}
-			}
-			inode := wfs.inodeToPath.Lookup("/tmp", 1, false, true, 42, true)
-			wfs.inodeToPath.AddPath(inode, "/final")
-			wfs.inodeToPath.AddPath(inode, "/third")
-
-			rename := &filer_pb.StreamRenameEntryResponse{Directory: "/", TsNs: 20, EventNotification: &filer_pb.EventNotification{OldEntry: link("final"), NewEntry: link("tmp"), NewParentPath: "/", Signatures: []int32{7}}}
-			if err := wfs.handleRenameResponse(ctx, rename, "/tmp", nil); err != nil {
-				t.Fatalf("local rename: %v", err)
-			}
-			for _, del := range []struct {
-				name string
-				tsNs int64
-			}{{"tmp", 10}, {"third", 30}} {
-				event := &filer_pb.SubscribeMetadataResponse{Directory: "/", TsNs: del.tsNs, EventNotification: &filer_pb.EventNotification{OldEntry: link(del.name), Signatures: []int32{7}}}
-				if err := wfs.metaCache.ApplyMetadataResponse(ctx, event, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
-					t.Fatalf("apply peer delete of %s: %v", del.name, err)
-				}
-				wfs.metaCache.WaitForEntryInvalidations()
-			}
-
-			if got, found := wfs.inodeToPath.GetInode("/tmp"); !found || got != inode {
-				t.Fatalf("/tmp maps to %d (%v), want %d", got, found, inode)
-			}
-			if got, status := wfs.inodeToPath.GetPath(inode); status != fuse.OK || got != "/tmp" {
-				t.Fatalf("the inode resolves to %s (%v), want /tmp", got, status)
-			}
-		})
-	}
-}
-
-// A delete logged by another filer is not ordered against this mount's
-// rename by stamp, so it removes the name even with a smaller stamp.
-func TestPeerUnlinkFromOtherFilerDropsRenamedOntoName(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
+	wfs.inodeToPath.MarkChildrenCached("/")
 	ctx := context.Background()
 	link := func(name string) *filer_pb.Entry {
 		return &filer_pb.Entry{Name: name, HardLinkId: []byte("link"), HardLinkCounter: 3, Attributes: &filer_pb.FuseAttributes{Inode: 42, FileMode: 0o600}}
 	}
+	for _, name := range []string{"tmp", "final", "third"} {
+		if err := wfs.metaCache.InsertEntry(ctx, filer.FromPbEntry("/", link(name)), 1); err != nil {
+			t.Fatalf("insert %s: %v", name, err)
+		}
+	}
 	inode := wfs.inodeToPath.Lookup("/tmp", 1, false, true, 42, true)
 	wfs.inodeToPath.AddPath(inode, "/final")
 	wfs.inodeToPath.AddPath(inode, "/third")
-	rename := &filer_pb.StreamRenameEntryResponse{Directory: "/", TsNs: 20, EventNotification: &filer_pb.EventNotification{OldEntry: link("final"), NewEntry: link("tmp"), NewParentPath: "/", Signatures: []int32{7}}}
-	if err := wfs.handleRenameResponse(ctx, rename, "/tmp", nil); err != nil {
-		t.Fatalf("local rename: %v", err)
+
+	rename := &filer_pb.SubscribeMetadataResponse{Directory: "/", TsNs: 20, EventNotification: &filer_pb.EventNotification{OldEntry: link("final"), NewEntry: link("tmp"), NewParentPath: "/"}}
+	if err := wfs.applyLocalMetadataEvent(ctx, rename); err != nil {
+		t.Fatalf("apply local rename: %v", err)
 	}
-	event := &filer_pb.SubscribeMetadataResponse{Directory: "/", TsNs: 10, EventNotification: &filer_pb.EventNotification{OldEntry: link("tmp"), Signatures: []int32{9}}}
-	if err := wfs.metaCache.ApplyMetadataResponse(ctx, event, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+	wfs.inodeToPath.MovePath("/final", "/tmp")
+	del := &filer_pb.SubscribeMetadataResponse{Directory: "/", TsNs: 10, EventNotification: &filer_pb.EventNotification{OldEntry: link("tmp")}}
+	if err := wfs.metaCache.ApplyMetadataResponse(ctx, del, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
 		t.Fatalf("apply peer delete: %v", err)
 	}
 	wfs.metaCache.WaitForEntryInvalidations()
-	if wfs.inodeToPath.HasPath("/tmp") {
-		t.Fatal("a delete from another filer kept /tmp")
-	}
-	if got, status := wfs.inodeToPath.GetPath(inode); status != fuse.OK || got != "/third" {
-		t.Fatalf("the inode resolves to %s (%v), want /third", got, status)
+
+	if got, found := wfs.inodeToPath.GetInode("/tmp"); !found || got != inode {
+		t.Fatalf("/tmp maps to %d (%v), want %d", got, found, inode)
 	}
 }
 

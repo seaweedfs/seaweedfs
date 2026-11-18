@@ -487,7 +487,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 				DeleteChunks:       false,
 				NewParentPath:      string(newParent),
 				IsFromOtherCluster: false,
-				Signatures:         []int32{fs.filer.Signature},
+				Signatures:         nil,
 			},
 			TsNs: time.Now().UnixNano(),
 		}); err != nil {
@@ -546,7 +546,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 				DeleteChunks:       false,
 				NewParentPath:      "",
 				IsFromOtherCluster: false,
-				Signatures:         []int32{fs.filer.Signature},
+				Signatures:         nil,
 			},
 			TsNs: time.Now().UnixNano(),
 		}); err != nil {

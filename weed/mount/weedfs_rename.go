@@ -499,13 +499,6 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 		oldPath := oldParent.Child(oldName)
 		newPath := newParent.Child(newName)
 
-		if inode, found := wfs.inodeToPath.GetInode(oldPath); found && len(resp.EventNotification.NewEntry.HardLinkId) > 0 {
-			var signature int32
-			if sigs := resp.EventNotification.Signatures; len(sigs) > 0 {
-				signature = sigs[len(sigs)-1]
-			}
-			wfs.inodeToPath.NameLocally(inode, newPath, resp.TsNs, signature)
-		}
 		sourceInode, targetInode := wfs.inodeToPath.MovePath(oldPath, newPath)
 		if sourceInode != 0 {
 			fh, foundFh := wfs.fhMap.FindFileHandle(sourceInode)
