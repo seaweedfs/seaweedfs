@@ -16,8 +16,3 @@ RestoreObject
 # starts with the request's bucket, as bucket/key, because AWS documents both
 # spellings. A leading slash is dropped since filer paths cannot hold it.
 RenameObject_SourceIsLiteralKey
-
-# Not yet fixed in SeaweedFS.
-PutBucketAccelerateConfiguration
-GetBucketAccelerateConfiguration error
-PutBucketNotificationConfiguration

@@ -12,9 +12,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
-// putBucketRequestPaymentMaxBodyBytes caps the request body for PutBucketRequestPayment
-// to prevent DoS via large payloads. The valid payload is a few hundred bytes.
-const putBucketRequestPaymentMaxBodyBytes = 64 * 1024
+// putBucketMiscConfigMaxBodyBytes caps the request body of the configuration
+// PUTs in this file; a valid payload is a few hundred bytes.
+const putBucketMiscConfigMaxBodyBytes = 64 * 1024
 
 type policyStatusResponse struct {
 	XMLName  xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ PolicyStatus"`
@@ -32,6 +32,19 @@ type bucketLoggingStatusResponse struct {
 
 type notificationConfigurationResponse struct {
 	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ NotificationConfiguration"`
+}
+
+type accelerateConfigurationRequest struct {
+	XMLName xml.Name `xml:"AccelerateConfiguration"`
+	Status  string   `xml:"Status"`
+}
+
+type notificationConfigurationRequest struct {
+	XMLName     xml.Name   `xml:"NotificationConfiguration"`
+	Topics      []struct{} `xml:"TopicConfiguration"`
+	Queues      []struct{} `xml:"QueueConfiguration"`
+	Functions   []struct{} `xml:"CloudFunctionConfiguration"`
+	EventBridge []struct{} `xml:"EventBridgeConfiguration"`
 }
 
 // GetBucketPolicyStatusHandler reports whether the bucket policy grants public access.
@@ -92,7 +105,7 @@ func (s3a *S3ApiServer) PutBucketRequestPaymentHandler(w http.ResponseWriter, r 
 	}
 
 	defer r.Body.Close()
-	body, err := readRequestBody(r, putBucketRequestPaymentMaxBodyBytes)
+	body, err := readRequestBody(r, putBucketMiscConfigMaxBodyBytes)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
 		return
@@ -121,6 +134,67 @@ func (s3a *S3ApiServer) GetBucketAccelerateConfigurationHandler(w http.ResponseW
 		return
 	}
 	writeSuccessResponseXML(w, r, accelerateConfigurationResponse{Status: "Suspended"})
+}
+
+// PutBucketAccelerateConfigurationHandler accepts Status=Suspended, the state
+// GetBucketAccelerateConfigurationHandler always reports; Enabled is not implemented.
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketAccelerateConfiguration.html
+func (s3a *S3ApiServer) PutBucketAccelerateConfigurationHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+
+	defer r.Body.Close()
+	body, err := readRequestBody(r, putBucketMiscConfigMaxBodyBytes)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
+		return
+	}
+	var cfg accelerateConfigurationRequest
+	if err := xml.Unmarshal(body, &cfg); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
+		return
+	}
+
+	switch cfg.Status {
+	case "Suspended":
+		writeSuccessResponseEmpty(w, r)
+	case "Enabled":
+		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+	default:
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
+	}
+}
+
+// PutBucketNotificationConfigurationHandler accepts an empty configuration, the
+// one GetBucketNotificationConfigurationHandler always reports; any destination
+// is not implemented.
+// https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketNotificationConfiguration.html
+func (s3a *S3ApiServer) PutBucketNotificationConfigurationHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+
+	defer r.Body.Close()
+	body, err := readRequestBody(r, putBucketMiscConfigMaxBodyBytes)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
+		return
+	}
+	var cfg notificationConfigurationRequest
+	if err := xml.Unmarshal(body, &cfg); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
+		return
+	}
+	if len(cfg.Topics)+len(cfg.Queues)+len(cfg.Functions)+len(cfg.EventBridge) > 0 {
+		s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+		return
+	}
+	writeSuccessResponseEmpty(w, r)
 }
 
 // GetBucketLoggingHandler returns an empty BucketLoggingStatus (logging disabled).
