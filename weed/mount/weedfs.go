@@ -128,6 +128,15 @@ type Option struct {
 	// When false (default), directories report nlink=2.
 	PosixDirNlink bool
 
+	// AccessReport reports opens of a file for reading to the filer with
+	// TouchAccessTime, at most once per AccessReportInterval for each path
+	// (0 reports every open), so a filer that tracks access also sees the
+	// reads answered from the metadata cache. It has no effect unless the
+	// filer implements TouchAccessTime: while the filer answers
+	// Unimplemented, reporting pauses.
+	AccessReport         bool
+	AccessReportInterval time.Duration
+
 	uniqueCacheDirForRead  string
 	uniqueCacheDirForWrite string
 }
@@ -156,6 +165,7 @@ type WFS struct {
 	dhMap                 *DirectoryHandleToInode
 	fuseServer            *fuse.Server
 	IsOverQuota           bool
+	accessReporter        *accessReporter // nil unless -accessReport
 	// Handle lock nesting order is defined at FileHandle.entryLock.
 	fhLockTable       *util.LockTable[FileHandleId]
 	hardLinkLockTable *util.LockTable[string]
@@ -299,6 +309,11 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		glog.V(0).Infof("distributed lock manager disabled: writeback cache implies single-writer mode")
 	}
 
+	if option.AccessReport {
+		wfs.accessReporter = newAccessReporter(wfs.touchAccessTime, option.AccessReportInterval)
+		wfs.accessReporter.start()
+	}
+
 	wfs.option.filerIndex = int32(rand.IntN(len(option.FilerAddresses)))
 	wfs.option.setupUniqueCacheDirectory()
 	if option.CacheSizeMBForRead > 0 {
@@ -346,6 +361,9 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			os.RemoveAll(option.getUniqueCacheDirForWrite())
 		}
 		os.RemoveAll(option.getUniqueCacheDirForRead())
+		if wfs.accessReporter != nil {
+			wfs.accessReporter.stop()
+		}
 		if wfs.peerAnnouncer != nil {
 			wfs.peerAnnouncer.Stop()
 		}
