@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -65,16 +66,32 @@ func (vs *VolumeServer) recoverMissingEcIndexes(filterVid uint32) int {
 			glog.Warningf("ec volume %d: shards present locally but .ecx missing and no peer holds it; leaving shards unloaded", m.VolumeId)
 			continue
 		}
-		if vs.fetchEcIndexFromPeers(peers, m) {
+		if vs.recoverEcIndexLocked(peers, m) {
 			recovered++
 		}
 	}
 
 	if recovered > 0 {
-		vs.store.MountRecoveredEcShards()
 		glog.V(0).Infof("recovered missing EC index for %d volume(s) from peers and mounted their shards", recovered)
 	}
 	return recovered
+}
+
+// recoverEcIndexLocked fetches m's index and mounts that volume's shards under
+// its lifecycle lock, so an in-flight VolumeEcShardsCopy of the volume, which
+// may unlink the shards it renamed in, never has them mounted from under it.
+func (vs *VolumeServer) recoverEcIndexLocked(peers []pb.ServerAddress, m storage.EcVolumeMissingIndex) bool {
+	lifecycle := vs.store.EcLifecycleLock(m.VolumeId)
+	lifecycle.Lock()
+	defer lifecycle.Unlock()
+	if !slices.ContainsFunc(vs.store.CollectEcVolumesMissingIndex(), func(x storage.EcVolumeMissingIndex) bool { return x.VolumeId == m.VolumeId }) {
+		return false
+	}
+	if !vs.fetchEcIndexFromPeers(peers, m) {
+		return false
+	}
+	vs.store.MountRecoveredEcShards(m.VolumeId)
+	return true
 }
 
 // lookupEcVolumePeers asks the master which servers hold shards for vid and

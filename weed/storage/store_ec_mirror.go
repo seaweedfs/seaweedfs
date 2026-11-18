@@ -20,7 +20,7 @@ var ecMirroredSidecars = []string{".ecx", ".ecj", ".vif"}
 // of reaching across to a sibling. Runs before
 // reconcileEcShardsAcrossDisks; the cross-disk virtual mount stays
 // as the fallback when mirroring fails.
-func (s *Store) mirrorEcMetadataToShardDisks() {
+func (s *Store) mirrorEcMetadataToShardDisks(only ...needle.VolumeId) {
 	if len(s.Locations) < 2 {
 		return
 	}
@@ -37,7 +37,7 @@ func (s *Store) mirrorEcMetadataToShardDisks() {
 		}
 		for key := range orphans {
 			owner, ok := ecxOwners[key]
-			if !ok {
+			if !ok || !ecVolumeSelected(key.vid, only) {
 				continue
 			}
 			if owner.location == loc {

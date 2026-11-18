@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"slices"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
@@ -58,21 +60,26 @@ func (s *Store) CollectEcVolumesMissingIndex() []EcVolumeMissingIndex {
 // back to the cross-disk virtual mount for any disk the mirror could not reach.
 // Each shard load announces itself through ecShardNotifyHandler so the master
 // learns about the now-registered shards.
-func (s *Store) MountRecoveredEcShards() {
-	s.mirrorEcMetadataToShardDisks()
-	s.loadOrphanEcShardsWithLocalIndex()
-	s.reconcileEcShardsAcrossDisks()
+// Given volume ids, it touches only those volumes' shards.
+func (s *Store) MountRecoveredEcShards(only ...needle.VolumeId) {
+	s.mirrorEcMetadataToShardDisks(only...)
+	s.loadOrphanEcShardsWithLocalIndex(only...)
+	s.reconcileEcShardsAcrossDisks(only...)
+}
+
+func ecVolumeSelected(vid needle.VolumeId, only []needle.VolumeId) bool {
+	return len(only) == 0 || slices.Contains(only, vid)
 }
 
 // loadOrphanEcShardsWithLocalIndex mounts on-disk EC shards whose .ecx index is
 // now present on the same disk. Unlike reconcileEcShardsAcrossDisks it does not
 // require a sibling disk, so a single-disk store recovers too once its index has
 // been fetched from a peer.
-func (s *Store) loadOrphanEcShardsWithLocalIndex() {
+func (s *Store) loadOrphanEcShardsWithLocalIndex(only ...needle.VolumeId) {
 	for _, loc := range s.Locations {
 		orphans := loc.collectOrphanEcShards()
 		for key, shards := range orphans {
-			if !loc.HasEcxFileOnDisk(key.collection, key.vid) {
+			if !ecVolumeSelected(key.vid, only) || !loc.HasEcxFileOnDisk(key.collection, key.vid) {
 				continue
 			}
 			if err := loc.loadEcShards(shards, key.collection, key.vid, loc.ecShardNotifyHandler); err != nil {

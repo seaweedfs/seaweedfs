@@ -57,7 +57,7 @@ type ecxOwnerInfo struct {
 // ecVolumes map (so heartbeat reporting carries the right DiskId per
 // shard), but point the EcVolume at the sibling disk's index files so it
 // can serve reads and route deletes through a real .ecx / .ecj.
-func (s *Store) reconcileEcShardsAcrossDisks() {
+func (s *Store) reconcileEcShardsAcrossDisks(only ...needle.VolumeId) {
 	if len(s.Locations) < 2 {
 		return
 	}
@@ -73,6 +73,9 @@ func (s *Store) reconcileEcShardsAcrossDisks() {
 			continue
 		}
 		for key, shards := range orphans {
+			if !ecVolumeSelected(key.vid, only) {
+				continue
+			}
 			owner, ok := ecxOwners[key]
 			if !ok {
 				glog.Warningf("ec volume %d (collection=%q) has shards on %s without a matching .ecx anywhere on this volume server; shards %v will stay unloaded until the missing .ecx is restored",
