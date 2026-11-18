@@ -205,6 +205,14 @@ func (up *UploadPipeline) FlushAll() {
 	up.waitForCurrentWritersToComplete()
 }
 
+// HasPendingUploads reports whether written data is still waiting to be
+// uploaded and attached.
+func (up *UploadPipeline) HasPendingUploads() bool {
+	up.chunksLock.Lock()
+	defer up.chunksLock.Unlock()
+	return len(up.writableChunks) > 0 || atomic.LoadInt32(&up.uploaderCount) > 0
+}
+
 func (up *UploadPipeline) flushChunks() {
 	up.chunksLock.Lock()
 	defer up.chunksLock.Unlock()

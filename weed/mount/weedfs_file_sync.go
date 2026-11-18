@@ -350,26 +350,34 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		return fmt.Errorf("compact chunks of %s: %w", fileFullPath, err)
 	}
 
+	deferMerge := false
 	if _, _, bloated := shouldMergeChunks(chunks, manifestChunks); bloated {
 		// The merge replaces every chunk it reads. Uploads attach their chunks
 		// without the handle lock, and writes that landed after doFlush drained
-		// the pages may still be uploading: drain them while the lock holds
-		// writes off and take the chunks again, so that nothing attaches
-		// during the merge or after its chunks replace the list. A failed
-		// upload fails the flush as a write error, before anything claims
-		// the bytes it did not store.
-		if err := fh.dirtyPages.FlushData(); err != nil {
-			return &pageUploadError{err: err}
-		}
-		snapshot = entry.GetChunks()
-		manifestChunks, nonManifestChunks = filer.SeparateManifestChunks(snapshot)
-		if chunks, _, err = filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks); err != nil {
-			return fmt.Errorf("compact chunks of %s: %w", fileFullPath, err)
+		// the pages may still be uploading. A writeback upload retries until
+		// storage recovers, so leave the merge to a later flush rather than
+		// wait for it under these locks. With none pending, the lock holds
+		// writes off and nothing attaches during the merge: take the chunks
+		// again. A failed upload fails the flush as a write error, before
+		// anything claims the bytes it did not store.
+		if fh.dirtyPages.HasPendingUploads() {
+			deferMerge = true
+		} else {
+			if err := fh.dirtyPages.FlushData(); err != nil {
+				return &pageUploadError{err: err}
+			}
+			snapshot = entry.GetChunks()
+			manifestChunks, nonManifestChunks = filer.SeparateManifestChunks(snapshot)
+			if chunks, _, err = filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks); err != nil {
+				return fmt.Errorf("compact chunks of %s: %w", fileFullPath, err)
+			}
 		}
 	}
 
 	rewrote := false
-	if mergedChunks, mergeErr := wfs.maybeMergeChunks(fileFullPath, chunks, manifestChunks); mergeErr != nil {
+	if deferMerge {
+		glog.V(3).Infof("%s: uploads pending, leaving the chunk merge to a later flush", fileFullPath)
+	} else if mergedChunks, mergeErr := wfs.maybeMergeChunks(fileFullPath, chunks, manifestChunks); mergeErr != nil {
 		glog.V(0).Infof("maybeMergeChunks %s: %v", fileFullPath, mergeErr)
 	} else if mergedChunks != nil {
 		chunks = mergedChunks

@@ -5,12 +5,15 @@ package mount
 import (
 	"bytes"
 	"context"
+	"io"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -94,5 +97,68 @@ func TestFlushClonesRequestWhileUploadsAttach(t *testing.T) {
 			return
 		default:
 		}
+	}
+}
+
+// A flush that finds its chunks bloated while an upload is still in flight
+// leaves the merge to a later flush instead of waiting for the upload under
+// the handle and publication locks: a writeback upload retries until storage
+// recovers, and every operation on the handle would wait with it.
+func TestFlushLeavesMergeWhileUploadPending(t *testing.T) {
+	base := attributeAppendEntry(1)
+	base.Chunks = nil
+	for i := 0; i < 8; i++ {
+		base.Chunks = append(base.Chunks, &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: uint64(i + 1), Cookie: 1}, Offset: int64(i * 64), Size: 256, ModifiedTsNs: int64(i + 1)})
+	}
+	base.Attributes.FileSize = 7*64 + 256
+	base.CommitTsNs = 100
+	if _, _, bloated := shouldMergeChunks(base.Chunks, nil); !bloated {
+		t.Fatal("the test entry is not bloated enough to merge")
+	}
+	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
+	w, handle := g6AppendHandle(t, peer, base, 1000)
+	fh := w.GetHandle(FileHandleId(handle))
+
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	fh.dirtyPages.randomWriter.(*ChunkedDirtyPages).saveDataAsChunk = func(util.FullPath) filer.SaveDataAsChunkFunctionType {
+		return func(r io.Reader, _ string, offset, ts int64, _ uint64) (*filer_pb.FileChunk, error) {
+			once.Do(func() { close(started) })
+			<-release
+			body, err := io.ReadAll(r)
+			if err != nil {
+				return nil, err
+			}
+			return &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 2, FileKey: 1, Cookie: 1}, Offset: offset, Size: uint64(len(body)), ModifiedTsNs: ts}, nil
+		}
+	}
+	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: base.Attributes.FileSize, Size: 256}, bytes.Repeat([]byte{'W'}, 256)); n != 256 || code != fuse.OK {
+		t.Fatalf("write: %d %v", n, code)
+	}
+	drained := make(chan error, 1)
+	go func() { drained <- fh.dirtyPages.FlushData() }()
+	<-started
+
+	flushed := make(chan error, 1)
+	go func() { flushed <- w.flushMetadataToFiler(context.Background(), fh, "/dir", "file", 0, 0, nil) }()
+	select {
+	case err := <-flushed:
+		if err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		close(release)
+		<-flushed
+		t.Fatal("the flush waited for a pending upload under the handle lock")
+	}
+	close(release)
+	if err := <-drained; err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	if len(peer.entry.Chunks) != len(base.Chunks) {
+		t.Fatalf("published %d chunks, want the %d unmerged ones", len(peer.entry.Chunks), len(base.Chunks))
 	}
 }
