@@ -35,19 +35,37 @@ type OpenBaoKMSProvider struct {
 	// AppRole credentials, kept to log in again when the token expires or is revoked
 	roleID   string
 	secretID string
-	logins   singleflight.Group
+	logins   singleflight.Group // keyed by the refused token
 	now      func() time.Time
 
-	tokenMu      sync.Mutex
-	reloginAfter time.Time // until then a refused token is a policy denial, not an expired token
+	reloginTimeout time.Duration // bounds the shared check and login when the client has no timeout
+	reloginWaiting func()        // test hook: called when a caller starts waiting for a re-login
+
+	tokenMu         sync.Mutex
+	canLookupSelf   bool      // the token has the default policy, which allows auth/token/lookup-self
+	reloginAfter    time.Time // without lookup-self: until then a refusal is taken for a policy denial
+	loginRetryAfter time.Time // after a failed login, no new attempt before this
 }
 
-// reloginMinTokenAge is how old a token must be (or half its TTL, if shorter) before a
-// refusal is taken for an expired token. OpenBao/Vault answer 403 both to an expired token
-// and to a key the token may not use, and a new login would not fix the second.
+// OpenBao/Vault answer 403 both to a token that is no longer valid (expired, revoked, out
+// of uses) and to a key the token may not use; only the first is fixed by a new login, and
+// a login per denied request would mint a new token each time. The provider asks
+// auth/token/lookup-self which one it is. A token without the default policy may not ask,
+// so then a refusal within reloginMinTokenAge of the login (or half the token's TTL, if
+// shorter) is taken for a policy denial.
 const reloginMinTokenAge = time.Minute
 
-var errFreshTokenRefused = errors.New("a fresh token was refused: policy denial")
+// defaultReloginTimeout bounds the shared check and login when the client has no timeout of
+// its own: a request_timeout that is not positive leaves Vault requests without one.
+const defaultReloginTimeout = 30 * time.Second
+
+// reloginFailureBackoff is how long refused requests wait for a new login attempt after one failed.
+const reloginFailureBackoff = 5 * time.Second
+
+var (
+	errPolicyDenied = errors.New("the token is valid but was refused: policy denial")
+	errLoginBackoff = errors.New("an AppRole login failed moments ago")
+)
 
 // OpenBaoKMSConfig contains configuration for the OpenBao/Vault KMS provider
 type OpenBaoKMSConfig struct {
@@ -127,6 +145,8 @@ func NewOpenBaoKMSProvider(config util.Configuration) (seaweedkms.KMSProvider, e
 		transitPath: transitPath,
 		address:     address,
 		now:         time.Now,
+
+		reloginTimeout: defaultReloginTimeout,
 	}
 
 	// Authenticate
@@ -148,8 +168,8 @@ func NewOpenBaoKMSProvider(config util.Configuration) (seaweedkms.KMSProvider, e
 	return provider, nil
 }
 
-// authenticateAppRole authenticates using AppRole method and returns the token's TTL
-func authenticateAppRole(ctx context.Context, client *vault.Client, roleID, secretID string) (time.Duration, error) {
+// authenticateAppRole authenticates using AppRole method
+func authenticateAppRole(ctx context.Context, client *vault.Client, roleID, secretID string) (*vault.SecretAuth, error) {
 	data := map[string]interface{}{
 		"role_id":   roleID,
 		"secret_id": secretID,
@@ -157,31 +177,62 @@ func authenticateAppRole(ctx context.Context, client *vault.Client, roleID, secr
 
 	secret, err := client.Logical().WriteWithContext(ctx, "auth/approle/login", data)
 	if err != nil {
-		return 0, fmt.Errorf("AppRole authentication failed: %w", err)
+		return nil, fmt.Errorf("AppRole authentication failed: %w", err)
 	}
 
 	if secret == nil || secret.Auth == nil {
-		return 0, fmt.Errorf("AppRole authentication returned empty token")
+		return nil, fmt.Errorf("AppRole authentication returned empty token")
 	}
 
 	client.SetToken(secret.Auth.ClientToken)
-	return time.Duration(secret.Auth.LeaseDuration) * time.Second, nil
+	return secret.Auth, nil
 }
 
-// login logs in with AppRole and notes from when a refusal of the new token may mean it expired.
+// login logs in with AppRole and notes how a later refusal of the new token can be told
+// from a policy denial.
 func (p *OpenBaoKMSProvider) login(ctx context.Context) error {
-	ttl, err := authenticateAppRole(ctx, p.client, p.roleID, p.secretID)
+	start := p.now() // the token's TTL may start before its response arrives
+	auth, err := authenticateAppRole(ctx, p.client, p.roleID, p.secretID)
 	if err != nil {
+		p.tokenMu.Lock()
+		p.loginRetryAfter = p.now().Add(reloginFailureBackoff)
+		p.tokenMu.Unlock()
 		return err
 	}
 	minAge := reloginMinTokenAge
-	if ttl > 0 && ttl/2 < minAge {
+	if ttl := time.Duration(auth.LeaseDuration) * time.Second; ttl > 0 && ttl/2 < minAge {
 		minAge = ttl / 2
 	}
+	canLookupSelf := false
+	for _, policy := range auth.Policies {
+		if policy == "default" {
+			canLookupSelf = true
+		}
+	}
 	p.tokenMu.Lock()
-	p.reloginAfter = p.now().Add(minAge)
+	p.canLookupSelf = canLookupSelf
+	p.reloginAfter = start.Add(minAge)
 	p.tokenMu.Unlock()
 	return nil
+}
+
+// tokenStillValid tells whether a refused token is still valid, which makes the refusal
+// a policy denial.
+func (p *OpenBaoKMSProvider) tokenStillValid(ctx context.Context) (bool, error) {
+	p.tokenMu.Lock()
+	canLookupSelf, fresh := p.canLookupSelf, p.now().Before(p.reloginAfter)
+	p.tokenMu.Unlock()
+	if !canLookupSelf {
+		return fresh, nil
+	}
+	_, err := p.client.Auth().Token().LookupSelfWithContext(ctx)
+	if err == nil {
+		return true, nil
+	}
+	if isPermissionDenied(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 // withRelogin runs a request and, with AppRole authentication, logs in again once and
@@ -197,7 +248,7 @@ func (p *OpenBaoKMSProvider) withRelogin(ctx context.Context, call func() (*vaul
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
 		}
-		if !errors.Is(loginErr, errFreshTokenRefused) {
+		if !errors.Is(loginErr, errPolicyDenied) && !errors.Is(loginErr, errLoginBackoff) {
 			glog.Warningf("OpenBao KMS: %v", loginErr)
 		}
 		return nil, err
@@ -206,24 +257,40 @@ func (p *OpenBaoKMSProvider) withRelogin(ctx context.Context, call func() (*vaul
 }
 
 // relogin logs in again, unless another request already did so after the refused token
-// was used, or the token is too fresh to have expired. Concurrent callers share one login
-// and its result, failure included; the login is not bound to any one caller's context
-// (the client's request timeout still applies), and each caller stops waiting when its
-// own context ends.
+// was used, or the token is still valid. Concurrent callers refused with the same token
+// share one check and login and their result, failure included; that work is bounded by
+// the client's timeout rather than by any one caller's context, and each caller stops
+// waiting when its own context ends.
 func (p *OpenBaoKMSProvider) relogin(ctx context.Context, refusedToken string) error {
-	result := p.logins.DoChan("approle", func() (interface{}, error) {
+	result := p.logins.DoChan(refusedToken, func() (interface{}, error) {
 		if p.client.Token() != refusedToken {
 			return nil, nil
 		}
 		p.tokenMu.Lock()
-		fresh := p.now().Before(p.reloginAfter)
+		backoff := p.now().Before(p.loginRetryAfter)
 		p.tokenMu.Unlock()
-		if fresh {
-			return nil, errFreshTokenRefused
+		if backoff {
+			return nil, errLoginBackoff
+		}
+		timeout := p.client.ClientTimeout()
+		if timeout <= 0 {
+			timeout = p.reloginTimeout
+		}
+		sharedCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+		defer cancel()
+		valid, err := p.tokenStillValid(sharedCtx)
+		if err != nil {
+			return nil, err
+		}
+		if valid {
+			return nil, errPolicyDenied
 		}
 		glog.V(1).Infof("OpenBao KMS: token refused, logging in again with AppRole")
-		return nil, p.login(context.WithoutCancel(ctx))
+		return nil, p.login(sharedCtx)
 	})
+	if p.reloginWaiting != nil {
+		p.reloginWaiting()
+	}
 	select {
 	case r := <-result:
 		return r.Err
