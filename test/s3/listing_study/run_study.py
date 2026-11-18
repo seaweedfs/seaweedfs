@@ -760,6 +760,8 @@ ROOT_ONLY = {
 """Modes whose capsule lists the root (remainder) or a staged root-scope fixture."""
 
 SHALLOW = re.compile(r"shallow|delimiter|rootkeys|remainder|max-depth")
+KEYS_ONLY = re.compile(r"rootkeys|remainder")
+"""Shallow modes whose normalizer keeps only the keys, dropping CommonPrefixes."""
 
 
 def compare(case: Case, normalized: bytes, expected: dict[str, tuple[int, str]], fields) -> None:
@@ -797,7 +799,7 @@ def compare(case: Case, normalized: bytes, expected: dict[str, tuple[int, str]],
     bad_dirs = [d for d, _, _ in dirs if d not in allowed_dirs]
     if bad_dirs:
         problems.append(f"unexpected directory rows {bad_dirs[:5]}")
-    if shallow and dirs and {d for d, _, _ in dirs} != allowed_dirs:
+    if shallow and not KEYS_ONLY.search(case.mode) and {d for d, _, _ in dirs} != allowed_dirs:
         problems.append(f"common prefixes {sorted(d for d, _, _ in dirs)[:8]} != {sorted(allowed_dirs)[:8]}")
     for key, size, etag in objects:
         if key not in scope:
