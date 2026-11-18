@@ -103,3 +103,40 @@ func TestVolumeGrowthCountsLoadPerDisk(t *testing.T) {
 		}
 	}
 }
+
+// Disks that report no volume slots (unavailable, or low on space) do not
+// count: a server with one usable disk of four takes one disk's share.
+func TestVolumeGrowthSkipsDisksWithoutSlots(t *testing.T) {
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	option := &VolumeGrowOption{Collection: "spread", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL, DiskType: types.HardDriveType}
+	for trial := 0; trial < 20; trial++ {
+		topo, racks := newSpreadTopology(1, 3, 100)
+		damaged := addMaintenanceTestNode(racks[0], "damaged", 100)
+		damaged.UpdateDiskTags([]*master_pb.DiskTag{{DiskId: 0, MaxVolumeCount: 100}, {DiskId: 1}, {DiskId: 2}, {DiskId: 3}})
+		perNode := growSpreadVolumes(t, topo, option, 8)
+		if perNode["damaged"] != 2 {
+			t.Fatalf("trial %d: the server with one usable disk got %d volumes of 8, want 2: %v", trial, perNode["damaged"], perNode)
+		}
+	}
+}
+
+// A server that refused an allocation in this grow request ranks after every
+// other server, so the retry places the volume elsewhere.
+func TestVolumeGrowthRanksRefusingServerLast(t *testing.T) {
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	option := &VolumeGrowOption{Collection: "spread", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL, DiskType: types.HardDriveType}
+	topo, racks := newSpreadTopology(1, 4, 100)
+	refusing := racks[0].Children()[0].(*DataNode)
+	placed := option.withLayoutLoad(topo)
+	placed.layoutLoad[refusing] += refusedAllocationLoad
+	vg := NewDefaultVolumeGrowth()
+	for i := 0; i < 50; i++ {
+		servers, _, err := vg.findEmptySlotsForOneVolume(topo, placed, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if servers[0] == refusing {
+			t.Fatalf("attempt %d picked %s, which refused an allocation", i, refusing.Id())
+		}
+	}
+}

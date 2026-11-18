@@ -2,6 +2,7 @@ package topology
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"reflect"
@@ -149,22 +150,49 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 	vg.accessLock.Lock()
 	defer vg.accessLock.Unlock()
 
-	// Scan the layout for its load once per request: findAndGrow adds each
-	// volume it creates, so the scan does not hold the layout's lock, which
-	// assigns need, once per volume.
-	option = option.withLayoutLoad(topo)
+	// findAndGrow scans the layout for its load once per request, after
+	// warmup, and adds each volume it creates, so the scan does not hold the
+	// layout's lock, which assigns need, once per volume. The copy keeps that
+	// load out of the caller's option.
+	placed := *option
+	placed.layoutLoad = nil
+	option = &placed
+	retries := 0
 	for i := uint32(0); i < targetCount; i++ {
-		if res, e := vg.findAndGrow(grpcDialOption, topo, option); e == nil {
+		res, e := vg.findAndGrow(grpcDialOption, topo, option)
+		if e == nil {
 			result = append(result, res...)
 			stats.MasterVolumeCreationCounter.WithLabelValues("success").Inc()
-		} else {
-			glog.V(0).Infof("create %d volume, created %d: %v", targetCount, len(result), e)
-			stats.MasterVolumeCreationCounter.WithLabelValues("failure").Inc()
-			return result, e
+			continue
 		}
+		stats.MasterVolumeCreationCounter.WithLabelValues("failure").Inc()
+		// A server that refused the allocation now ranks last, so another
+		// attempt places the volume elsewhere instead of failing on it again.
+		var refused *allocateError
+		if errors.As(e, &refused) && retries < maxAllocateRetries {
+			retries++
+			i--
+			continue
+		}
+		glog.V(0).Infof("create %d volume, created %d: %v", targetCount, len(result), e)
+		return result, e
 	}
 	return
 }
+
+// maxAllocateRetries bounds how many refused allocations one grow request
+// retries on other servers.
+const maxAllocateRetries = 3
+
+// allocateError is a volume allocation that one server refused.
+type allocateError struct {
+	server *DataNode
+	err    error
+}
+
+func (e *allocateError) Error() string { return e.err.Error() }
+
+func (e *allocateError) Unwrap() error { return e.err }
 
 func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topology, option *VolumeGrowOption) (result []*master_pb.VolumeLocation, err error) {
 	// Wait for warmup to complete before searching for slots so the
@@ -172,6 +200,9 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 	for topo.IsWarmingUp() {
 		glog.V(0).Infof("wait for volume servers to join back")
 		time.Sleep(topo.WarmupDuration() / WarmupPulseMultiplier / 2)
+	}
+	if option.layoutLoad == nil {
+		option.layoutLoad = option.withLayoutLoad(topo).layoutLoad
 	}
 
 	servers, reservation, e := vg.findEmptySlotsForOneVolume(topo, option, true) // use reservations
@@ -201,9 +232,15 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 				NewVids:    []uint32{uint32(vid)},
 			})
 		}
+	} else if refused := (*allocateError)(nil); errors.As(err, &refused) {
+		option.layoutLoad[refused.server] += refusedAllocationLoad
 	}
 	return
 }
+
+// refusedAllocationLoad is added to the load of a server that refused an
+// allocation, which ranks it after every server that has not.
+const refusedAllocationLoad = 1 << 20
 
 // 1. find the main data node
 // 1.1 collect all data nodes that have 1 slots
@@ -410,7 +447,7 @@ func (vg *VolumeGrowth) grow(grpcDialOption grpc.DialOption, topo *Topology, vid
 			glog.V(0).Infof("Created Volume %d on %s", vid, server.NodeImpl.String())
 		} else {
 			glog.Warningf("Failed to assign volume %d on %s: %v", vid, server.NodeImpl.String(), err)
-			growErr = fmt.Errorf("failed to assign volume %d on %s: %v", vid, server.NodeImpl.String(), err)
+			growErr = &allocateError{server: server, err: fmt.Errorf("failed to assign volume %d on %s: %v", vid, server.NodeImpl.String(), err)}
 			break
 		}
 	}

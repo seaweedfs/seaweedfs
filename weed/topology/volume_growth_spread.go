@@ -45,14 +45,16 @@ func (vl *VolumeLayout) writableCountByNode() map[*DataNode]int {
 	return counts
 }
 
-// diskCount is the number of disks of diskType on the node, from the
-// heartbeat DiskTags. A node that reported none counts as one disk.
+// diskCount is the number of disks of diskType on the node that can take new
+// volumes, from the heartbeat DiskTags. An unavailable disk, or one low on
+// space with no volumes, reports no volume slots and is left out. A node that
+// reported none counts as one disk.
 func (dn *DataNode) diskCount(diskType types.DiskType) int {
 	dn.RLock()
 	defer dn.RUnlock()
 	count := 0
 	for _, meta := range dn.diskMetas {
-		if meta.diskType == diskType {
+		if meta.diskType == diskType && meta.maxVolumeCount > 0 {
 			count++
 		}
 	}

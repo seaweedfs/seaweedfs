@@ -710,7 +710,8 @@ func (l *DiskLocation) LocalVolumesLen() int {
 
 // WritableCollectionVolumesLen counts the local volumes of collection that
 // still take writes: not read-only and, when volumeSizeLimit is known (non
-// zero), below it.
+// zero), with a .dat below it. The .dat size is what the master compares with
+// the limit to stop writes.
 func (l *DiskLocation) WritableCollectionVolumesLen(collection string, volumeSizeLimit uint64) int {
 	l.volumesLock.RLock()
 	defer l.volumesLock.RUnlock()
@@ -720,8 +721,10 @@ func (l *DiskLocation) WritableCollectionVolumesLen(collection string, volumeSiz
 		if v.Collection != collection || v.HasRemoteFile() || v.IsReadOnly() {
 			continue
 		}
-		if volumeSizeLimit > 0 && v.ContentSize() >= volumeSizeLimit {
-			continue
+		if volumeSizeLimit > 0 {
+			if datSize, _, _ := v.FileStat(); datSize >= volumeSizeLimit {
+				continue
+			}
 		}
 		count++
 	}

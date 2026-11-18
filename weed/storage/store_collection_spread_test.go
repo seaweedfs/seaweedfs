@@ -49,6 +49,23 @@ func TestAddVolumeSpreadsCollectionOverDisks(t *testing.T) {
 	}
 }
 
+// A volume whose .dat reached the size limit takes no more writes even though
+// it is not read-only, so it does not count against its disk.
+func TestAddVolumeIgnoresFullVolumesOfCollection(t *testing.T) {
+	store := newTestStore(t, 2)
+	// Every .dat holds at least its superblock, so all volumes are full.
+	store.SetVolumeSizeLimit(1)
+
+	addSpreadTestVolume(t, store, 1, "spread")
+	fullDisk := locationOf(store, 1)
+	addSpreadTestVolume(t, store, 2, "other") // the other disk
+	// Both disks hold one volume and no writable "spread" volume.
+	addSpreadTestVolume(t, store, 3, "spread")
+	if got := locationOf(store, 3); got != fullDisk {
+		t.Fatalf("volume 3 went to disk %d; the full volume 1 on disk %d should not count", got, fullDisk)
+	}
+}
+
 // Read-only volumes no longer take writes, so they do not count against a disk.
 func TestAddVolumeIgnoresReadOnlyVolumesOfCollection(t *testing.T) {
 	store := newTestStore(t, 2)
