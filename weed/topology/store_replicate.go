@@ -267,7 +267,8 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 		}(time.Now())
 	}
 
-	size, err = store.DeleteVolumeNeedle(volumeId, n)
+	fsync := r.FormValue("fsync") == "true"
+	size, err = store.DeleteVolumeNeedleWithFsync(volumeId, n, fsync)
 	if err != nil {
 		glog.V(0).Infoln("delete error:", err)
 		return
@@ -279,7 +280,11 @@ func ReplicatedDelete(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOp
 	if replicaCount > 0 { //send to other replica locations
 		// background, not r.Context(): a client disconnect must not orphan replica deletes
 		if err = DistributedOperation(context.Background(), remoteLocations, func(ctx context.Context, location operation.Location) error {
-			url, normalizeErr := util_http.GetGlobalHttpClient().NormalizeHttpScheme(location.Url + r.URL.Path + "?type=replicate")
+			query := "?type=replicate"
+			if fsync {
+				query += "&fsync=true"
+			}
+			url, normalizeErr := util_http.GetGlobalHttpClient().NormalizeHttpScheme(location.Url + r.URL.Path + query)
 			if normalizeErr != nil {
 				return normalizeErr
 			}
