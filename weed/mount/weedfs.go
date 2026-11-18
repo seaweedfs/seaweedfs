@@ -738,17 +738,13 @@ func (wfs *WFS) lookupEntry(ctx context.Context, fullpath util.FullPath) (*filer
 	if err == filer_pb.ErrNotFound && placeholder != nil && ctx.Err() == nil {
 		if inode, found := wfs.inodeToPath.GetInode(fullpath); found && inode == placeholder.inode {
 			if placeholder.baseEntry.Load() == nil {
-				// Still unpublished: the filer cannot have the file yet, so
-				// the handle answers. Async upload workers append chunks
-				// under entryLock; read the entry under it.
-				placeholder.entryLock.RLock()
-				pbEntry := placeholder.GetEntry().GetEntry()
-				var localEntry *filer.Entry
-				if pbEntry != nil {
-					localEntry = filer.FromPbEntry(dir, pbEntry)
+				// Still unpublished: the filer cannot have the file yet. The
+				// copy the create cached answers while it is still this
+				// file's; otherwise a snapshot of the handle does.
+				if cached, cachedTsNs, cacheErr := wfs.metaCache.FindEntry(ctx, fullpath); cacheErr == nil && cached != nil && cached.Attr.Inode == placeholder.inode {
+					return cached, entryVersion{tsNs: cachedTsNs}, fuse.OK
 				}
-				placeholder.entryLock.RUnlock()
-				if localEntry != nil {
+				if localEntry := placeholder.entrySnapshot(dir); localEntry != nil {
 					return localEntry, entryVersion{}, fuse.OK
 				}
 			} else {

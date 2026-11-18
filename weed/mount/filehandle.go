@@ -149,6 +149,25 @@ func (fh *FileHandle) GetEntry() *LockedEntry {
 	return fh.entry
 }
 
+// entrySnapshot copies the handle's entry under the locks of both of its
+// writers, as GetAttr reads it: Write and the metadata flush change size,
+// times and chunks under the handle lock, while async upload workers append
+// chunks under the LockedEntry lock.
+func (fh *FileHandle) entrySnapshot(dir string) *filer.Entry {
+	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("entrySnapshot", fh.fh, util.SharedLock)
+	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+	fh.entry.RLock()
+	var snapshot *filer_pb.Entry
+	if fh.entry.Entry != nil {
+		snapshot = proto.Clone(fh.entry.Entry).(*filer_pb.Entry)
+	}
+	fh.entry.RUnlock()
+	if snapshot == nil {
+		return nil
+	}
+	return filer.FromPbEntry(dir, snapshot)
+}
+
 func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 	if entry != nil {
 		fileSize := filer.FileSize(entry)

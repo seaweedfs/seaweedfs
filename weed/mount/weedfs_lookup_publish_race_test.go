@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -400,4 +401,78 @@ func waitClosed(t *testing.T, ch chan struct{}, msg string) {
 	case <-time.After(10 * time.Second):
 		t.Fatal(msg)
 	}
+}
+
+// The copy cached for the path answers for a placeholder only while it is
+// that file's: an entry of another inode cached at the same path does not.
+func TestLookupPlaceholderSkipsCachedEntryOfAnotherFile(t *testing.T) {
+	wfs, _, dir, dirInode := newPublishRaceWFS(t)
+	out := createDeferredFile(t, wfs, dirInode, "swapped")
+	path := dir.Child("swapped")
+	other := &filer_pb.Entry{
+		Name:       "swapped",
+		Attributes: &filer_pb.FuseAttributes{Inode: out.NodeId + 1, FileMode: 0o644, FileSize: 7, Mtime: 1, Crtime: 1},
+	}
+	if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(string(dir), other), 0); err != nil {
+		t.Fatalf("cache another file at the path: %v", err)
+	}
+
+	entry, _, st := wfs.lookupEntry(context.Background(), path)
+	if st != fuse.OK || entry == nil {
+		t.Fatalf("lookupEntry = %v, want the placeholder", st)
+	}
+	if entry.Attr.Inode != out.NodeId {
+		t.Fatalf("lookupEntry answered with inode %d, want the placeholder's %d", entry.Attr.Inode, out.NodeId)
+	}
+}
+
+// With no cached copy, a placeholder answers from a snapshot of its handle,
+// taken while Write changes the entry and upload workers append chunks. Run
+// with -race: the snapshot holds the locks of both writers.
+func TestLookupSnapshotsPlaceholderWhileWritten(t *testing.T) {
+	wfs, _, dir, dirInode := newPublishRaceWFS(t)
+	out := createDeferredFile(t, wfs, dirInode, "busy")
+	path := dir.Child("busy")
+	if err := wfs.metaCache.DeleteEntry(context.Background(), path); err != nil {
+		t.Fatalf("evict the cached copy: %v", err)
+	}
+	fh := wfs.GetHandle(FileHandleId(out.Fh))
+
+	const rounds = 200
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		payload := make([]byte, 16)
+		for i := 0; i < rounds; i++ {
+			in := &fuse.WriteIn{}
+			in.NodeId, in.Fh, in.Offset, in.Size = out.NodeId, out.Fh, uint64((i%60)*16), uint32(len(payload))
+			if n, st := wfs.Write(nil, in, payload); st != fuse.OK || n != uint32(len(payload)) {
+				t.Errorf("Write = %d %v", n, st)
+				return
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < rounds; i++ {
+			fh.AddChunks([]*filer_pb.FileChunk{{
+				Fid:          &filer_pb.FileId{VolumeId: 3, FileKey: uint64(i + 1), Cookie: 1},
+				Offset:       int64(4096 + i*16),
+				Size:         16,
+				ModifiedTsNs: int64(i + 1),
+			}})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < rounds; i++ {
+			entry, _, st := wfs.lookupEntry(context.Background(), path)
+			if st != fuse.OK || entry == nil || entry.Attr.Inode != out.NodeId {
+				t.Errorf("lookupEntry = %v, want the placeholder", st)
+				return
+			}
+		}
+	}()
+	wg.Wait()
 }
