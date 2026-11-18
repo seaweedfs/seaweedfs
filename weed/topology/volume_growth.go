@@ -149,6 +149,10 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 	vg.accessLock.Lock()
 	defer vg.accessLock.Unlock()
 
+	// Scan the layout for its load once per request: findAndGrow adds each
+	// volume it creates, so the scan does not hold the layout's lock, which
+	// assigns need, once per volume.
+	option = option.withLayoutLoad(topo)
 	for i := uint32(0); i < targetCount; i++ {
 		if res, e := vg.findAndGrow(grpcDialOption, topo, option); e == nil {
 			result = append(result, res...)
@@ -186,6 +190,9 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 	}
 	if err = vg.grow(grpcDialOption, topo, vid, option, reservation, servers...); err == nil {
 		for _, server := range servers {
+			if option.layoutLoad != nil {
+				option.layoutLoad[server]++
+			}
 			result = append(result, &master_pb.VolumeLocation{
 				Url:        server.Url(),
 				PublicUrl:  server.PublicUrl,
@@ -205,7 +212,9 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 // 2. find rest data nodes
 // If useReservations is true, reserves capacity on each server and returns reservation info
 func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *VolumeGrowOption, useReservations bool) (servers []*DataNode, reservation *VolumeGrowReservation, err error) {
-	option = option.withLayoutLoad(topo)
+	if option.layoutLoad == nil {
+		option = option.withLayoutLoad(topo)
+	}
 
 	//find main datacenter and other data centers
 	rp := option.ReplicaPlacement
