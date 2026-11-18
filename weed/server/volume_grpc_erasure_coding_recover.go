@@ -87,8 +87,9 @@ func (vs *VolumeServer) recoverEcIndexLocked(peers []pb.ServerAddress, m storage
 	// A copy holding the lock may have installed the index meanwhile: skip
 	// the fetch, but its shards still need the mount.
 	fetched := false
-	if slices.ContainsFunc(vs.store.CollectEcVolumesMissingIndex(), func(x storage.EcVolumeMissingIndex) bool { return x.VolumeId == m.VolumeId }) {
-		if !vs.fetchEcIndexFromPeers(peers, m) {
+	current := vs.store.CollectEcVolumesMissingIndex()
+	if i := slices.IndexFunc(current, func(x storage.EcVolumeMissingIndex) bool { return x.VolumeId == m.VolumeId }); i >= 0 {
+		if !vs.fetchEcIndexFromPeers(peers, current[i]) {
 			return false
 		}
 		fetched = true
