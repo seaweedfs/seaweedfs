@@ -672,6 +672,7 @@ func TestPutBucketAccelerateConfiguration(t *testing.T) {
 		{"enabled", `<AccelerateConfiguration><Status>Enabled</Status></AccelerateConfiguration>`, http.StatusNotImplemented},
 		{"invalid status", `<AccelerateConfiguration><Status>On</Status></AccelerateConfiguration>`, http.StatusBadRequest},
 		{"malformed", `<AccelerateConfiguration>`, http.StatusBadRequest},
+		{"wrong root", `<NotAConfiguration><Status>Suspended</Status></NotAConfiguration>`, http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -696,6 +697,7 @@ func TestPutBucketNotificationConfiguration(t *testing.T) {
 		{"queue", `<NotificationConfiguration><QueueConfiguration><Queue>arn:aws:sqs:us-east-1:1:q</Queue><Event>s3:ObjectCreated:*</Event></QueueConfiguration></NotificationConfiguration>`, http.StatusNotImplemented},
 		{"eventbridge", `<NotificationConfiguration><EventBridgeConfiguration/></NotificationConfiguration>`, http.StatusNotImplemented},
 		{"malformed", `<NotificationConfiguration>`, http.StatusBadRequest},
+		{"wrong root", `<NotAConfiguration/>`, http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

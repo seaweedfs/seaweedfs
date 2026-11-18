@@ -35,10 +35,12 @@ type notificationConfigurationResponse struct {
 }
 
 type accelerateConfigurationRequest struct {
-	Status string `xml:"Status"`
+	XMLName xml.Name `xml:"AccelerateConfiguration"`
+	Status  string   `xml:"Status"`
 }
 
 type notificationConfigurationRequest struct {
+	XMLName     xml.Name   `xml:"NotificationConfiguration"`
 	Topics      []struct{} `xml:"TopicConfiguration"`
 	Queues      []struct{} `xml:"QueueConfiguration"`
 	Functions   []struct{} `xml:"CloudFunctionConfiguration"`
