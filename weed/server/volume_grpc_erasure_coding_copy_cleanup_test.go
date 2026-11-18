@@ -3,6 +3,7 @@ package weed_server
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -503,17 +504,23 @@ func TestVolumeEcShardsCopy_FailedCopyKeepsShardWrittenMeanwhile(t *testing.T) {
 	receiver := newEcCopyReceiver(t, dstDir)
 	dstBase := erasure_coding.EcShardFileName(collection, dstDir, int(vid))
 	received := bytes.Repeat([]byte{7}, 4096)
+	sent := bytes.Repeat([]byte{1}, 4096)
 
 	srcDir := filepath.Join(t.TempDir(), "src")
 	src := &failingExtCopySource{
 		VolumeServer: &VolumeServer{store: newRecoverTestStore(t, srcDir)},
 		failExt:      ".ec01",
-		onFail:       func() error { return os.WriteFile(dstBase+".ec00", received, 0o644) },
+		onFail: func() error {
+			if staged, err := os.ReadFile(dstBase + ".ec00.copying"); err != nil || !bytes.Equal(staged, sent) {
+				return fmt.Errorf(".ec00 not staged before .ec01: %d bytes, %v", len(staged), err)
+			}
+			return os.WriteFile(dstBase+".ec00", received, 0o644)
+		},
 	}
 	source := serveEcCopySource(t, src)
 	srcBase := erasure_coding.EcShardFileName(collection, srcDir, int(vid))
 	writeFile(t, srcBase+".ecx", bytes.Repeat([]byte{9}, types.NeedleMapEntrySize))
-	writeFile(t, srcBase+".ec00", bytes.Repeat([]byte{1}, 4096))
+	writeFile(t, srcBase+".ec00", sent)
 	writeFile(t, srcBase+".ec01", bytes.Repeat([]byte{2}, 4096))
 
 	_, err := receiver.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
