@@ -571,14 +571,8 @@ func (wfs *WFS) isLocalOnlyEntry(entry *filer.Entry) bool {
 	if entry == nil || entry.Attr.Inode == 0 {
 		return false
 	}
-	inode := entry.Attr.Inode
-	if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound && fh.dirtyMetadata {
-		return true
-	}
-	wfs.pendingAsyncFlushMu.Lock()
-	_, pending := wfs.pendingAsyncFlush[inode]
-	wfs.pendingAsyncFlushMu.Unlock()
-	return pending
+	dirty, pending := wfs.hasUnpublishedMetadata(entry.Attr.Inode)
+	return dirty || pending
 }
 
 // maybeLoadEntry returns the entry and the log position it reflects, or a zero
@@ -720,21 +714,27 @@ func (wfs *WFS) lookupEntry(ctx context.Context, fullpath util.FullPath) (*filer
 
 	// Directory not cached - fetch directly from filer without caching the entire directory.
 	glog.V(4).Infof("lookupEntry fetching from filer %s", fullpath)
-	var entry *filer_pb.Entry
-	var lookupVersion entryVersion
-	lookupDir, lookupName := fullpath.DirAndName()
-	err := wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
-		resp, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: lookupDir,
-			Name:      lookupName,
-		})
-		if lookupErr != nil {
-			return lookupErr
+	// A flush can publish a deferred create while this lookup is in flight.
+	// The filer may then answer from a read taken before the publish
+	// committed, while the handle is already clean when the answer arrives,
+	// so the not-found check below would find nothing local to excuse it.
+	// Note what was unpublished when the request left, and ask once more
+	// when that has since been published: the filer acknowledged it before
+	// the second request is sent.
+	unpublishedAtSend := false
+	if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
+		dirty, pending := wfs.hasUnpublishedMetadata(inode)
+		unpublishedAtSend = dirty || pending
+	}
+	entry, lookupVersion, err := wfs.lookupEntryOnFiler(ctx, fullpath)
+	if err == filer_pb.ErrNotFound && unpublishedAtSend && ctx.Err() == nil {
+		if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
+			if dirty, pending := wfs.hasUnpublishedMetadata(inode); !dirty && !pending {
+				glog.V(1).Infof("lookupEntry %s: published while the lookup was in flight, asking the filer again", fullpath)
+				entry, lookupVersion, err = wfs.lookupEntryOnFiler(ctx, fullpath)
+			}
 		}
-		entry = resp.Entry
-		lookupVersion = entryVersion{tsNs: resp.LogTsNs, signature: resp.LogSignature}
-		return nil
-	})
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, entryVersion{}, fuse.EINTR
@@ -749,12 +749,7 @@ func (wfs *WFS) lookupEntry(ctx context.Context, fullpath util.FullPath) (*filer
 			hasDirtyHandle := false
 			hasPendingFlush := false
 			if inodeFound {
-				if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound && fh.dirtyMetadata {
-					hasDirtyHandle = true
-				}
-				wfs.pendingAsyncFlushMu.Lock()
-				_, hasPendingFlush = wfs.pendingAsyncFlush[inode]
-				wfs.pendingAsyncFlushMu.Unlock()
+				hasDirtyHandle, hasPendingFlush = wfs.hasUnpublishedMetadata(inode)
 
 				if hasDirtyHandle || hasPendingFlush {
 					if localEntry, localVersionTsNs, localErr := wfs.metaCache.FindEntry(ctx, fullpath); localErr == nil && localEntry != nil {
@@ -808,6 +803,39 @@ func (wfs *WFS) lookupEntry(ctx context.Context, fullpath util.FullPath) (*filer
 		entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
 	}
 	return filer.FromPbEntry(dir, entry), lookupVersion, fuse.OK
+}
+
+// lookupEntryOnFiler asks the filer for fullpath, bypassing the local cache.
+func (wfs *WFS) lookupEntryOnFiler(ctx context.Context, fullpath util.FullPath) (*filer_pb.Entry, entryVersion, error) {
+	dir, name := fullpath.DirAndName()
+	var entry *filer_pb.Entry
+	var version entryVersion
+	err := wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		resp, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if lookupErr != nil {
+			return lookupErr
+		}
+		entry = resp.Entry
+		version = entryVersion{tsNs: resp.LogTsNs, signature: resp.LogSignature}
+		return nil
+	})
+	return entry, version, err
+}
+
+// hasUnpublishedMetadata reports what this mount holds for inode that the
+// filer may not have yet: an open handle with dirty metadata (a deferred
+// create stays dirty until its first flush) or an async flush in flight.
+func (wfs *WFS) hasUnpublishedMetadata(inode uint64) (dirtyHandle, pendingFlush bool) {
+	if fh, found := wfs.fhMap.FindFileHandle(inode); found && fh.dirtyMetadata {
+		dirtyHandle = true
+	}
+	wfs.pendingAsyncFlushMu.Lock()
+	_, pendingFlush = wfs.pendingAsyncFlush[inode]
+	wfs.pendingAsyncFlushMu.Unlock()
+	return dirtyHandle, pendingFlush
 }
 
 // entryVersion is a filer log position together with the clock domain it
