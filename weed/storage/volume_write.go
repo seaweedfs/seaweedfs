@@ -504,7 +504,7 @@ func (v *Volume) syncDeleteWithFsync(n *needle.Needle, fsync bool) (Size, error)
 		return 0, syncErr
 	}
 	if tombstoned {
-		if err = v.publishDeleteRequest(n, offset, true); err != nil {
+		if err = v.publishDeleteRequest(n, offset); err != nil {
 			return size, err
 		}
 	}
@@ -543,7 +543,7 @@ func (v *Volume) doDeleteRequest(n *needle.Needle) (Size, error) {
 	if err != nil || !tombstoned {
 		return size, err
 	}
-	if err = v.publishDeleteRequest(n, offset, false); err != nil {
+	if err = v.publishDeleteRequest(n, offset); err != nil {
 		return size, err
 	}
 	return size, nil
@@ -572,15 +572,13 @@ func (v *Volume) appendDeleteRequest(n *needle.Needle) (size Size, offset uint64
 	return size, offset, true, nil
 }
 
-func (v *Volume) publishDeleteRequest(n *needle.Needle, offset uint64, fsync bool) error {
+func (v *Volume) publishDeleteRequest(n *needle.Needle, offset uint64) error {
 	if err := v.nm.Delete(n.Id, ToOffset(int64(offset))); err != nil {
-		if fsync {
-			// The map already dropped the needle, so a retry would ack without
-			// the missing .idx row. Stop taking writes, as publishWriteRequest does.
-			v.noWriteLock.Lock()
-			v.noWriteOrDelete = true
-			v.noWriteLock.Unlock()
-		}
+		// The map already dropped the needle, so a retry, durable or not, would
+		// ack without the missing .idx row. Stop taking writes.
+		v.noWriteLock.Lock()
+		v.noWriteOrDelete = true
+		v.noWriteLock.Unlock()
 		return err
 	}
 	if n.Id == v.lastWriteNeedleKey {
@@ -739,7 +737,7 @@ func (v *Volume) processBatchRun(run []*needle.AsyncRequest) {
 				}
 			}
 		} else if stagedDeleteOk[i] {
-			if perr := v.publishDeleteRequest(run[i].N, stagedDeleteOffsets[i], true); perr != nil {
+			if perr := v.publishDeleteRequest(run[i].N, stagedDeleteOffsets[i]); perr != nil {
 				run[i].UpdateResult(0, 0, false, perr)
 				refused = true
 			}

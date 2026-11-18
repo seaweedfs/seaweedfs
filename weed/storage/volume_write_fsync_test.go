@@ -703,12 +703,16 @@ func TestAsyncRequestAppendRefusesAfterChannelClosed(t *testing.T) {
 // taking writes instead: nothing is appended past the tombstone, so a reload
 // re-indexes it from the .dat tail rather than resurrect the needle.
 func TestDurableDeleteIndexFailureStopsWrites(t *testing.T) {
+	durableBatch := func(v *Volume, n *needle.Needle) (types.Size, error) { return v.deleteNeedleWithFsync(n, true) }
+	durableInline := func(v *Volume, n *needle.Needle) (types.Size, error) { return v.syncDeleteWithFsync(n, true) }
 	for _, tc := range []struct {
 		name   string
+		first  func(*Volume, *needle.Needle) (types.Size, error)
 		delete func(*Volume, *needle.Needle) (types.Size, error)
 	}{
-		{"batch", func(v *Volume, n *needle.Needle) (types.Size, error) { return v.deleteNeedleWithFsync(n, true) }},
-		{"inline", func(v *Volume, n *needle.Needle) (types.Size, error) { return v.syncDeleteWithFsync(n, true) }},
+		{"batch", durableBatch, durableBatch},
+		{"inline", durableInline, durableInline},
+		{"non-durable then durable retry", func(v *Volume, n *needle.Needle) (types.Size, error) { return v.deleteNeedleWithFsync(n, false) }, durableBatch},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v, _ := newCountingVolume(t)
@@ -721,7 +725,7 @@ func TestDurableDeleteIndexFailureStopsWrites(t *testing.T) {
 			require.NoError(t, err)
 			defer readOnlyIndex.Close()
 			nm.indexFile = readOnlyIndex
-			_, err = tc.delete(v, fixedNeedle(1, ""))
+			_, err = tc.first(v, fixedNeedle(1, ""))
 			nm.indexFile = indexFile
 			require.Error(t, err)
 
