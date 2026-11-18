@@ -197,6 +197,11 @@ class Page:
     raw: ET.Element
 
 
+def check_byte_order(values: list[str], what: str) -> None:
+    for a, b in zip(values, values[1:]):
+        assert a.encode() <= b.encode(), f"{what} out of byte order: {a!r} before {b!r}"
+
+
 def parse_page(root: ET.Element, url_encoded: bool) -> Page:
     dec = urllib.parse.unquote_plus if url_encoded else (lambda s: s)
     entries: list[tuple[str, str]] = []
@@ -206,8 +211,10 @@ def parse_page(root: ET.Element, url_encoded: bool) -> Page:
         elif child.tag == S3NS + "CommonPrefixes":
             entries.append(("prefix", dec(text(child, "Prefix") or "")))
     nm = text(root, "NextMarker")
-    # XML carries Contents and CommonPrefixes as two lists; their merged byte
-    # order is what pagination has to respect.
+    # XML carries Contents and CommonPrefixes as two lists, each in byte order;
+    # their merged byte order is what pagination has to respect.
+    for kind in ("key", "prefix"):
+        check_byte_order([v for k, v in entries if k == kind], f"{kind} list")
     entries.sort(key=lambda e: e[1].encode())
     return Page(
         entries,
@@ -402,6 +409,8 @@ class Probe:
                 elif child.tag == S3NS + "CommonPrefixes":
                     page.append(("prefix", dec(text(child, "Prefix") or "")))
             assert len(page) <= max_keys, f"{len(page)} entries > max-keys {max_keys}"
+            for kind in ("key", "prefix"):
+                check_byte_order([v for k, v in page if k == kind], f"version {kind} list")
             got += sorted(page, key=lambda e: e[1].encode())
             if text(root, "IsTruncated") != "true":
                 break
