@@ -204,7 +204,8 @@ def split_notes(body):
     start = next((i for i, l in enumerate(lines) if l.strip() == "## What's Changed"), None)
     if start is None:
         return [], body, ""
-    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    end = next((i for i in range(start + 1, len(lines))
+                if lines[i].startswith(("## ", "**Full Changelog**"))), len(lines))
     prs = [l for l in lines[start + 1:end] if PR_LINE.match(l)]
     before = "\n".join(lines[:start]).rstrip()
     after = "\n".join(lines[end:]).strip()

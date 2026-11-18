@@ -146,6 +146,13 @@ class RegroupTest(unittest.TestCase):
         for n in (12709, 12707, 12685, 12366, 12600):
             self.assertEqual(out.count("/pull/%d\n" % n), 2 if n == 12600 else 1)
 
+    def test_changelog_kept_without_new_contributors(self):
+        body = NOTES.replace(
+            "## New Contributors\n* @c made their first contribution in https://github.com/seaweedfs/seaweedfs/pull/12600\n\n", "")
+        out = rn.regroup(body, self.files)
+        self.assertTrue(out.endswith("</details>\n\n**Full Changelog**: https://github.com/seaweedfs/seaweedfs/compare/4.53...4.54\n"), out)
+        self.assertEqual(rn.regroup(out, self.files), out)
+
     def test_notes_without_prs_unchanged(self):
         body = "Hand-written notes\n\n**Full Changelog**: x"
         self.assertEqual(rn.regroup(body, no_files), body)
