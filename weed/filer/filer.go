@@ -699,9 +699,11 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 				glog.V(3).InfofCtx(ctx, "mkdir %s: %v", dirPath, mkdirErr)
 				return fmt.Errorf("mkdir %s: %v", dirPath, mkdirErr)
 			}
-		} else if !strings.HasPrefix("/"+util.Join(dirParts[:]...), SystemLogDir) {
+		} else if !metadataEventsSuppressed(ctx) && !strings.HasPrefix("/"+util.Join(dirParts[:]...), SystemLogDir) {
 			f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
 		} else {
+			// No event adopts this stamp: a suppressing caller (rename) covers
+			// only its own entry, not the parents created on the way.
 			f.releaseEntryCommitTsNs(dirEntry.CommitTsNs)
 		}
 
@@ -727,7 +729,11 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 			f.releaseEntryCommitTsNs(dirEntry.CommitTsNs)
 			return fmt.Errorf("promote %s to directory: %v", dirPath, updateErr)
 		}
-		f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
+		if metadataEventsSuppressed(ctx) {
+			f.releaseEntryCommitTsNs(dirEntry.CommitTsNs)
+		} else {
+			f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
+		}
 	}
 
 	return nil

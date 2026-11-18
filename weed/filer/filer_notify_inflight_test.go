@@ -1,9 +1,11 @@
 package filer
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
 
@@ -131,4 +133,47 @@ func TestMetaLogInflightStampMonotonic(t *testing.T) {
 	}
 	inflight.done(ts1)
 	inflight.done(ts2)
+}
+
+// TestSuppressedCreateReleasesParentDirectoryStamps pins the stamps of the
+// parent directories a rename creates or promotes on the way to its target:
+// the rename's covering event names the moved entry only, so a parent stamp
+// left in flight caps LocalDeliveredThroughTsNs for good and every peer holds
+// its aggregated subscribers at the settled horizon.
+func TestSuppressedCreateReleasesParentDirectoryStamps(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		existing   string // an object where the target's parent will be
+		targetPath string
+	}{
+		{name: "missing parents", targetPath: "/buckets/data/.trash/2026/11/file.txt"},
+		{name: "object promoted to directory", existing: "/buckets/data/prefix", targetPath: "/buckets/data/prefix/file.txt"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _ := newTestFilerWithStubStore(t)
+			if tc.existing != "" {
+				object := &Entry{FullPath: util.FullPath(tc.existing), Attr: Attr{Mode: 0o644}}
+				if err := f.CreateEntry(context.Background(), object, nil, false, false, nil, false, f.MaxFilenameLength); err != nil {
+					t.Fatalf("create %s: %v", tc.existing, err)
+				}
+			}
+
+			entry := &Entry{FullPath: util.FullPath(tc.targetPath), Attr: Attr{Mode: 0o644}}
+			ctx := WithSuppressedMetadataEvents(context.Background())
+			if err := f.CreateEntry(ctx, entry, nil, false, false, nil, false, f.MaxFilenameLength); err != nil {
+				t.Fatalf("create %s: %v", tc.targetPath, err)
+			}
+			if got := f.LocalDeliveredThroughTsNs(time.Now().UnixNano()); got != entry.CommitTsNs-1 {
+				t.Fatalf("claim=%d before the covering event, want %d: the moved entry's stamp must stay in flight", got, entry.CommitTsNs-1)
+			}
+			// The rename handler emits the covering event for the moved entry
+			// after the commit, which adopts the entry's own stamp.
+			f.NotifyUpdateEvent(context.Background(), nil, entry, false, false, nil)
+
+			now := time.Now().UnixNano()
+			if got := f.LocalDeliveredThroughTsNs(now); got != now {
+				t.Fatalf("claim=%d want now=%d: %d parent directory stamp(s) still in flight", got, now, len(f.metaLogInflight.stamped))
+			}
+		})
+	}
 }
