@@ -251,6 +251,14 @@ func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, ho
 	shouldRetry := func(err error) bool {
 		var statusErr *uploadStatusError
 		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusUnauthorized && statusErr.expiredBeforeAppend {
+			// A proxy upload already exhausted its bounded same-FID retries in
+			// retriedUploadData (with a fresh filer credential each time); the
+			// filer owns the FID, so a reassignment here is wrong, and counting
+			// exhausted groups would also inflate the refusal budget. Make it
+			// terminal; only direct uploads reassign.
+			if util_http.IsProxyChunkUrl(uploadOption.UploadUrl) {
+				return false
+			}
 			expiryRefusals++
 			return expiryRefusals < 3
 		}

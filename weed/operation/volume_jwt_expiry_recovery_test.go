@@ -218,6 +218,44 @@ func TestUploadExpiryProxyRefreshesFilerJwtOnRetry(t *testing.T) {
 	require.Equal(t, "Bearer fresh-filer-jwt-1", auths[1])
 }
 
+// A proxy upload driven through uploadWithRetryData must be terminal after its
+// bounded same-FID attempts: the outer loop must not reassign a FID the proxy
+// owns, nor count exhausted groups toward the expiry budget.
+func TestUploadExpiryProxyDoesNotReassignThroughOuterRetry(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		// The proxy keeps reporting the marked expiry (never recovers).
+		w.Header().Set(util_http.WriteOutcomeHeader, util_http.WriteOutcomeExpiredJwtBeforeAppend)
+		w.WriteHeader(401)
+		_, _ = io.WriteString(w, `{"error":"wrong jwt"}`)
+	}))
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "http://")
+	assigns := 0
+	option := &UploadOption{
+		FilerJwt: func(isWrite bool) security.EncodedJwt { return "fresh-filer-jwt" },
+		GenUploadUrl: func(host, fileId string) string {
+			return "http://" + host + "/?" + util_http.ProxyChunkIdParam + "=" + fileId
+		},
+	}
+	_, _, err := NewUploaderWithHttpClient(srv.Client()).uploadWithRetryData(func() (string, string, security.EncodedJwt, bool, error) {
+		assigns++
+		return "3,01637037d6", host, "vol-jwt", false, nil
+	}, option, []byte("plain"))
+	require.Error(t, err)
+	mu.Lock()
+	defer mu.Unlock()
+	// One assignment (no reassignment), and only the inner bounded same-FID
+	// attempts reached the server (the outer loop did not re-enter).
+	require.Equal(t, 1, assigns)
+	require.Equal(t, 3, calls)
+}
+
 // Generic401 still uses the old RetryForever behavior. Only the explicitly
 // marked expiry path gains the separate finite recovery budget.
 func TestUploadExpiryPreservesRetryForeverGenericDenial(t *testing.T) {
