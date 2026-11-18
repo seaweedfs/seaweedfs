@@ -633,7 +633,7 @@ func TestDeleteNeedleWithFsyncSyncsTombstone(t *testing.T) {
 	require.True(t, !found || nv.Size.IsDeleted(), "the durable delete must survive a reload")
 }
 
-func TestSyncDeleteTakesBackTombstoneWhenFsyncFails(t *testing.T) {
+func TestSyncDeleteWithFsyncTakesBackTombstoneWhenFsyncFails(t *testing.T) {
 	v, counting := newCountingVolume(t)
 
 	_, _, _, err := v.writeNeedle2(fixedNeedle(1, "payload"), true, true, true)
@@ -643,7 +643,7 @@ func TestSyncDeleteTakesBackTombstoneWhenFsyncFails(t *testing.T) {
 	syncs := counting.syncCount
 
 	counting.syncErr = errors.New("disk went away")
-	_, err = v.syncDelete(fixedNeedle(1, ""), true)
+	_, err = v.syncDeleteWithFsync(fixedNeedle(1, ""), true)
 	require.Error(t, err, "a delete whose fsync failed must not be acked")
 	require.Equal(t, syncs+1, counting.syncCount)
 
@@ -674,11 +674,11 @@ func TestSyncDeleteWithFsyncSyncsAfterUnsyncedDelete(t *testing.T) {
 
 	_, _, _, err := v.writeNeedle2(fixedNeedle(1, "payload"), true, false, false)
 	require.NoError(t, err)
-	_, err = v.syncDelete(fixedNeedle(1, ""), false)
+	_, err = v.syncDelete(fixedNeedle(1, ""))
 	require.NoError(t, err)
 	require.Equal(t, 0, counting.syncCount)
 
-	size, err := v.syncDelete(fixedNeedle(1, ""), true)
+	size, err := v.syncDeleteWithFsync(fixedNeedle(1, ""), true)
 	require.NoError(t, err)
 	require.Zero(t, size)
 	require.Equal(t, 1, counting.syncCount, "an earlier unsynced delete must still be flushed before a durable ack")

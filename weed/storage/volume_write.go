@@ -444,7 +444,11 @@ func (v *Volume) publishWriteRequest(n *needle.Needle, offset uint64, fsync bool
 	return
 }
 
-func (v *Volume) syncDelete(n *needle.Needle, fsync bool) (Size, error) {
+func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
+	return v.syncDeleteWithFsync(n, false)
+}
+
+func (v *Volume) syncDeleteWithFsync(n *needle.Needle, fsync bool) (Size, error) {
 	// glog.V(4).Infof("delete needle %s", needle.NewFileIdFromNeedle(v.Id, n).String())
 	v.dataFileSyncLock.Lock()
 	defer v.dataFileSyncLock.Unlock()
@@ -515,13 +519,13 @@ func (v *Volume) deleteNeedleWithFsync(n *needle.Needle, fsync bool) (Size, erro
 	v.CancelPendingWrites(n.Id, n.Cookie)
 
 	if !fsync {
-		return v.syncDelete(n, false)
+		return v.syncDelete(n)
 	}
 	asyncRequest := needle.NewAsyncRequest(n, false)
 	asyncRequest.ActualSize = needle.GetActualSize(0, v.Version())
 
 	if !v.asyncRequestAppend(asyncRequest) {
-		return v.syncDelete(n, true)
+		return v.syncDeleteWithFsync(n, true)
 	}
 	_, size, _, err := asyncRequest.WaitComplete()
 
