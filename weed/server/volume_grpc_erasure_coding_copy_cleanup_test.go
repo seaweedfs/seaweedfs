@@ -6,10 +6,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -46,14 +44,11 @@ func serveEcCopySource(t *testing.T, srv volume_server_pb.VolumeServerServer) st
 	return string(pb.NewServerAddress("127.0.0.1", port-10000, port))
 }
 
-// failingExtCopySource fails CopyFile for one extension and records the
-// extensions it served.
+// failingExtCopySource fails CopyFile for one extension, running onFail first.
 type failingExtCopySource struct {
 	*VolumeServer
 	failExt string
 	onFail  func()
-	mu      sync.Mutex
-	served  []string
 }
 
 func (s *failingExtCopySource) CopyFile(req *volume_server_pb.CopyFileRequest, stream volume_server_pb.VolumeServer_CopyFileServer) error {
@@ -63,19 +58,7 @@ func (s *failingExtCopySource) CopyFile(req *volume_server_pb.CopyFileRequest, s
 		}
 		return status.Errorf(codes.Unavailable, "injected %s failure", req.Ext)
 	}
-	if err := s.VolumeServer.CopyFile(req, stream); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	s.served = append(s.served, req.Ext)
-	s.mu.Unlock()
-	return nil
-}
-
-func (s *failingExtCopySource) servedExts() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.served...)
+	return s.VolumeServer.CopyFile(req, stream)
 }
 
 func newEcCopyReceiver(t *testing.T, dstDir string) *VolumeServer {
@@ -327,21 +310,25 @@ func TestVolumeEcShardsCopy_FailedSidecarKeepsExistingVif(t *testing.T) {
 	const collection = "col"
 	vid := needle.VolumeId(60)
 
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	receiver := newEcCopyReceiver(t, dstDir)
+	dstBase := erasure_coding.EcShardFileName(collection, dstDir, int(vid))
+
+	srcVif := []byte(`{"version":3}`)
+	var stagedVif []byte
 	srcDir := filepath.Join(t.TempDir(), "src")
 	src := &failingExtCopySource{
 		VolumeServer: &VolumeServer{store: newRecoverTestStore(t, srcDir)},
 		failExt:      erasure_coding.BitrotSidecarExt,
+		onFail:       func() { stagedVif, _ = os.ReadFile(dstBase + ".vif.copying") },
 	}
 	source := serveEcCopySource(t, src)
 	srcBase := erasure_coding.EcShardFileName(collection, srcDir, int(vid))
 	writeFile(t, srcBase+".ecx", bytes.Repeat([]byte{9}, types.NeedleMapEntrySize))
 	writeFile(t, srcBase+".ec00", bytes.Repeat([]byte{1}, 4096))
-	writeFile(t, srcBase+".vif", []byte(`{"version":3}`))
+	writeFile(t, srcBase+".vif", srcVif)
 	writeFile(t, srcBase+erasure_coding.BitrotSidecarExt, []byte("sum"))
 
-	dstDir := filepath.Join(t.TempDir(), "dst")
-	receiver := newEcCopyReceiver(t, dstDir)
-	dstBase := erasure_coding.EcShardFileName(collection, dstDir, int(vid))
 	ecx := make([]byte, types.NeedleMapEntrySize)
 	writeFile(t, dstBase+".ecx", ecx)
 	vif := []byte(`{"version":2}`)
@@ -360,8 +347,8 @@ func TestVolumeEcShardsCopy_FailedSidecarKeepsExistingVif(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "copy "+erasure_coding.BitrotSidecarExt+" sidecar") {
 		t.Fatalf("VolumeEcShardsCopy error = %v, want the %s transfer to fail", err, erasure_coding.BitrotSidecarExt)
 	}
-	if served := src.servedExts(); !slices.Contains(served, ".vif") {
-		t.Fatalf("source served %v before the %s failure, want .vif among them", served, erasure_coding.BitrotSidecarExt)
+	if !bytes.Equal(stagedVif, srcVif) {
+		t.Fatalf("staged .vif at the %s failure = %q, want the source's %q", erasure_coding.BitrotSidecarExt, stagedVif, srcVif)
 	}
 	if after := listDir(t, dstDir); strings.Join(after, ",") != strings.Join(before, ",") {
 		t.Fatalf("destination files after failed copy = %v, want %v", after, before)
