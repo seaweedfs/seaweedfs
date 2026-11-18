@@ -84,14 +84,17 @@ func (vs *VolumeServer) recoverEcIndexLocked(peers []pb.ServerAddress, m storage
 	lifecycle := vs.store.EcLifecycleLock(m.VolumeId)
 	lifecycle.Lock()
 	defer lifecycle.Unlock()
-	if !slices.ContainsFunc(vs.store.CollectEcVolumesMissingIndex(), func(x storage.EcVolumeMissingIndex) bool { return x.VolumeId == m.VolumeId }) {
-		return false
-	}
-	if !vs.fetchEcIndexFromPeers(peers, m) {
-		return false
+	// A copy holding the lock may have installed the index meanwhile: skip
+	// the fetch, but its shards still need the mount.
+	fetched := false
+	if slices.ContainsFunc(vs.store.CollectEcVolumesMissingIndex(), func(x storage.EcVolumeMissingIndex) bool { return x.VolumeId == m.VolumeId }) {
+		if !vs.fetchEcIndexFromPeers(peers, m) {
+			return false
+		}
+		fetched = true
 	}
 	vs.store.MountRecoveredEcShards(m.VolumeId)
-	return true
+	return fetched
 }
 
 // lookupEcVolumePeers asks the master which servers hold shards for vid and

@@ -2405,12 +2405,17 @@ pub(crate) async fn recover_missing_ec_indexes(
             .collect_ec_volumes_missing_index()
             .iter()
             .any(|x| x.vid == m.vid);
-        if still_missing && fetch_ec_index_from_peers(state, m, &peers).await {
-            state
-                .store
-                .write()
-                .unwrap()
-                .mount_recovered_ec_shards_only(Some(m.vid));
+        // A copy holding the lock may have installed the index meanwhile: skip
+        // the fetch, but its shards still need the mount.
+        if still_missing && !fetch_ec_index_from_peers(state, m, &peers).await {
+            continue;
+        }
+        state
+            .store
+            .write()
+            .unwrap()
+            .mount_recovered_ec_shards_only(Some(m.vid));
+        if still_missing {
             recovered += 1;
         }
     }
