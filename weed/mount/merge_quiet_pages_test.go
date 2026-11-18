@@ -297,6 +297,19 @@ func TestFlushMergeThroughChunkProxy(t *testing.T) {
 			}
 			vol.ServeHTTP(rw, r)
 		}))
+		// Let a held upload go however the test ends: the proxy's cleanup,
+		// which runs after this one, waits for its handlers.
+		var released sync.Once
+		releaseUpload := func() { released.Do(func() { close(release) }) }
+		t.Cleanup(releaseUpload)
+		await := func(done <-chan struct{}, what string) {
+			t.Helper()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("timed out waiting for %s", what)
+			}
+		}
 		write := func(data []byte) {
 			t.Helper()
 			if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: 100, Size: uint32(len(data))}, data); int(n) != len(data) || code != fuse.OK {
@@ -313,7 +326,7 @@ func TestFlushMergeThroughChunkProxy(t *testing.T) {
 		write(bytes.Repeat([]byte{'o'}, 40))
 		hold.Store(true)
 		go drain()
-		<-uploading
+		await(uploading, "the older page to upload")
 		// A third drains the newer page, which uploads and attaches.
 		newer := bytes.Repeat([]byte{'n'}, 40)
 		write(newer)
@@ -324,9 +337,9 @@ func TestFlushMergeThroughChunkProxy(t *testing.T) {
 			}
 		}
 		flush(t, w, fh, publication)
-		close(release)
-		<-drained
-		<-drained
+		releaseUpload()
+		await(drained, "the drains")
+		await(drained, "the drains")
 
 		want := append([]byte{}, content...)
 		copy(want[100:], newer)
