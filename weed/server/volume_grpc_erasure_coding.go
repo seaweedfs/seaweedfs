@@ -572,6 +572,9 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			}
 			// A mounted shard keeps reading the replaced inode until reopened.
 			if _, err := location.ReopenEcShard(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId)); err != nil {
+				if uerr := vs.store.UnmountEcShards(needle.VolumeId(req.VolumeId), erasure_coding.ShardId(shardId), 0); uerr != nil {
+					glog.Warningf("VolumeEcShardsCopy volume %d: unmount shard %d left on the replaced file: %v", req.VolumeId, shardId, uerr)
+				}
 				return fmt.Errorf("VolumeEcShardsCopy volume %d: reopen replaced shard %d: %w", req.VolumeId, shardId, err)
 			}
 		}
