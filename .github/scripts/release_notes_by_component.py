@@ -264,6 +264,10 @@ def gh(*args, stdin=None):
     return subprocess.run(["gh", *args], input=stdin, capture_output=True, text=True, check=True).stdout
 
 
+def pr_files(repo, num):
+    return gh("pr", "view", str(num), "-R", repo, "--json", "files", "--jq", ".files[].path").splitlines()
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo", default="seaweedfs/seaweedfs")
@@ -275,17 +279,16 @@ def main():
 
     failed = []
 
-    def pr_files(num):
+    def files_of(num):
         try:
-            out = gh("pr", "view", str(num), "-R", args.repo, "--json", "files", "--jq", ".files[].path")
+            return pr_files(args.repo, num)
         except subprocess.CalledProcessError as e:
             print("warning: files of #%d: %s" % (num, e.stderr.strip()), file=sys.stderr)
             failed.append(num)
             return []
-        return out.splitlines()
 
     try:
-        notes = regroup(body, pr_files)
+        notes = regroup(body, files_of)
     except ValueError as e:
         sys.exit("release %s: %s" % (args.tag, e))
     sys.stdout.write(notes)

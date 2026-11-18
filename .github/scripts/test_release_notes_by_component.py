@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest import mock
 
 
 def load():
@@ -95,6 +96,12 @@ class ClassifyTest(unittest.TestCase):
         self.check("Make it right", "S3 API",
                    files=["weed/s3api/auth.go", "test/s3/iam/test_a.py", "test/s3/iam/test_b.py"])
         self.check("Cover more", "Tests and CI", files=["test/s3/iam/test_a.py"])
+
+    def test_path_with_space(self):
+        with mock.patch.object(rn, "gh", return_value="test/s3/iam/policy cases.json\n"):
+            files = rn.pr_files("seaweedfs/seaweedfs", 1)
+        self.assertEqual(files, ["test/s3/iam/policy cases.json"])
+        self.check("Cover more", "Tests and CI", files=files)
 
 
 NOTES = """## What's Changed
