@@ -6502,26 +6502,17 @@ impl VolumeGrpcService {
             staged.committed();
             // A mounted shard keeps reading the replaced inode until reopened.
             let mut store = self.state.store.write().unwrap();
-            let reopened = store
-                .locations
-                .iter_mut()
-                .find(|l| l.directory == dest_dir)
-                .map(|loc| loc.reopen_ec_shard(vid, shard_id));
-            if let Some(Err(e)) = reopened {
-                if let Err(ue) = store.unmount_ec_shard(vid, shard_id, 0) {
-                    tracing::warn!(
-                        volume_id = vid.0,
-                        shard_id,
-                        "VolumeEcShardsCopy: unmount shard left on the replaced file: {}",
-                        ue
-                    );
+            if let Some(loc) = store.locations.iter_mut().find(|l| l.directory == dest_dir) {
+                if let Err(e) = loc.reopen_ec_shard(vid, shard_id) {
+                    // Only this disk's mount reads the replaced file.
+                    loc.unmount_ec_shards(vid, &[shard_id]);
+                    drop(store);
+                    self.state.volume_state_notify.notify_one();
+                    return Err(Status::internal(format!(
+                        "VolumeEcShardsCopy volume {}: reopen replaced shard {}: {}",
+                        vid, shard_id, e
+                    )));
                 }
-                drop(store);
-                self.state.volume_state_notify.notify_one();
-                return Err(Status::internal(format!(
-                    "VolumeEcShardsCopy volume {}: reopen replaced shard {}: {}",
-                    vid, shard_id, e
-                )));
             }
         }
 

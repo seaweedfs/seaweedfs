@@ -434,6 +434,36 @@ func (s *Store) UnmountEcShards(vid needle.VolumeId, shardId erasure_coding.Shar
 	return nil
 }
 
+// UnmountEcShardOnDisk unloads one shard from the disk at diskId only and
+// reports its removal; copies of it on other disks stay mounted.
+func (s *Store) UnmountEcShardOnDisk(diskId int, vid needle.VolumeId, shardId erasure_coding.ShardId) bool {
+	location := s.Locations[diskId]
+	ecShard, found := location.FindEcShard(vid, shardId)
+	if !found {
+		return false
+	}
+	var encodeTsNs int64
+	if ecVolume, ok := location.FindEcVolume(vid); ok {
+		encodeTsNs = ecVolume.EncodeTsNs
+	}
+	if !location.UnloadEcShard(vid, shardId) {
+		return false
+	}
+	si := erasure_coding.NewShardsInfo()
+	si.Set(erasure_coding.NewShardInfo(shardId, 0))
+	s.DeletedEcShardsChan <- &master_pb.VolumeEcShardInformationMessage{
+		Id:          uint32(vid),
+		Collection:  ecShard.Collection,
+		EcIndexBits: si.Bitmap(),
+		ShardSizes:  si.SizesInt64(),
+		DiskType:    string(ecShard.DiskType),
+		DiskId:      uint32(diskId),
+		EncodeTsNs:  encodeTsNs,
+	}
+	glog.V(0).Infof("UnmountEcShards %d.%d disk_id:%d", vid, shardId, diskId)
+	return true
+}
+
 func (s *Store) findEcShard(vid needle.VolumeId, shardId erasure_coding.ShardId) (diskId uint32, shard *erasure_coding.EcVolumeShard, found bool) {
 	for diskId, location := range s.Locations {
 		if v, found := location.FindEcShard(vid, shardId); found {
