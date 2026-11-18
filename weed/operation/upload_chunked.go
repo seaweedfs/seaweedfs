@@ -188,7 +188,7 @@ uploadLoop:
 			var prepared *preparedUpload
 			if opt.UploadFunc == nil {
 				var prepareErr error
-				prepared, prepareErr = prepare(buf.Bytes(), &UploadOption{Cipher: opt.Cipher, MimeType: opt.MimeType})
+				prepared, prepareErr = prepare(buf.Bytes(), chunkUploadOption(opt))
 				if prepareErr != nil {
 					uploadErrLock.Lock()
 					if uploadErr == nil {
@@ -327,23 +327,18 @@ func uploadChunk(ctx context.Context, assignResult *AssignResult, data []byte, p
 	if opt.UploadFunc == nil && !opt.Cipher && len(holders) > 1 {
 		return uploadChunkToHolders(ctx, holders, assignResult.Fid, prepared, jwt, md5b64, assignResult.Fsync, opt)
 	}
-	uploadOption := &UploadOption{
-		UploadUrl:         fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid),
-		Cipher:            opt.Cipher,
-		IsInputCompressed: false,
-		MimeType:          opt.MimeType,
-		PairMap:           nil,
-		Jwt:               jwt,
-		Md5:               md5b64,
-		// One upload call per assignment: the caller retries everything a
-		// same-URL retry would, and a different volume is the better second try.
-		// This bounds retriedUploadData only — doUploadData still reissues once
-		// on a connection reset, with a rewound body, which is a transport
-		// stutter rather than a fresh attempt at the volume. The fan-out path
-		// keeps its retries, where absorbing a blip locally beats cancelling
-		// every holder and re-uploading the chunk.
-		MaxAttempts: 1,
-	}
+	uploadOption := chunkUploadOption(opt)
+	uploadOption.UploadUrl = fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
+	uploadOption.Jwt = jwt
+	uploadOption.Md5 = md5b64
+	// One upload call per assignment: the caller retries everything a
+	// same-URL retry would, and a different volume is the better second try.
+	// This bounds retriedUploadData only — doUploadData still reissues once
+	// on a connection reset, with a rewound body, which is a transport
+	// stutter rather than a fresh attempt at the volume. The fan-out path
+	// keeps its retries, where absorbing a blip locally beats cancelling
+	// every holder and re-uploading the chunk.
+	uploadOption.MaxAttempts = 1
 	if assignResult.Fsync {
 		uploadOption.UploadUrl += "?fsync=true"
 	}
@@ -356,6 +351,12 @@ func uploadChunk(ctx context.Context, assignResult *AssignResult, data []byte, p
 		return nil, fmt.Errorf("create uploader: %w", err)
 	}
 	return uploader.retriedUploadData(ctx, prepared, uploadOption)
+}
+
+// chunkUploadOption holds the settings that shape a chunk's bytes, shared by
+// its preparation and every upload of it.
+func chunkUploadOption(opt *ChunkedUploadOption) *UploadOption {
+	return &UploadOption{Cipher: opt.Cipher, MimeType: opt.MimeType}
 }
 
 // chunkHolders returns the assigned volume plus its replica holders.
@@ -393,15 +394,10 @@ func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, prepa
 			if fsync {
 				uploadUrl += "&fsync=true"
 			}
-			uploadOption := &UploadOption{
-				UploadUrl:         uploadUrl,
-				Cipher:            false,
-				IsInputCompressed: false,
-				MimeType:          opt.MimeType,
-				PairMap:           nil,
-				Jwt:               jwt,
-				Md5:               md5b64,
-			}
+			uploadOption := chunkUploadOption(opt)
+			uploadOption.UploadUrl = uploadUrl
+			uploadOption.Jwt = jwt
+			uploadOption.Md5 = md5b64
 			r, e := uploader.retriedUploadData(ctx, prepared, uploadOption)
 			outcomes <- outcome{host, r, e}
 		}(host)
