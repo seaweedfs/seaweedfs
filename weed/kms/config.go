@@ -124,7 +124,7 @@ func InitializeGlobalKMS(config *KMSConfig) error {
 		providerConfig = &configAdapter{config: config.Config}
 	}
 
-	provider, err := GetProvider(config.Provider, providerConfig)
+	provider, err := NewProvider(config.Provider, providerConfig)
 	if err != nil {
 		return err
 	}
@@ -208,19 +208,12 @@ func (km *KMSManager) AddKMSProvider(name string, config *KMSConfig) error {
 		return fmt.Errorf("KMS configuration cannot be nil")
 	}
 
-	km.mu.Lock()
-	defer km.mu.Unlock()
-
-	// Close existing provider if it exists
-	if existingProvider, exists := km.providers[name]; exists {
-		if err := existingProvider.Close(); err != nil {
-			glog.Errorf("Failed to close existing KMS provider %s: %v", name, err)
-		}
-	}
-
-	// Create new provider instance
+	// Create a new provider instance of its own: a cached registry instance would be the
+	// one closed below and then handed back still in use. It is created before the lock is
+	// taken and the current provider closed, so a slow configuration does not hold up other
+	// lookups and one that fails leaves the current provider working.
 	configAdapter := &configAdapter{config: config.Config}
-	provider, err := GetProvider(config.Provider, configAdapter)
+	provider, err := NewProvider(config.Provider, configAdapter)
 	if err != nil {
 		return fmt.Errorf("failed to create KMS provider %s: %w", name, err)
 	}
@@ -230,8 +223,18 @@ func (km *KMSManager) AddKMSProvider(name string, config *KMSConfig) error {
 	provider = wrapWithCacheIfEnabled(provider, config)
 
 	// Store provider and configuration
+	km.mu.Lock()
+	existingProvider, exists := km.providers[name]
 	km.providers[name] = provider
 	km.configs[name] = config
+	km.mu.Unlock()
+
+	// Close the provider it replaces
+	if exists {
+		if err := existingProvider.Close(); err != nil {
+			glog.Errorf("Failed to close existing KMS provider %s: %v", name, err)
+		}
+	}
 
 	glog.V(1).Infof("Added KMS provider %s (type: %s)", name, config.Provider)
 	return nil

@@ -27,7 +27,17 @@ type OpenBaoKMSProvider struct {
 	client      *vault.Client
 	transitPath string // Transit engine mount path (default: "transit")
 	address     string
+
+	stopRefresh context.CancelFunc // stops the AppRole token refresh; nil without one
+	refreshDone chan struct{}
 }
+
+// refreshRetryInterval is how soon a failed AppRole login is tried again.
+// Variables so that tests can shorten them.
+var (
+	refreshRetryInterval = 5 * time.Second
+	refreshLoginTimeout  = 30 * time.Second // when request_timeout leaves the client without one
+)
 
 // OpenBaoKMSConfig contains configuration for the OpenBao/Vault KMS provider
 type OpenBaoKMSConfig struct {
@@ -103,11 +113,13 @@ func NewOpenBaoKMSProvider(config util.Configuration) (seaweedkms.KMSProvider, e
 	}
 
 	// Authenticate
+	var ttl time.Duration
+	loginStart := time.Now() // the token's TTL runs from when OpenBao issues it, not from its response
 	if token != "" {
 		client.SetToken(token)
 		glog.V(1).Infof("OpenBao KMS: Using token authentication")
 	} else if roleID != "" && secretID != "" {
-		if err := authenticateAppRole(client, roleID, secretID); err != nil {
+		if ttl, err = authenticateAppRole(context.Background(), client, roleID, secretID); err != nil {
 			return nil, fmt.Errorf("failed to authenticate with AppRole: %w", err)
 		}
 		glog.V(1).Infof("OpenBao KMS: Using AppRole authentication")
@@ -120,29 +132,72 @@ func NewOpenBaoKMSProvider(config util.Configuration) (seaweedkms.KMSProvider, e
 		transitPath: transitPath,
 		address:     address,
 	}
+	if ttl > 0 {
+		ctx, stop := context.WithCancel(context.Background())
+		provider.stopRefresh = stop
+		provider.refreshDone = make(chan struct{})
+		go provider.refreshAppRoleToken(ctx, roleID, secretID, loginStart, ttl)
+	}
 
 	glog.V(1).Infof("OpenBao/Vault KMS provider initialized at %s", address)
 	return provider, nil
 }
 
-// authenticateAppRole authenticates using AppRole method
-func authenticateAppRole(client *vault.Client, roleID, secretID string) error {
+// authenticateAppRole authenticates using AppRole method and returns the token's TTL
+func authenticateAppRole(ctx context.Context, client *vault.Client, roleID, secretID string) (time.Duration, error) {
 	data := map[string]interface{}{
 		"role_id":   roleID,
 		"secret_id": secretID,
 	}
 
-	secret, err := client.Logical().Write("auth/approle/login", data)
+	secret, err := client.Logical().WriteWithContext(ctx, "auth/approle/login", data)
 	if err != nil {
-		return fmt.Errorf("AppRole authentication failed: %w", err)
+		return 0, fmt.Errorf("AppRole authentication failed: %w", err)
 	}
 
 	if secret == nil || secret.Auth == nil {
-		return fmt.Errorf("AppRole authentication returned empty token")
+		return 0, fmt.Errorf("AppRole authentication returned empty token")
 	}
 
 	client.SetToken(secret.Auth.ClientToken)
-	return nil
+	return time.Duration(secret.Auth.LeaseDuration) * time.Second, nil
+}
+
+// refreshAppRoleToken logs in again once two thirds of the token's TTL have passed since the
+// login that issued it started, and retries a failed login every refreshRetryInterval, until
+// ctx is cancelled. Nothing renews an AppRole token, so without this every request fails
+// once it expires.
+func (p *OpenBaoKMSProvider) refreshAppRoleToken(ctx context.Context, roleID, secretID string, issued time.Time, ttl time.Duration) {
+	defer close(p.refreshDone)
+	timeout := p.client.ClientTimeout()
+	if timeout <= 0 {
+		timeout = refreshLoginTimeout
+	}
+	timer := time.NewTimer(time.Until(issued.Add(ttl * 2 / 3)))
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		loginCtx, cancel := context.WithTimeout(ctx, timeout)
+		issued = time.Now()
+		newTTL, err := authenticateAppRole(loginCtx, p.client, roleID, secretID)
+		cancel()
+		switch {
+		case err != nil:
+			if ctx.Err() != nil {
+				return
+			}
+			glog.Warningf("OpenBao KMS: refreshing the AppRole token failed, retrying in %v: %v", refreshRetryInterval, err)
+			timer.Reset(refreshRetryInterval)
+		case newTTL <= 0:
+			return // the new token does not expire
+		default:
+			timer.Reset(time.Until(issued.Add(newTTL * 2 / 3)))
+		}
+	}
 }
 
 // GenerateDataKey generates a new data encryption key using OpenBao/Vault Transit
@@ -361,7 +416,10 @@ func (p *OpenBaoKMSProvider) GetKeyID(ctx context.Context, keyIdentifier string)
 
 // Close cleans up any resources used by the provider
 func (p *OpenBaoKMSProvider) Close() error {
-	// OpenBao/Vault client doesn't require explicit cleanup
+	if p.stopRefresh != nil {
+		p.stopRefresh()
+		<-p.refreshDone
+	}
 	glog.V(2).Infof("OpenBao/Vault KMS provider closed")
 	return nil
 }
