@@ -396,7 +396,9 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	// does not mutate the file handle's live entry. Without the clone, a concurrent
 	// Lookup can observe filer-side uid/gid on the file handle entry and return it
 	// to the kernel, which caches it and then rejects opens by the local user.
-	requestEntry := proto.Clone(entry.GetEntry()).(*filer_pb.Entry)
+	// Uploads attach chunks without the handle lock, so clone under the entry lock.
+	var requestEntry *filer_pb.Entry
+	fh.UpdateEntry(func(e *filer_pb.Entry) { requestEntry = proto.Clone(e).(*filer_pb.Entry) })
 	request := &filer_pb.CreateEntryRequest{
 		Directory:                string(dir),
 		Entry:                    requestEntry,

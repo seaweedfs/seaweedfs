@@ -7,6 +7,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -64,5 +65,34 @@ func TestFlushKeepsChunkAttachedDuringCommit(t *testing.T) {
 	defer peer.mu.Unlock()
 	if !has(peer.entry.Chunks) {
 		t.Fatal("the flush did not publish the chunk an upload attached during it")
+	}
+}
+
+// Uploads keep attaching chunks while a flush clones its request entry, so the
+// clone must hold the entry lock. Run with -race.
+func TestFlushClonesRequestWhileUploadsAttach(t *testing.T) {
+	base := attributeAppendEntry(1)
+	base.CommitTsNs = 100
+	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
+	w, handle := g6AppendHandle(t, peer, base, 1000)
+	fh := w.GetHandle(FileHandleId(handle))
+
+	attached := make(chan struct{})
+	go func() {
+		defer close(attached)
+		for key := uint64(1); key <= 2000; key++ {
+			fh.AddChunks([]*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 9, FileKey: key, Cookie: 1}, Offset: 0, Size: 256, ModifiedTsNs: int64(key)}})
+			time.Sleep(20 * time.Microsecond)
+		}
+	}()
+	for {
+		if err := w.flushMetadataToFiler(context.Background(), fh, "/dir", "file", 0, 0, nil); err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+		select {
+		case <-attached:
+			return
+		default:
+		}
 	}
 }
