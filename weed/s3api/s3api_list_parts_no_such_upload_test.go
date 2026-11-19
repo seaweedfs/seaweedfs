@@ -2,8 +2,10 @@ package s3api
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -49,6 +51,9 @@ func (f *fakePartsFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream fi
 	var sent uint32
 	for _, entry := range parts {
 		name := entry.Name
+		if !strings.HasPrefix(name, req.Prefix) {
+			continue
+		}
 		if req.StartFromFileName != "" {
 			if name < req.StartFromFileName {
 				continue
@@ -405,5 +410,86 @@ func TestListPartsEmptyReplacementSupersedesEarlierAttempt(t *testing.T) {
 				t.Fatalf("part 1 = %s/%d, want the empty replacement", got, aws.Int64Value(output.Part[0].Size))
 			}
 		})
+	}
+}
+
+// Names sort as text, so part 10000 lands between part 1000's legacy and uuid
+// names; every page size must still walk the part numbers in numeric order.
+func TestListPartsPagesPartTenThousandLast(t *testing.T) {
+	s3a := newListPartsServer(t, &fakePartsFiler{
+		uploadEntry: uploadRecordEntry("open-upload"),
+		parts: []*filer_pb.Entry{
+			partAttempt("0999_99999999-9999-9999-9999-999999999999.part", 100, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+			partAttempt("1000_10001000-1000-1000-1000-100010001000.part", 100, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+			partAttempt("1001_10011001-1001-1001-1001-100110011001.part", 100, "cccccccccccccccccccccccccccccccc"),
+			partAttempt("10000_10000000-0000-0000-0000-100000000000.part", 100, "dddddddddddddddddddddddddddddddd"),
+		},
+	})
+
+	for maxParts := int64(1); maxParts <= 5; maxParts++ {
+		input := listPartsInput("open-upload")
+		input.MaxParts = aws.Int64(maxParts)
+		var got []int64
+		for page := 0; page < 5; page++ {
+			output, code := s3a.listObjectParts(input)
+			if code != s3err.ErrNone {
+				t.Fatalf("max-parts %d page %d code = %v, want ErrNone", maxParts, page, code)
+			}
+			if int64(len(output.Part)) > maxParts {
+				t.Fatalf("max-parts %d page %d returned %d parts", maxParts, page, len(output.Part))
+			}
+			got = append(got, partNumbers(output)...)
+			if !aws.BoolValue(output.IsTruncated) {
+				break
+			}
+			input.PartNumberMarker = output.NextPartNumberMarker
+		}
+		if fmt.Sprint(got) != "[999 1000 1001 10000]" {
+			t.Fatalf("max-parts %d parts = %v, want [999 1000 1001 10000]", maxParts, got)
+		}
+	}
+}
+
+// Part 10000's names sort inside part 1000's: a legacy 1000.part, then
+// 10000_<uuid>.part, then the newer 1000_<uuid>.part. Part 1000 must still be
+// reported from its newer attempt.
+func TestListPartsPartTenThousandDoesNotSplitPartAttempts(t *testing.T) {
+	s3a := newListPartsServer(t, &fakePartsFiler{
+		uploadEntry: uploadRecordEntry("open-upload"),
+		parts: []*filer_pb.Entry{
+			partAttempt("1000.part", 100, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+			partAttempt("10000_10000000-0000-0000-0000-100000000000.part", 150, "cccccccccccccccccccccccccccccccc"),
+			partAttempt("1000_10001000-1000-1000-1000-100010001000.part", 200, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+		},
+	})
+
+	input := listPartsInput("open-upload")
+	input.MaxParts = aws.Int64(1)
+	input.PartNumberMarker = aws.Int64(999)
+
+	output, code := s3a.listObjectParts(input)
+	if code != s3err.ErrNone {
+		t.Fatalf("page 1 code = %v, want ErrNone", code)
+	}
+	if got := partNumbers(output); len(got) != 1 || got[0] != 1000 {
+		t.Fatalf("page 1 parts = %v, want [1000]", got)
+	}
+	if got := partETags(output)[0]; got != "\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"" {
+		t.Fatalf("part 1000 etag = %s, want the newer attempt", got)
+	}
+	if !aws.BoolValue(output.IsTruncated) || aws.Int64Value(output.NextPartNumberMarker) != 1000 {
+		t.Fatalf("page 1 IsTruncated/NextPartNumberMarker = %v/%v, want true/1000", aws.BoolValue(output.IsTruncated), output.NextPartNumberMarker)
+	}
+
+	input.PartNumberMarker = output.NextPartNumberMarker
+	output, code = s3a.listObjectParts(input)
+	if code != s3err.ErrNone {
+		t.Fatalf("page 2 code = %v, want ErrNone", code)
+	}
+	if got := partNumbers(output); len(got) != 1 || got[0] != 10000 {
+		t.Fatalf("page 2 parts = %v, want [10000]", got)
+	}
+	if aws.BoolValue(output.IsTruncated) {
+		t.Fatal("page 2 IsTruncated = true, want false")
 	}
 }
