@@ -139,7 +139,11 @@ func newPipelinedSender(ctx context.Context, stream metadataStreamSender, bufSiz
 // position, which the buffer can move forward past a late event); payloads older
 // than the MutationTsNs field still carry the stamp in TsNs.
 func observeSubscribeDeliveryLag(scope string, msg *filer_pb.SubscribeMetadataResponse) {
-	if msg == nil || msg.EventNotification == nil || len(msg.LogFileRefs) > 0 {
+	if msg == nil || msg.EventNotification == nil || len(msg.LogFileRefs) > 0 || filer_pb.IsEmpty(msg) {
+		// Skip control messages, log-file-ref envelopes, and the empty progress
+		// markers sent after MaxUnsyncedEvents filtered entries: none is a real
+		// delivery, and the marker carries the filtered entry's position (TsNs),
+		// not a mutation.
 		return
 	}
 	stampNs := msg.MutationTsNs

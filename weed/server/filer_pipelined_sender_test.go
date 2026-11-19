@@ -227,11 +227,21 @@ func TestPipelinedSenderObservesDeliveryLagAfterSend(t *testing.T) {
 	}
 	// A control message (heartbeat): no EventNotification -> must not be sampled.
 	control := &filer_pb.SubscribeMetadataResponse{TsNs: time.Now().UnixNano()}
+	// A progress marker (sent after MaxUnsyncedEvents filtered entries): a
+	// non-nil but empty EventNotification carrying the filtered entry's TsNs ->
+	// must not be sampled either.
+	marker := &filer_pb.SubscribeMetadataResponse{
+		TsNs:              time.Now().UnixNano(),
+		EventNotification: &filer_pb.EventNotification{},
+	}
 	if err := sender.Send(event); err != nil {
 		t.Fatalf("send event: %v", err)
 	}
 	if err := sender.Send(control); err != nil {
 		t.Fatalf("send control: %v", err)
+	}
+	if err := sender.Send(marker); err != nil {
+		t.Fatalf("send marker: %v", err)
 	}
 	if err := sender.Close(); err != nil {
 		t.Fatalf("close: %v", err)
@@ -239,7 +249,7 @@ func TestPipelinedSenderObservesDeliveryLagAfterSend(t *testing.T) {
 
 	afterCount, afterSum := deliveryLagSnapshot(t, scope)
 	if afterCount != beforeCount+1 {
-		t.Fatalf("delivery-lag samples added = %d, want 1 (only the real event; the control is skipped)", afterCount-beforeCount)
+		t.Fatalf("delivery-lag samples added = %d, want 1 (only the real event; control and progress markers skipped)", afterCount-beforeCount)
 	}
 	if lag := afterSum - beforeSum; lag < 4 || lag > 60 {
 		t.Fatalf("delivery lag = %.2fs, want ~5s from the mutation stamp (not ~0 from the moved TsNs)", lag)
