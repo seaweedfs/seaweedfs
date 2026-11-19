@@ -435,7 +435,7 @@ type deletionOutcome struct {
 // deleteFilesAndClassify performs deletion and classifies outcomes for a list of file IDs
 func deleteFilesAndClassify(ctx context.Context, grpcDialOption grpc.DialOption, fileIds []string, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) map[string]deletionOutcome {
 	// Perform deletion
-	results := operation.DeleteFileIdsWithLookupVolumeId(ctx, grpcDialOption, fileIds, lookupFunc)
+	results := operation.DeleteFileIdsWithLookupVolumeId(ctx, grpcDialOption, fileIds, false, lookupFunc)
 
 	// Group results by file ID to handle multiple results for replicated volumes
 	resultsByFileId := make(map[string][]*volume_server_pb.DeleteResult)
