@@ -53,7 +53,7 @@ func (ms *MasterServer) StreamAssign(server master_pb.Seaweed_StreamAssignServer
 func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest) (*master_pb.AssignResponse, error) {
 
 	if !ms.Topo.IsLeader() {
-		return nil, raft.NotLeaderError
+		return nil, notLeaderError()
 	}
 
 	if req.Count == 0 {
@@ -331,6 +331,15 @@ func (w *unservedLayoutWarning) Do(optionKey string, lastErr error) {
 	}
 	w.last[optionKey] = now
 	glog.Warningf("assign requests for %s will keep failing until a volume server registers that disk layout or clients change their assignment disk type: %v", optionKey, lastErr)
+}
+
+func notLeaderError() error {
+	st := status.New(codes.Unavailable, raft.NotLeaderError.Error())
+	withReason, err := st.WithDetails(&errdetails.ErrorInfo{Reason: "NOT_LEADER", Domain: "seaweedfs"})
+	if err != nil {
+		return st.Err()
+	}
+	return withReason.Err()
 }
 
 // warmingUpError carries the remaining warm-up as a RetryInfo detail, the gRPC

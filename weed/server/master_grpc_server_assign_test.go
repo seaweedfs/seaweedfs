@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/raft"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -39,6 +40,31 @@ func newLeaderMaster() *MasterServer {
 		guard:                   security.NewGuard(nil, "", 0, "", 0),
 		volumeGrowthRequestChan: make(chan *topology.VolumeGrowRequest, 1<<6),
 	}
+}
+
+// followerRaftServer is a raft follower that knows no leader yet, as during an
+// election.
+type followerRaftServer struct {
+	raft.Server
+}
+
+func (followerRaftServer) State() string  { return raft.Follower }
+func (followerRaftServer) Leader() string { return "" }
+func (followerRaftServer) Name() string   { return "127.0.0.1:9333" }
+
+func TestAssignOnFollowerIsUnavailable(t *testing.T) {
+	ms := newLeaderMaster()
+	ms.Topo.RaftServer = followerRaftServer{}
+
+	_, err := ms.Assign(context.Background(), &master_pb.AssignRequest{Count: 1})
+	st, ok := status.FromError(err)
+	require.True(t, ok, "want a gRPC status, got %v", err)
+	assert.Equal(t, codes.Unavailable, st.Code())
+	assert.Equal(t, raft.NotLeaderError.Error(), st.Message())
+	require.Len(t, st.Details(), 1)
+	info, ok := st.Details()[0].(*errdetails.ErrorInfo)
+	require.True(t, ok, "want an ErrorInfo detail, got %T", st.Details()[0])
+	assert.Equal(t, "NOT_LEADER", info.GetReason())
 }
 
 // markGrowthInFlight flags growth on the same VolumeLayout the handler resolves,

@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"testing"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -124,6 +125,22 @@ func TestShouldInvalidateConnection_PeerAnswerNamingTransportKeepsChannel(t *tes
 		if shouldInvalidateConnection(context.Background(), fmt.Errorf("touch: %w", answer)) {
 			t.Errorf("wrapped %v answer from the peer must not invalidate the shared connection", code)
 		}
+	}
+}
+
+func TestShouldInvalidateConnection_UnavailableAnswerKeepsChannel(t *testing.T) {
+	st, err := status.New(codes.Unavailable, "raft.Server: Not current leader").WithDetails(&errdetails.ErrorInfo{Reason: "NOT_LEADER"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shouldInvalidateConnection(context.Background(), st.Err()) {
+		t.Errorf("Unavailable answered by the peer must not invalidate the shared connection")
+	}
+	if shouldInvalidateConnection(context.Background(), fmt.Errorf("assign: %w", st.Err())) {
+		t.Errorf("wrapped Unavailable answered by the peer must not invalidate the shared connection")
+	}
+	if !shouldInvalidateConnection(context.Background(), status.Error(codes.Unavailable, "connection error: desc = \"transport: Error while dialing\"")) {
+		t.Errorf("Unavailable raised by gRPC itself must still invalidate the shared connection")
 	}
 }
 
