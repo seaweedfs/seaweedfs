@@ -93,6 +93,32 @@ func TestVersionSeriesHoldsForwardAndLimits(t *testing.T) {
 	}
 }
 
+func TestVersionSeriesKeepsNewestRelease(t *testing.T) {
+	s := newPrometheusStorage(prometheus.NewRegistry())
+
+	seedSamples(s, "a", HistorySample{Version: "4.40"}, -2, -1, 0)
+	seedSamples(s, "b", HistorySample{Version: "4.40"}, -2, -1, 0)
+	seedSamples(s, "c", HistorySample{Version: "4.41"}, -2, -1, 0)
+	seedSamples(s, "d", HistorySample{Version: "4.41"}, -2, -1, 0)
+	// Upgraded to the newest release, which is still the smallest band.
+	seedSamples(s, "e", HistorySample{Version: "4.41"}, -2)
+	seedSamples(s, "e", HistorySample{Version: "4.42"}, -1, 0)
+	// A suffixed build newer than every release does not take its place.
+	seedSamples(s, "f", HistorySample{Version: "4.43-dev"}, -2, -1, 0)
+
+	series := s.GetVersionSeries(3, 2)
+	var kept []string
+	for _, v := range series.Versions {
+		kept = append(kept, v.Version)
+	}
+	if len(kept) != 2 || kept[0] != "4.41" || kept[1] != "4.42" {
+		t.Fatalf("kept = %v, want 4.41 and the newest release 4.42", kept)
+	}
+	if series.Other == nil || series.Other.Count != 2 {
+		t.Fatalf("other = %+v, want 4.40 and 4.43-dev", series.Other)
+	}
+}
+
 func TestVersionLess(t *testing.T) {
 	// Ordered oldest to newest; every pair must compare in this order.
 	ordered := []string{"unknown", "3.97", "4.02", "4.30", "4.30-enterprise", "9.99", "10.02"}
