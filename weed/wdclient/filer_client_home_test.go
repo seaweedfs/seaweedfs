@@ -1,11 +1,19 @@
 package wdclient
 
 import (
+	"context"
+	"fmt"
+	"net"
 	"reflect"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 // An embedded S3 gateway is seeded with its local filer as "ip:port" while the
@@ -70,5 +78,195 @@ func TestDiscoveryCurrentGoneFallsToFirstSorted(t *testing.T) {
 
 	if got := fc.GetCurrentFiler(); got != a {
 		t.Fatalf("current filer: want %s, got %s", a, got)
+	}
+}
+
+type fakeClock struct{ t time.Time }
+
+func (c *fakeClock) now() time.Time          { return c.t }
+func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
+
+const (
+	homeA = pb.ServerAddress("10.0.0.1:8888.18888")
+	peerB = pb.ServerAddress("10.0.0.2:8888.18888")
+)
+
+// newHomeTestClient returns a client on [home, peer] whose home is the first
+// filer, with the default breaker (3 failures, 30s reset) and a fake clock.
+func newHomeTestClient(clock *fakeClock) *FilerClient {
+	fc := newTestFilerClient(homeA, peerB)
+	fc.failureThreshold = 3
+	fc.resetTimeout = 30 * time.Second
+	fc.homeFiler = homeA
+	fc.homeBackoff = fc.resetTimeout
+	fc.now = clock.now
+	return fc
+}
+
+// failHome trips the breaker on home and fails over to the peer.
+func failHome(fc *FilerClient) {
+	for i := 0; i < 3; i++ {
+		fc.RecordFilerFailure(homeA)
+	}
+	fc.SetCurrentFiler(peerB)
+}
+
+func TestHomeReturnAfterBreakerReset(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	fc := newHomeTestClient(clock)
+
+	failHome(fc)
+	if got := fc.GetCurrentFiler(); got != peerB {
+		t.Fatalf("after failover: want %s, got %s", peerB, got)
+	}
+	clock.advance(10 * time.Second)
+	if got := fc.GetCurrentFiler(); got != peerB {
+		t.Fatalf("home still in breaker: want %s, got %s", peerB, got)
+	}
+	clock.advance(21 * time.Second)
+	if got := fc.GetCurrentFiler(); got != homeA {
+		t.Fatalf("after breaker reset: want home %s, got %s", homeA, got)
+	}
+}
+
+func TestHomeBackoffDoublesOnFlap(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	fc := newHomeTestClient(clock)
+
+	failHome(fc)
+	clock.advance(31 * time.Second)
+	if got := fc.GetCurrentFiler(); got != homeA {
+		t.Fatalf("first return: want home, got %s", got)
+	}
+
+	clock.advance(9 * time.Second) // +40s: home fails again soon after the return
+	failHome(fc)
+	if fc.homeBackoff != 60*time.Second {
+		t.Fatalf("backoff after flap: want 60s, got %v", fc.homeBackoff)
+	}
+	clock.advance(55 * time.Second) // +95s: breaker reset, backoff not yet over
+	if got := fc.GetCurrentFiler(); got != peerB {
+		t.Fatalf("inside backoff: want %s, got %s", peerB, got)
+	}
+	clock.advance(6 * time.Second) // +101s
+	if got := fc.GetCurrentFiler(); got != homeA {
+		t.Fatalf("after backoff: want home, got %s", got)
+	}
+}
+
+// flapUntilHome fails home over, waits until it is eligible again and returns.
+func flapUntilHome(t *testing.T, fc *FilerClient, clock *fakeClock) {
+	t.Helper()
+	failHome(fc)
+	wait := fc.homeBackoff
+	if wait < fc.resetTimeout {
+		wait = fc.resetTimeout
+	}
+	clock.advance(wait + time.Second)
+	if got := fc.GetCurrentFiler(); got != homeA {
+		t.Fatalf("expected a return home, got %s", got)
+	}
+	clock.advance(time.Second)
+}
+
+func TestHomeBackoffCapsAtFiveMinutes(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	fc := newHomeTestClient(clock)
+	for i := 0; i < 6; i++ {
+		flapUntilHome(t, fc, clock)
+	}
+	failHome(fc)
+	if fc.homeBackoff != 5*time.Minute {
+		t.Fatalf("backoff: want 5m cap, got %v", fc.homeBackoff)
+	}
+}
+
+func TestHomeBackoffResetsAfterHold(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	fc := newHomeTestClient(clock)
+	flapUntilHome(t, fc, clock)
+	flapUntilHome(t, fc, clock)
+	if fc.homeBackoff != 60*time.Second {
+		t.Fatalf("setup: want backoff 60s, got %v", fc.homeBackoff)
+	}
+
+	clock.advance(10*time.Minute + time.Second)
+	failHome(fc)
+	if fc.homeBackoff != 30*time.Second {
+		t.Fatalf("after a 10m hold: want backoff reset to 30s, got %v", fc.homeBackoff)
+	}
+}
+
+func TestNoHomeKeepsStickyBehaviour(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	fc := newHomeTestClient(clock)
+	fc.homeFiler = ""
+
+	failHome(fc)
+	clock.advance(time.Hour)
+	if got := fc.GetCurrentFiler(); got != peerB {
+		t.Fatalf("without a home the client must stay put: want %s, got %s", peerB, got)
+	}
+}
+
+func TestDiscoveryPrefersHealthyHomeWhenCurrentGone(t *testing.T) {
+	x := pb.ServerAddress("10.0.0.0:8888.18888") // sorts and stays first
+	home := pb.ServerAddress("10.0.0.3:8888.18888")
+	fc := newTestFilerClient(x, peerB, home)
+	fc.homeFiler = home
+	fc.failureThreshold = 3
+	fc.resetTimeout = 30 * time.Second
+	atomic.StoreInt32(&fc.filerIndex, 1) // current is the peer that leaves
+
+	fc.applyDiscoveredFilers(map[pb.ServerAddress]struct{}{x: {}, home: {}})
+
+	if got := fc.filerAddresses[atomic.LoadInt32(&fc.filerIndex)]; got != home {
+		t.Fatalf("current after discovery: want home %s, got %s", home, got)
+	}
+}
+
+// countingFiler answers LookupVolume with no locations and counts the calls.
+type countingFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	calls atomic.Int32
+}
+
+func (s *countingFiler) LookupVolume(context.Context, *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
+	s.calls.Add(1)
+	return &filer_pb.LookupVolumeResponse{}, nil
+}
+
+func startCountingFiler(t *testing.T) (pb.ServerAddress, *countingFiler) {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := &countingFiler{}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, srv)
+	go func() { _ = grpcServer.Serve(lis) }()
+	t.Cleanup(grpcServer.Stop)
+	_, port, _ := net.SplitHostPort(lis.Addr().String())
+	return pb.ServerAddress(fmt.Sprintf("127.0.0.1:0.%s", port)), srv
+}
+
+func TestLookupStartsFromEligibleHome(t *testing.T) {
+	home, homeSrv := startCountingFiler(t)
+	peer, peerSrv := startCountingFiler(t)
+	fc := newTestFilerClient(home, peer)
+	fc.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+	fc.grpcTimeout = 5 * time.Second
+	fc.maxRetries = 1
+	fc.failureThreshold = 3
+	fc.resetTimeout = 30 * time.Second
+	fc.homeFiler = home
+	atomic.StoreInt32(&fc.filerIndex, 1) // current is the peer
+
+	if _, err := (&filerVolumeProvider{filerClient: fc}).LookupVolumeIds(context.Background(), []string{"4"}); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if homeSrv.calls.Load() != 1 || peerSrv.calls.Load() != 0 {
+		t.Fatalf("lookup calls: home=%d peer=%d, want home=1 peer=0", homeSrv.calls.Load(), peerSrv.calls.Load())
 	}
 }

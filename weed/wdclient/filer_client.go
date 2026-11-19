@@ -66,7 +66,22 @@ type FilerClient struct {
 	discoveryInterval  time.Duration // How often to refresh filer list from master
 	stopDiscovery      chan struct{} // Signal to stop discovery goroutine
 	closeDiscoveryOnce sync.Once     // Ensures discovery channel is closed at most once
+
+	// Home filer: the filer this client returns to whenever it is healthy,
+	// e.g. the local filer of an embedded S3 gateway. Empty means no home.
+	homeFiler pb.ServerAddress
+	now       func() time.Time // clock; nil means time.Now
+
+	homeMu         sync.Mutex
+	homeBackoff    time.Duration // wait after leaving home before returning to it
+	homeEligibleAt time.Time     // home is not returned to before this time
+	lastReturnHome time.Time     // when the client last returned home
 }
+
+const (
+	homeBackoffCap = 5 * time.Minute  // ceiling of the return-to-home backoff
+	homeHoldReset  = 10 * time.Minute // a return that holds this long resets the backoff
+)
 
 // filerVolumeProvider implements VolumeLocationProvider by querying filer
 // Supports multiple filer addresses with automatic failover
@@ -89,6 +104,11 @@ type FilerClientOption struct {
 	MasterClient      *MasterClient // Optional: enables filer discovery from master
 	FilerGroup        string        // Optional: filer group name for discovery (required if MasterClient is set)
 	DiscoveryInterval time.Duration // Optional: how often to refresh filer list (0 = use default of 5 minutes)
+
+	// HomeFiler, when set, is preferred whenever it is healthy: after a failover
+	// the client returns to it once its circuit breaker resets, backing off if it
+	// keeps failing. Embedded S3 gateways set it to their local filer.
+	HomeFiler pb.ServerAddress
 }
 
 // NewFilerClient creates a new client that queries filer(s) for volume locations
@@ -110,6 +130,7 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 	retryBackoffFactor := 1.5        // Default: 1.5x backoff multiplier
 	var masterClient *MasterClient
 	var filerGroup string
+	var homeFiler pb.ServerAddress
 	discoveryInterval := 5 * time.Minute // Default: refresh every 5 minutes
 
 	// Override with provided options
@@ -139,6 +160,7 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 		if opt.RetryBackoffFactor > 0 {
 			retryBackoffFactor = opt.RetryBackoffFactor
 		}
+		homeFiler = opt.HomeFiler
 		if opt.MasterClient != nil {
 			masterClient = opt.MasterClient
 			filerGroup = opt.FilerGroup
@@ -171,6 +193,9 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 		masterClient:       masterClient,
 		filerGroup:         filerGroup,
 		discoveryInterval:  discoveryInterval,
+		homeFiler:          homeFiler,
+		now:                time.Now,
+		homeBackoff:        resetTimeout,
 	}
 
 	// Start filer discovery if master client is configured
@@ -202,13 +227,60 @@ func (fc *FilerClient) GetCurrentFiler() pb.ServerAddress {
 		return ""
 	}
 
-	// Get current index (atomically updated on successful operations)
+	return fc.filerAddresses[fc.currentIndexPreferHomeLocked()]
+}
+
+// currentIndexPreferHomeLocked returns the index to use next: the home filer
+// when the current one is not home and home is eligible again (switching to
+// it), else the current filer. The caller holds filerAddressesMu.
+func (fc *FilerClient) currentIndexPreferHomeLocked() int32 {
 	index := atomic.LoadInt32(&fc.filerIndex)
-	if index >= int32(len(fc.filerAddresses)) {
+	if index < 0 || index >= int32(len(fc.filerAddresses)) {
 		index = 0
 	}
+	home := fc.homeIndexLocked()
+	if home >= 0 && home != index && fc.homeEligibleLocked() {
+		fc.setCurrentIndexLocked(home, switchReturnHome)
+		return home
+	}
+	return index
+}
 
-	return fc.filerAddresses[index]
+// homeIndexLocked returns the position of the home filer in the list, or -1
+// when there is no home or it is not listed. The caller holds filerAddressesMu.
+func (fc *FilerClient) homeIndexLocked() int32 {
+	if fc.homeFiler == "" {
+		return -1
+	}
+	for i, f := range fc.filerAddresses {
+		if sameFiler(f, fc.homeFiler) {
+			return int32(i)
+		}
+	}
+	return -1
+}
+
+// homeEligibleLocked reports whether the client may return to the home filer:
+// it is listed, its circuit breaker is closed or due for a re-check, and the
+// return backoff has passed. The caller holds filerAddressesMu.
+func (fc *FilerClient) homeEligibleLocked() bool {
+	home := fc.homeIndexLocked()
+	if home < 0 || int(home) >= len(fc.filerHealth) {
+		return false
+	}
+	if fc.shouldSkipUnhealthyFilerWithHealth(fc.filerHealth[home]) {
+		return false
+	}
+	fc.homeMu.Lock()
+	defer fc.homeMu.Unlock()
+	return !fc.clock().Before(fc.homeEligibleAt)
+}
+
+func (fc *FilerClient) clock() time.Time {
+	if fc.now == nil {
+		return time.Now()
+	}
+	return fc.now()
 }
 
 // GetAllFilers returns a snapshot of all filer addresses
@@ -546,6 +618,9 @@ func (fc *FilerClient) applyDiscoveredFilersLocked(discoveredFilers map[pb.Serve
 	}
 	if newIndex < 0 {
 		newIndex = 0
+		if home := fc.homeIndexLocked(); home >= 0 && fc.homeEligibleLocked() {
+			newIndex = home
+		}
 	}
 	fc.setCurrentIndexFrom(currentFiler, newIndex, switchDiscovery)
 
@@ -596,9 +671,34 @@ func (fc *FilerClient) setCurrentIndexFrom(from pb.ServerAddress, newIndex int32
 }
 
 // noteSwitchLocked records a change of the current filer for the home-filer
-// return logic and reports the return backoff now in effect.
+// return logic and reports the return backoff now in effect. Leaving home on a
+// failover starts the backoff; leaving it again soon after a return doubles it,
+// up to homeBackoffCap; a return that held for homeHoldReset resets it.
 func (fc *FilerClient) noteSwitchLocked(from, to pb.ServerAddress, reason string) time.Duration {
-	return 0
+	fc.homeMu.Lock()
+	defer fc.homeMu.Unlock()
+	if fc.homeBackoff <= 0 {
+		fc.homeBackoff = fc.resetTimeout
+	}
+	if fc.homeFiler == "" {
+		return fc.homeBackoff
+	}
+	now := fc.clock()
+	switch {
+	case reason == switchReturnHome && sameFiler(to, fc.homeFiler):
+		fc.lastReturnHome = now
+	case reason == switchFailover && sameFiler(from, fc.homeFiler) && !sameFiler(to, fc.homeFiler):
+		if !fc.lastReturnHome.IsZero() {
+			sinceReturn := now.Sub(fc.lastReturnHome)
+			if sinceReturn >= homeHoldReset {
+				fc.homeBackoff = fc.resetTimeout
+			} else if sinceReturn < 2*fc.homeBackoff {
+				fc.homeBackoff = min(2*fc.homeBackoff, homeBackoffCap)
+			}
+		}
+		fc.homeEligibleAt = now.Add(fc.homeBackoff)
+	}
+	return fc.homeBackoff
 }
 
 // OnVolumeLocationChange applies master-pushed changes to the lookup-fed cache,
@@ -772,7 +872,7 @@ func (fc *FilerClient) shouldSkipUnhealthyFilerWithHealth(health *filerHealth) b
 		return false // Never failed, shouldn't skip
 	}
 	lastFailureTime := time.Unix(0, lastFailureNs)
-	if time.Since(lastFailureTime) > fc.resetTimeout {
+	if fc.clock().Sub(lastFailureTime) > fc.resetTimeout {
 		return false // Time to re-check
 	}
 
@@ -787,7 +887,7 @@ func (fc *FilerClient) recordFilerSuccessWithHealth(health *filerHealth) {
 // recordFilerFailureWithHealth increments failure count for an unhealthy filer
 func (fc *FilerClient) recordFilerFailureWithHealth(health *filerHealth) {
 	atomic.AddInt32(&health.failureCount, 1)
-	atomic.StoreInt64(&health.lastFailureTimeNs, time.Now().UnixNano())
+	atomic.StoreInt64(&health.lastFailureTimeNs, fc.clock().UnixNano())
 }
 
 // LookupVolumeIds queries the filer for volume locations with automatic failover
@@ -808,10 +908,12 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 	for retry := 0; retry < maxRetries; retry++ {
 		// Try all filer addresses with round-robin starting from current index
 		// Skip known-unhealthy filers (circuit breaker pattern)
-		i := atomic.LoadInt32(&fc.filerIndex)
-
-		// Get filer count with read lock
+		// Get start index and filer count with read lock
 		fc.filerAddressesMu.RLock()
+		i := int32(0)
+		if len(fc.filerAddresses) > 0 {
+			i = fc.currentIndexPreferHomeLocked()
+		}
 		n := int32(len(fc.filerAddresses))
 		fc.filerAddressesMu.RUnlock()
 
