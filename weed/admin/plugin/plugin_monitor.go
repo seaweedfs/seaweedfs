@@ -617,8 +617,15 @@ func (r *Plugin) BuildJobDetail(jobID string, activityLimit int, relatedLimit in
 		return nil, false, err
 	}
 
+	var runRecord *JobRunRecord
 	if trackedSnapshot == nil && detailJob == nil {
-		return nil, false, nil
+		// Run history keeps the last runs per job type, so it can still
+		// list a job pruned from tracking; show what the record holds.
+		runRecord, err = r.findRunRecord(normalizedJobID)
+		if err != nil || runRecord == nil {
+			return nil, false, err
+		}
+		detailJob = trackedJobFromRunRecord(runRecord)
 	}
 	if detailJob == nil && trackedSnapshot != nil {
 		clone := cloneTrackedJob(*trackedSnapshot)
@@ -639,30 +646,16 @@ func (r *Plugin) BuildJobDetail(jobID string, activityLimit int, relatedLimit in
 	detail := &JobDetail{
 		Job:         detailJob,
 		Activities:  filterJobActivitiesFromSlice(activities, normalizedJobID, activityLimit),
+		RunRecord:   runRecord,
 		LastUpdated: timeToPtr(time.Now().UTC()),
 	}
 
-	if history, err := r.store.LoadRunHistory(detailJob.JobType); err != nil {
-		return nil, true, err
-	} else if history != nil {
-		for i := range history.SuccessfulRuns {
-			record := history.SuccessfulRuns[i]
-			if strings.TrimSpace(record.JobID) == normalizedJobID {
-				recordCopy := record
-				detail.RunRecord = &recordCopy
-				break
-			}
+	if runRecord == nil {
+		history, err := r.store.LoadRunHistory(detailJob.JobType)
+		if err != nil {
+			return nil, true, err
 		}
-		if detail.RunRecord == nil {
-			for i := range history.ErrorRuns {
-				record := history.ErrorRuns[i]
-				if strings.TrimSpace(record.JobID) == normalizedJobID {
-					recordCopy := record
-					detail.RunRecord = &recordCopy
-					break
-				}
-			}
-		}
+		detail.RunRecord = newestRunRecord(history, normalizedJobID)
 	}
 
 	if relatedLimit > 0 {
@@ -1229,6 +1222,79 @@ func (r *Plugin) appendActivity(activity JobActivity) {
 	}
 	r.dirtyActivities = true
 	r.activitiesMu.Unlock()
+}
+
+func (r *Plugin) findRunRecord(jobID string) (*JobRunRecord, error) {
+	jobTypes, err := r.store.ListJobTypes()
+	if err != nil {
+		return nil, err
+	}
+	var newest *JobRunRecord
+	var loadErr error
+	for _, jobType := range jobTypes {
+		history, err := r.store.LoadRunHistory(jobType)
+		if err != nil {
+			if loadErr == nil {
+				loadErr = err
+			}
+			continue
+		}
+		record := newestRunRecord(history, jobID)
+		if record != nil && (newest == nil || runCompletedAt(*record).After(runCompletedAt(*newest))) {
+			newest = record
+		}
+	}
+	if newest != nil {
+		return newest, nil
+	}
+	return nil, loadErr
+}
+
+// newestRunRecord picks across both outcome lists, since a job id can be
+// run again and end the other way.
+func newestRunRecord(history *JobTypeRunHistory, jobID string) *JobRunRecord {
+	if history == nil {
+		return nil
+	}
+	var newest *JobRunRecord
+	for _, runs := range [][]JobRunRecord{history.SuccessfulRuns, history.ErrorRuns} {
+		for i := range runs {
+			if strings.TrimSpace(runs[i].JobID) != jobID {
+				continue
+			}
+			if newest == nil || runCompletedAt(runs[i]).After(runCompletedAt(*newest)) {
+				record := runs[i]
+				newest = &record
+			}
+		}
+	}
+	return newest
+}
+
+func runCompletedAt(record JobRunRecord) time.Time {
+	if record.CompletedAt == nil {
+		return time.Time{}
+	}
+	return *record.CompletedAt
+}
+
+func trackedJobFromRunRecord(record *JobRunRecord) *TrackedJob {
+	job := &TrackedJob{
+		JobID:       record.JobID,
+		JobType:     record.JobType,
+		WorkerID:    record.WorkerID,
+		State:       StateSucceeded,
+		Message:     record.Message,
+		UpdatedAt:   record.CompletedAt,
+		CompletedAt: record.CompletedAt,
+	}
+	if record.Outcome == RunOutcomeError {
+		job.State = StateFailed
+		job.ErrorMessage = record.Message
+	} else {
+		job.Progress = 100
+	}
+	return job
 }
 
 func (r *Plugin) pruneTrackedJobsLocked() {
