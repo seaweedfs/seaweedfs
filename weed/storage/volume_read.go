@@ -444,7 +444,11 @@ func (v *Volume) streamNeedleData(n *needle.Needle, readOption *ReadOption, writ
 		}
 		probe := new(needle.Needle)
 		probe.ParseNeedleHeader(header)
-		if probe.Id != n.Id || probe.Size != nv.Size {
+		recordSize := nv.Size
+		if recordSize < 0 {
+			recordSize = -recordSize
+		}
+		if probe.Id != n.Id || probe.Size != recordSize {
 			glog.V(0).Infof("volume %d index entry for needle %x resolves to needle %x; reporting not-found",
 				v.Id, uint64(n.Id), uint64(probe.Id))
 			return ErrorNotFound
