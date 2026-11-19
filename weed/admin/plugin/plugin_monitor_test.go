@@ -704,6 +704,20 @@ func TestBuildJobDetailUsesNewestRunRecord(t *testing.T) {
 	if detail.RunRecord == nil || detail.RunRecord.RunID != "req-2" {
 		t.Fatalf("expected the newer error run, got=%+v", detail.RunRecord)
 	}
+
+	third := second.Add(30 * time.Second)
+	if err := pluginSvc.store.AppendRunRecord("volume_balance", &JobRunRecord{
+		RunID: "req-3", JobID: "job-rerun", JobType: "volume_balance", Outcome: RunOutcomeSuccess, CompletedAt: &third,
+	}); err != nil {
+		t.Fatalf("AppendRunRecord: %v", err)
+	}
+	detail, found, err = pluginSvc.BuildJobDetail("job-rerun", 100, 0)
+	if err != nil || !found || detail == nil || detail.Job == nil {
+		t.Fatalf("BuildJobDetail: found=%v err=%v", found, err)
+	}
+	if detail.Job.JobType != "volume_balance" || detail.RunRecord == nil || detail.RunRecord.RunID != "req-3" {
+		t.Fatalf("expected the newest run across job types, job=%+v record=%+v", detail.Job, detail.RunRecord)
+	}
 }
 
 func TestBuildJobDetailSkipsUnreadableRunHistory(t *testing.T) {

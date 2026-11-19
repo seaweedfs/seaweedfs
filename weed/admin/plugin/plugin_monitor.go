@@ -1229,6 +1229,7 @@ func (r *Plugin) findRunRecord(jobID string) (*JobRunRecord, error) {
 	if err != nil {
 		return nil, err
 	}
+	var newest *JobRunRecord
 	var loadErr error
 	for _, jobType := range jobTypes {
 		history, err := r.store.LoadRunHistory(jobType)
@@ -1238,9 +1239,13 @@ func (r *Plugin) findRunRecord(jobID string) (*JobRunRecord, error) {
 			}
 			continue
 		}
-		if record := newestRunRecord(history, jobID); record != nil {
-			return record, nil
+		record := newestRunRecord(history, jobID)
+		if record != nil && (newest == nil || runCompletedAt(*record).After(runCompletedAt(*newest))) {
+			newest = record
 		}
+	}
+	if newest != nil {
+		return newest, nil
 	}
 	return nil, loadErr
 }
