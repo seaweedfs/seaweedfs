@@ -68,7 +68,14 @@ func MetadataPathInScope(fullPath string, prefixes []string) bool {
 	return false
 }
 
-func metadataSubscriptionScope(signingKey SigningKey, token EncodedJwt, method string) ([]string, bool) {
+// MetadataSubscriptionScope limits a subscription to events under Prefixes
+// until ExpiresAt.
+type MetadataSubscriptionScope struct {
+	Prefixes  []string
+	ExpiresAt time.Time
+}
+
+func metadataSubscriptionScope(signingKey SigningKey, token EncodedJwt, method string) (*MetadataSubscriptionScope, bool) {
 	parsed, err := DecodeJwt(signingKey, token, &SeaweedFilerClaims{})
 	if err != nil || parsed == nil || !parsed.Valid {
 		return nil, false
@@ -87,14 +94,18 @@ func metadataSubscriptionScope(signingKey SigningKey, token EncodedJwt, method s
 	if !allowsMethod {
 		return nil, false
 	}
-	return cleanMetadataPrefixes(claims.AllowedPrefixes)
+	prefixes, ok := cleanMetadataPrefixes(claims.AllowedPrefixes)
+	if !ok {
+		return nil, false
+	}
+	return &MetadataSubscriptionScope{Prefixes: prefixes, ExpiresAt: claims.ExpiresAt.Time}, true
 }
 
 // CheckGrpcMetadataSubscription authorizes a metadata subscription call.
 // Without subscribeKey every caller is unrestricted (nil scope). With it, an
 // mTLS-verified peer or an admin token signed by adminKey is unrestricted,
-// and a token signed by subscribeKey limits events to the returned prefixes.
-func CheckGrpcMetadataSubscription(ctx context.Context, subscribeKey, adminKey SigningKey, method string) (scope []string, err error) {
+// and a token signed by subscribeKey is limited to the returned scope.
+func CheckGrpcMetadataSubscription(ctx context.Context, subscribeKey, adminKey SigningKey, method string) (scope *MetadataSubscriptionScope, err error) {
 	if len(subscribeKey) == 0 || isMtlsVerifiedPeer(ctx) {
 		return nil, nil
 	}
@@ -112,8 +123,8 @@ func CheckGrpcMetadataSubscription(ctx context.Context, subscribeKey, adminKey S
 		if IsFilerAdminToken(adminKey, token) {
 			return nil, nil
 		}
-		if prefixes, ok := metadataSubscriptionScope(subscribeKey, token, method); ok {
-			return prefixes, nil
+		if scope, ok := metadataSubscriptionScope(subscribeKey, token, method); ok {
+			return scope, nil
 		}
 	}
 	return nil, status.Error(codes.Unauthenticated, "metadata subscription requires mTLS, an admin token, or a subscription token for this method")

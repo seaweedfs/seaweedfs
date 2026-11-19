@@ -647,7 +647,10 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	}
 	if scope != nil {
 		req.ClientSupportsMetadataChunks = false
-		stream = &scopedSubscribeStream{SeaweedFiler_SubscribeMetadataServer: stream, prefixes: scope}
+		scoped, cancel := newScopedMetadataStream(stream.Context(), scope)
+		defer cancel()
+		defer func() { err = scoped.endErr(err) }()
+		stream = &scopedSubscribeStream{SeaweedFiler_SubscribeMetadataServer: stream, scopedMetadataStream: scoped}
 	}
 	// A filer that has not learned remote peers yet serves the local log and
 	// upgrades when the first one appears. RemotePeerArrivedChan takes the
@@ -1131,14 +1134,17 @@ func (fs *FilerServer) endOfSubscription(stream context.Context, err error) erro
 	return err
 }
 
-func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeLocalMetadataServer) error {
+func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeLocalMetadataServer) (err error) {
 	scope, err := metadataSubscriptionScope(stream.Context(), security.MethodSubscribeLocalMetadata)
 	if err != nil {
 		return err
 	}
 	if scope != nil {
 		req.ClientSupportsMetadataChunks = false
-		stream = &scopedSubscribeLocalStream{SeaweedFiler_SubscribeLocalMetadataServer: stream, prefixes: scope}
+		scoped, cancel := newScopedMetadataStream(stream.Context(), scope)
+		defer cancel()
+		defer func() { err = scoped.endErr(err) }()
+		stream = &scopedSubscribeLocalStream{SeaweedFiler_SubscribeLocalMetadataServer: stream, scopedMetadataStream: scoped}
 	}
 	return fs.subscribeLocalMetadata(req, stream, nil)
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -29,7 +30,7 @@ func TestFsMetaToken(t *testing.T) {
 	}
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+strings.TrimSpace(out.String())))
 	scope, err := security.CheckGrpcMetadataSubscription(ctx, security.SigningKey("sub-key"), nil, security.MethodSubscribeMetadata)
-	if err != nil || strings.Join(scope, ",") != "/buckets/a,/buckets/b" {
+	if err != nil || strings.Join(scope.Prefixes, ",") != "/buckets/a,/buckets/b" || time.Until(scope.ExpiresAt) < 59*time.Minute {
 		t.Fatalf("scope=%v err=%v", scope, err)
 	}
 }

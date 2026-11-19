@@ -66,8 +66,11 @@ func TestCheckGrpcMetadataSubscription(t *testing.T) {
 			if status.Code(err) != tt.wantCode {
 				t.Fatalf("code = %v (%v), want %v", status.Code(err), err, tt.wantCode)
 			}
-			if !slices.Equal(scope, tt.wantScope) {
-				t.Fatalf("scope = %v, want %v", scope, tt.wantScope)
+			if (scope == nil) != (tt.wantScope == nil) || scope != nil && !slices.Equal(scope.Prefixes, tt.wantScope) {
+				t.Fatalf("scope = %+v, want %v", scope, tt.wantScope)
+			}
+			if scope != nil && time.Until(scope.ExpiresAt) <= 0 {
+				t.Fatalf("scope expiry %v is not in the future", scope.ExpiresAt)
 			}
 		})
 	}

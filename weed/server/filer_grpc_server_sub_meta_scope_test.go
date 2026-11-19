@@ -1,9 +1,17 @@
 package weed_server
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func scopeTestEvent(dir, name string, tsNs int64) *filer_pb.SubscribeMetadataResponse {
@@ -79,5 +87,44 @@ func TestScopeMetadataResponse(t *testing.T) {
 	got = scopeMetadataResponse(inScopeHead, prefixes)
 	if got == nil || got.EventNotification != inScopeHead.EventNotification || len(got.Events) != 0 {
 		t.Errorf("an in-scope head keeps its event and drops the out-of-scope tail: %+v", got)
+	}
+}
+
+func TestScopedSubscriptionEndsAtTokenExpiry(t *testing.T) {
+	h := newSubscribeHarness(t)
+	v := util.GetViper()
+	v.Set("jwt.filer_signing.subscribe.key", "sub-key")
+	t.Cleanup(func() { v.Set("jwt.filer_signing.subscribe.key", "") })
+	token := security.GenJwtForMetadataSubscription(security.SigningKey("sub-key"), 2, []string{"/t"})
+	ctx, cancel := context.WithCancel(metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+string(token))))
+	defer cancel()
+	stream := &fakeSubscribeStream{ctx: ctx}
+	done := make(chan error, 1)
+	go func() {
+		done <- h.fs.SubscribeLocalMetadata(&filer_pb.SubscribeMetadataRequest{ClientName: "scoped", ClientId: 9, ClientEpoch: 1, SinceNs: 1}, stream)
+	}()
+
+	now := time.Now().UnixNano()
+	h.append(now)
+	outside, _ := proto.Marshal(&filer_pb.SubscribeMetadataResponse{Directory: "/other", TsNs: now + 1, EventNotification: &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: "x"}}})
+	if err := h.f.LocalMetaLogBuffer.AddLogEntryToBuffer(&filer_pb.LogEntry{TsNs: now + 1, Data: outside, Key: []byte("/other/x")}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-done:
+		if status.Code(err) != codes.Unauthenticated {
+			t.Fatalf("stream ended with %v, want Unauthenticated at token expiry", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("scoped subscription outlived its token")
+	}
+	for _, m := range stream.snapshot() {
+		if m.Directory == "/other" {
+			t.Fatalf("out-of-scope event delivered: %+v", m)
+		}
+	}
+	if got := eventTimestamps(stream.snapshot()); len(got) != 1 || got[0] != now {
+		t.Fatalf("delivered %v, want only the in-scope event", got)
 	}
 }
