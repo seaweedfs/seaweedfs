@@ -127,18 +127,23 @@ func dialError(err error) error {
 }
 
 func TestReachableFirstTriesEveryServerOfAnUnansweringMachineLast(t *testing.T) {
-	for _, host := range []string{"10.0.0.9:9501", "10.0.0.9"} {
-		t.Run(host, func(t *testing.T) {
+	for _, tc := range []struct{ host, sibling, other string }{
+		{"10.0.0.9:9501", "10.0.0.9:9502", "10.0.0.8:9501"},
+		{"10.0.0.9", "10.0.0.9:9502", "10.0.0.8:9501"},
+		{"[2001:db8::9]:9501", "[2001:db8::9]", "[2001:db8::8]:9501"},
+		{"[2001:db8::9]", "[2001:db8::9]:9502", "[2001:db8::8]:9501"},
+	} {
+		t.Run(tc.host, func(t *testing.T) {
 			forgetUnreachable(t)
-			urls := []string{"http://" + host + "/3,x", "http://10.0.0.9:9502/3,x", "http://10.0.0.8:9501/3,x"}
+			urls := []string{"http://" + tc.host + "/3,x", "http://" + tc.sibling + "/3,x", "http://" + tc.other + "/3,x"}
 
-			recordUnreachable(host, dialError(os.ErrDeadlineExceeded))
+			recordUnreachable(tc.host, dialError(os.ErrDeadlineExceeded))
 			assertOrder(t, ReachableFirst(urls), urls[2], urls[0], urls[1])
 
 			// a sibling port answering clears the machine, not the host that timed out
-			recordReachable("10.0.0.9:9502")
+			recordReachable(tc.sibling)
 			assertOrder(t, ReachableFirst(urls), urls[1], urls[2], urls[0])
-			recordReachable(host)
+			recordReachable(tc.host)
 			assertOrder(t, ReachableFirst(urls), urls...)
 		})
 	}

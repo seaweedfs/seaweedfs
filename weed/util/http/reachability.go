@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -126,6 +127,9 @@ func hostOf(rawUrl string) string {
 func machineOf(host string) machineKey {
 	if machine, _, err := net.SplitHostPort(host); err == nil {
 		return machineKey(machine)
+	}
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
 	}
 	return machineKey(host)
 }
