@@ -192,7 +192,7 @@ func TestPopulateReadAuthCoversDataChunksBehindManifests(t *testing.T) {
 		{Found: true, Entry: &filer_pb.Entry{Name: "big", Chunks: chunks}},
 	}}
 	mint := func(fid string) string { return "jwt:" + fid }
-	populateReadAuth(context.Background(), response, true, lookup, mint)
+	populateReadAuth(context.Background(), response, true, lookup, nil, mint)
 	for _, chunk := range dataChunks {
 		if got := response.ReadAuth[chunk.FileId]; got != "jwt:"+chunk.FileId {
 			t.Fatalf("data chunk %s behind a manifest: read auth %q", chunk.FileId, got)
@@ -209,7 +209,7 @@ func TestPopulateReadAuthCoversDataChunksBehindManifests(t *testing.T) {
 	failed := &filer_pb.LookupDirectoryEntriesResponse{Results: []*filer_pb.LookupDirectoryEntryResult{
 		{Found: true, Entry: &filer_pb.Entry{Name: "big", Chunks: chunks}},
 	}}
-	populateReadAuth(context.Background(), failed, true, lookup, mint)
+	populateReadAuth(context.Background(), failed, true, lookup, nil, mint)
 	if got := failed.ReadAuth[dataChunks[0].FileId]; got != "" {
 		t.Fatalf("unresolvable manifest: data chunk got read auth %q", got)
 	}
@@ -271,7 +271,7 @@ func TestPopulateReadAuthCoversNestedManifests(t *testing.T) {
 		{Found: true, Entry: &filer_pb.Entry{Name: "nested", Chunks: []*filer_pb.FileChunk{m0}}},
 	}}
 	mint := func(fid string) string { return "jwt:" + fid }
-	populateReadAuth(context.Background(), response, true, lookup, mint)
+	populateReadAuth(context.Background(), response, true, lookup, nil, mint)
 	// Every fid a reader must fetch: the listed M0, the intermediate M1, and the data chunks.
 	for _, fid := range []string{"9,2", "9,1", "3,1", "3,2"} {
 		if got := response.ReadAuth[fid]; got != "jwt:"+fid {
@@ -293,7 +293,7 @@ func TestResolveFidsBehindManifestsSkipsWhenSigningDisabled(t *testing.T) {
 		lookupCalled = true
 		return nil, nil
 	}
-	if fids := resolveFidsBehindManifests(context.Background(), response, false, lookup); fids != nil {
+	if fids := resolveFidsBehindManifests(context.Background(), response, false, lookup, nil); fids != nil {
 		t.Fatalf("read signing disabled: resolved %d fids", len(fids))
 	}
 	if lookupCalled {
@@ -301,7 +301,7 @@ func TestResolveFidsBehindManifestsSkipsWhenSigningDisabled(t *testing.T) {
 	}
 
 	// The whole read-auth pass issues nothing when signing is off.
-	populateReadAuth(context.Background(), response, false, lookup, func(string) string { return "" })
+	populateReadAuth(context.Background(), response, false, lookup, nil, func(string) string { return "" })
 	if len(response.ReadAuth) != 0 {
 		t.Fatalf("read signing disabled: read auth = %#v", response.ReadAuth)
 	}
@@ -345,7 +345,7 @@ func TestPopulateReadAuthMintsAfterManifestDownloads(t *testing.T) {
 		{Found: true, Entry: &filer_pb.Entry{Name: "small", Chunks: []*filer_pb.FileChunk{{FileId: "7,abc"}}}},
 		{Found: true, Entry: &filer_pb.Entry{Name: "big", Chunks: chunks}},
 	}}
-	populateReadAuth(context.Background(), response, true, lookup, mint)
+	populateReadAuth(context.Background(), response, true, lookup, nil, mint)
 
 	lastLookup, firstMint := -1, len(events)
 	for i, e := range events {
