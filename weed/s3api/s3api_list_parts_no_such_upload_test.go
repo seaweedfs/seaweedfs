@@ -2,8 +2,10 @@ package s3api
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -49,6 +51,9 @@ func (f *fakePartsFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream fi
 	var sent uint32
 	for _, entry := range parts {
 		name := entry.Name
+		if !strings.HasPrefix(name, req.Prefix) {
+			continue
+		}
 		if req.StartFromFileName != "" {
 			if name < req.StartFromFileName {
 				continue
@@ -277,4 +282,214 @@ func partNumbers(output *ListPartsResult) []int64 {
 		}
 	}
 	return nums
+}
+
+func partAttempt(name string, modifiedTsNs int64, etag string) *filer_pb.Entry {
+	return &filer_pb.Entry{
+		Name:       name,
+		Attributes: &filer_pb.FuseAttributes{FileSize: 5},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "1,01", Size: 5, ModifiedTsNs: modifiedTsNs}},
+		Extended:   map[string][]byte{s3_constants.ExtETagKey: []byte(etag)},
+	}
+}
+
+func partETags(output *ListPartsResult) []string {
+	etags := make([]string, len(output.Part))
+	for i, part := range output.Part {
+		etags[i] = aws.StringValue(part.ETag)
+	}
+	return etags
+}
+
+// Each UploadPart attempt keeps its own entry; ListParts reports one entry per
+// part number, the latest attempt, the way a re-upload replaces a part on S3.
+func TestListPartsReportsLatestAttemptPerPartNumber(t *testing.T) {
+	s3a := newListPartsServer(t, &fakePartsFiler{
+		uploadEntry: uploadRecordEntry("open-upload"),
+		parts: []*filer_pb.Entry{
+			partAttempt("0001_11111111-1111-1111-1111-111111111111.part", 200, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+			partAttempt("0001_99999999-9999-9999-9999-999999999999.part", 100, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+			partAttempt("0002_22222222-2222-2222-2222-222222222222.part", 300, "cccccccccccccccccccccccccccccccc"),
+		},
+	})
+
+	output, code := s3a.listObjectParts(listPartsInput("open-upload"))
+	if code != s3err.ErrNone {
+		t.Fatalf("code = %v, want ErrNone", code)
+	}
+	if got := partNumbers(output); len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Fatalf("parts = %v, want [1 2]", got)
+	}
+	if got := partETags(output); got[0] != "\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"" {
+		t.Fatalf("part 1 etag = %s, want the latest attempt", got[0])
+	}
+	if aws.BoolValue(output.IsTruncated) {
+		t.Fatal("IsTruncated = true, want false")
+	}
+}
+
+// With max-parts=1 the attempts of one part number span more than a page of
+// raw entries; paging must still return each part number once, latest attempt
+// first, and advance past the superseded entries.
+func TestListPartsPagesOverRepeatedAttempts(t *testing.T) {
+	s3a := newListPartsServer(t, &fakePartsFiler{
+		uploadEntry: uploadRecordEntry("open-upload"),
+		parts: []*filer_pb.Entry{
+			partAttempt("0001_11111111-1111-1111-1111-111111111111.part", 100, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+			partAttempt("0001_55555555-5555-5555-5555-555555555555.part", 150, "dddddddddddddddddddddddddddddddd"),
+			partAttempt("0001_99999999-9999-9999-9999-999999999999.part", 200, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+			partAttempt("0002_22222222-2222-2222-2222-222222222222.part", 300, "cccccccccccccccccccccccccccccccc"),
+		},
+	})
+
+	input := listPartsInput("open-upload")
+	input.MaxParts = aws.Int64(1)
+
+	output, code := s3a.listObjectParts(input)
+	if code != s3err.ErrNone {
+		t.Fatalf("page 1 code = %v, want ErrNone", code)
+	}
+	if got := partNumbers(output); len(got) != 1 || got[0] != 1 {
+		t.Fatalf("page 1 parts = %v, want [1]", got)
+	}
+	if got := partETags(output); got[0] != "\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"" {
+		t.Fatalf("page 1 etag = %s, want the latest attempt", got[0])
+	}
+	if !aws.BoolValue(output.IsTruncated) || aws.Int64Value(output.NextPartNumberMarker) != 1 {
+		t.Fatalf("page 1 IsTruncated/NextPartNumberMarker = %v/%v, want true/1", aws.BoolValue(output.IsTruncated), output.NextPartNumberMarker)
+	}
+
+	input.PartNumberMarker = output.NextPartNumberMarker
+	output, code = s3a.listObjectParts(input)
+	if code != s3err.ErrNone {
+		t.Fatalf("page 2 code = %v, want ErrNone", code)
+	}
+	if got := partNumbers(output); len(got) != 1 || got[0] != 2 {
+		t.Fatalf("page 2 parts = %v, want [2]", got)
+	}
+	if aws.BoolValue(output.IsTruncated) || output.NextPartNumberMarker != nil {
+		t.Fatalf("page 2 IsTruncated/NextPartNumberMarker = %v/%v, want false/nil", aws.BoolValue(output.IsTruncated), output.NextPartNumberMarker)
+	}
+}
+
+// An empty re-upload has no chunks, so it has no chunk write time; it must
+// still supersede the earlier non-empty attempt.
+func TestListPartsEmptyReplacementSupersedesEarlierAttempt(t *testing.T) {
+	const emptyETag = "d41d8cd98f00b204e9800998ecf8427e"
+	for _, tc := range []struct {
+		name               string
+		olderTs, newerTs   int64
+		olderSec, newerSec int64
+	}{
+		{name: "commit stamps", olderTs: 100, newerTs: 200},
+		{name: "mtime without commit stamps", olderSec: 1, newerSec: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			older := partAttempt("0001_99999999-9999-9999-9999-999999999999.part", 1_500_000_000, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+			older.CommitTsNs = tc.olderTs
+			older.Attributes.Mtime = tc.olderSec
+			newer := &filer_pb.Entry{
+				Name:       "0001_11111111-1111-1111-1111-111111111111.part",
+				Attributes: &filer_pb.FuseAttributes{Mtime: tc.newerSec},
+				Extended:   map[string][]byte{s3_constants.ExtETagKey: []byte(emptyETag)},
+				CommitTsNs: tc.newerTs,
+			}
+			s3a := newListPartsServer(t, &fakePartsFiler{
+				uploadEntry: uploadRecordEntry("open-upload"),
+				parts:       []*filer_pb.Entry{older, newer},
+			})
+
+			output, code := s3a.listObjectParts(listPartsInput("open-upload"))
+			if code != s3err.ErrNone {
+				t.Fatalf("code = %v, want ErrNone", code)
+			}
+			if got := partNumbers(output); len(got) != 1 || got[0] != 1 {
+				t.Fatalf("parts = %v, want [1]", got)
+			}
+			if got := partETags(output)[0]; got != "\""+emptyETag+"\"" || aws.Int64Value(output.Part[0].Size) != 0 {
+				t.Fatalf("part 1 = %s/%d, want the empty replacement", got, aws.Int64Value(output.Part[0].Size))
+			}
+		})
+	}
+}
+
+// Names sort as text, so part 10000 lands between part 1000's legacy and uuid
+// names; every page size must still walk the part numbers in numeric order.
+func TestListPartsPagesPartTenThousandLast(t *testing.T) {
+	s3a := newListPartsServer(t, &fakePartsFiler{
+		uploadEntry: uploadRecordEntry("open-upload"),
+		parts: []*filer_pb.Entry{
+			partAttempt("0999_99999999-9999-9999-9999-999999999999.part", 100, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+			partAttempt("1000_10001000-1000-1000-1000-100010001000.part", 100, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+			partAttempt("1001_10011001-1001-1001-1001-100110011001.part", 100, "cccccccccccccccccccccccccccccccc"),
+			partAttempt("10000_10000000-0000-0000-0000-100000000000.part", 100, "dddddddddddddddddddddddddddddddd"),
+		},
+	})
+
+	for maxParts := int64(1); maxParts <= 5; maxParts++ {
+		input := listPartsInput("open-upload")
+		input.MaxParts = aws.Int64(maxParts)
+		var got []int64
+		for page := 0; page < 5; page++ {
+			output, code := s3a.listObjectParts(input)
+			if code != s3err.ErrNone {
+				t.Fatalf("max-parts %d page %d code = %v, want ErrNone", maxParts, page, code)
+			}
+			if int64(len(output.Part)) > maxParts {
+				t.Fatalf("max-parts %d page %d returned %d parts", maxParts, page, len(output.Part))
+			}
+			got = append(got, partNumbers(output)...)
+			if !aws.BoolValue(output.IsTruncated) {
+				break
+			}
+			input.PartNumberMarker = output.NextPartNumberMarker
+		}
+		if fmt.Sprint(got) != "[999 1000 1001 10000]" {
+			t.Fatalf("max-parts %d parts = %v, want [999 1000 1001 10000]", maxParts, got)
+		}
+	}
+}
+
+// Part 10000's names sort inside part 1000's: a legacy 1000.part, then
+// 10000_<uuid>.part, then the newer 1000_<uuid>.part. Part 1000 must still be
+// reported from its newer attempt.
+func TestListPartsPartTenThousandDoesNotSplitPartAttempts(t *testing.T) {
+	s3a := newListPartsServer(t, &fakePartsFiler{
+		uploadEntry: uploadRecordEntry("open-upload"),
+		parts: []*filer_pb.Entry{
+			partAttempt("1000.part", 100, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+			partAttempt("10000_10000000-0000-0000-0000-100000000000.part", 150, "cccccccccccccccccccccccccccccccc"),
+			partAttempt("1000_10001000-1000-1000-1000-100010001000.part", 200, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+		},
+	})
+
+	input := listPartsInput("open-upload")
+	input.MaxParts = aws.Int64(1)
+	input.PartNumberMarker = aws.Int64(999)
+
+	output, code := s3a.listObjectParts(input)
+	if code != s3err.ErrNone {
+		t.Fatalf("page 1 code = %v, want ErrNone", code)
+	}
+	if got := partNumbers(output); len(got) != 1 || got[0] != 1000 {
+		t.Fatalf("page 1 parts = %v, want [1000]", got)
+	}
+	if got := partETags(output)[0]; got != "\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"" {
+		t.Fatalf("part 1000 etag = %s, want the newer attempt", got)
+	}
+	if !aws.BoolValue(output.IsTruncated) || aws.Int64Value(output.NextPartNumberMarker) != 1000 {
+		t.Fatalf("page 1 IsTruncated/NextPartNumberMarker = %v/%v, want true/1000", aws.BoolValue(output.IsTruncated), output.NextPartNumberMarker)
+	}
+
+	input.PartNumberMarker = output.NextPartNumberMarker
+	output, code = s3a.listObjectParts(input)
+	if code != s3err.ErrNone {
+		t.Fatalf("page 2 code = %v, want ErrNone", code)
+	}
+	if got := partNumbers(output); len(got) != 1 || got[0] != 10000 {
+		t.Fatalf("page 2 parts = %v, want [10000]", got)
+	}
+	if aws.BoolValue(output.IsTruncated) {
+		t.Fatal("page 2 IsTruncated = true, want false")
+	}
 }

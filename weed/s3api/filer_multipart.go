@@ -1618,7 +1618,7 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 		output.IsTruncated = aws.Bool(false)
 		return output, s3err.ErrNone
 	}
-	entries, isLast, err := s3a.uploadFiler(*input.Bucket, *input.Key).list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d", *input.PartNumberMarker+1), true, uint32(*input.MaxParts))
+	numbers, latest, truncated, err := s3a.listPartAttempts(input)
 	if err != nil {
 		// A store that reports the missing upload directory as not-found means
 		// the upload is gone (completed or aborted), not a store error.
@@ -1632,33 +1632,22 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 	// Note: The upload directory is sort of a marker of the existence of an multipart upload request.
 	// So can not just delete empty upload folders.
 
-	output.IsTruncated = aws.Bool(!isLast)
+	output.IsTruncated = aws.Bool(truncated)
 
-	for _, entry := range entries {
-		if strings.HasSuffix(entry.Name, multipartExt) && !entry.IsDirectory {
-			partNumber, err := parsePartNumber(entry.Name)
-			if err != nil {
-				glog.Errorf("listObjectParts %s %s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, err)
-				continue
-			}
-			// the marker is exclusive even if a store ignores startFrom
-			if partNumber <= int(*input.PartNumberMarker) {
-				continue
-			}
-
-			partETag := getEtagFromEntry(entry)
-			part := &s3.Part{
-				PartNumber:   aws.Int64(int64(partNumber)),
-				LastModified: aws.Time(time.Unix(entry.Attributes.Mtime, 0).UTC()),
-				Size:         aws.Int64(int64(filer.FileSize(entry))),
-				ETag:         aws.String(partETag),
-			}
-			output.Part = append(output.Part, part)
-			glog.V(3).Infof("listObjectParts: Added part %d, size=%d, etag=%s",
-				partNumber, filer.FileSize(entry), partETag)
-			if !isLast {
-				output.NextPartNumberMarker = aws.Int64(int64(partNumber))
-			}
+	for _, partNumber := range numbers {
+		entry := latest[partNumber]
+		partETag := getEtagFromEntry(entry)
+		part := &s3.Part{
+			PartNumber:   aws.Int64(int64(partNumber)),
+			LastModified: aws.Time(time.Unix(entry.Attributes.Mtime, 0).UTC()),
+			Size:         aws.Int64(int64(filer.FileSize(entry))),
+			ETag:         aws.String(partETag),
+		}
+		output.Part = append(output.Part, part)
+		glog.V(3).Infof("listObjectParts: Added part %d, size=%d, etag=%s",
+			partNumber, filer.FileSize(entry), partETag)
+		if truncated {
+			output.NextPartNumberMarker = aws.Int64(int64(partNumber))
 		}
 	}
 
@@ -1670,6 +1659,82 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 
 	glog.V(2).Infof("listObjectParts: Returning %d parts for uploadId=%s", len(output.Part), *input.UploadId)
 	return
+}
+
+// listPartAttempts returns the latest stored attempt of each of the next
+// max-parts part numbers after the marker. Each UploadPart writes its own
+// entry, so a part number uploaded twice has several, and they may straddle a
+// listing page. Names sort as text, which puts the one five-digit part number
+// between "1000.part" and "1000_<uuid>.part", so it is listed last, apart.
+func (s3a *S3ApiServer) listPartAttempts(input *s3.ListPartsInput) (numbers []int, latest map[int]*filer_pb.Entry, truncated bool, err error) {
+	marker := *input.PartNumberMarker
+	maxParts := int(*input.MaxParts)
+	lastPart := s3_constants.MaxS3MultipartParts
+	latest = make(map[int]*filer_pb.Entry)
+	visit := func(partNumber int, entry *filer_pb.Entry) (full bool) {
+		prior, seen := latest[partNumber]
+		if !seen {
+			if maxParts > 0 && len(numbers) == maxParts {
+				return true
+			}
+			numbers = append(numbers, partNumber)
+		}
+		if !seen || compareLatestPartAttempt(entry, prior) < 0 {
+			latest[partNumber] = entry
+		}
+		return false
+	}
+	if marker+1 < int64(lastPart) {
+		// the marker is exclusive even if a store ignores startFrom
+		truncated, err = s3a.scanPartAttempts(input, "", fmt.Sprintf("%04d", marker+1), func(partNumber int) bool {
+			return int64(partNumber) > marker && partNumber < lastPart
+		}, visit)
+		if err != nil || truncated {
+			return numbers, latest, truncated, err
+		}
+	}
+	if marker >= int64(lastPart) {
+		return numbers, latest, false, nil
+	}
+	truncated, err = s3a.scanPartAttempts(input, strconv.Itoa(lastPart), strconv.Itoa(lastPart), func(partNumber int) bool {
+		return partNumber == lastPart
+	}, visit)
+	return numbers, latest, truncated, err
+}
+
+// scanPartAttempts feeds the part entries named from startFrom on to visit, in
+// name order, until visit reports the page full.
+func (s3a *S3ApiServer) scanPartAttempts(input *s3.ListPartsInput, prefix, startFrom string, wanted func(int) bool, visit func(int, *filer_pb.Entry) bool) (full bool, err error) {
+	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
+	var batch uint32
+	if *input.MaxParts > 0 {
+		batch = uint32(*input.MaxParts) + 1
+	}
+	inclusive := true
+	for {
+		entries, isLast, listErr := s3a.uploadFiler(*input.Bucket, *input.Key).list(uploadDirectory, prefix, startFrom, inclusive, batch)
+		if listErr != nil {
+			return false, listErr
+		}
+		priorStart := startFrom
+		for _, entry := range entries {
+			startFrom, inclusive = entry.Name, false
+			if entry.IsDirectory || !strings.HasSuffix(entry.Name, multipartExt) {
+				continue
+			}
+			partNumber, parseErr := parsePartNumber(entry.Name)
+			if parseErr != nil {
+				glog.Errorf("listObjectParts %s %s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, parseErr)
+				continue
+			}
+			if wanted(partNumber) && visit(partNumber, entry) {
+				return true, nil
+			}
+		}
+		if isLast || batch == 0 || startFrom == priorStart {
+			return false, nil
+		}
+	}
 }
 
 // maxInt returns the maximum of two int values
@@ -1852,17 +1917,29 @@ func (s3a *S3ApiServer) applyMultipartEncryptionConfig(entry *filer_pb.Entry, co
 	}
 }
 
+// sortEntriesByLatestChunk orders part attempts newest first: by the filer's
+// commit stamp (unstamped entries predate it), then by the later of the first
+// chunk's write time and the entry mtime, so a chunkless attempt still ranks.
 func sortEntriesByLatestChunk(entries []*filer_pb.Entry) {
-	slices.SortFunc(entries, func(a, b *filer_pb.Entry) int {
-		var aTs, bTs int64
-		if len(a.Chunks) > 0 {
-			aTs = a.Chunks[0].ModifiedTsNs
-		}
-		if len(b.Chunks) > 0 {
-			bTs = b.Chunks[0].ModifiedTsNs
-		}
-		return cmp.Compare(bTs, aTs)
-	})
+	slices.SortFunc(entries, compareLatestPartAttempt)
+}
+
+func compareLatestPartAttempt(a, b *filer_pb.Entry) int {
+	if c := cmp.Compare(b.CommitTsNs, a.CommitTsNs); c != 0 {
+		return c
+	}
+	return cmp.Compare(partAttemptTsNs(b), partAttemptTsNs(a))
+}
+
+func partAttemptTsNs(entry *filer_pb.Entry) int64 {
+	var tsNs int64
+	if len(entry.Chunks) > 0 {
+		tsNs = entry.Chunks[0].ModifiedTsNs
+	}
+	if entry.Attributes != nil {
+		tsNs = max(tsNs, entry.Attributes.Mtime*int64(time.Second)+int64(entry.Attributes.MtimeNs))
+	}
+	return tsNs
 }
 
 func calculateMultipartETag(partEntries map[int][]*filer_pb.Entry, completedPartNumbers []int) string {
