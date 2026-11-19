@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/raft"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -60,6 +61,10 @@ func TestAssignOnFollowerIsUnavailable(t *testing.T) {
 	require.True(t, ok, "want a gRPC status, got %v", err)
 	assert.Equal(t, codes.Unavailable, st.Code())
 	assert.Equal(t, raft.NotLeaderError.Error(), st.Message())
+	require.Len(t, st.Details(), 1)
+	info, ok := st.Details()[0].(*errdetails.ErrorInfo)
+	require.True(t, ok, "want an ErrorInfo detail, got %T", st.Details()[0])
+	assert.Equal(t, "NOT_LEADER", info.GetReason())
 }
 
 // markGrowthInFlight flags growth on the same VolumeLayout the handler resolves,
