@@ -128,3 +128,44 @@ func TestScopedSubscriptionEndsAtTokenExpiry(t *testing.T) {
 		t.Fatalf("delivered %v, want only the in-scope event", got)
 	}
 }
+
+func TestScopedSubscriptionKeepsOtherRegistrations(t *testing.T) {
+	h := newSubscribeHarness(t)
+	v := util.GetViper()
+	v.Set("jwt.filer_signing.subscribe.key", "sub-key")
+	t.Cleanup(func() { v.Set("jwt.filer_signing.subscribe.key", "") })
+	if replacing, _, _ := h.fs.addClient("local", "mount", "10.0.0.1:1", "/", -9, 1); !replacing {
+		t.Fatal("unrestricted registration was not added")
+	}
+
+	token := security.GenJwtForMetadataSubscription(security.SigningKey("sub-key"), 60, []string{"/t"})
+	ctx, cancel := context.WithCancel(metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+string(token))))
+	stream := &fakeSubscribeStream{ctx: ctx}
+	done := make(chan error, 1)
+	go func() {
+		done <- h.fs.SubscribeLocalMetadata(&filer_pb.SubscribeMetadataRequest{ClientName: "scoped", ClientId: 9, ClientEpoch: 100, SinceNs: 1}, stream)
+	}()
+
+	now := time.Now().UnixNano()
+	h.append(now)
+	deadline := time.Now().Add(5 * time.Second)
+	for len(stream.snapshot()) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("scoped subscription delivered nothing")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !h.fs.hasClient(-9, 1) {
+		t.Fatal("scoped caller replaced the unrestricted registration")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scoped subscription did not end")
+	}
+	if !h.fs.hasClient(-9, 1) {
+		t.Fatal("scoped caller removed the unrestricted registration on exit")
+	}
+}

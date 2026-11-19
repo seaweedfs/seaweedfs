@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"math/rand/v2"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -70,6 +71,21 @@ var errMetadataSubscriptionExpired = status.Error(codes.Unauthenticated, "metada
 type scopedMetadataStream struct {
 	ctx   context.Context
 	scope *security.MetadataSubscriptionScope
+}
+
+// unusedClientId gives a scoped caller a registration id of its own, so it
+// cannot replace or squat on another subscriber's registration.
+func (fs *FilerServer) unusedClientId() int32 {
+	fs.knownListenersLock.Lock()
+	defer fs.knownListenersLock.Unlock()
+	for {
+		id := rand.Int32N(1<<31-1) + 1
+		_, found := fs.knownListeners[id]
+		_, foundLocal := fs.knownListeners[-id]
+		if !found && !foundLocal {
+			return id
+		}
+	}
 }
 
 func newScopedMetadataStream(parent context.Context, scope *security.MetadataSubscriptionScope) (scopedMetadataStream, context.CancelFunc) {

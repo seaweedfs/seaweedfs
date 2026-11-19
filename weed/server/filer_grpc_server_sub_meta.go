@@ -647,6 +647,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	}
 	if scope != nil {
 		req.ClientSupportsMetadataChunks = false
+		req.ClientId = fs.unusedClientId()
 		scoped, cancel := newScopedMetadataStream(stream.Context(), scope)
 		defer cancel()
 		defer func() { err = scoped.endErr(err) }()
@@ -1141,6 +1142,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	}
 	if scope != nil {
 		req.ClientSupportsMetadataChunks = false
+		req.ClientId = fs.unusedClientId()
 		scoped, cancel := newScopedMetadataStream(stream.Context(), scope)
 		defer cancel()
 		defer func() { err = scoped.endErr(err) }()
