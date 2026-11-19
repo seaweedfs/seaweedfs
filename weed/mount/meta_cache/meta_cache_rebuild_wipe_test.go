@@ -399,6 +399,14 @@ func TestRebuildWipeKeepsAnEntryNewerThanTheRemoval(t *testing.T) {
 	if got, want := cachedChildNames(t, mc, "/dir"), []string{"zz-newer"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("children left by the wipe = %v, want %v", got, want)
 	}
+
+	// An unversioned listing replays every buffered event.
+	if err := mc.CompleteDirectoryBuild(context.Background(), "/dir", 0, nil); err != nil {
+		t.Fatalf("complete build: %v", err)
+	}
+	if got, want := cachedChildNames(t, mc, "/dir"), []string{"zz-newer"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("children after an unversioned listing = %v, want %v", got, want)
+	}
 }
 
 // TestRebuildWipeTellsAPlaceholderFromAnEarlierFile: a removal can arrive late,
@@ -406,14 +414,18 @@ func TestRebuildWipeKeepsAnEntryNewerThanTheRemoval(t *testing.T) {
 // only the file the event took away tells whether it is the one cached there.
 func TestRebuildWipeTellsAPlaceholderFromAnEarlierFile(t *testing.T) {
 	for _, tc := range []struct {
-		desc    string
-		removed *filer_pb.FuseAttributes
-		want    []string
+		desc      string
+		removed   *filer_pb.FuseAttributes
+		renamedTo string
+		want      []string
+		built     []string
 	}{
-		{"another inode", &filer_pb.FuseAttributes{Inode: 7, Crtime: 1}, []string{"zz-new"}},
-		{"no inode and another creation time", &filer_pb.FuseAttributes{Crtime: 5}, []string{"zz-new"}},
-		{"the same inode", &filer_pb.FuseAttributes{Inode: 42, Crtime: 1}, nil},
-		{"no inode and the same creation time", &filer_pb.FuseAttributes{Crtime: 1}, nil},
+		{"another inode", &filer_pb.FuseAttributes{Inode: 7, Crtime: 1}, "", []string{"zz-new"}, []string{"zz-new"}},
+		{"another inode, renamed", &filer_pb.FuseAttributes{Inode: 7, Crtime: 1}, "zz-moved", []string{"zz-new"}, []string{"zz-moved", "zz-new"}},
+		{"no inode and another creation time", &filer_pb.FuseAttributes{Crtime: 5}, "", []string{"zz-new"}, []string{"zz-new"}},
+		{"the same inode", &filer_pb.FuseAttributes{Inode: 42, Crtime: 1}, "", nil, nil},
+		{"the same inode, renamed", &filer_pb.FuseAttributes{Inode: 42, Crtime: 1}, "zz-moved", nil, []string{"zz-moved"}},
+		{"no inode and the same creation time", &filer_pb.FuseAttributes{Crtime: 1}, "", nil, nil},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
 			mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
@@ -425,6 +437,10 @@ func TestRebuildWipeTellsAPlaceholderFromAnEarlierFile(t *testing.T) {
 			removal := &filer_pb.SubscribeMetadataResponse{Directory: "/dir", TsNs: 100, EventNotification: &filer_pb.EventNotification{
 				OldEntry: &filer_pb.Entry{Name: "zz-new", Attributes: tc.removed},
 			}}
+			if tc.renamedTo != "" {
+				removal.EventNotification.NewParentPath = "/dir"
+				removal.EventNotification.NewEntry = &filer_pb.Entry{Name: tc.renamedTo, Attributes: &filer_pb.FuseAttributes{FileMode: 0100644, Inode: tc.removed.Inode, Crtime: tc.removed.Crtime}}
+			}
 			if err := mc.ApplyMetadataResponse(context.Background(), removal, SubscriberMetadataResponseApplyOptions); err != nil {
 				t.Fatalf("apply removal: %v", err)
 			}
@@ -432,6 +448,15 @@ func TestRebuildWipeTellsAPlaceholderFromAnEarlierFile(t *testing.T) {
 
 			if got := cachedChildNames(t, mc, "/dir"); !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("children left by the wipe = %v, want %v", got, tc.want)
+			}
+
+			// An unversioned listing replays every buffered event, so the
+			// removal the wipe declined must not reach the placeholder there.
+			if err := mc.CompleteDirectoryBuild(context.Background(), "/dir", 0, nil); err != nil {
+				t.Fatalf("complete build: %v", err)
+			}
+			if got := cachedChildNames(t, mc, "/dir"); !reflect.DeepEqual(got, tc.built) {
+				t.Errorf("children after an unversioned listing = %v, want %v", got, tc.built)
 			}
 		})
 	}
