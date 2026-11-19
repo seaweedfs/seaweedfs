@@ -68,7 +68,15 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: ${{ runner.environment == 'github-hosted' && 'maven' || '' }}
+
+      - name: Cache suite Maven dependencies
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v6
+        with:
+          path: ~/.m2/repository
+          key: snowflake-s3compat-m2-${{ hashFiles('test/s3/snowflake/run.sh') }}
+          restore-keys: |
+            snowflake-s3compat-m2-
 
       - name: Install SeaweedFS
         run: |
