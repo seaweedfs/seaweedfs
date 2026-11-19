@@ -4,20 +4,19 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
 	"net/url"
 	"sync"
 	"syscall"
 	"time"
-
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // unreachableRetryInterval is how long a server that failed to answer is tried
 // last before it is probed again.
 const unreachableRetryInterval = 30 * time.Second
 
-// reachabilityProbeTimeout bounds the background dial that checks whether an
-// unanswering server is back.
+// reachabilityProbeTimeout bounds the background request that checks whether
+// an unanswering server is back.
 const reachabilityProbeTimeout = 5 * time.Second
 
 type unanswered struct {
@@ -96,16 +95,21 @@ func isUnanswering(host string) bool {
 	return false
 }
 
+// probeReachability asks for response headers, not just a connection, so a
+// server that accepts but never answers stays last.
 func probeReachability(addr string) {
 	ctx, cancel := context.WithTimeout(context.Background(), reachabilityProbeTimeout)
 	defer cancel()
-	conn, err := util.OutboundDialContext(ctx, "tcp", addr)
-	if err != nil {
-		recordUnreachable(addr, err)
-		return
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, "http://"+addr+"/status", nil)
+	if err == nil {
+		var resp *http.Response
+		if resp, err = GetGlobalHttpClient().Do(req); err == nil {
+			resp.Body.Close()
+			recordReachable(addr)
+			return
+		}
 	}
-	conn.Close()
-	recordReachable(addr)
+	recordUnreachable(addr, err)
 }
 
 func hostOf(rawUrl string) string {

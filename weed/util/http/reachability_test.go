@@ -60,54 +60,82 @@ func expireUnreachable(t *testing.T, host string) {
 	unreachable.Store(host, failure)
 }
 
-func waitUnreachable(t *testing.T, host string, want bool) {
+// waitProbe waits until the background probe started by ReachableFirst has
+// settled host, by clearing it or by recording a failure after the claim.
+func waitProbe(t *testing.T, host string) (stillUnreachable bool) {
 	t.Helper()
+	v, found := unreachable.Load(host)
+	if !found {
+		return false
+	}
+	claimedAt := v.(unanswered).at
 	deadline := time.Now().Add(2 * reachabilityProbeTimeout)
-	for {
+	for time.Now().Before(deadline) {
 		v, found := unreachable.Load(host)
-		if found == want && (!found || time.Since(v.(unanswered).at) < unreachableRetryInterval) {
-			return
+		if !found {
+			return false
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%s recorded unreachable: %v, want %v", host, found, want)
+		if v.(unanswered).at.After(claimedAt) {
+			return true
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	t.Fatalf("probe of %s did not settle", host)
+	return false
 }
 
 func TestReachableFirstProbesInBackgroundAfterRetryInterval(t *testing.T) {
 	forgetUnreachable(t)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	host := listener.Addr().String()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+	host := srv.Listener.Addr().String()
 	urls := []string{"http://" + host + "/3,x", "http://b:8080/3,x"}
 	recordUnreachable(host, io.EOF)
 	expireUnreachable(t, host)
 
 	// the read that finds the interval passed still tries the host last
 	assertOrder(t, ReachableFirst(urls), urls[1], urls[0])
-	waitUnreachable(t, host, false)
+	if waitProbe(t, host) {
+		t.Fatalf("an answering server stayed unreachable")
+	}
 	assertOrder(t, ReachableFirst(urls), urls...)
 }
 
 func TestReachableFirstKeepsHostLastWhenProbeFails(t *testing.T) {
 	forgetUnreachable(t)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	refusing, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := listener.Addr().String()
-	listener.Close()
-	urls := []string{"http://" + host + "/3,x", "http://b:8080/3,x"}
-	recordUnreachable(host, io.EOF)
-	expireUnreachable(t, host)
+	refusing.Close()
+	silent, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer silent.Close()
+	go func() {
+		for {
+			conn, err := silent.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+		}
+	}()
 
-	assertOrder(t, ReachableFirst(urls), urls[1], urls[0])
-	waitUnreachable(t, host, true)
-	assertOrder(t, ReachableFirst(urls), urls[1], urls[0])
+	for _, host := range []string{refusing.Addr().String(), silent.Addr().String()} {
+		urls := []string{"http://" + host + "/3,x", "http://b:8080/3,x"}
+		recordUnreachable(host, io.EOF)
+		expireUnreachable(t, host)
+
+		assertOrder(t, ReachableFirst(urls), urls[1], urls[0])
+		if !waitProbe(t, host) {
+			t.Fatalf("%s was cleared by a probe it did not answer", host)
+		}
+		assertOrder(t, ReachableFirst(urls), urls[1], urls[0])
+	}
 }
 
 func dialError(err error) error {
