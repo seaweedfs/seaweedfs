@@ -24,13 +24,14 @@ func TestCheckGrpcMetadataSubscription(t *testing.T) {
 	if scoped == "" {
 		t.Fatal("no scoped token")
 	}
-	sign := func(key SigningKey, claims jwt.Claims) string {
-		s, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(key))
+	signWith := func(method jwt.SigningMethod, key SigningKey, claims jwt.Claims) string {
+		s, err := jwt.NewWithClaims(method, claims).SignedString([]byte(key))
 		if err != nil {
 			t.Fatal(err)
 		}
 		return s
 	}
+	sign := func(key SigningKey, claims jwt.Claims) string { return signWith(jwt.SigningMethodHS256, key, claims) }
 	exp := jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute))}
 	subscribeOnly := []string{MethodSubscribeMetadata}
 	wantScope := []string{"/buckets/uploads", "/buckets/logs"}
@@ -58,6 +59,7 @@ func TestCheckGrpcMetadataSubscription(t *testing.T) {
 		{"relative prefix", incomingBearer(sign(subKey, SeaweedFilerClaims{AllowedPrefixes: []string{"/a", "b"}, AllowedMethods: subscribeOnly, RegisteredClaims: exp})), subKey, MethodSubscribeMetadata, nil, codes.Unauthenticated},
 		{"session token", incomingBearer(sign(subKey, SeaweedFilerClaims{SessionId: "s", AllowedPrefixes: []string{"/a"}, AllowedMethods: subscribeOnly, RegisteredClaims: exp})), subKey, MethodSubscribeMetadata, nil, codes.Unauthenticated},
 		{"token without expiry", incomingBearer(sign(subKey, SeaweedFilerClaims{AllowedPrefixes: []string{"/a"}, AllowedMethods: subscribeOnly})), subKey, MethodSubscribeMetadata, nil, codes.Unauthenticated},
+		{"HS512 token", incomingBearer(signWith(jwt.SigningMethodHS512, subKey, SeaweedFilerClaims{AllowedPrefixes: []string{"/a"}, AllowedMethods: subscribeOnly, RegisteredClaims: exp})), subKey, MethodSubscribeMetadata, nil, codes.Unauthenticated},
 		{"expired token", incomingBearer(sign(subKey, SeaweedFilerClaims{AllowedPrefixes: []string{"/a"}, AllowedMethods: subscribeOnly, RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(-time.Hour))}})), subKey, MethodSubscribeMetadata, nil, codes.Unauthenticated},
 	}
 	for _, tt := range tests {

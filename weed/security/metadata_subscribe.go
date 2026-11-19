@@ -76,7 +76,7 @@ type MetadataSubscriptionScope struct {
 }
 
 func metadataSubscriptionScope(signingKey SigningKey, token EncodedJwt, method string) (*MetadataSubscriptionScope, bool) {
-	parsed, err := DecodeJwt(signingKey, token, &SeaweedFilerClaims{})
+	parsed, err := decodeJwt(signingKey, token, &SeaweedFilerClaims{}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
 	if err != nil || parsed == nil || !parsed.Valid {
 		return nil, false
 	}
