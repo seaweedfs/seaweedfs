@@ -46,6 +46,7 @@ var (
 // When adding a new field, update all four flag registration sites.
 type S3Options struct {
 	filer                     *string
+	homeFiler                 string // set by an embedding command to its own filer; not a flag
 	ip                        *string
 	bindIp                    *string
 	listenOnLocalhost         *bool
@@ -392,6 +393,7 @@ func (s3opt *S3Options) startS3Server() bool {
 
 	s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
 		Filers:                    filerAddresses,
+		HomeFiler:                 pb.ServerAddress(s3opt.homeFiler),
 		Masters:                   masterAddresses,
 		Port:                      *s3opt.port,
 		Config:                    *s3opt.config,

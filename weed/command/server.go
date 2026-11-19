@@ -408,8 +408,9 @@ func runServer(cmd *Command, args []string) bool {
 	*filerOptions.disableHttp = *filerOptions.disableHttp || *serverDisableHttp
 	masterOptions.disableHttp = serverDisableHttp
 
-	filerAddress := string(pb.NewServerAddress(*serverIp, *filerOptions.port, *filerOptions.portGrpc))
+	filerAddress := embeddedFilerAddress(*serverIp, *filerOptions.port, filerOptions.portGrpc)
 	s3Options.filer = &filerAddress
+	s3Options.homeFiler = filerAddress
 	sftpOptions.filer = &filerAddress
 	iamOptions.filer = &filerAddress
 	webdavOptions.filer = &filerAddress
