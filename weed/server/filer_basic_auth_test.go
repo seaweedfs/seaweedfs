@@ -3,11 +3,14 @@ package weed_server
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func TestFilerBasicAuth(t *testing.T) {
@@ -128,5 +131,48 @@ func TestFilerBasicAuthChallenge(t *testing.T) {
 	fs.writeUnauthorized(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	if got := w.Header().Get("WWW-Authenticate"); got != "" {
 		t.Errorf("challenge %q with Basic Auth off", got)
+	}
+}
+
+func TestFilerBasicAuthReloadDropsRemovedPassword(t *testing.T) {
+	dir := t.TempDir()
+	saved := util.ConfigurationFileDirectory
+	util.ConfigurationFileDirectory = util.DirectoryValueType(dir)
+	t.Cleanup(func() { util.ConfigurationFileDirectory = saved })
+	write := func(content string) {
+		if err := os.WriteFile(filepath.Join(dir, "security.toml"), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fs := &FilerServer{
+		filerGuard:  security.NewGuard(nil, "", 0, "", 0),
+		volumeGuard: security.NewGuard(nil, "", 0, "", 0),
+	}
+	write("[filer.basic_auth]\nuser = \"admin\"\npassword = \"pw\"\n")
+	fs.Reload()
+	if fs.basicAuth.Load() == nil {
+		t.Fatal("Basic Auth off after reloading a file that sets it")
+	}
+
+	write("[filer.basic_auth]\nuser = \"admin\"\npassword = \"pw2\"\n")
+	fs.Reload()
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.SetBasicAuth("admin", "pw2")
+	if !fs.basicAuth.Load().Allows(r) {
+		t.Fatal("changed password not applied")
+	}
+
+	write("# Basic Auth removed\n")
+	fs.Reload()
+	if fs.basicAuth.Load() != nil {
+		t.Error("Basic Auth still on after its section was removed")
+	}
+
+	write("[filer.basic_auth\n")
+	fs.basicAuth.Store(security.NewBasicAuth("admin", "pw"))
+	fs.Reload()
+	if fs.basicAuth.Load() == nil {
+		t.Error("an unreadable file turned Basic Auth off")
 	}
 }

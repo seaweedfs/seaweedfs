@@ -327,7 +327,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Warningf("filer: guard.white_list is configured but the IP whitelist feature is currently disabled. See https://github.com/seaweedfs/seaweedfs/issues/7094")
 	}
 	fs.filerGuard = security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
-	fs.basicAuth.Store(security.NewBasicAuth(v.GetString("filer.basic_auth.user"), v.GetString("filer.basic_auth.password")))
+	fs.basicAuth.Store(loadBasicAuth(nil))
 	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec)
 
 	fs.checkWithMaster()
@@ -758,6 +758,18 @@ func (fs *FilerServer) leaveLockRing(removalTimeout time.Duration) {
 	time.Sleep(time.Until(until))
 }
 
+// loadBasicAuth reads [filer.basic_auth] from security.toml alone: the shared
+// viper merges every reload into what it held, so it would keep a password
+// the file no longer sets. An unreadable file keeps current.
+func loadBasicAuth(current *security.BasicAuth) *security.BasicAuth {
+	v, err := util.ReadConfiguration("security")
+	if err != nil {
+		glog.Warningf("filer.basic_auth unchanged: %v", err)
+		return current
+	}
+	return security.NewBasicAuth(v.GetString("filer.basic_auth.user"), v.GetString("filer.basic_auth.password"))
+}
+
 func (fs *FilerServer) Reload() {
 	glog.V(0).Infoln("Reload filer server...")
 
@@ -765,7 +777,7 @@ func (fs *FilerServer) Reload() {
 	v := util.GetViper()
 	// Turn the new credential on before the old one goes off, so a switch
 	// between Basic Auth and JWT never leaves a window with neither.
-	basicAuth := security.NewBasicAuth(v.GetString("filer.basic_auth.user"), v.GetString("filer.basic_auth.password"))
+	basicAuth := loadBasicAuth(fs.basicAuth.Load())
 	if basicAuth != nil {
 		fs.basicAuth.Store(basicAuth)
 	}
