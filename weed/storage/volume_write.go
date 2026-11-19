@@ -907,6 +907,9 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 	if blobHeader.Size != size {
 		return fmt.Errorf("needle %d size %d does not match its blob header size %d", needleId, size, blobHeader.Size)
 	}
+	if blobHeader.Id != needleId {
+		return fmt.Errorf("needle %d blob header holds needle %d", needleId, blobHeader.Id)
+	}
 	// The blob is appended as is: its length must be the record this size takes in this volume's version.
 	if actualSize := needle.GetActualSize(size, v.Version()); int64(len(needleBlob)) != actualSize {
 		return fmt.Errorf("needle %d blob of %d bytes does not match the %d bytes size %d takes in a version %d volume", needleId, len(needleBlob), actualSize, size, v.Version())
