@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"time"
@@ -131,6 +132,15 @@ func (s scopedMetadataStream) send(resp *filer_pb.SubscribeMetadataResponse, sen
 	return nil
 }
 
+// sendMsg filters SendMsg too, so the embedded stream never sends unfiltered.
+func (s scopedMetadataStream) sendMsg(m any, send func(*filer_pb.SubscribeMetadataResponse) error) error {
+	resp, ok := m.(*filer_pb.SubscribeMetadataResponse)
+	if !ok {
+		return fmt.Errorf("scoped metadata stream: unexpected message %T", m)
+	}
+	return s.send(resp, send)
+}
+
 // endErr reports an expired token in place of whatever ended the stream.
 func (s scopedMetadataStream) endErr(err error) error {
 	if !time.Now().Before(s.scope.ExpiresAt) {
@@ -150,6 +160,10 @@ func (s *scopedSubscribeStream) Send(resp *filer_pb.SubscribeMetadataResponse) e
 	return s.send(resp, s.SeaweedFiler_SubscribeMetadataServer.Send)
 }
 
+func (s *scopedSubscribeStream) SendMsg(m any) error {
+	return s.sendMsg(m, s.SeaweedFiler_SubscribeMetadataServer.Send)
+}
+
 type scopedSubscribeLocalStream struct {
 	filer_pb.SeaweedFiler_SubscribeLocalMetadataServer
 	scopedMetadataStream
@@ -159,4 +173,8 @@ func (s *scopedSubscribeLocalStream) Context() context.Context { return s.ctx }
 
 func (s *scopedSubscribeLocalStream) Send(resp *filer_pb.SubscribeMetadataResponse) error {
 	return s.send(resp, s.SeaweedFiler_SubscribeLocalMetadataServer.Send)
+}
+
+func (s *scopedSubscribeLocalStream) SendMsg(m any) error {
+	return s.sendMsg(m, s.SeaweedFiler_SubscribeLocalMetadataServer.Send)
 }

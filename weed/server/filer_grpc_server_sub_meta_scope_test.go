@@ -232,3 +232,32 @@ func TestScopedStreamMarksWithheldBatch(t *testing.T) {
 		t.Fatalf("marker %+v, want an empty event at %d", m, want)
 	}
 }
+
+func TestScopedStreamSendMsgIsFiltered(t *testing.T) {
+	scoped, cancel := newScopedMetadataStream(context.Background(), &security.MetadataSubscriptionScope{Prefixes: []string{"/a"}, ExpiresAt: time.Now().Add(time.Hour)})
+	defer cancel()
+	for _, s := range []interface{ SendMsg(any) error }{
+		&scopedSubscribeStream{SeaweedFiler_SubscribeMetadataServer: &fakeSubscribeStream{ctx: context.Background()}, scopedMetadataStream: scoped},
+		&scopedSubscribeLocalStream{SeaweedFiler_SubscribeLocalMetadataServer: &fakeSubscribeStream{ctx: context.Background()}, scopedMetadataStream: scoped},
+	} {
+		if err := s.SendMsg(scopeTestEvent("/b", "x", 1)); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SendMsg(scopeTestEvent("/a", "x", 2)); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.SendMsg(&filer_pb.Entry{}); err == nil {
+			t.Error("an unexpected message type must be refused")
+		}
+		var inner *fakeSubscribeStream
+		switch w := s.(type) {
+		case *scopedSubscribeStream:
+			inner = w.SeaweedFiler_SubscribeMetadataServer.(*fakeSubscribeStream)
+		case *scopedSubscribeLocalStream:
+			inner = w.SeaweedFiler_SubscribeLocalMetadataServer.(*fakeSubscribeStream)
+		}
+		if msgs := inner.snapshot(); len(msgs) != 1 || msgs[0].Directory != "/a" {
+			t.Errorf("%T sent %v", s, msgs)
+		}
+	}
+}
