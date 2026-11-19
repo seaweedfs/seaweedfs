@@ -545,3 +545,20 @@ func TestOpenDropsUnreadableTable(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestStrictRecoveryDropsDamagedTable(t *testing.T) {
+	dir, opts, _ := damagedTableDB(t)
+	if err := os.Remove(filepath.Join(dir, "CURRENT")); err != nil {
+		t.Fatal(err)
+	}
+	opts.Strict = opt.DefaultStrict | opt.StrictRecovery
+
+	db, err := OpenFile(dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Get([]byte("k1999"), nil); err != leveldb.ErrNotFound {
+		t.Fatalf("get from the dropped table: %v", err)
+	}
+}

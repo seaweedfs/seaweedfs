@@ -19,8 +19,12 @@ const internalKeyTrailer = 8
 // table itself, but it orders internal keys with the user comparer, so a
 // table holding several versions of one key fails to rebuild, and the index
 // keys and filter it writes do not match lookups. A table with nothing
-// readable is left for Recover to drop.
+// readable is left for Recover to drop, and so is every damaged table under
+// StrictRecovery.
 func rebuildDamagedTables(stor storage.Storage, o *opt.Options) error {
+	if o.GetStrict(opt.StrictRecovery) {
+		return nil
+	}
 	fds, err := stor.List(storage.TypeTable)
 	if err != nil {
 		return err
