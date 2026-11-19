@@ -210,11 +210,29 @@ func deliveryLagSnapshot(t *testing.T, scope string) (uint64, float64) {
 // after the real stream send (through the queue + Close), measured from the
 // event's mutation stamp (not the moved stream position), and that control
 // messages without an event are not sampled.
+// gatedStream blocks Send until release is closed, signalling on entered the
+// first time Send is called, so a test can inspect state while a send is in
+// flight (i.e. before it has succeeded).
+type gatedStream struct {
+	recordingStream
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *gatedStream) Send(m *filer_pb.SubscribeMetadataResponse) error {
+	select {
+	case s.entered <- struct{}{}:
+	default:
+	}
+	<-s.release
+	return s.recordingStream.Send(m)
+}
+
 func TestPipelinedSenderObservesDeliveryLagAfterSend(t *testing.T) {
 	const scope = "delivery-lag-test"
 	beforeCount, beforeSum := deliveryLagSnapshot(t, scope)
 
-	stream := &recordingStream{}
+	stream := &gatedStream{entered: make(chan struct{}, 1), release: make(chan struct{})}
 	sender := newPipelinedSender(context.Background(), stream, 64, false, scope)
 
 	mutationNs := time.Now().Add(-5 * time.Second).UnixNano()
@@ -237,6 +255,15 @@ func TestPipelinedSenderObservesDeliveryLagAfterSend(t *testing.T) {
 	if err := sender.Send(event); err != nil {
 		t.Fatalf("send event: %v", err)
 	}
+	// Wait until the send loop is blocked inside stream.Send for the event, then
+	// confirm nothing was sampled yet: the observation must come after the send
+	// succeeds, not when the event entered the queue.
+	<-stream.entered
+	if midCount, _ := deliveryLagSnapshot(t, scope); midCount != beforeCount {
+		t.Fatalf("delivery-lag sampled %d while the send was still blocked; it must observe only after stream.Send succeeds", midCount-beforeCount)
+	}
+	close(stream.release)
+
 	if err := sender.Send(control); err != nil {
 		t.Fatalf("send control: %v", err)
 	}
