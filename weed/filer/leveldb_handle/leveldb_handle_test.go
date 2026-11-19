@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/syndtr/goleveldb/leveldb"
+	leveldb_errors "github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/filter"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/storage"
@@ -300,7 +301,7 @@ func TestReopenKeepsFileDatabase(t *testing.T) {
 	if err := db.Put([]byte("a"), []byte("1"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if !db.reopen(db.db) {
+	if !db.reopen(db.db, nil) {
 		t.Fatal("reopen failed")
 	}
 	if err := db.Put([]byte("b"), []byte("2"), nil); err != nil {
@@ -431,4 +432,54 @@ func TestOpenRecoversDamagedTable(t *testing.T) {
 	defer db.Close()
 	expectValue(t, db, "k1999", value)
 	expectValue(t, db, "after", "1")
+}
+
+func TestWriteRecoversFromCorruptedTable(t *testing.T) {
+	dir, opts, _ := damagedTableDB(t)
+	opts.WriteBuffer = 64 * 1024
+	opts.CompactionTotalSize = 64 * 1024
+	db, err := OpenFile(dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Get([]byte("k0000"), nil); !leveldb_errors.IsCorrupted(err) {
+		t.Fatalf("get from the damaged block: %v", err)
+	}
+	db.mu.RLock()
+	damaged := db.db
+	db.mu.RUnlock()
+
+	// Overwrite the keys until a background compaction reads the damaged
+	// table and goleveldb fails every later write.
+	for round := 0; ; round++ {
+		db.mu.RLock()
+		recovered := db.db != damaged
+		db.mu.RUnlock()
+		if recovered {
+			break
+		}
+		if round == 100 {
+			t.Fatal("no compaction reached the damaged table")
+		}
+		for i := 0; i < 2000; i++ {
+			if err := db.Put([]byte(fmt.Sprintf("k%04d", i)), []byte("new"), nil); err != nil {
+				t.Fatalf("put after a compaction hit the damaged table: %v", err)
+			}
+		}
+	}
+	if err := db.Put([]byte("after"), []byte("1"), nil); err != nil {
+		t.Fatal(err)
+	}
+	expectValue(t, db, "k1999", "new")
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = OpenFile(dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	expectValue(t, db, "after", "1")
+	expectValue(t, db, "k0000", "new")
 }

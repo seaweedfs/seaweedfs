@@ -1,7 +1,9 @@
 // Package leveldb_handle wraps a goleveldb database so a write that fails on
-// a storage error reopens it. goleveldb latches the first journal write error
-// and returns it for every later write until the database is reopened, so one
-// transient ENOSPC or EIO would otherwise fail writes until a restart.
+// a storage error or a corrupted table reopens it. goleveldb latches the first
+// journal write error, and the first corruption a compaction reads, and
+// returns it for every later write until the database is reopened. Corruption
+// reopens through leveldb.Recover, which drops the damaged blocks; a plain
+// open would load the same table and fail again.
 package leveldb_handle
 
 import (
@@ -66,19 +68,21 @@ func OpenFile(path string, o *opt.Options) (*DB, error) {
 }
 
 func Open(stor storage.Storage, o *opt.Options) (*DB, error) {
-	db, err := open(stor, o)
+	db, err := open(stor, o, nil)
 	if err != nil {
 		return nil, err
 	}
 	return &DB{stor: stor, opts: o, db: db, reopening: make(chan struct{}, 1)}, nil
 }
 
-func open(stor storage.Storage, o *opt.Options) (*leveldb.DB, error) {
-	db, err := leveldb.Open(stor, o)
-	if leveldb_errors.IsCorrupted(err) {
-		db, err = leveldb.Recover(stor, recoverOptions(o))
+func open(stor storage.Storage, o *opt.Options, cause error) (*leveldb.DB, error) {
+	if !leveldb_errors.IsCorrupted(cause) {
+		db, err := leveldb.Open(stor, o)
+		if !leveldb_errors.IsCorrupted(err) {
+			return db, err
+		}
 	}
-	return db, err
+	return leveldb.Recover(stor, recoverOptions(o))
 }
 
 // recoverOptions keeps leveldb.Recover from writing broken tables: it rebuilds
@@ -159,7 +163,7 @@ func (d *DB) write(fn func(*leveldb.DB) error) error {
 	}
 	err = fn(db)
 	d.mu.RUnlock()
-	if !isStorageError(err) || !d.reopen(db) {
+	if !isStorageError(err) || !d.reopen(db, err) {
 		return err
 	}
 	if db, err = d.acquire(); err != nil {
@@ -185,7 +189,7 @@ func (d *DB) acquire() (*leveldb.DB, error) {
 		}
 		err := d.openErr
 		d.mu.RUnlock()
-		if attempt > 0 || !d.reopen(nil) {
+		if attempt > 0 || !d.reopen(nil, err) {
 			return nil, err
 		}
 	}
@@ -194,7 +198,7 @@ func (d *DB) acquire() (*leveldb.DB, error) {
 // reopen replaces failed with a freshly opened database once no call holds
 // it, unless another caller already did. It waits at most reopenWait for a
 // running reopen and reports whether a retry can use an open database.
-func (d *DB) reopen(failed *leveldb.DB) bool {
+func (d *DB) reopen(failed *leveldb.DB, cause error) bool {
 	select {
 	case d.reopening <- struct{}{}:
 	case <-time.After(reopenWait):
@@ -225,11 +229,11 @@ func (d *DB) reopen(failed *leveldb.DB) bool {
 	if d.closed.Load() {
 		return false
 	}
-	glog.Warningf("leveldb %s: reopening after a storage write error", d.name)
+	glog.Warningf("leveldb %s: reopening after %v", d.name, cause)
 	if failed != nil {
 		failed.Close()
 	}
-	d.db, d.openErr = open(d.stor, d.opts)
+	d.db, d.openErr = open(d.stor, d.opts, cause)
 	if d.openErr != nil {
 		glog.Errorf("leveldb %s: reopen: %v", d.name, d.openErr)
 		return false
@@ -278,7 +282,7 @@ func probe(stor storage.Storage) error {
 
 func isStorageError(err error) bool {
 	var errno syscall.Errno
-	return errors.As(err, &errno)
+	return errors.As(err, &errno) || leveldb_errors.IsCorrupted(err)
 }
 
 type heldIterator struct {
