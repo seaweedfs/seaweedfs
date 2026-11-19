@@ -741,9 +741,10 @@ const rebuildWipeBatchSize = 1024
 // markCachedFn publishes the directory authoritatively cached without a file the
 // client created, so it vanishes from the mount.
 //
-// The wipe runs in batches and lets go of the lock between them. That adds no
-// interleaving the build did not already allow: the listing that refills the
-// directory runs after the wipe, outside the lock.
+// The wipe runs in batches and lets go of the lock between them, so what the
+// single-lock wipe made wait now lands while it runs: a create's placeholder,
+// which keepInsertsDuringWipe keeps, and the unlink or rename that ends such a
+// file before the listing starts, which vacateDuringWipe applies.
 func (mc *MetaCache) deleteFolderChildrenForRebuild(ctx context.Context, dirPath util.FullPath) error {
 	defer mc.keepInsertsDuringWipe(dirPath)()
 	startFrom := ""
@@ -1033,8 +1034,47 @@ func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_p
 			continue
 		}
 		state.bufferedEvents = append(state.bufferedEvents, events...)
+		mc.vacateDuringWipe(ctx, events)
 	}
 	return nil
+}
+
+// vacateDuringWipe takes out of the store, at once, the paths that events
+// buffered for a directory vacate while its rebuild wipe runs. The build
+// replays only the events later than its listing's snapshot and leaves the
+// earlier ones to the listing, which starts after the wipe. A listing shows
+// that a file is gone only by not having it, and that removes nothing: an
+// entry the wipe kept, a deferred create's placeholder, would stay cached
+// after its file was flushed and then unlinked or renamed away before the
+// wipe ended. Once the wipe is over the store holds what the listing put
+// there, and a removal earlier than the snapshot may still arrive, so the
+// event is left to the replay again.
+func (mc *MetaCache) vacateDuringWipe(ctx context.Context, events []*filer_pb.SubscribeMetadataResponse) {
+	mc.Lock()
+	defer mc.Unlock()
+	for _, event := range events {
+		oldDir, hasOld := metadataOldParentDir(event)
+		if !hasOld {
+			continue
+		}
+		if _, wiping := mc.rebuildWipeInserts[oldDir]; !wiping {
+			continue
+		}
+		oldPath := oldDir.Child(event.EventNotification.OldEntry.Name)
+		if newDir, hasNew := metadataNewParentDir(event); hasNew && newDir.Child(event.EventNotification.NewEntry.Name) == oldPath {
+			continue // rewritten in place
+		}
+		if event.TsNs != 0 && mc.entryVersionBlocksLocked(ctx, oldPath, event.TsNs, true) {
+			continue // older than what is cached there
+		}
+		if err := mc.localStore.DeleteEntry(ctx, oldPath); err != nil {
+			glog.V(1).Infof("vacate %s while its directory is wiped: %v", oldPath, err)
+			continue
+		}
+		// The placeholder's record goes with it, or the name would stay
+		// unversioned and fenced against nothing.
+		mc.clearEntryVersionLocked(ctx, oldPath)
+	}
 }
 
 func (mc *MetaCache) applyMetadataResponseDirect(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions, allowUncachedInsert bool) error {

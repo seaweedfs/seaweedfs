@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -244,6 +245,214 @@ func TestRebuildWipeKeepsInsertsWhileItRuns(t *testing.T) {
 
 	if got, want := cachedChildNames(t, mc, "/dir"), []string{"zz-placeholder"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("children left by the wipe = %v, want only the one inserted while it ran %v", got, want)
+	}
+	if len(mc.rebuildWipeInserts) != 0 {
+		t.Errorf("rebuildWipeInserts = %v after the wipe ended, want empty", mc.rebuildWipeInserts)
+	}
+}
+
+// midRebuildWipe begins a build of /dir over more children than one batch
+// holds and runs the wipe's first batch. The returned func runs the rest of
+// the wipe.
+func midRebuildWipe(t *testing.T, mc *MetaCache) (finishWipe func()) {
+	t.Helper()
+	ctx := context.Background()
+	fillRebuildWipeDir(t, mc, "/dir", 2*rebuildWipeBatchSize+10)
+	if err := mc.BeginDirectoryBuild(ctx, "/dir"); err != nil {
+		t.Fatalf("begin build: %v", err)
+	}
+	stopKeeping := mc.keepInsertsDuringWipe("/dir")
+	last, err := mc.deleteFolderChildrenBatch(ctx, "/dir", "")
+	if err != nil {
+		t.Fatalf("first batch: %v", err)
+	}
+	return func() {
+		t.Helper()
+		for last != "" {
+			if last, err = mc.deleteFolderChildrenBatch(ctx, "/dir", last); err != nil {
+				t.Fatalf("batch: %v", err)
+			}
+		}
+		stopKeeping()
+	}
+}
+
+// applyDirEvent applies an event in /dir at tsNs that takes oldName away, puts
+// newName there, or both. "" leaves that half out.
+func applyDirEvent(t *testing.T, mc *MetaCache, options MetadataResponseApplyOptions, tsNs int64, oldName, newName string) {
+	t.Helper()
+	message := &filer_pb.EventNotification{}
+	if oldName != "" {
+		message.OldEntry = &filer_pb.Entry{Name: oldName}
+	}
+	if newName != "" {
+		message.NewParentPath = "/dir"
+		message.NewEntry = &filer_pb.Entry{Name: newName, Attributes: &filer_pb.FuseAttributes{FileMode: 0100644}}
+	}
+	event := &filer_pb.SubscribeMetadataResponse{Directory: "/dir", TsNs: tsNs, EventNotification: message}
+	if err := mc.ApplyMetadataResponse(context.Background(), event, options); err != nil {
+		t.Fatalf("apply event at %d (%q -> %q): %v", tsNs, oldName, newName, err)
+	}
+}
+
+// insertListedEntries caches names as children of /dir the way a build's
+// listing does.
+func insertListedEntries(t *testing.T, mc *MetaCache, names ...string) {
+	t.Helper()
+	entries := make([]*filer.Entry, 0, len(names))
+	for _, name := range names {
+		entries = append(entries, &filer.Entry{
+			FullPath: util.FullPath("/dir").Child(name),
+			Attr:     filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(1, 0), Mode: 0100644, FileSize: 1},
+		})
+	}
+	if err := mc.doBatchInsertEntries(context.Background(), entries); err != nil {
+		t.Fatalf("listing insert: %v", err)
+	}
+}
+
+// TestRebuildWipeDropsAPlaceholderWhoseFileIsGone: a file created, flushed and
+// then unlinked or renamed away, all while the wipe runs, is gone from the
+// filer before the listing's snapshot. Neither event is replayed, so the
+// removal has to take the placeholder out when it arrives, whichever side of
+// the wipe's cursor the name is on.
+func TestRebuildWipeDropsAPlaceholderWhoseFileIsGone(t *testing.T) {
+	for _, tc := range []struct {
+		desc, placeholder, renamedTo string
+	}{
+		{"unlinked ahead of the cursor", "zz.tmp", ""},
+		{"unlinked behind the cursor", "a.tmp", ""},
+		{"renamed ahead of the cursor", "zz.tmp", "final"},
+		{"renamed behind the cursor", "a.tmp", "final"},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+			defer mc.Shutdown()
+			mc.SetPinnedChildFn(pinInode42)
+
+			finishWipe := midRebuildWipe(t, mc)
+			insertCacheEntry(t, mc, util.FullPath("/dir").Child(tc.placeholder))
+			// the flush, then the unlink or the rename
+			applyDirEvent(t, mc, LocalMetadataResponseApplyOptions, 100, "", tc.placeholder)
+			applyDirEvent(t, mc, LocalMetadataResponseApplyOptions, 110, tc.placeholder, tc.renamedTo)
+			finishWipe()
+
+			// The listing starts after the wipe, so its snapshot, 200, is
+			// past both events.
+			var want []string
+			if tc.renamedTo != "" {
+				insertListedEntries(t, mc, tc.renamedTo)
+				want = []string{tc.renamedTo}
+			}
+			if err := mc.CompleteDirectoryBuild(context.Background(), "/dir", 200, nil); err != nil {
+				t.Fatalf("complete build: %v", err)
+			}
+			if got := cachedChildNames(t, mc, "/dir"); !reflect.DeepEqual(got, want) {
+				t.Errorf("children of the rebuilt directory = %v, want %v: the filer has no %s", got, want, tc.placeholder)
+			}
+
+			// The placeholder's version record went with it, so the listing
+			// fences the name like any other it did not have.
+			applyDirEvent(t, mc, SubscriberMetadataResponseApplyOptions, 90, "", tc.placeholder)
+			if got := cachedChildNames(t, mc, "/dir"); !reflect.DeepEqual(got, want) {
+				t.Errorf("children after an event older than the listing = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// TestRebuildWipeKeepsAPlaceholderRewrittenInPlace: an event that names the
+// same path as old and new, a flush or a setattr, vacates nothing.
+func TestRebuildWipeKeepsAPlaceholderRewrittenInPlace(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	defer mc.Shutdown()
+	mc.SetPinnedChildFn(pinInode42)
+
+	finishWipe := midRebuildWipe(t, mc)
+	insertCacheEntry(t, mc, "/dir/zz-open")
+	applyDirEvent(t, mc, LocalMetadataResponseApplyOptions, 100, "zz-open", "zz-open")
+	finishWipe()
+
+	if got, want := cachedChildNames(t, mc, "/dir"), []string{"zz-open"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("children left by the wipe = %v, want %v", got, want)
+	}
+}
+
+// TestRebuildWipeKeepsAnEntryNewerThanTheRemoval: a removal that arrives during
+// the wipe is fenced by versions like any other event, so one older than what
+// the wipe kept leaves it alone.
+func TestRebuildWipeKeepsAnEntryNewerThanTheRemoval(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	defer mc.Shutdown()
+	mc.SetPinnedChildFn(pinInode42)
+
+	finishWipe := midRebuildWipe(t, mc)
+	if err := mc.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: "/dir/zz-newer",
+		Attr:     filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(1, 0), Mode: 0100644, FileSize: 1, Inode: 42},
+	}, 500); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	applyDirEvent(t, mc, SubscriberMetadataResponseApplyOptions, 100, "zz-newer", "")
+	finishWipe()
+
+	if got, want := cachedChildNames(t, mc, "/dir"), []string{"zz-newer"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("children left by the wipe = %v, want %v", got, want)
+	}
+}
+
+// TestRemovalAfterTheWipeIsLeftToTheReplay: once the wipe is over the store
+// holds what the listing put there, and a removal from before the snapshot can
+// still arrive. If its name was created again by then, the entry it would take
+// out is the one the listing just inserted. A removal later than the snapshot
+// is replayed.
+func TestRemovalAfterTheWipeIsLeftToTheReplay(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	defer mc.Shutdown()
+	ctx := context.Background()
+
+	if err := mc.BeginDirectoryBuild(ctx, "/dir"); err != nil {
+		t.Fatalf("begin build: %v", err)
+	}
+	if err := mc.deleteFolderChildrenForRebuild(ctx, "/dir"); err != nil {
+		t.Fatalf("wipe: %v", err)
+	}
+	// The listing at 200: "again" was removed at 100 and created again by then.
+	insertListedEntries(t, mc, "again", "gone-after", "stays")
+	applyDirEvent(t, mc, SubscriberMetadataResponseApplyOptions, 100, "again", "")
+	applyDirEvent(t, mc, SubscriberMetadataResponseApplyOptions, 300, "gone-after", "")
+	if err := mc.CompleteDirectoryBuild(ctx, "/dir", 200, nil); err != nil {
+		t.Fatalf("complete build: %v", err)
+	}
+
+	if got, want := cachedChildNames(t, mc, "/dir"), []string{"again", "stays"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("children of the rebuilt directory = %v, want %v", got, want)
+	}
+}
+
+// TestRebuildWipeIsRegisteredWhileItRuns: keeping inserts and applying
+// removals both act only on a directory whose wipe is registered, so the wipe
+// registers itself for as long as it runs, and no longer.
+func TestRebuildWipeIsRegisteredWhileItRuns(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	defer mc.Shutdown()
+
+	fillRebuildWipeDir(t, mc, "/dir", rebuildWipeBatchSize+10)
+	var visited, visitedWhileRegistered int
+	// called for every child, under the wipe's lock
+	mc.SetPinnedChildFn(func(*filer.Entry) bool {
+		visited++
+		if _, registered := mc.rebuildWipeInserts["/dir"]; registered {
+			visitedWhileRegistered++
+		}
+		return false
+	})
+	if err := mc.deleteFolderChildrenForRebuild(context.Background(), "/dir"); err != nil {
+		t.Fatalf("wipe: %v", err)
+	}
+
+	if visited == 0 || visitedWhileRegistered != visited {
+		t.Errorf("the wipe was registered for %d of the %d children it visited, want all of them", visitedWhileRegistered, visited)
 	}
 	if len(mc.rebuildWipeInserts) != 0 {
 		t.Errorf("rebuildWipeInserts = %v after the wipe ended, want empty", mc.rebuildWipeInserts)
