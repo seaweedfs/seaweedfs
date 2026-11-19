@@ -23,10 +23,13 @@ type unanswered struct {
 	addr string
 }
 
-// unreachable maps a host:port, or the bare host when the whole machine did
-// not answer, to its last failure. A dead replica sits in the location list of
-// every volume it held, so this is kept per host rather than per volume.
+// unreachable maps a host, and a machine whose dial got no answer, to its last
+// failure. A dead replica sits in the location list of every volume it held,
+// so this is kept per host rather than per volume.
 var unreachable sync.Map
+
+// machineKey keys a machine apart from a host without an explicit port.
+type machineKey string
 
 var probes sync.WaitGroup
 
@@ -38,7 +41,7 @@ func recordUnreachable(host string, err error) {
 	unreachable.Store(host, failure)
 	if hostDown(err) {
 		unreachable.Store(machine, failure)
-	} else if machine != host && connRefused(err) {
+	} else if connRefused(err) {
 		unreachable.Delete(machine)
 	}
 }
@@ -80,7 +83,7 @@ func ReachableFirst(urls []string) []string {
 }
 
 func isUnanswering(host string) bool {
-	for _, key := range [2]string{host, machineOf(host)} {
+	for _, key := range [2]any{host, machineOf(host)} {
 		v, found := unreachable.Load(key)
 		if !found {
 			continue
@@ -120,9 +123,9 @@ func hostOf(rawUrl string) string {
 	return parsed.Host
 }
 
-func machineOf(host string) string {
+func machineOf(host string) machineKey {
 	if machine, _, err := net.SplitHostPort(host); err == nil {
-		return machine
+		return machineKey(machine)
 	}
-	return host
+	return machineKey(host)
 }
