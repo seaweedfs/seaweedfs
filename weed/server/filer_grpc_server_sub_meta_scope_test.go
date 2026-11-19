@@ -184,3 +184,27 @@ func TestScopedRegistrationNeverReplacesLaterRegistration(t *testing.T) {
 		t.Fatal("unrestricted registration lost to a scoped caller")
 	}
 }
+
+func TestScopedStreamMarksWithheldProgress(t *testing.T) {
+	var sent []*filer_pb.SubscribeMetadataResponse
+	send := func(m *filer_pb.SubscribeMetadataResponse) error {
+		sent = append(sent, m)
+		return nil
+	}
+	s, cancel := newScopedMetadataStream(context.Background(), &security.MetadataSubscriptionScope{Prefixes: []string{"/a"}, ExpiresAt: time.Now().Add(time.Hour)})
+	defer cancel()
+	var last int64
+	for i := int64(1); i <= MaxUnsyncedEvents+1; i++ {
+		last = i
+		if err := s.send(scopeTestEvent("/other", "x", i), send); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(sent) != 1 {
+		t.Fatalf("sent %d messages, want one position marker", len(sent))
+	}
+	m := sent[0]
+	if m.TsNs != last || !filer_pb.IsEmpty(m) || m.Directory != "" || len(m.Events) > 0 {
+		t.Fatalf("marker %+v, want an empty event at %d", m, last)
+	}
+}

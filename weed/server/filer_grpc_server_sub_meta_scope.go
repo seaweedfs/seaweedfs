@@ -70,8 +70,9 @@ var errMetadataSubscriptionExpired = status.Error(codes.Unauthenticated, "metada
 // scopedMetadataStream ends its context when the token expires, so an open
 // subscription stops there.
 type scopedMetadataStream struct {
-	ctx   context.Context
-	scope *security.MetadataSubscriptionScope
+	ctx      context.Context
+	scope    *security.MetadataSubscriptionScope
+	withheld *int64
 }
 
 // scopedClientEpoch is below every other epoch, so a scoped registration
@@ -95,7 +96,7 @@ func (fs *FilerServer) unusedClientId() int32 {
 
 func newScopedMetadataStream(parent context.Context, scope *security.MetadataSubscriptionScope) (scopedMetadataStream, context.CancelFunc) {
 	ctx, cancel := context.WithDeadline(parent, scope.ExpiresAt)
-	return scopedMetadataStream{ctx: ctx, scope: scope}, cancel
+	return scopedMetadataStream{ctx: ctx, scope: scope, withheld: new(int64)}, cancel
 }
 
 func (s scopedMetadataStream) Context() context.Context { return s.ctx }
@@ -105,8 +106,28 @@ func (s scopedMetadataStream) send(resp *filer_pb.SubscribeMetadataResponse, sen
 		return errMetadataSubscriptionExpired
 	}
 	if scoped := scopeMetadataResponse(resp, s.scope.Prefixes); scoped != nil {
-		return send(scoped)
+		if err := send(scoped); err != nil {
+			return err
+		}
+		*s.withheld = 0
+		return nil
 	}
+	if resp.EventNotification == nil {
+		return nil
+	}
+	// withheld events still move the subscriber's resume position
+	*s.withheld += int64(1 + len(resp.Events))
+	if *s.withheld <= MaxUnsyncedEvents {
+		return nil
+	}
+	tsNs := resp.TsNs
+	for _, e := range resp.Events {
+		tsNs = max(tsNs, e.TsNs)
+	}
+	if err := send(&filer_pb.SubscribeMetadataResponse{EventNotification: &filer_pb.EventNotification{}, TsNs: tsNs}); err != nil {
+		return err
+	}
+	*s.withheld = 0
 	return nil
 }
 
