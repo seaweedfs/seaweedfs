@@ -38,6 +38,38 @@ ALL_TOOLS = (
 MC_COMMIT = "d6541ea280b73a834b64d4097e21f2be77676104"
 """github.com/minio/mc tag RELEASE.2025-08-13T08-35-41Z."""
 
+SOURCE_PATCHES = {
+    "s3-fast-list": (
+        "s3-fast-list/src/data_map.rs",
+        (
+            (
+                "        match ctx.data_map_channel.try_recv() {",
+                "        let list_tasks_running = ctx.all_list_tasks_is_running();\n"
+                "        match ctx.data_map_channel.try_recv() {",
+            ),
+            (
+                "!ctx.all_list_tasks_is_running() && !has_more_in_queue",
+                "!list_tasks_running && !has_more_in_queue",
+            ),
+        ),
+    ),
+}
+"""Source fixes applied before a build. s3-fast-list's data map reads the channel
+and then the list-task state, so a last page sent and completed between the two
+reads is dropped and the run exits 0 with a short or empty listing. Reading the
+state first means a finished task's pages are already in the channel."""
+
+
+def patch_source(tool: str, work: Path) -> None:
+    rel, edits = SOURCE_PATCHES[tool]
+    path = work / rel
+    text = path.read_text()
+    for old, new in edits:
+        if text.count(old) != 1:
+            raise SystemExit(f"{tool}: {rel} no longer matches its source patch: {old!r}")
+        text = text.replace(old, new)
+    path.write_text(text)
+
 
 def fetch(url: str, sha256: str, dest: Path) -> Path:
     if dest.exists() and hashlib.sha256(dest.read_bytes()).hexdigest() == sha256:
@@ -84,7 +116,8 @@ def install(tool: str, study: Path, tools_dir: Path) -> None:
     bin_dir.mkdir(parents=True, exist_ok=True)
     name = url.rsplit("/", 1)[-1]
     stamp = tools_dir / "installed" / tool
-    if stamp.exists() and stamp.read_text() == sha:
+    installed = sha + ("+patched" if tool in SOURCE_PATCHES else "")
+    if stamp.exists() and stamp.read_text() == installed:
         print(f"{tool} {image.get('tool_version', '')} already installed")
         return
 
@@ -172,6 +205,7 @@ def install(tool: str, study: Path, tools_dir: Path) -> None:
         work.mkdir(parents=True)
         subprocess.run(["tar", "xzf", str(archive), "--strip-components=1", "-C", str(work)], check=True)
         shutil.copyfile(study / "tools/s3-fast-list/build/Cargo.lock", work / "Cargo.lock")
+        patch_source(tool, work)
         subprocess.run(["cargo", "build", "--release", "--locked", "--quiet"], cwd=work, check=True)
         for exe in ("s3-fast-list", "ks-tool"):
             shutil.copyfile(work / "target/release" / exe, bin_dir / exe)
@@ -193,7 +227,7 @@ def install(tool: str, study: Path, tools_dir: Path) -> None:
     else:
         raise SystemExit(f"unknown tool {tool}")
     stamp.parent.mkdir(parents=True, exist_ok=True)
-    stamp.write_text(sha)
+    stamp.write_text(installed)
     print(f"installed {tool} {image.get('tool_version', '')}")
 
 
