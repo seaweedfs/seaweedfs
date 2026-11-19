@@ -290,7 +290,7 @@ var (
 			Namespace: Namespace,
 			Subsystem: subsystemFiler,
 			Name:      "subscribe_delivery_lag_seconds",
-			Help:      "Seconds from a metadata event's stamp until the filer sends it to a subscriber (send-side; excludes client receipt and processing): scope=local on the filer's own stream, scope=aggregated on the multi-filer stream.",
+			Help:      "Seconds from a metadata event's mutation until the filer sends it to the subscriber's stream, measured after the send-queue wait and the actual gRPC send (excludes client receipt): scope=local on the filer's own stream, scope=aggregated on the multi-filer stream.",
 			Buckets:   []float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 45, 60, 90, 120, 180, 300},
 		}, []string{"scope"})
 

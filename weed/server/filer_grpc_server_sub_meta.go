@@ -115,19 +115,41 @@ type pipelinedSender struct {
 	sendCh   chan *filer_pb.SubscribeMetadataResponse
 	errCh    chan error
 	done     chan struct{}
-	canBatch bool // true only if client set ClientSupportsBatching
+	canBatch bool   // true only if client set ClientSupportsBatching
+	scope    string // local or aggregated, for the delivery-lag metric
 }
 
-func newPipelinedSender(ctx context.Context, stream metadataStreamSender, bufSize int, clientSupportsBatching bool) *pipelinedSender {
+func newPipelinedSender(ctx context.Context, stream metadataStreamSender, bufSize int, clientSupportsBatching bool, scope string) *pipelinedSender {
 	s := &pipelinedSender{
 		ctx:      ctx,
 		sendCh:   make(chan *filer_pb.SubscribeMetadataResponse, bufSize),
 		errCh:    make(chan error, 1),
 		done:     make(chan struct{}),
 		canBatch: clientSupportsBatching,
+		scope:    scope,
 	}
 	go s.sendLoop(stream)
 	return s
+}
+
+// observeSubscribeDeliveryLag records, for a real metadata event that was just
+// sent, the seconds from its original mutation stamp until delivery. It skips
+// control messages (heartbeats, flush reports) and log-file-ref envelopes, which
+// carry no mutation. MutationTsNs is the original stamp (TsNs is the stream
+// position, which the buffer can move forward past a late event); payloads older
+// than the MutationTsNs field still carry the stamp in TsNs.
+func observeSubscribeDeliveryLag(scope string, msg *filer_pb.SubscribeMetadataResponse) {
+	if msg == nil || msg.EventNotification == nil || len(msg.LogFileRefs) > 0 {
+		return
+	}
+	stampNs := msg.MutationTsNs
+	if stampNs == 0 {
+		stampNs = msg.TsNs
+	}
+	if stampNs <= 0 {
+		return
+	}
+	stats.FilerSubscribeDeliveryLagSeconds.WithLabelValues(scope).Observe(float64(time.Now().UnixNano()-stampNs) / 1e9)
 }
 
 func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
@@ -144,6 +166,14 @@ func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 				s.reportErr(err)
 			}
 			return false
+		}
+		// Record delivery lag only after the event actually reached the client
+		// over the stream: Send() above is the real gRPC send (this loop runs
+		// off the queue), and a batched envelope carries its extra events in
+		// Events, so each one is sampled here too.
+		observeSubscribeDeliveryLag(s.scope, msg)
+		for _, ev := range msg.Events {
+			observeSubscribeDeliveryLag(s.scope, ev)
 		}
 		return true
 	}
@@ -682,7 +712,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	// had already arrived and been delivered).
 	diskAnchorTsNs := req.SinceNs
 
-	sender := newPipelinedSender(ctx, stream, 1024, req.ClientSupportsBatching)
+	sender := newPipelinedSender(ctx, stream, 1024, req.ClientSupportsBatching, "aggregated")
 	defer sender.Close()
 
 	// Register for instant notification when new data arrives in the aggregated log buffer.
@@ -703,7 +733,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	defer gapStall.close()
 
 	var unsyncedEvents int64
-	eachEventNotificationFn := fs.eachEventNotificationFn("aggregated", req, sender, clientName, &unsyncedEvents)
+	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName, &unsyncedEvents)
 
 	// lastSeenTsNs tracks how far the subscriber has read so idle heartbeats are
 	// only emitted once it is caught up to the buffer head. It is read and
@@ -715,6 +745,20 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	// diskHeldAtTsNs is the same marker for the disk pass alone: a pending
 	// disk hold keeps the pass re-reading until the entry is served.
 	var heldAtTsNs, diskHeldAtTsNs int64
+
+	// A watermark hold on one entry spans many waitHeld retries; measure the
+	// whole hold once -- when a different entry becomes held, or the
+	// subscription ends -- not per retry, which would turn a long hold into
+	// many short samples. holdScope is memory or disk.
+	var holdEntryTsNs, holdStartNs int64
+	var holdScope string
+	flushHold := func() {
+		if holdEntryTsNs != 0 {
+			stats.FilerSubscribeHoldSeconds.WithLabelValues(holdScope).Observe(float64(time.Now().UnixNano()-holdStartNs) / 1e9)
+			holdEntryTsNs = 0
+		}
+	}
+	defer flushHold()
 	// Each read path holds at its own watermark: persisted logs are complete
 	// only up to every peer's flush watermark, the ring only up to every
 	// peer's delivery watermark.
@@ -765,7 +809,12 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	// False: context ended.
 	waitHeld := func(scope string, watermarkChan <-chan struct{}) bool {
 		stats.FilerSubscribeWatermarkHolds.WithLabelValues(scope).Inc()
-		heldStartNs := time.Now().UnixNano()
+		if heldAtTsNs != holdEntryTsNs {
+			// A different entry is now held: the previous hold (if any) was
+			// released, so record it and start timing this one.
+			flushHold()
+			holdEntryTsNs, holdStartNs, holdScope = heldAtTsNs, time.Now().UnixNano(), scope
+		}
 		glog.V(3).Infof("held at %v (deliveredUpTo %v, flushLow %v, deliveryLow %v) for %v",
 			time.Unix(0, heldAtTsNs), time.Unix(0, deliveredUpToTsNs),
 			time.Unix(0, fs.filer.MetaAggregator.PeerLowFlushWatermarkTsNs()),
@@ -781,7 +830,6 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			return false
 		case <-time.After(unflushedGapRetryInterval):
 		}
-		stats.FilerSubscribeHoldSeconds.WithLabelValues(scope).Observe(float64(time.Now().UnixNano()-heldStartNs) / 1e9)
 		return true
 	}
 
@@ -1156,7 +1204,7 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, gapResumeCursorOffset)
 	glog.V(0).Infof(" + %v local subscribe %s from %+v clientId:%d", clientName, req.PathPrefix, lastReadTime, req.ClientId)
 
-	sender := newPipelinedSender(ctx, stream, 1024, req.ClientSupportsBatching)
+	sender := newPipelinedSender(ctx, stream, 1024, req.ClientSupportsBatching, "local")
 	defer sender.Close()
 
 	// Bounded gap waits use the buffer's subscriber notification plus a retry
@@ -1176,7 +1224,7 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	defer gapStall.close()
 
 	var unsyncedEvents int64
-	eachEventNotificationFn := fs.eachEventNotificationFn("local", req, sender, clientName, &unsyncedEvents)
+	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName, &unsyncedEvents)
 
 	// lastSeenTsNs tracks how far the subscriber has read so idle heartbeats are
 	// only emitted once it is caught up to the buffer head. It is read and
@@ -1695,7 +1743,7 @@ func deltaLogFileRefs(refs []*filer_pb.LogFileChunkRef, sent map[string]sentRefS
 	return out
 }
 
-func (fs *FilerServer) eachEventNotificationFn(scope string, req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, clientName string, filtered *int64) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
+func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, clientName string, filtered *int64) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
 	return func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
 		defer func() {
 			if *filtered > MaxUnsyncedEvents {
@@ -1756,7 +1804,6 @@ func (fs *FilerServer) eachEventNotificationFn(scope string, req *filer_pb.Subsc
 			glog.V(0).Infof("=> client %v: %+v", clientName, err)
 			return err
 		}
-		stats.FilerSubscribeDeliveryLagSeconds.WithLabelValues(scope).Observe(float64(time.Now().UnixNano()-tsNs) / 1e9)
 		*filtered = 0
 		return nil
 	}
