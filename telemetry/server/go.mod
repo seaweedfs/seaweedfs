@@ -13,9 +13,9 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/prometheus/common v0.70.1 // indirect
-	github.com/prometheus/procfs v0.22.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
+	github.com/prometheus/common v0.71.0 // indirect
+	github.com/prometheus/procfs v0.23.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 )
 
 replace github.com/seaweedfs/seaweedfs => ../..
