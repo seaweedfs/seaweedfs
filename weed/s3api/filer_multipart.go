@@ -1618,7 +1618,7 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 		output.IsTruncated = aws.Bool(false)
 		return output, s3err.ErrNone
 	}
-	numbers, attempts, truncated, err := s3a.listPartAttempts(input)
+	numbers, latest, truncated, err := s3a.listPartAttempts(input)
 	if err != nil {
 		// A store that reports the missing upload directory as not-found means
 		// the upload is gone (completed or aborted), not a store error.
@@ -1635,9 +1635,7 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 	output.IsTruncated = aws.Bool(truncated)
 
 	for _, partNumber := range numbers {
-		entries := attempts[partNumber]
-		sortEntriesByLatestChunk(entries)
-		entry := entries[0]
+		entry := latest[partNumber]
 		partETag := getEtagFromEntry(entry)
 		part := &s3.Part{
 			PartNumber:   aws.Int64(int64(partNumber)),
@@ -1663,14 +1661,15 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 	return
 }
 
-// listPartAttempts groups every stored attempt of the next max-parts part
-// numbers after the marker. Each UploadPart writes its own entry, so a part
-// number uploaded twice has several, and they may straddle a listing page.
-func (s3a *S3ApiServer) listPartAttempts(input *s3.ListPartsInput) (numbers []int, attempts map[int][]*filer_pb.Entry, truncated bool, err error) {
+// listPartAttempts returns the latest stored attempt of each of the next
+// max-parts part numbers after the marker. Each UploadPart writes its own
+// entry, so a part number uploaded twice has several, and they may straddle a
+// listing page.
+func (s3a *S3ApiServer) listPartAttempts(input *s3.ListPartsInput) (numbers []int, latest map[int]*filer_pb.Entry, truncated bool, err error) {
 	marker := *input.PartNumberMarker
 	maxParts := int(*input.MaxParts)
 	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
-	attempts = make(map[int][]*filer_pb.Entry)
+	latest = make(map[int]*filer_pb.Entry)
 	startFrom, inclusive := fmt.Sprintf("%04d", marker+1), true
 	var batch uint32
 	if maxParts > 0 {
@@ -1696,16 +1695,19 @@ func (s3a *S3ApiServer) listPartAttempts(input *s3.ListPartsInput) (numbers []in
 			if int64(partNumber) <= marker {
 				continue
 			}
-			if _, seen := attempts[partNumber]; !seen {
+			prior, seen := latest[partNumber]
+			if !seen {
 				if maxParts > 0 && len(numbers) == maxParts {
-					return numbers, attempts, true, nil
+					return numbers, latest, true, nil
 				}
 				numbers = append(numbers, partNumber)
 			}
-			attempts[partNumber] = append(attempts[partNumber], entry)
+			if !seen || compareLatestPartAttempt(entry, prior) < 0 {
+				latest[partNumber] = entry
+			}
 		}
 		if isLast || batch == 0 || startFrom == priorStart {
-			return numbers, attempts, false, nil
+			return numbers, latest, false, nil
 		}
 	}
 }
@@ -1894,12 +1896,14 @@ func (s3a *S3ApiServer) applyMultipartEncryptionConfig(entry *filer_pb.Entry, co
 // commit stamp when both carry one, else by the later of the first chunk's
 // write time and the entry mtime, so a chunkless (empty) attempt still ranks.
 func sortEntriesByLatestChunk(entries []*filer_pb.Entry) {
-	slices.SortFunc(entries, func(a, b *filer_pb.Entry) int {
-		if a.CommitTsNs > 0 && b.CommitTsNs > 0 {
-			return cmp.Compare(b.CommitTsNs, a.CommitTsNs)
-		}
-		return cmp.Compare(partAttemptTsNs(b), partAttemptTsNs(a))
-	})
+	slices.SortFunc(entries, compareLatestPartAttempt)
+}
+
+func compareLatestPartAttempt(a, b *filer_pb.Entry) int {
+	if a.CommitTsNs > 0 && b.CommitTsNs > 0 {
+		return cmp.Compare(b.CommitTsNs, a.CommitTsNs)
+	}
+	return cmp.Compare(partAttemptTsNs(b), partAttemptTsNs(a))
 }
 
 func partAttemptTsNs(entry *filer_pb.Entry) int64 {
