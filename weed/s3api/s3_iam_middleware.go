@@ -419,6 +419,10 @@ func (s3iam *S3IAMIntegration) extractRequestContext(r *http.Request) map[string
 		context["referer"] = referer
 	}
 
+	for key, values := range policy_engine.RequestConditionValues(r) {
+		context[key] = values
+	}
+
 	for key, values := range vectorIAMConditions(r) {
 		context[key] = values
 	}
