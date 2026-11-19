@@ -413,3 +413,21 @@ func TestFailoverFromHomeRacingReadKeepsBackoff(t *testing.T) {
 		}
 	}
 }
+
+// A home still inside its return backoff is not picked just because it is
+// listed first when discovery removes the current filer.
+func TestDiscoverySkipsBackingOffHomeWhenCurrentGone(t *testing.T) {
+	peerC := pb.ServerAddress("10.0.0.3:8888.18888")
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	fc := newHomeTestClient(clock)
+	fc.filerAddresses = []pb.ServerAddress{homeA, peerB, peerC}
+	fc.filerHealth = []*filerHealth{{}, {}, {}}
+	fc.RecordFilerFailure(homeA)
+	fc.SwitchCurrentFiler(homeA, peerB)
+
+	fc.applyDiscoveredFilers(map[pb.ServerAddress]struct{}{homeA: {}, peerC: {}})
+
+	if got := fc.GetCurrentFiler(); got != peerC {
+		t.Fatalf("current after discovery: want %s, got %s", peerC, got)
+	}
+}

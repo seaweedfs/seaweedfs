@@ -658,6 +658,8 @@ func (fc *FilerClient) applyDiscoveredFilersLocked(discoveredFilers map[pb.Serve
 		newIndex = 0
 		if home := fc.homeIndexLocked(); home >= 0 && fc.homeEligibleLocked(home) {
 			newIndex = home
+		} else if home == 0 && len(newAddresses) > 1 {
+			newIndex = 1 // home is still backing off; take the next filer
 		}
 	}
 	fc.moveCurrentIndexLocked(currentFiler, newIndex, switchDiscovery)
