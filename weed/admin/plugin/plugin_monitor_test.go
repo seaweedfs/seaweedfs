@@ -638,6 +638,35 @@ func TestBuildJobDetailFallsBackToRunRecordAfterPrune(t *testing.T) {
 		t.Fatalf("expected the error run record, got=%+v", detail.RunRecord)
 	}
 
+	if detail.Job.Progress != 0 {
+		t.Fatalf("failed job progress = %v, want 0", detail.Job.Progress)
+	}
+
+	pluginSvc.trackExecutionStart("req-pruned-ok", "worker-p", &plugin_pb.JobSpec{
+		JobId:   "job-pruned-ok",
+		JobType: "vacuum",
+	}, 1)
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		RequestId:   "req-pruned-ok",
+		JobId:       "job-pruned-ok",
+		JobType:     "vacuum",
+		Success:     true,
+		CompletedAt: timestamppb.Now(),
+	})
+	pluginSvc.jobsMu.Lock()
+	delete(pluginSvc.jobs, "job-pruned-ok")
+	pluginSvc.jobsMu.Unlock()
+	if err := pluginSvc.store.DeleteJobDetail("job-pruned-ok"); err != nil {
+		t.Fatalf("DeleteJobDetail: %v", err)
+	}
+	detail, found, err = pluginSvc.BuildJobDetail("job-pruned-ok", 100, 0)
+	if err != nil || !found || detail == nil || detail.Job == nil {
+		t.Fatalf("pruned successful job: found=%v err=%v", found, err)
+	}
+	if detail.Job.State != StateSucceeded || detail.Job.Progress != 100 {
+		t.Fatalf("pruned successful job: state=%q progress=%v", detail.Job.State, detail.Job.Progress)
+	}
+
 	if _, found, err := pluginSvc.BuildJobDetail("job-unknown", 100, 0); err != nil || found {
 		t.Fatalf("unknown job: found=%v err=%v", found, err)
 	}

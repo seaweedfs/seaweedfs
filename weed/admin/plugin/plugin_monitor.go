@@ -1272,6 +1272,8 @@ func trackedJobFromRunRecord(record *JobRunRecord) *TrackedJob {
 	if record.Outcome == RunOutcomeError {
 		job.State = StateFailed
 		job.ErrorMessage = record.Message
+	} else {
+		job.Progress = 100
 	}
 	return job
 }
