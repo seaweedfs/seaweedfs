@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -499,4 +500,48 @@ func TestWriteRecoversFromCorruptedTable(t *testing.T) {
 	expectValue(t, db, "k0000", "new")
 	expectValue(t, db, "k1000", value)
 	expectValue(t, db, "k1999", value)
+}
+
+func TestOpenDropsUnreadableTable(t *testing.T) {
+	dir := t.TempDir()
+	opts := &opt.Options{Filter: filter.NewBloomFilter(8)}
+	for _, key := range []string{"a", "b", "c"} {
+		raw, err := leveldb.OpenFile(dir, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := raw.Put([]byte(key), []byte(key), nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := raw.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Each reopen flushed the previous journal, so "a" and "b" have a table
+	// each and "c" is still in the journal.
+	tables, _ := filepath.Glob(filepath.Join(dir, "*.ldb"))
+	if len(tables) != 2 {
+		t.Fatalf("tables: %v", tables)
+	}
+	sort.Strings(tables)
+	if err := os.Truncate(tables[0], 10); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "CURRENT")); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := OpenFile(dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Get([]byte("a"), nil); err != leveldb.ErrNotFound {
+		t.Fatalf("get from the unreadable table: %v", err)
+	}
+	expectValue(t, db, "b", "b")
+	expectValue(t, db, "c", "c")
+	if err := db.Put([]byte("d"), []byte("d"), nil); err != nil {
+		t.Fatal(err)
+	}
 }

@@ -18,7 +18,8 @@ const internalKeyTrailer = 8
 // without them, before leveldb.Recover runs. Recover would rebuild such a
 // table itself, but it orders internal keys with the user comparer, so a
 // table holding several versions of one key fails to rebuild, and the index
-// keys and filter it writes do not match lookups.
+// keys and filter it writes do not match lookups. A table with nothing
+// readable is left for Recover to drop.
 func rebuildDamagedTables(stor storage.Storage, o *opt.Options) error {
 	fds, err := stor.List(storage.TypeTable)
 	if err != nil {
@@ -57,8 +58,8 @@ func rebuildTable(stor storage.Storage, fd storage.FileDesc, o *opt.Options) err
 	if err != nil {
 		return err
 	}
-	damaged, err := scanTable(tr, nil)
-	if err != nil || !damaged {
+	entries, damaged, err := scanTable(tr, nil)
+	if err != nil || !damaged || entries == 0 {
 		return err
 	}
 
@@ -68,7 +69,7 @@ func rebuildTable(stor storage.Storage, fd storage.FileDesc, o *opt.Options) err
 		return err
 	}
 	tw := table.NewWriter(w, o)
-	if _, err = scanTable(tr, tw); err == nil {
+	if _, _, err = scanTable(tr, tw); err == nil {
 		err = tw.Close()
 	}
 	if err == nil {
@@ -88,9 +89,9 @@ func rebuildTable(stor storage.Storage, fd storage.FileDesc, o *opt.Options) err
 	return err
 }
 
-// scanTable reads every readable entry of tr, appending it to tw if set, and
-// reports whether a block was corrupted.
-func scanTable(tr *table.Reader, tw *table.Writer) (damaged bool, err error) {
+// scanTable counts the readable entries of tr, appending them to tw if set,
+// and reports whether a block was corrupted.
+func scanTable(tr *table.Reader, tw *table.Writer) (entries int, damaged bool, err error) {
 	iter := tr.NewIterator(nil, nil)
 	defer iter.Release()
 	if setter, ok := iter.(iterator.ErrorCallbackSetter); ok {
@@ -101,19 +102,23 @@ func scanTable(tr *table.Reader, tw *table.Writer) (damaged bool, err error) {
 		})
 	}
 	for iter.Next() {
-		if tw != nil && len(iter.Key()) >= internalKeyTrailer {
+		if len(iter.Key()) < internalKeyTrailer {
+			continue
+		}
+		entries++
+		if tw != nil {
 			if err := tw.Append(iter.Key(), iter.Value()); err != nil {
-				return damaged, err
+				return entries, damaged, err
 			}
 		}
 	}
 	if err := iter.Error(); err != nil {
 		if !leveldb_errors.IsCorrupted(err) {
-			return damaged, err
+			return entries, damaged, err
 		}
 		damaged = true
 	}
-	return damaged, nil
+	return entries, damaged, nil
 }
 
 // internalComparer orders goleveldb internal keys, a user key followed by
