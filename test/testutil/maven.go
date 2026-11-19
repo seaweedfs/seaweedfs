@@ -19,6 +19,11 @@ var mavenCentralMirrors = []string{
 	"https://maven-central.storage-download.googleapis.com/maven2",
 }
 
+var (
+	mavenDownloadBudget = 3 * time.Minute
+	mavenAttemptTimeout = 75 * time.Second
+)
+
 // MavenJar returns a local copy of a Maven Central jar, verified against its
 // pinned SHA-256. The jar is kept under the user cache directory so every test
 // in a run, and every run that restores that directory, shares one download.
@@ -39,7 +44,7 @@ func MavenJar(t testing.TB, group, artifact, version, sha256Hex string) string {
 		return path
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), mavenDownloadBudget)
 	defer cancel()
 	urlPath := fmt.Sprintf("%s/%s/%s/%s", strings.ReplaceAll(group, ".", "/"), artifact, version, name)
 	var lastErr error
@@ -54,7 +59,10 @@ func MavenJar(t testing.TB, group, artifact, version, sha256Hex string) string {
 			if ctx.Err() != nil {
 				break
 			}
-			if lastErr = downloadVerified(ctx, mirror+"/"+urlPath, path, sha256Hex); lastErr == nil {
+			attemptCtx, cancelAttempt := context.WithTimeout(ctx, mavenAttemptTimeout)
+			lastErr = downloadVerified(attemptCtx, mirror+"/"+urlPath, path, sha256Hex)
+			cancelAttempt()
+			if lastErr == nil {
 				return path
 			}
 			t.Logf("download %s: %v", name, lastErr)
