@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/syndtr/goleveldb/leveldb"
-	"github.com/syndtr/goleveldb/leveldb/comparer"
 	leveldb_errors "github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/iterator"
 	"github.com/syndtr/goleveldb/leveldb/opt"
@@ -82,30 +81,11 @@ func open(stor storage.Storage, o *opt.Options, cause error) (*leveldb.DB, error
 			return db, err
 		}
 	}
-	return leveldb.Recover(stor, recoverOptions(o))
-}
-
-// recoverOptions keeps leveldb.Recover from writing broken tables: it rebuilds
-// a damaged table with the user comparer and filter applied to internal keys,
-// so shortened index keys are not valid internal keys and the filter misses
-// every lookup. Full index keys and no filter only cost space and speed.
-func recoverOptions(o *opt.Options) *opt.Options {
-	ro := opt.Options{}
-	if o != nil {
-		ro = *o
+	if err := rebuildDamagedTables(stor, o); err != nil {
+		return nil, err
 	}
-	ro.Comparer = fullKeyComparer{ro.GetComparer()}
-	ro.Filter = nil
-	return &ro
+	return leveldb.Recover(stor, o)
 }
-
-type fullKeyComparer struct {
-	comparer.Comparer
-}
-
-func (fullKeyComparer) Separator(dst, a, b []byte) []byte { return nil }
-
-func (fullKeyComparer) Successor(dst, b []byte) []byte { return nil }
 
 func (d *DB) Get(key []byte, ro *opt.ReadOptions) ([]byte, error) {
 	db, err := d.acquire()
