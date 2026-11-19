@@ -617,14 +617,15 @@ func (r *Plugin) BuildJobDetail(jobID string, activityLimit int, relatedLimit in
 		return nil, false, err
 	}
 
+	var runRecord *JobRunRecord
 	if trackedSnapshot == nil && detailJob == nil {
 		// Run history keeps the last runs per job type, so it can still
 		// list a job pruned from tracking; show what the record holds.
-		record, err := r.findRunRecord(normalizedJobID)
-		if err != nil || record == nil {
+		runRecord, err = r.findRunRecord(normalizedJobID)
+		if err != nil || runRecord == nil {
 			return nil, false, err
 		}
-		detailJob = trackedJobFromRunRecord(record)
+		detailJob = trackedJobFromRunRecord(runRecord)
 	}
 	if detailJob == nil && trackedSnapshot != nil {
 		clone := cloneTrackedJob(*trackedSnapshot)
@@ -645,12 +646,15 @@ func (r *Plugin) BuildJobDetail(jobID string, activityLimit int, relatedLimit in
 	detail := &JobDetail{
 		Job:         detailJob,
 		Activities:  filterJobActivitiesFromSlice(activities, normalizedJobID, activityLimit),
+		RunRecord:   runRecord,
 		LastUpdated: timeToPtr(time.Now().UTC()),
 	}
 
-	if history, err := r.store.LoadRunHistory(detailJob.JobType); err != nil {
-		return nil, true, err
-	} else {
+	if runRecord == nil {
+		history, err := r.store.LoadRunHistory(detailJob.JobType)
+		if err != nil {
+			return nil, true, err
+		}
 		detail.RunRecord = newestRunRecord(history, normalizedJobID)
 	}
 
