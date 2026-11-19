@@ -217,3 +217,35 @@ func TestRebuildWipeLetsReadersInBetweenBatches(t *testing.T) {
 		t.Fatal("a reader parked behind the wipe waited past the first batch; the wipe should release the lock between batches")
 	}
 }
+
+// TestRebuildWipeKeepsInsertsWhileItRuns: a deferred create's placeholder can
+// land between batches before its handle pins it. The wipe keeps it, as the
+// single-lock wipe did by making the insert wait.
+func TestRebuildWipeKeepsInsertsWhileItRuns(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	defer mc.Shutdown()
+	mc.SetPinnedChildFn(pinInode42)
+
+	const n = 2*rebuildWipeBatchSize + 10
+	fillRebuildWipeDir(t, mc, "/dir", n)
+
+	stopKeeping := mc.keepInsertsDuringWipe("/dir")
+	last, err := mc.deleteFolderChildrenBatch(context.Background(), "/dir", "")
+	if err != nil {
+		t.Fatalf("first batch: %v", err)
+	}
+	insertCacheEntry(t, mc, "/dir/zz-placeholder")
+	for batches := 1; last != ""; batches++ {
+		if last, err = mc.deleteFolderChildrenBatch(context.Background(), "/dir", last); err != nil {
+			t.Fatalf("batch %d: %v", batches+1, err)
+		}
+	}
+	stopKeeping()
+
+	if got, want := cachedChildNames(t, mc, "/dir"), []string{"zz-placeholder"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("children left by the wipe = %v, want only the one inserted while it ran %v", got, want)
+	}
+	if len(mc.rebuildWipeInserts) != 0 {
+		t.Errorf("rebuildWipeInserts = %v after the wipe ended, want empty", mc.rebuildWipeInserts)
+	}
+}

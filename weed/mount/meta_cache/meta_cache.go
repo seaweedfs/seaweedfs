@@ -48,6 +48,10 @@ type MetaCache struct {
 	// instead of streaming to the limit again to rediscover them.
 	oversizedDirs map[util.FullPath]struct{}
 
+	// rebuildWipeInserts holds the children inserted into each directory
+	// while its rebuild wipe runs; the wipe keeps them.
+	rebuildWipeInserts map[util.FullPath]map[string]struct{}
+
 	// dirVersionFloors is each cached directory's listing snapshot: the
 	// version of every child the listing covered, present or absent, unless
 	// a later event gave that child its own record. One map write per build
@@ -134,6 +138,7 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		dirVersionFloors:     make(map[util.FullPath]int64),
 		dirSections:          make(map[util.FullPath]*sectionList),
 		oversizedDirs:        make(map[util.FullPath]struct{}),
+		rebuildWipeInserts:   make(map[util.FullPath]map[string]struct{}),
 	}
 	mc.invalidateWorker = util.NewAsyncBatchWorker(func(batch []EntryInvalidation) {
 		for _, invalidation := range batch {
@@ -174,6 +179,10 @@ func (mc *MetaCache) InsertEntry(ctx context.Context, entry *filer.Entry, versio
 func (mc *MetaCache) doInsertEntry(ctx context.Context, entry *filer.Entry, versionTsNs int64) error {
 	if err := mc.localStore.InsertEntry(ctx, entry); err != nil {
 		return err
+	}
+	dir, name := entry.FullPath.DirAndName()
+	if inserted, wiping := mc.rebuildWipeInserts[util.FullPath(dir)]; wiping {
+		inserted[name] = struct{}{}
 	}
 	mc.setEntryVersionLocked(ctx, entry.FullPath, versionTsNs)
 	mc.noteHardLinkVersionLocked(ctx, entry.HardLinkId, versionTsNs)
@@ -736,6 +745,7 @@ const rebuildWipeBatchSize = 1024
 // interleaving the build did not already allow: the listing that refills the
 // directory runs after the wipe, outside the lock.
 func (mc *MetaCache) deleteFolderChildrenForRebuild(ctx context.Context, dirPath util.FullPath) error {
+	defer mc.keepInsertsDuringWipe(dirPath)()
 	startFrom := ""
 	for {
 		last, err := mc.deleteFolderChildrenBatch(ctx, dirPath, startFrom)
@@ -746,6 +756,21 @@ func (mc *MetaCache) deleteFolderChildrenForRebuild(ctx context.Context, dirPath
 			return nil
 		}
 		startFrom = last
+	}
+}
+
+// keepInsertsDuringWipe makes a wipe of dirPath keep the children inserted
+// until the returned func runs. A deferred create inserts its placeholder
+// before its handle pins it; the single-lock wipe kept such an insert by
+// making it wait, and a batch running in that gap must not drop it either.
+func (mc *MetaCache) keepInsertsDuringWipe(dirPath util.FullPath) func() {
+	mc.Lock()
+	mc.rebuildWipeInserts[dirPath] = make(map[string]struct{})
+	mc.Unlock()
+	return func() {
+		mc.Lock()
+		delete(mc.rebuildWipeInserts, dirPath)
+		mc.Unlock()
 	}
 }
 
@@ -760,8 +785,12 @@ func (mc *MetaCache) deleteFolderChildrenBatch(ctx context.Context, dirPath util
 	defer mc.Unlock()
 	visited := 0
 	var doomed []util.FullPath
+	inserted := mc.rebuildWipeInserts[dirPath]
 	last, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, startFrom, false, rebuildWipeBatchSize, func(entry *filer.Entry) (bool, error) {
 		visited++
+		if _, kept := inserted[entry.Name()]; kept {
+			return true, nil
+		}
 		if mc.pinnedChildFn == nil || !mc.pinnedChildFn(entry) {
 			doomed = append(doomed, entry.FullPath)
 		}
