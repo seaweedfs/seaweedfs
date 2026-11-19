@@ -208,3 +208,27 @@ func TestScopedStreamMarksWithheldProgress(t *testing.T) {
 		t.Fatalf("marker %+v, want an empty event at %d", m, last)
 	}
 }
+
+func TestScopedStreamMarksWithheldBatch(t *testing.T) {
+	var sent []*filer_pb.SubscribeMetadataResponse
+	send := func(m *filer_pb.SubscribeMetadataResponse) error {
+		sent = append(sent, m)
+		return nil
+	}
+	s, cancel := newScopedMetadataStream(context.Background(), &security.MetadataSubscriptionScope{Prefixes: []string{"/a"}, ExpiresAt: time.Now().Add(time.Hour)})
+	defer cancel()
+	batch := scopeTestEvent("/other", "head", 1)
+	for i := int64(2); i <= MaxUnsyncedEvents+1; i++ {
+		batch.Events = append(batch.Events, scopeTestEvent("/other", "x", i))
+	}
+	if err := s.send(batch, send); err != nil {
+		t.Fatal(err)
+	}
+	if len(sent) != 1 {
+		t.Fatalf("sent %d messages, want one position marker", len(sent))
+	}
+	m, want := sent[0], int64(MaxUnsyncedEvents+1)
+	if m.TsNs != want || !filer_pb.IsEmpty(m) || m.Directory != "" || len(m.Events) > 0 {
+		t.Fatalf("marker %+v, want an empty event at %d", m, want)
+	}
+}
