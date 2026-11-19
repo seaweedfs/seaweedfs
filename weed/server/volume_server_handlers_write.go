@@ -167,9 +167,15 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		_, ok = vs.store.ReadVolumeNeedle(volumeId, n, deleteReadOption(), nil)
 	}
 	if ok != nil {
+		// 404 tells the forwarding replica the needle is gone here, so a read
+		// that failed for any other reason must not answer it
+		if v != nil && !errors.Is(ok, storage.ErrorNotFound) && !errors.Is(ok, storage.ErrorDeleted) {
+			writeDeleteResult(ok, 0, w, r)
+			return
+		}
 		// a retry of a delete whose replica fan-out failed finds nothing here,
 		// but the other replicas may still hold the needle
-		if !isReplicate && replicated && (errors.Is(ok, storage.ErrorNotFound) || errors.Is(ok, storage.ErrorDeleted)) {
+		if !isReplicate && replicated {
 			if _, err := topology.ReplicatedDelete(vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, n, r, true); err != nil {
 				writeDeleteResult(err, 0, w, r)
 				return
