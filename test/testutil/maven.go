@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -38,14 +39,22 @@ func MavenJar(t testing.TB, group, artifact, version, sha256Hex string) string {
 		return path
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
 	urlPath := fmt.Sprintf("%s/%s/%s/%s", strings.ReplaceAll(group, ".", "/"), artifact, version, name)
 	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 3 && ctx.Err() == nil; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 10 * time.Second)
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Duration(attempt) * 10 * time.Second):
+			}
 		}
 		for _, mirror := range mavenCentralMirrors {
-			if lastErr = downloadVerified(mirror+"/"+urlPath, path, sha256Hex); lastErr == nil {
+			if ctx.Err() != nil {
+				break
+			}
+			if lastErr = downloadVerified(ctx, mirror+"/"+urlPath, path, sha256Hex); lastErr == nil {
 				return path
 			}
 			t.Logf("download %s: %v", name, lastErr)
@@ -68,9 +77,12 @@ func fileSHA256(path string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func downloadVerified(url, path, sha256Hex string) error {
-	client := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := client.Get(url)
+func downloadVerified(ctx context.Context, url, path, sha256Hex string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
