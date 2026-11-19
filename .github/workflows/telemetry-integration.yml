@@ -6,12 +6,16 @@ on:
     paths:
       - 'telemetry/**'
       - 'weed/telemetry/**'
+      - 'go.mod'
+      - 'go.sum'
       - '.github/workflows/telemetry-integration.yml'
   pull_request:
     branches: [ master ]
     paths:
       - 'telemetry/**'
       - 'weed/telemetry/**'
+      - 'go.mod'
+      - 'go.sum'
       - '.github/workflows/telemetry-integration.yml'
 
 concurrency:
