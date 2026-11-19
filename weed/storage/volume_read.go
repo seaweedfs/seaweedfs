@@ -94,6 +94,7 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 	// data, which ReadNeedleMeta relies on, so it is always read in full.
 	if readOption != nil && readOption.AttemptMetaOnly && v.Version() != needle.Version1 && (readOption.MustMetaOnly || readOption.HasRange || readSize > PagedReadLimit) {
 		readOption.VolumeRevision = v.SuperBlock.CompactionRevision
+		id := n.Id
 		err = n.ReadNeedleMeta(v.DataBackend, nv.Offset.ToActualOffset(), readSize, v.Version())
 		if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
 			readOption.IsOutOfRange = true
@@ -102,6 +103,11 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 		if err != nil {
 			v.checkReadWriteError(err)
 			return 0, err
+		}
+		if n.Id != id {
+			glog.V(0).Infof("volume %d index entry for needle %x resolves to needle %x; reporting not-found",
+				v.Id, uint64(id), uint64(n.Id))
+			return -1, ErrorNotFound
 		}
 		if !n.IsCompressed() && !n.IsChunkedManifest() {
 			readOption.IsMetaOnly = true
@@ -438,7 +444,11 @@ func (v *Volume) streamNeedleData(n *needle.Needle, readOption *ReadOption, writ
 		}
 		probe := new(needle.Needle)
 		probe.ParseNeedleHeader(header)
-		if probe.Id != n.Id && probe.Size != nv.Size {
+		recordSize := nv.Size
+		if recordSize < 0 {
+			recordSize = -recordSize
+		}
+		if probe.Id != n.Id || probe.Size != recordSize {
 			glog.V(0).Infof("volume %d index entry for needle %x resolves to needle %x; reporting not-found",
 				v.Id, uint64(n.Id), uint64(probe.Id))
 			return ErrorNotFound

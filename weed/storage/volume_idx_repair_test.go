@@ -222,6 +222,60 @@ func TestRepairIdxHeadTombstones_KeepsDeletedNeedlesDeleted(t *testing.T) {
 	}
 }
 
+// TestStaleIndexEntry_SameSizeStreamMisses covers a damaged index entry that
+// resolves to another needle of the same size.
+func TestStaleIndexEntry_SameSizeStreamMisses(t *testing.T) {
+	dir := t.TempDir()
+	written := writeTestVolume(t, dir, 5)
+
+	v := mustReload(t, dir)
+	defer v.Close()
+
+	const staleKey = 9
+	nv, ok := v.nm.Get(types.Uint64ToNeedleId(2))
+	if !ok {
+		t.Fatal("needle 2 missing from index")
+	}
+	if err := v.nm.Put(types.Uint64ToNeedleId(staleKey), nv.Offset, nv.Size); err != nil {
+		t.Fatalf("plant stale index entry: %v", err)
+	}
+
+	meta := newEmptyNeedle(staleKey)
+	if _, err := v.readNeedle(meta, &ReadOption{AttemptMetaOnly: true, MustMetaOnly: true}, nil); err != ErrorNotFound {
+		t.Fatalf("stale-index meta read: want ErrorNotFound, got %v (needle %x)", err, uint64(meta.Id))
+	}
+
+	stream := newEmptyNeedle(staleKey)
+	stream.DataSize = written[2].DataSize
+	var out bytes.Buffer
+	if err := v.readNeedleDataInto(stream, &ReadOption{ReadBufferSize: 1024}, &out, 0, int64(stream.DataSize)); err != ErrorNotFound {
+		t.Fatalf("stale-index stream: want ErrorNotFound, got %v after %d bytes", err, out.Len())
+	}
+}
+
+func TestDeletedNeedleStreamsWithReadDeleted(t *testing.T) {
+	dir := t.TempDir()
+	written := writeTestVolume(t, dir, 3)
+
+	v := mustReload(t, dir)
+	defer v.Close()
+
+	if _, err := v.deleteNeedle2(newEmptyNeedle(2), false); err != nil {
+		t.Fatalf("delete needle 2: %v", err)
+	}
+
+	stream := newEmptyNeedle(2)
+	stream.DataSize = written[2].DataSize
+	stream.Checksum = written[2].Checksum
+	var out bytes.Buffer
+	if err := v.readNeedleDataInto(stream, &ReadOption{ReadDeleted: true, ReadBufferSize: 1024}, &out, 0, int64(stream.DataSize)); err != nil {
+		t.Fatalf("stream deleted needle: %v", err)
+	}
+	if !bytes.Equal(out.Bytes(), written[2].Data) {
+		t.Fatalf("streamed %d bytes, want the %d bytes written", out.Len(), len(written[2].Data))
+	}
+}
+
 // TestStaleIndexEntry_HealsOnWrite covers a damaged index entry that resolves
 // to a different needle: reads must miss instead of serving the wrong needle,
 // and the next write for the key must re-index it rather than be rejected as

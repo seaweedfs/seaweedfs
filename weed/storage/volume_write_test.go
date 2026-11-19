@@ -207,7 +207,7 @@ func TestWriteNeedleBlobRejectedOnReadOnlyVolume(t *testing.T) {
 
 	datSizeBefore, _, _ := v.DataBackend.GetStat()
 
-	err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), blob, n.Size)
+	err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), withNeedleId(blob, 2), n.Size)
 	if err == nil {
 		t.Fatalf("expected WriteNeedleBlob to be rejected on a read-only volume")
 	}
@@ -249,7 +249,7 @@ func TestWriteNeedleBlobRejectsSizeMismatch(t *testing.T) {
 
 	// types.Size(n.DataSize) is what needle.Append reports, and what a caller
 	// following the payload-size convention would send.
-	if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), blob, types.Size(n.DataSize)); err == nil {
+	if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), withNeedleId(blob, 2), types.Size(n.DataSize)); err == nil {
 		t.Fatal("expected WriteNeedleBlob to reject a size that disagrees with the blob header")
 	}
 
@@ -258,7 +258,7 @@ func TestWriteNeedleBlobRejectsSizeMismatch(t *testing.T) {
 		t.Errorf(".dat grew from %d to %d on a rejected blob", datSizeBefore, datSizeAfter)
 	}
 
-	if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), blob, n.Size); err != nil {
+	if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), withNeedleId(blob, 2), n.Size); err != nil {
 		t.Fatalf("write needle blob with the header size: %v", err)
 	}
 }
@@ -325,7 +325,7 @@ func TestWriteNeedleBlobRejectsNegativeSize(t *testing.T) {
 
 			datSizeBefore, _, _ := v.DataBackend.GetStat()
 
-			if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), blob, size); err == nil {
+			if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), withNeedleId(blob, 2), size); err == nil {
 				t.Error("expected WriteNeedleBlob to reject a negative size")
 			}
 
@@ -371,7 +371,7 @@ func TestWriteNeedleBlobRejectsLengthMismatch(t *testing.T) {
 			}
 			datSizeBefore, _, _ := v.DataBackend.GetStat()
 
-			if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), tc.mutate(blob), n.Size); err == nil {
+			if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), tc.mutate(withNeedleId(blob, 2)), n.Size); err == nil {
 				t.Error("expected WriteNeedleBlob to reject a blob whose length does not match its size")
 			}
 
@@ -414,7 +414,7 @@ func TestWriteNeedleBlobRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read needle blob: %v", err)
 	}
-	if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), blob, n.Size); err != nil {
+	if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), withNeedleId(blob, 2), n.Size); err != nil {
 		t.Fatalf("write needle blob: %v", err)
 	}
 	got := newEmptyNeedle(2)
@@ -433,7 +433,7 @@ func TestWriteNeedleBlobRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read delete record: %v", err)
 	}
-	if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(3), deleteRecord, 0); err != nil {
+	if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(3), withNeedleId(deleteRecord, 3), 0); err != nil {
 		t.Fatalf("write size-0 needle blob: %v", err)
 	}
 
@@ -579,5 +579,41 @@ func TestSyncBatchDefersFlushForStragglers(t *testing.T) {
 	}
 	if syncs := counting.syncs.Load(); syncs != 2 {
 		t.Fatalf("expected a lone write to take its own sync, got %d total", syncs)
+	}
+}
+
+// withNeedleId returns a copy of blob whose header names needle id.
+func withNeedleId(blob []byte, id uint64) []byte {
+	out := append([]byte(nil), blob...)
+	types.NeedleIdToBytes(out[types.CookieSize:types.CookieSize+types.NeedleIdSize], types.Uint64ToNeedleId(id))
+	return out
+}
+
+func TestWriteNeedleBlobRejectsAnotherNeedlesBlob(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 7, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	n := newRandomNeedle(1)
+	offset, _, _, err := v.writeNeedle2(n, true, false, false)
+	if err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	blob, err := v.ReadNeedleBlob(int64(offset), n.Size)
+	if err != nil {
+		t.Fatalf("read needle blob: %v", err)
+	}
+	datSizeBefore, _, _ := v.DataBackend.GetStat()
+	if err = v.WriteNeedleBlob(types.Uint64ToNeedleId(2), blob, n.Size); err == nil {
+		t.Fatal("needle 1's blob was stored under key 2")
+	}
+	if datSizeAfter, _, _ := v.DataBackend.GetStat(); datSizeAfter != datSizeBefore {
+		t.Errorf("rejected blob grew .dat from %d to %d bytes", datSizeBefore, datSizeAfter)
+	}
+	if _, ok := v.nm.Get(types.Uint64ToNeedleId(2)); ok {
+		t.Error("rejected blob was indexed under key 2")
 	}
 }

@@ -897,6 +897,13 @@ impl NeedleReadPlan {
             self.io_errors.check_read_write_error(Some(e));
         }
         result?;
+        if n.id != self.needle_id {
+            warn!(
+                "index entry for needle {} resolves to needle {}; reporting not-found",
+                self.needle_id.0, n.id.0
+            );
+            return Err(VolumeError::NotFound);
+        }
         if needle_expired(n) {
             return Err(VolumeError::NotFound);
         }
@@ -5666,13 +5673,22 @@ impl Volume {
                 ),
             )));
         }
-        let (_, _, header_size) = Needle::parse_header(needle_blob);
+        let (_, header_id, header_size) = Needle::parse_header(needle_blob);
         if header_size != size {
             return Err(VolumeError::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
                     "needle {} size {} does not match its blob header size {}",
                     needle_id.0, size.0, header_size.0
+                ),
+            )));
+        }
+        if header_id != needle_id {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "needle {} blob header holds needle {}",
+                    needle_id.0, header_id.0
                 ),
             )));
         }
@@ -10731,6 +10747,15 @@ mod tests {
         assert!(matches!(err, VolumeError::Io(_)), "got {err:?}");
         assert_eq!(v.dat_file_size().unwrap(), dat_size_before);
 
+        // needle 1's blob is not stored under key 2
+        let err = v
+            .write_needle_blob_and_index(NeedleId(2), &blob, n.size)
+            .unwrap_err();
+        assert!(matches!(err, VolumeError::Io(_)), "got {err:?}");
+        assert_eq!(v.dat_file_size().unwrap(), dat_size_before);
+
+        let mut blob = blob;
+        NeedleId(2).to_bytes(&mut blob[COOKIE_SIZE..COOKIE_SIZE + NEEDLE_ID_SIZE]);
         v.write_needle_blob_and_index(NeedleId(2), &blob, n.size)
             .unwrap();
     }
@@ -10753,7 +10778,8 @@ mod tests {
         };
         n.checksum = CRC::new(&n.data);
         let (offset, _, _) = v.write_needle(&mut n, true, false).unwrap();
-        let blob = v.read_needle_blob(offset as i64, n.size).unwrap();
+        let mut blob = v.read_needle_blob(offset as i64, n.size).unwrap();
+        NeedleId(2).to_bytes(&mut blob[COOKIE_SIZE..COOKIE_SIZE + NEEDLE_ID_SIZE]);
 
         let dat_size_before = v.dat_file_size().unwrap();
 
@@ -11221,6 +11247,42 @@ mod tests {
             bad_end,
             dat_size
         );
+    }
+
+    #[test]
+    fn test_read_meta_rejects_index_entry_naming_another_needle() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+
+        for id in [1u64, 2] {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(0xDEADBEEF),
+                data: vec![id as u8; 2048],
+                data_size: 2048,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+        // point key 9 at needle 2's record with the record's own size
+        {
+            let mut io = v.io.write().unwrap();
+            let nm = io.nm.as_mut().unwrap();
+            let nv = nm.get(NeedleId(2)).unwrap().unwrap();
+            nm.put(NeedleId(9), nv.offset, nv.size).unwrap();
+        }
+
+        let mut read_n = Needle {
+            id: NeedleId(9),
+            cookie: Cookie(0xDEADBEEF),
+            ..Needle::default()
+        };
+        let mut plan = v.needle_read_plan(NeedleId(9), false).unwrap();
+        assert!(matches!(
+            plan.read_meta(&mut read_n),
+            Err(VolumeError::NotFound)
+        ));
     }
 
     #[test]
