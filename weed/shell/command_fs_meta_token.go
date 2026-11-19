@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -45,7 +46,10 @@ func (c *commandFsMetaToken) Do(args []string, commandEnv *CommandEnv, writer io
 	prefixes := tokenCommand.String("prefix", "", "comma-separated absolute path prefixes")
 	expire := tokenCommand.Duration("expire", 24*time.Hour, "token lifetime")
 	if err = tokenCommand.Parse(args); err != nil {
-		return nil
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
 	}
 
 	key := util.GetViper().GetString("jwt.filer_signing.subscribe.key")

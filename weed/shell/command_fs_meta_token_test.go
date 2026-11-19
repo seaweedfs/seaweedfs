@@ -22,6 +22,9 @@ func TestFsMetaToken(t *testing.T) {
 	}
 
 	v.Set("jwt.filer_signing.subscribe.key", "sub-key")
+	if err := c.Do([]string{"-prefix=/a", "-expire=soon"}, nil, &out); err == nil {
+		t.Fatal("an unparsable flag must fail")
+	}
 	if err := c.Do([]string{"-prefix=a"}, nil, &out); err == nil {
 		t.Fatal("minted for a relative prefix")
 	}
