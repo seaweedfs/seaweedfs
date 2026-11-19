@@ -204,6 +204,57 @@ func TestCommitCompactDeletionTailKeepsWritable(t *testing.T) {
 	}
 }
 
+func TestCommitCompactKeepsEmptyNeedleWrittenDuringCompaction(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	for i := uint64(1); i <= 3; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false, false); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+	}
+
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+
+	empty := newEmptyNeedle(10)
+	empty.Cookie = 0x0abcdef0
+	if _, _, _, err := v.writeNeedle2(empty, true, false, false); err != nil {
+		t.Fatalf("write empty needle: %v", err)
+	}
+	if _, _, _, err := v.writeNeedle2(newRandomNeedle(11), true, false, false); err != nil {
+		t.Fatalf("write needle 11: %v", err)
+	}
+
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit compact: %v", err)
+	}
+
+	nv, ok := v.nm.Get(empty.Id)
+	if !ok || nv.Size != 0 {
+		t.Fatalf("empty needle index entry after commit: %+v found=%v, want size 0", nv, ok)
+	}
+	record, _, _, err := needle.ReadNeedleHeader(v.DataBackend, v.Version(), nv.Offset.ToActualOffset())
+	if err != nil {
+		t.Fatalf("read compacted record header: %v", err)
+	}
+	if record.Id != empty.Id || record.Cookie != empty.Cookie {
+		t.Fatalf("compacted record is id %d cookie %x, want the written id %d cookie %x", record.Id, record.Cookie, empty.Id, empty.Cookie)
+	}
+
+	read := newEmptyNeedle(10)
+	read.Cookie = empty.Cookie
+	if _, err := v.readNeedle(read, nil, nil); err != nil {
+		t.Fatalf("read empty needle after commit: %v", err)
+	}
+}
+
 // A second vacuum must not take a running compaction as its own: reporting
 // success would let it commit or delete the other run's .cpd/.cpx.
 func TestCompactionInProgressRefusesOtherVacuumSteps(t *testing.T) {

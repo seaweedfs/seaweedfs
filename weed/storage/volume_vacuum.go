@@ -593,7 +593,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 			}
 		}
 		//updated needle
-		if !increIdxEntry.offset.IsZero() && increIdxEntry.size != 0 && increIdxEntry.size.IsValid() {
+		if !increIdxEntry.offset.IsZero() && !increIdxEntry.size.IsDeleted() {
 			//even the needle cache in memory is hit, the need_bytes is correct
 			glog.V(4).Infof("file %d offset %d size %d", key, increIdxEntry.offset.ToActualOffset(), increIdxEntry.size)
 			var needleBytes []byte
@@ -602,7 +602,9 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 				v.checkReadWriteError(err)
 				return fmt.Errorf("ReadNeedleBlob %s key %d offset %d size %d failed: %w", oldDatFile.Name(), key, increIdxEntry.offset.ToActualOffset(), increIdxEntry.size, err)
 			}
-			dstDatBackend.Write(needleBytes)
+			if _, err = dstDatBackend.Write(needleBytes); err != nil {
+				return fmt.Errorf("write %s key %d failed: %w", dst.Name(), key, err)
+			}
 			idxEntryBytes = needle_map.ToBytes(key, ToOffset(offset), increIdxEntry.size)
 		} else { //deleted needle
 			//fakeDelNeedle's default Data field is nil
