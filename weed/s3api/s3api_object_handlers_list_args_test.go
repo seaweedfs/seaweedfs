@@ -106,6 +106,10 @@ func TestListObjectsV1EncodesDelimiterNotPrefix(t *testing.T) {
 	assert.Contains(t, body, "<Prefix>dir a/&#xA;+</Prefix>")
 	assert.Contains(t, body, "<Delimiter>%20</Delimiter>")
 
+	response.Prefix = "dir a/\x01"
+	body = string(s3err.EncodeXMLResponse(toListBucketResultV1(response)))
+	assert.Contains(t, body, "<Prefix>dir%20a/%01</Prefix>")
+
 	response.EncodingType = ""
 	body = string(s3err.EncodeXMLResponse(toListBucketResultV1(response)))
 	assert.Contains(t, body, "<Delimiter> </Delimiter>")
