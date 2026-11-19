@@ -473,6 +473,34 @@ func TestCollectEntryInvalidationsCarryAuthoritativeEntries(t *testing.T) {
 	}
 }
 
+// TestRenameFragmentsKeepSignatures: a handle fences an invalidation by its
+// timestamp only within the filer clock the signatures name, so the halves a
+// rename is split into keep the event's.
+func TestRenameFragmentsKeepSignatures(t *testing.T) {
+	rename := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/src",
+		TsNs:      78,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "file.tmp"},
+			NewEntry:      &filer_pb.Entry{Name: "file.txt"},
+			NewParentPath: "/dst",
+			Signatures:    []int32{7},
+		},
+	}
+	var got []EntryInvalidation
+	for _, fragment := range []*filer_pb.SubscribeMetadataResponse{metadataDeleteFragment(rename), metadataCreateFragment(rename)} {
+		got = append(got, collectEntryInvalidations(fragment)...)
+	}
+	if len(got) != 2 {
+		t.Fatalf("fragment invalidations = %+v, want one per half", got)
+	}
+	for _, invalidation := range got {
+		if len(invalidation.Signatures) != 1 || invalidation.Signatures[0] != 7 {
+			t.Errorf("invalidation of %s carries signatures %v, want [7]", invalidation.Path, invalidation.Signatures)
+		}
+	}
+}
+
 func newTestMetaCache(t *testing.T, cached map[util.FullPath]bool) (*MetaCache, map[util.FullPath]bool, *recordedPaths, *recordedPaths) {
 	t.Helper()
 

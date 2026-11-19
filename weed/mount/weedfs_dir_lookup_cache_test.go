@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -510,5 +511,118 @@ func TestLookupRefreshesStaleSection(t *testing.T) {
 	}
 	if got := fake.listCalls.Load() - listCallsBefore; got != 1 {
 		t.Errorf("ListEntries RPCs = %d, want 1 (one section refresh)", got)
+	}
+}
+
+// lookupEntryWithin runs lookupEntry on its own goroutine and reports whether
+// it returned before the deadline. The deadline is not a timing assertion: a
+// lookup that returns at all returns well inside it, and one that queued on a
+// stalled build does not return until the test releases the build.
+func lookupEntryWithin(wfs *WFS, fullpath util.FullPath, deadline time.Duration) (name string, status fuse.Status, returned bool) {
+	type result struct {
+		name   string
+		status fuse.Status
+	}
+	done := make(chan result, 1)
+	go func() {
+		entry, _, status := wfs.lookupEntry(context.Background(), fullpath)
+		r := result{status: status}
+		if entry != nil {
+			r.name = entry.Name()
+		}
+		done <- r
+	}()
+	select {
+	case r := <-done:
+		return r.name, r.status, true
+	case <-time.After(deadline):
+		return "", fuse.EIO, false
+	}
+}
+
+// TestLookupDoesNotWaitOutSlowRebuild: a lookup that starts the rebuild of an
+// expired directory stops waiting for it after lookupRebuildWaitTime and
+// answers with one LookupEntry RPC. The build carries on without it, so once
+// the listing completes later lookups are served from the cache again.
+func TestLookupDoesNotWaitOutSlowRebuild(t *testing.T) {
+	wfs := newLookupCacheTestWFS(t, 60)
+	wfs.lookupRebuildWait = 50 * time.Millisecond
+	dir := util.FullPath("/dir")
+	wfs.inodeToPath.Lookup(dir, time.Now().Unix(), true, false, 0, true)
+
+	fake := &lookupCacheTestFiler{
+		entries: []*filer_pb.Entry{
+			{Name: "a", Attributes: &filer_pb.FuseAttributes{FileSize: 1, FileMode: 0100644}},
+			{Name: "b", Attributes: &filer_pb.FuseAttributes{FileSize: 2, FileMode: 0100644}},
+		},
+		snapshotTsNs: 5000,
+	}
+	startFakeFiler(t, wfs, fake)
+
+	if err := meta_cache.EnsureVisited(context.Background(), wfs.metaCache, wfs, dir, 0); err != nil {
+		t.Fatalf("EnsureVisited: %v", err)
+	}
+	expireDirCache(t, wfs.inodeToPath, dir)
+
+	// Stall the rebuild's listing until released.
+	started := make(chan struct{})
+	gate := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(gate) }) }
+	t.Cleanup(release)
+	fake.setListGate(gate, started)
+
+	const deadline = 10 * time.Second
+	lookupCallsBefore := fake.lookupCalls.Load()
+	name, status, returned := lookupEntryWithin(wfs, dir.Child("a"), deadline)
+	if !returned {
+		t.Fatal("lookup is still waiting on a rebuild whose listing is stalled")
+	}
+	if status != fuse.OK || name != "a" {
+		t.Fatalf("lookupEntry a: status=%v name=%q", status, name)
+	}
+	if got := fake.lookupCalls.Load() - lookupCallsBefore; got != 1 {
+		t.Errorf("LookupDirectoryEntry RPCs = %d, want 1 (fall back to the per-entry RPC)", got)
+	}
+	// The build runs on its own goroutine and may reach the filer only after
+	// the lookup stopped waiting for it, so wait for its listing to arrive
+	// rather than reading how far it got when the lookup returned. From here
+	// on that listing is in flight, parked at the gate, and already counted.
+	select {
+	case <-started:
+	case <-time.After(deadline):
+		t.Fatal("lookup should have started a rebuild")
+	}
+
+	// The wait that timed out counts as a rebuild attempt, so until the
+	// cooldown passes a lookup goes straight to the per-entry RPC. Were it to
+	// queue on the build again it could not return: the build is still
+	// stalled and the wait is now far longer than the deadline.
+	wfs.lookupRebuildWait = time.Hour
+	listCallsBefore := fake.listCalls.Load()
+	if _, status, returned := lookupEntryWithin(wfs, dir.Child("b"), deadline); !returned {
+		t.Fatal("second lookup queued on the build that is still in flight")
+	} else if status != fuse.OK {
+		t.Fatalf("lookupEntry b: %v", status)
+	}
+	if got := fake.listCalls.Load() - listCallsBefore; got != 0 {
+		t.Errorf("second lookup ListEntries RPCs = %d, want 0 (no second rebuild during the cooldown)", got)
+	}
+
+	// Let the listing finish: the build the first lookup gave up on completes
+	// and publishes the directory.
+	release()
+	for end := time.Now().Add(deadline); !wfs.inodeToPath.IsChildrenCached(dir); {
+		if time.Now().After(end) {
+			t.Fatal("the rebuild the lookup stopped waiting for never completed")
+		}
+		runtime.Gosched()
+	}
+	lookupCallsBefore = fake.lookupCalls.Load()
+	if name, status, returned := lookupEntryWithin(wfs, dir.Child("a"), deadline); !returned || status != fuse.OK || name != "a" {
+		t.Fatalf("lookupEntry a after rebuild: returned=%v status=%v name=%q", returned, status, name)
+	}
+	if got := fake.lookupCalls.Load() - lookupCallsBefore; got != 0 {
+		t.Errorf("LookupDirectoryEntry RPCs = %d, want 0 (served from the rebuilt cache)", got)
 	}
 }

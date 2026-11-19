@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"math"
 	"os"
 	"sync"
 	"time"
@@ -49,6 +48,10 @@ type MetaCache struct {
 	// instead of streaming to the limit again to rediscover them.
 	oversizedDirs map[util.FullPath]struct{}
 
+	// rebuildWipeInserts holds the children inserted into each directory
+	// while its rebuild wipe runs; the wipe keeps them.
+	rebuildWipeInserts map[util.FullPath]map[string]struct{}
+
 	// dirVersionFloors is each cached directory's listing snapshot: the
 	// version of every child the listing covered, present or absent, unless
 	// a later event gave that child its own record. One map write per build
@@ -86,6 +89,9 @@ var (
 
 type directoryBuildState struct {
 	bufferedEvents []*filer_pb.SubscribeMetadataResponse
+	// removals the rebuild wipe declined as being of another file than the
+	// one cached; the replay checks them again against what it finds
+	declinedRemovals map[*filer_pb.SubscribeMetadataResponse]struct{}
 }
 
 const recentEventDedupWindow = 4096
@@ -135,6 +141,7 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		dirVersionFloors:     make(map[util.FullPath]int64),
 		dirSections:          make(map[util.FullPath]*sectionList),
 		oversizedDirs:        make(map[util.FullPath]struct{}),
+		rebuildWipeInserts:   make(map[util.FullPath]map[string]struct{}),
 	}
 	mc.invalidateWorker = util.NewAsyncBatchWorker(func(batch []EntryInvalidation) {
 		for _, invalidation := range batch {
@@ -175,6 +182,10 @@ func (mc *MetaCache) InsertEntry(ctx context.Context, entry *filer.Entry, versio
 func (mc *MetaCache) doInsertEntry(ctx context.Context, entry *filer.Entry, versionTsNs int64) error {
 	if err := mc.localStore.InsertEntry(ctx, entry); err != nil {
 		return err
+	}
+	dir, name := entry.FullPath.DirAndName()
+	if inserted, wiping := mc.rebuildWipeInserts[util.FullPath(dir)]; wiping {
+		inserted[name] = struct{}{}
 	}
 	mc.setEntryVersionLocked(ctx, entry.FullPath, versionTsNs)
 	mc.noteHardLinkVersionLocked(ctx, entry.HardLinkId, versionTsNs)
@@ -718,34 +729,87 @@ func (mc *MetaCache) SetPinnedChildFn(fn func(*filer.Entry) bool) {
 	mc.pinnedChildFn = fn
 }
 
+// rebuildWipeBatchSize caps how many cached children one locked step of a
+// rebuild's wipe visits. Every metadata read in the mount takes mc's read lock,
+// and a pending writer blocks new readers, so a wipe that held the write lock
+// across a whole directory stalled lookups in unrelated directories for as long
+// as the scan took — longer still while leveldb carries the deletion markers of
+// earlier wipes of the same directory.
+const rebuildWipeBatchSize = 1024
+
 // deleteFolderChildrenForRebuild clears a directory's cached children ahead of a
 // rebuild, but keeps any child flagged pinned by pinnedChildFn — a local-only
 // create not yet flushed to the filer. A rebuild refills from a filer listing
 // that does not include such a create; a blind wipe would drop it and then
 // markCachedFn publishes the directory authoritatively cached without a file the
 // client created, so it vanishes from the mount.
+//
+// The wipe runs in batches and lets go of the lock between them, so what the
+// single-lock wipe made wait now lands while it runs: a create's placeholder,
+// which keepInsertsDuringWipe keeps, and the unlink or rename that ends such a
+// file before the listing starts, which vacateDuringWipe applies.
 func (mc *MetaCache) deleteFolderChildrenForRebuild(ctx context.Context, dirPath util.FullPath) error {
+	defer mc.keepInsertsDuringWipe(dirPath)()
+	startFrom := ""
+	for {
+		last, err := mc.deleteFolderChildrenBatch(ctx, dirPath, startFrom)
+		if err != nil {
+			return err
+		}
+		if last == "" {
+			return nil
+		}
+		startFrom = last
+	}
+}
+
+// keepInsertsDuringWipe makes a wipe of dirPath keep the children inserted
+// until the returned func runs. A deferred create inserts its placeholder
+// before its handle pins it; the single-lock wipe kept such an insert by
+// making it wait, and a batch running in that gap must not drop it either.
+func (mc *MetaCache) keepInsertsDuringWipe(dirPath util.FullPath) func() {
+	mc.Lock()
+	mc.rebuildWipeInserts[dirPath] = make(map[string]struct{})
+	mc.Unlock()
+	return func() {
+		mc.Lock()
+		delete(mc.rebuildWipeInserts, dirPath)
+		mc.Unlock()
+	}
+}
+
+// deleteFolderChildrenBatch deletes the unpinned ones among the next
+// rebuildWipeBatchSize children of dirPath that sort after startFrom. It
+// returns the name to resume from, or "" once the directory is exhausted. A
+// child is judged pinned under the same lock that deletes it, so a create
+// pinned between batches survives as surely as one pinned before the wipe
+// began.
+func (mc *MetaCache) deleteFolderChildrenBatch(ctx context.Context, dirPath util.FullPath, startFrom string) (string, error) {
 	mc.Lock()
 	defer mc.Unlock()
-	if mc.pinnedChildFn == nil {
-		return mc.localStore.DeleteFolderChildren(ctx, dirPath)
-	}
-	var pinned []*filer.Entry
-	if _, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, "", true, math.MaxInt64, func(entry *filer.Entry) (bool, error) {
-		if mc.pinnedChildFn(entry) {
-			pinned = append(pinned, entry)
+	visited := 0
+	var doomed []util.FullPath
+	inserted := mc.rebuildWipeInserts[dirPath]
+	last, err := mc.localStore.ListDirectoryEntries(ctx, dirPath, startFrom, false, rebuildWipeBatchSize, func(entry *filer.Entry) (bool, error) {
+		visited++
+		if _, kept := inserted[entry.Name()]; kept {
+			return true, nil
+		}
+		if mc.pinnedChildFn == nil || !mc.pinnedChildFn(entry) {
+			doomed = append(doomed, entry.FullPath)
 		}
 		return true, nil
-	}); err != nil {
-		return err
+	})
+	if err != nil {
+		return "", err
 	}
-	if err := mc.localStore.DeleteFolderChildren(ctx, dirPath); err != nil {
-		return err
+	if err := mc.leveldbStore.BatchDeleteEntries(ctx, doomed); err != nil {
+		return "", err
 	}
-	if len(pinned) > 0 {
-		return mc.doBatchInsertEntries(ctx, pinned)
+	if visited < rebuildWipeBatchSize {
+		return "", nil
 	}
-	return nil
+	return last, nil
 }
 
 // ListDirectoryEntries reports the last name the store reached, which is not
@@ -973,8 +1037,100 @@ func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_p
 			continue
 		}
 		state.bufferedEvents = append(state.bufferedEvents, events...)
+		for _, declined := range mc.vacateDuringWipe(ctx, events) {
+			if state.declinedRemovals == nil {
+				state.declinedRemovals = make(map[*filer_pb.SubscribeMetadataResponse]struct{})
+			}
+			state.declinedRemovals[declined] = struct{}{}
+		}
 	}
 	return nil
+}
+
+// vacateDuringWipe takes out of the store, at once, the paths that events
+// buffered for a directory vacate while its rebuild wipe runs. The build
+// replays only the events later than its listing's snapshot and leaves the
+// earlier ones to the listing, which starts after the wipe. A listing shows
+// that a file is gone only by not having it, and that removes nothing: an
+// entry the wipe kept, a deferred create's placeholder, would stay cached
+// after its file was flushed and then unlinked or renamed away before the
+// wipe ended. Once the wipe is over the store holds what the listing put
+// there, and a removal earlier than the snapshot may still arrive, so the
+// event is left to the replay again.
+//
+// It returns the removals it declined as being of another file, which an
+// unversioned listing would otherwise replay over the entry the wipe kept.
+func (mc *MetaCache) vacateDuringWipe(ctx context.Context, events []*filer_pb.SubscribeMetadataResponse) (declined []*filer_pb.SubscribeMetadataResponse) {
+	mc.Lock()
+	defer mc.Unlock()
+	for _, event := range events {
+		oldDir, hasOld := metadataOldParentDir(event)
+		if !hasOld {
+			continue
+		}
+		if _, wiping := mc.rebuildWipeInserts[oldDir]; !wiping {
+			continue
+		}
+		old := event.EventNotification.OldEntry
+		oldPath := oldDir.Child(old.Name)
+		if newDir, hasNew := metadataNewParentDir(event); hasNew && newDir.Child(event.EventNotification.NewEntry.Name) == oldPath {
+			continue // rewritten in place
+		}
+		if event.TsNs != 0 && mc.entryVersionBlocksLocked(ctx, oldPath, event.TsNs, true) {
+			continue // older than what is cached there
+		}
+		// A placeholder is unversioned and fenced against nothing, so a late
+		// removal of an earlier file of the same name is told apart by the
+		// file it took away.
+		cached, err := mc.localStore.FindEntry(ctx, oldPath)
+		if err != nil || cached == nil {
+			continue
+		}
+		if !isCachedFile(old, cached) {
+			declined = append(declined, event)
+			continue
+		}
+		// OP=MV, as where a replayed event vacates a path: taking a name out
+		// of the cache is not an unlink of a hard link's shared record.
+		if err := mc.localStore.DeleteEntry(context.WithValue(ctx, "OP", "MV"), oldPath); err != nil {
+			glog.V(1).Infof("vacate %s while its directory is wiped: %v", oldPath, err)
+			continue
+		}
+		// The placeholder's record goes with it, or the name would stay
+		// unversioned.
+		mc.clearEntryVersionLocked(ctx, oldPath)
+	}
+	return declined
+}
+
+// declinedRemovalForReplay returns the removal the wipe declined, or only the
+// name it puts in place if the entry the replay finds there is still another
+// file. Earlier buffered events may have replaced the one the wipe saw.
+func (mc *MetaCache) declinedRemovalForReplay(ctx context.Context, event *filer_pb.SubscribeMetadataResponse) *filer_pb.SubscribeMetadataResponse {
+	mc.Lock()
+	defer mc.Unlock()
+	oldDir, _ := metadataOldParentDir(event)
+	old := event.EventNotification.OldEntry
+	cached, err := mc.localStore.FindEntry(ctx, oldDir.Child(old.Name))
+	if err != nil || cached == nil || isCachedFile(old, cached) {
+		return event
+	}
+	return metadataCreateFragment(event)
+}
+
+// isCachedFile reports whether old, the entry an event took away, is the file
+// cached at its path: the same inode, or with no inode to compare, the same
+// creation time. An event that only names the file cannot tell, and is taken
+// at its word.
+func isCachedFile(old *filer_pb.Entry, cached *filer.Entry) bool {
+	attributes := old.GetAttributes()
+	if attributes == nil {
+		return true
+	}
+	if attributes.Inode != 0 && cached.Attr.Inode != 0 {
+		return attributes.Inode == cached.Attr.Inode
+	}
+	return attributes.Crtime == 0 || attributes.Crtime == cached.Attr.Crtime.Unix()
 }
 
 func (mc *MetaCache) applyMetadataResponseDirect(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions, allowUncachedInsert bool) error {
@@ -1171,7 +1327,15 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 	}
 	mc.Unlock()
 
-	for _, event := range state.bufferedEvents {
+	for i, event := range state.bufferedEvents {
+		// Decided here for the invalidations below too.
+		if _, declined := state.declinedRemovals[event]; declined {
+			event = mc.declinedRemovalForReplay(ctx, event)
+			state.bufferedEvents[i] = event
+			if event == nil {
+				continue
+			}
+		}
 		// When the server provided a snapshot timestamp, skip events that
 		// the listing already included. When snapshotTsNs == 0 (empty
 		// directory — server returned no entries and no snapshot), replay
@@ -1191,6 +1355,9 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 	// so a handle can hold older state than the completed directory. After
 	// markCachedFn, versioned at the snapshot to outrank the mid-build install.
 	for _, event := range state.bufferedEvents {
+		if event == nil {
+			continue
+		}
 		if event.TsNs < snapshotTsNs {
 			event.TsNs = snapshotTsNs
 		}
@@ -1273,7 +1440,8 @@ func metadataDeleteFragment(resp *filer_pb.SubscribeMetadataResponse) *filer_pb.
 	return &filer_pb.SubscribeMetadataResponse{
 		Directory: resp.Directory,
 		EventNotification: &filer_pb.EventNotification{
-			OldEntry: proto.Clone(resp.EventNotification.OldEntry).(*filer_pb.Entry),
+			OldEntry:   proto.Clone(resp.EventNotification.OldEntry).(*filer_pb.Entry),
+			Signatures: resp.EventNotification.Signatures,
 		},
 		TsNs: resp.TsNs,
 	}
@@ -1292,6 +1460,7 @@ func metadataCreateFragment(resp *filer_pb.SubscribeMetadataResponse) *filer_pb.
 		EventNotification: &filer_pb.EventNotification{
 			NewEntry:      proto.Clone(resp.EventNotification.NewEntry).(*filer_pb.Entry),
 			NewParentPath: newDir,
+			Signatures:    resp.EventNotification.Signatures,
 		},
 		TsNs: resp.TsNs,
 	}

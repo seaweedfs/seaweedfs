@@ -9,6 +9,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -158,5 +159,39 @@ func TestUnavailableDatabaseFailsListAndDelete(t *testing.T) {
 	}
 	if err := store.DeleteFolderChildren(ctx, "/dir"); err == nil {
 		t.Fatal("delete children on a closed database succeeded")
+	}
+}
+
+// TestBatchDeleteEntries: one batch removes exactly the named entries, a name
+// that is not stored is not an error, and an empty batch is a no-op.
+func TestBatchDeleteEntries(t *testing.T) {
+	store := &LevelDBStore{}
+	store.initialize(t.TempDir())
+	defer store.Shutdown()
+	ctx := context.Background()
+
+	var entries []*filer.Entry
+	for _, p := range []util.FullPath{"/dir/a", "/dir/b", "/dir/c", "/other/a"} {
+		entries = append(entries, &filer.Entry{FullPath: p, Attr: filer.Attr{Mode: 0644}})
+	}
+	if err := store.BatchInsertEntries(ctx, entries); err != nil {
+		t.Fatalf("batch insert: %v", err)
+	}
+
+	if err := store.BatchDeleteEntries(ctx, nil); err != nil {
+		t.Fatalf("empty batch delete: %v", err)
+	}
+	if err := store.BatchDeleteEntries(ctx, []util.FullPath{"/dir/a", "/dir/missing", "/dir/c"}); err != nil {
+		t.Fatalf("batch delete: %v", err)
+	}
+
+	for p, wantFound := range map[util.FullPath]bool{"/dir/a": false, "/dir/b": true, "/dir/c": false, "/other/a": true} {
+		_, err := store.FindEntry(ctx, p)
+		if wantFound && err != nil {
+			t.Errorf("%s should have been kept: %v", p, err)
+		}
+		if !wantFound && err != filer_pb.ErrNotFound {
+			t.Errorf("%s should have been deleted, FindEntry returned %v", p, err)
+		}
 	}
 }

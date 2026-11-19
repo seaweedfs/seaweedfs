@@ -143,6 +143,25 @@ func (store *LevelDBStore) BatchInsertEntries(ctx context.Context, entries []*fi
 	return nil
 }
 
+// BatchDeleteEntries deletes multiple entries in a single LevelDB batch write,
+// the counterpart of BatchInsertEntries.
+func (store *LevelDBStore) BatchDeleteEntries(ctx context.Context, paths []weed_util.FullPath) error {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	batch := new(leveldb.Batch)
+	for _, fullpath := range paths {
+		batch.Delete(genKey(fullpath.DirAndName()))
+	}
+
+	if err := store.db.Write(batch, writeOptions(ctx)); err != nil {
+		return fmt.Errorf("batch delete: %w", err)
+	}
+
+	return nil
+}
+
 func (store *LevelDBStore) FindEntry(ctx context.Context, fullpath weed_util.FullPath) (entry *filer.Entry, err error) {
 	key := genKey(fullpath.DirAndName())
 
