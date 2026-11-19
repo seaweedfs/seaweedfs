@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -62,9 +63,60 @@ func periodicGrowCount(lastGrowCount uint32, writable, crowded int) (count uint3
 	return 0, false
 }
 
+// writableDiskSeries keeps the label values of the per-disk series last set
+// for each layout, so disks that stop holding its writable volumes drop out.
+type writableDiskSeries map[*topology.VolumeLayout]map[string][]string
+
+func (s writableDiskSeries) update(vl *topology.VolumeLayout, layout ...string) {
+	writable, crowded := vl.WritableVolumesPerDisk()
+	current := make(map[string][]string, 2*len(writable))
+	for disk, count := range writable {
+		for _, state := range []struct {
+			name  string
+			count int
+		}{{"writable", count}, {"crowded", crowded[disk]}} {
+			labels := append(append(make([]string, 0, len(layout)+5), layout...),
+				disk.DataCenter, disk.Rack, disk.Node, strconv.FormatUint(uint64(disk.DiskId), 10), state.name)
+			stats.MasterWritableVolumesPerDisk.WithLabelValues(labels...).Set(float64(state.count))
+			current[strings.Join(labels, "\x00")] = labels
+		}
+	}
+	for key, labels := range s[vl] {
+		if _, ok := current[key]; !ok {
+			stats.MasterWritableVolumesPerDisk.DeleteLabelValues(labels...)
+		}
+	}
+	s[vl] = current
+}
+
+func (s writableDiskSeries) retain(layouts []*topology.VolumeLayoutCollection) {
+	listed := make(map[*topology.VolumeLayout]bool, len(layouts))
+	for _, vlc := range layouts {
+		listed[vlc.VolumeLayout] = true
+	}
+	for vl, series := range s {
+		if listed[vl] {
+			continue
+		}
+		for _, labels := range series {
+			stats.MasterWritableVolumesPerDisk.DeleteLabelValues(labels...)
+		}
+		delete(s, vl)
+	}
+}
+
+func resetLeaderLayoutGauges(diskSeries writableDiskSeries) {
+	stats.MasterVolumeLayoutWritable.Reset()
+	stats.MasterVolumeLayoutCrowded.Reset()
+	stats.MasterUnderReplicatedVolumes.Reset()
+	stats.MasterWritableVolumesPerDisk.Reset()
+	clear(diskSeries)
+}
+
 func (ms *MasterServer) ProcessGrowRequest() {
 	go func() {
 		ctx := context.Background()
+		diskSeries := make(writableDiskSeries)
 		firstRun := true
 		for {
 			if firstRun {
@@ -73,10 +125,13 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				time.Sleep(5*time.Minute + time.Duration(30*rand.Float32())*time.Second)
 			}
 			if !ms.Topo.IsLeader() {
+				resetLeaderLayoutGauges(diskSeries)
 				continue
 			}
 			dcs := ms.Topo.ListDCAndRacks()
-			for _, vlc := range ms.Topo.ListVolumeLayoutCollections() {
+			layouts := ms.Topo.ListVolumeLayoutCollections()
+			diskSeries.retain(layouts)
+			for _, vlc := range layouts {
 				var err error
 				vl := vlc.VolumeLayout
 				lastGrowCount := vl.GetLastGrowCount()
@@ -86,6 +141,7 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				writable, crowded := vl.GetWritableVolumeCount()
 				vgr := vlc.ToVolumeGrowRequest()
 				underReplicated := vl.CountUnderReplicatedVolumes()
+				diskSeries.update(vl, vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl)
 				stats.MasterVolumeLayoutWritable.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(writable))
 				stats.MasterVolumeLayoutCrowded.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(crowded))
 				stats.MasterUnderReplicatedVolumes.WithLabelValues(vlc.Collection, vgr.DiskType, vgr.Replication, vgr.Ttl).Set(float64(underReplicated))
