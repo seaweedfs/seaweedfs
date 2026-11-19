@@ -436,6 +436,27 @@ func TestExtractConditionValuesFromRequestMaxKeys(t *testing.T) {
 	}
 }
 
+func TestExtractConditionValuesFromRequestAuthType(t *testing.T) {
+	for _, tt := range []struct {
+		query  string
+		header string
+		want   []string
+	}{
+		{"X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=key%2F20261119%2Fus-east-1%2Fs3%2Faws4_request", "", []string{"REST-QUERY-STRING"}},
+		{"AWSAccessKeyId=key&Expires=1&Signature=sig", "", []string{"REST-QUERY-STRING"}},
+		{"", "AWS4-HMAC-SHA256 Credential=key/20261119/us-east-1/s3/aws4_request", []string{"REST-HEADER"}},
+		{"", "", nil},
+	} {
+		req := &http.Request{Method: "GET", URL: &url.URL{Path: "/test-bucket/key", RawQuery: tt.query}, Header: http.Header{}, RemoteAddr: "10.0.0.5:54321"}
+		if tt.header != "" {
+			req.Header.Set("Authorization", tt.header)
+		}
+		if got := NewPolicyEngine().ExtractConditionValuesFromRequest(req)["s3:authType"]; !slices.Equal(got, tt.want) {
+			t.Errorf("%q %q: s3:authType = %v, want %v", tt.query, tt.header, got, tt.want)
+		}
+	}
+}
+
 func TestExtractConditionValuesFromRequestSourceIPPrecedence(t *testing.T) {
 	tests := []struct {
 		name       string

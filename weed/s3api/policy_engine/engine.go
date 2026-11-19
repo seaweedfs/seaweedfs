@@ -416,10 +416,33 @@ func ExtractPrincipalVariables(principal string) map[string][]string {
 
 // ExtractConditionValuesFromRequest extracts condition values from HTTP request
 func (engine *PolicyEngine) ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
+	values := RequestConditionValues(r)
+	values["aws:SourceIp"] = []string{engine.extractSourceIP(r)}
+
+	// S3 bucket-level conditions
+	if delimiter := r.URL.Query().Get("delimiter"); delimiter != "" {
+		values["s3:delimiter"] = []string{delimiter}
+	}
+
+	if prefix := r.URL.Query().Get("prefix"); prefix != "" {
+		values["s3:prefix"] = []string{prefix}
+	}
+
+	// Multipart listings use max-uploads, so max-keys cannot constrain them.
+	if maxKeys := r.URL.Query().Get("max-keys"); maxKeys != "" && !r.URL.Query().Has("uploads") {
+		values["s3:max-keys"] = []string{maxKeys}
+	}
+
+	return values
+}
+
+// RequestConditionValues returns the condition keys read from the request
+// itself, leaving out aws:SourceIp and the bucket-listing keys, which depend
+// on the caller's proxy and listing handling.
+func RequestConditionValues(r *http.Request) map[string][]string {
 	values := make(map[string][]string)
 
 	// AWS condition keys
-	values["aws:SourceIp"] = []string{engine.extractSourceIP(r)}
 	values["aws:SecureTransport"] = []string{fmt.Sprintf("%t", r.TLS != nil)}
 	// Use AWS standard condition key for current time
 	values["aws:CurrentTime"] = []string{time.Now().Format(time.RFC3339)}
@@ -445,20 +468,6 @@ func (engine *PolicyEngine) ExtractConditionValuesFromRequest(r *http.Request) m
 		values[RequestObjectTagKeys] = slices.Sorted(maps.Keys(tags))
 	}
 
-	// S3 bucket-level conditions
-	if delimiter := r.URL.Query().Get("delimiter"); delimiter != "" {
-		values["s3:delimiter"] = []string{delimiter}
-	}
-
-	if prefix := r.URL.Query().Get("prefix"); prefix != "" {
-		values["s3:prefix"] = []string{prefix}
-	}
-
-	// Multipart listings use max-uploads, so max-keys cannot constrain them.
-	if maxKeys := r.URL.Query().Get("max-keys"); maxKeys != "" && !r.URL.Query().Has("uploads") {
-		values["s3:max-keys"] = []string{maxKeys}
-	}
-
 	// Authentication method
 	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
 		if strings.HasPrefix(authHeader, "AWS4-HMAC-SHA256") {
@@ -466,7 +475,7 @@ func (engine *PolicyEngine) ExtractConditionValuesFromRequest(r *http.Request) m
 		} else if strings.HasPrefix(authHeader, "AWS ") {
 			values["s3:authType"] = []string{"REST-HEADER"}
 		}
-	} else if r.URL.Query().Get("AWSAccessKeyId") != "" {
+	} else if query := r.URL.Query(); query.Get("AWSAccessKeyId") != "" || query.Get("X-Amz-Credential") != "" {
 		values["s3:authType"] = []string{"REST-QUERY-STRING"}
 	}
 
