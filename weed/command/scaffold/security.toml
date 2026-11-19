@@ -11,6 +11,7 @@
 # The JWT signing keys map to:
 #   WEED_JWT_SIGNING_KEY, WEED_JWT_SIGNING_READ_KEY              (master <-> volume)
 #   WEED_JWT_FILER_SIGNING_KEY, WEED_JWT_FILER_SIGNING_READ_KEY  (s3/clients <-> filer)
+#   WEED_JWT_FILER_SIGNING_SUBSCRIBE_KEY                         (filer metadata subscriptions)
 # A set env var wins over the file, so the file can stay empty (or absent).
 
 # comma separated origins allowed to make requests to the filer and s3 gateway.
@@ -74,6 +75,17 @@ expires_after_seconds = 10           # seconds
 [jwt.filer_signing.read]
 key = ""
 expires_after_seconds = 10           # seconds
+
+# Optional. If this key is set, the filer's SubscribeMetadata and
+# SubscribeLocalMetadata gRPC calls require an mTLS-verified peer, an admin
+# token signed with jwt.filer_signing.key, or a read-only token signed with this
+# key. That token is an HS256 JWT with "exp", "allowed_methods" (a subset of
+# SubscribeMetadata and SubscribeLocalMetadata) and "allowed_prefixes"
+# (absolute paths); its holder only receives events whose paths are all under
+# one of the prefixes. Without mTLS, set jwt.filer_signing.key and this key on
+# every filer, S3 gateway, mount and filer.sync too, so they keep full access.
+[jwt.filer_signing.subscribe]
+key = ""
 
 # gRPC mTLS configuration
 # All gRPC TLS authentications are mutual (mTLS)
