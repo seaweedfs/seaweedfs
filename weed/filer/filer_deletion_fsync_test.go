@@ -28,9 +28,13 @@ type fsyncRecordingVolumeServer struct {
 	mu       sync.Mutex
 	fsync    map[string][]bool
 	failOnce map[string]string
+	inFlight func(req *volume_server_pb.BatchDeleteRequest)
 }
 
 func (v *fsyncRecordingVolumeServer) BatchDelete(_ context.Context, req *volume_server_pb.BatchDeleteRequest) (*volume_server_pb.BatchDeleteResponse, error) {
+	if v.inFlight != nil {
+		v.inFlight(req)
+	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	resp := &volume_server_pb.BatchDeleteResponse{}
@@ -210,7 +214,7 @@ func TestDeletionLedgerKeepsFsyncMarks(t *testing.T) {
 			}
 
 			for _, id := range synced {
-				f2.forgetDeletion(id)
+				f2.forgetDeletion(id, true)
 			}
 			f2.snapshotDeletionLedger()
 			f3 := newLedgerTestFiler(store)
@@ -323,5 +327,33 @@ func TestRecursiveDeleteFsyncFollowsChildPaths(t *testing.T) {
 		if want := path != "/mix/other.txt"; got != want {
 			t.Errorf("%s: fsync mark %v, want %v", path, got, want)
 		}
+	}
+}
+
+func TestPlainDeleteKeepsANewerFsyncMark(t *testing.T) {
+	withPersistedConfig(t, false)
+	v, lookup := startFsyncRecordingVolumeServer(t)
+	f := newFsyncRuleTestFiler(t)
+	ctx := context.Background()
+	fid := "6,01637037d6"
+	var once sync.Once
+	v.inFlight = func(*volume_server_pb.BatchDeleteRequest) {
+		once.Do(func() {
+			f.DeleteChunks(ctx, util.FullPath("/buckets/b/obj"), []*filer_pb.FileChunk{{FileId: fid}})
+		})
+	}
+
+	f.DeleteChunks(ctx, util.FullPath("/other/file"), []*filer_pb.FileChunk{{FileId: fid}})
+	f.FlushFileIdDeletionQueue(ctx, lookup)
+	if _, ok := f.fsyncDeletionIds([]string{fid})[fid]; !ok || f.pendingDeletionCount() != 1 {
+		t.Fatalf("a plain delete dropped the fsync request queued while it ran")
+	}
+
+	f.FlushFileIdDeletionQueue(ctx, lookup)
+	if got := v.calls(fid); len(got) != 2 || got[0] || !got[1] {
+		t.Fatalf("BatchDelete fsync calls %v, want [false true]", got)
+	}
+	if n := f.pendingDeletionCount(); n != 0 {
+		t.Errorf("pending deletions %d, want 0", n)
 	}
 }

@@ -81,7 +81,7 @@ func TestDeletionLedgerSnapshotAndRecover(t *testing.T) {
 	}
 
 	// Confirmed-gone for one id, then snapshot again.
-	f.forgetDeletion("1,02")
+	f.forgetDeletion("1,02", false)
 	f.snapshotDeletionLedger()
 	persisted, _ = readPersistedLedger(t, f)
 	if len(persisted) != 2 {
@@ -250,7 +250,7 @@ func TestDeletionLedgerChunked(t *testing.T) {
 	// Forget everything; the next snapshot is a single value again and the
 	// part keys are removed.
 	for _, id := range ids {
-		f2.forgetDeletion(id)
+		f2.forgetDeletion(id, false)
 	}
 	f2.snapshotDeletionLedger()
 	raw, err = f.Store.KvGet(context.Background(), []byte(f2.deletionLedgerKey()))
@@ -330,7 +330,7 @@ func TestDeletionLedgerZeroValueFiler(t *testing.T) {
 	if f.pendingDeletionCount() != 1 {
 		t.Fatalf("zero-value filer should lazily init the ledger, got %d", f.pendingDeletionCount())
 	}
-	f.forgetDeletion("0,01")
+	f.forgetDeletion("0,01", false)
 	if f.pendingDeletionCount() != 0 {
 		t.Fatalf("forget on zero-value filer failed, got %d", f.pendingDeletionCount())
 	}

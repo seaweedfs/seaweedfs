@@ -362,7 +362,8 @@ func (f *Filer) processDeletionBatch(ctx context.Context, toDeleteFileIds []stri
 	}
 
 	// Delete files and classify outcomes
-	outcomes := deleteFilesAndClassify(ctx, f.volumeGrpcDialOption(), uniqueFileIdsSlice, f.fsyncDeletionIds(uniqueFileIdsSlice), lookupFunc)
+	fsyncIds := f.fsyncDeletionIds(uniqueFileIdsSlice)
+	outcomes := deleteFilesAndClassify(ctx, f.volumeGrpcDialOption(), uniqueFileIdsSlice, fsyncIds, lookupFunc)
 
 	// Process outcomes
 	var successCount, notFoundCount, retryableErrorCount, permanentErrorCount int
@@ -370,14 +371,15 @@ func (f *Filer) processDeletionBatch(ctx context.Context, toDeleteFileIds []stri
 
 	for _, fileId := range uniqueFileIdsSlice {
 		outcome := outcomes[fileId]
+		_, fsynced := fsyncIds[fileId]
 
 		switch outcome.status {
 		case deletionOutcomeSuccess:
 			successCount++
-			f.forgetDeletion(fileId) // confirmed gone: drop from durable ledger
+			f.forgetDeletion(fileId, fsynced) // confirmed gone: drop from durable ledger
 		case deletionOutcomeNotFound:
 			notFoundCount++
-			f.forgetDeletion(fileId) // already gone: drop from durable ledger
+			f.forgetDeletion(fileId, fsynced) // already gone: drop from durable ledger
 		case deletionOutcomeRetryable, deletionOutcomeNoResult:
 			retryableErrorCount++
 			// Keep in the durable ledger: not confirmed, must survive restarts.
@@ -596,23 +598,25 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 	}
 
 	// Delete files and classify outcomes
-	outcomes := deleteFilesAndClassify(context.Background(), f.volumeGrpcDialOption(), fileIds, f.fsyncDeletionIds(fileIds), lookupFunc)
+	fsyncIds := f.fsyncDeletionIds(fileIds)
+	outcomes := deleteFilesAndClassify(context.Background(), f.volumeGrpcDialOption(), fileIds, fsyncIds, lookupFunc)
 
 	// Process outcomes - iterate over readyItems to ensure all items are accounted for
 	var successCount, notFoundCount, retryCount, permanentErrorCount int
 	for _, item := range readyItems {
 		outcome := outcomes[item.FileId]
+		_, fsynced := fsyncIds[item.FileId]
 
 		switch outcome.status {
 		case deletionOutcomeSuccess:
 			successCount++
-			f.DeletionRetryQueue.Remove(item) // Remove from queue (success)
-			f.forgetDeletion(item.FileId)     // confirmed gone: drop from durable ledger
+			f.DeletionRetryQueue.Remove(item)      // Remove from queue (success)
+			f.forgetDeletion(item.FileId, fsynced) // confirmed gone: drop from durable ledger
 			glog.V(2).Infof("retry successful for %s after %d attempts", item.FileId, item.RetryCount)
 		case deletionOutcomeNotFound:
 			notFoundCount++
-			f.DeletionRetryQueue.Remove(item) // Remove from queue (already deleted)
-			f.forgetDeletion(item.FileId)     // already gone: drop from durable ledger
+			f.DeletionRetryQueue.Remove(item)      // Remove from queue (already deleted)
+			f.forgetDeletion(item.FileId, fsynced) // already gone: drop from durable ledger
 		case deletionOutcomeRetryable, deletionOutcomeNoResult:
 			retryCount++
 			if outcome.status == deletionOutcomeNoResult {

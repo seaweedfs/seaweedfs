@@ -241,12 +241,16 @@ func (f *Filer) fsyncDeletionIds(fileIds []string) map[string]struct{} {
 // (deleted or already absent: the chunks are gone, so any pending record — even
 // a re-queued one — refers to work that no longer exists). Non-terminal
 // outcomes must NOT call this so the entry survives until confirmed.
-func (f *Filer) forgetDeletion(fileId string) {
+// fsynced reports whether the finished delete was durable; if not, a record
+// marked for fsync after that delete began stays for its queued copy, whose
+// durable delete syncs the tombstone.
+func (f *Filer) forgetDeletion(fileId string, fsynced bool) {
 	if fileId == "" {
 		return
 	}
 	f.deletionLedgerLock.Lock()
-	if _, exists := f.pendingDeletions[fileId]; exists {
+	_, marked := f.fsyncDeletions[fileId]
+	if _, exists := f.pendingDeletions[fileId]; exists && (fsynced || !marked) {
 		delete(f.pendingDeletions, fileId)
 		delete(f.fsyncDeletions, fileId)
 		f.deletionLedgerDirty = true
