@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -44,28 +45,65 @@ func TestReachableFirstTriesUnansweringHostLast(t *testing.T) {
 	assertOrder(t, ReachableFirst(urls), urls...)
 }
 
-func TestReachableFirstProbesOnceAfterRetryInterval(t *testing.T) {
-	forgetUnreachable(t)
-	urls := []string{"http://b:8080/3,x", "http://a:8080/3,x"}
-	unreachable.Store("a:8080", time.Now().Add(-unreachableRetryInterval))
+func expireUnreachable(t *testing.T, host string) {
+	t.Helper()
+	v, found := unreachable.Load(host)
+	if !found {
+		t.Fatalf("%s is not recorded as unreachable", host)
+	}
+	failure := v.(unanswered)
+	failure.at = failure.at.Add(-unreachableRetryInterval)
+	unreachable.Store(host, failure)
+}
 
-	// the first read to come by probes a, the next keeps it last until that settles
+func waitUnreachable(t *testing.T, host string, want bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * reachabilityProbeTimeout)
+	for {
+		v, found := unreachable.Load(host)
+		if found == want && (!found || time.Since(v.(unanswered).at) < unreachableRetryInterval) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s recorded unreachable: %v, want %v", host, found, want)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestReachableFirstProbesInBackgroundAfterRetryInterval(t *testing.T) {
+	forgetUnreachable(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	host := listener.Addr().String()
+	urls := []string{"http://" + host + "/3,x", "http://b:8080/3,x"}
+	recordUnreachable(host)
+	expireUnreachable(t, host)
+
+	// the read that finds the interval passed still tries the host last
 	assertOrder(t, ReachableFirst(urls), urls[1], urls[0])
-	assertOrder(t, ReachableFirst(urls), urls...)
-	recordReachable("a:8080")
+	waitUnreachable(t, host, false)
 	assertOrder(t, ReachableFirst(urls), urls...)
 }
 
-func TestReachableFirstProbesOneExpiredHostPerRead(t *testing.T) {
+func TestReachableFirstKeepsHostLastWhenProbeFails(t *testing.T) {
 	forgetUnreachable(t)
-	urls := []string{"http://a:8080/3,x", "http://b:8080/3,x", "http://c:8080/3,x"}
-	expired := time.Now().Add(-unreachableRetryInterval)
-	unreachable.Store("a:8080", expired)
-	unreachable.Store("c:8080", expired)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := listener.Addr().String()
+	listener.Close()
+	urls := []string{"http://" + host + "/3,x", "http://b:8080/3,x"}
+	recordUnreachable(host)
+	expireUnreachable(t, host)
 
-	assertOrder(t, ReachableFirst(urls), urls[0], urls[1], urls[2])
-	assertOrder(t, ReachableFirst(urls), urls[2], urls[1], urls[0])
-	assertOrder(t, ReachableFirst(urls), urls[1], urls[0], urls[2])
+	assertOrder(t, ReachableFirst(urls), urls[1], urls[0])
+	waitUnreachable(t, host, true)
+	assertOrder(t, ReachableFirst(urls), urls[1], urls[0])
 }
 
 // hangupServer accepts the connection and drops it without answering, the way
