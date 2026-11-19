@@ -100,13 +100,13 @@ func TestListObjectVersionsEncodeURL(t *testing.T) {
 	assert.Equal(t, "dir a/café+1", decoded)
 }
 
-func TestListObjectsV1EncodesPrefixAndDelimiter(t *testing.T) {
-	response := ListBucketResult{Name: "b", Prefix: "dir a/café+", Delimiter: "/", MaxKeys: 1000, EncodingType: "url"}
+func TestListObjectsV1EncodesDelimiterNotPrefix(t *testing.T) {
+	response := ListBucketResult{Name: "b", Prefix: "dir a/\n+", Delimiter: " ", MaxKeys: 1000, EncodingType: "url"}
 	body := string(s3err.EncodeXMLResponse(toListBucketResultV1(response)))
-	assert.Contains(t, body, "<Prefix>dir%20a/caf%C3%A9%2B</Prefix>")
-	assert.Contains(t, body, "<Delimiter>/</Delimiter>")
+	assert.Contains(t, body, "<Prefix>dir a/&#xA;+</Prefix>")
+	assert.Contains(t, body, "<Delimiter>%20</Delimiter>")
 
 	response.EncodingType = ""
 	body = string(s3err.EncodeXMLResponse(toListBucketResultV1(response)))
-	assert.Contains(t, body, "<Prefix>dir a/café+</Prefix>")
+	assert.Contains(t, body, "<Delimiter> </Delimiter>")
 }

@@ -70,7 +70,6 @@ type listBucketResultV1 struct {
 
 func toListBucketResultV1(in ListBucketResult) listBucketResultV1 {
 	if in.EncodingType == s3.EncodingTypeUrl {
-		in.Prefix = urlPathEscape(in.Prefix)
 		in.Delimiter = urlPathEscape(in.Delimiter)
 	}
 	return listBucketResultV1{
