@@ -378,3 +378,38 @@ func TestConcurrentFailoversFromHomeCountOnce(t *testing.T) {
 		t.Fatalf("backoff: want one doubling to 60s, got %v", fc.homeBackoff)
 	}
 }
+
+// One failure leaves home's breaker closed, so only the backoff keeps the
+// client on the peer. A request reading the current filer while another fails
+// over from home must not see the peer before that backoff is in place, or it
+// switches straight back home.
+func TestFailoverFromHomeRacingReadKeepsBackoff(t *testing.T) {
+	for iter := 0; iter < 200; iter++ {
+		clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+		fc := newHomeTestClient(clock)
+		fc.RecordFilerFailure(homeA)
+
+		var stop atomic.Bool
+		var ready, done sync.WaitGroup
+		for g := 0; g < 4; g++ {
+			ready.Add(1)
+			done.Add(1)
+			go func() {
+				defer done.Done()
+				fc.GetCurrentFiler()
+				ready.Done()
+				for !stop.Load() {
+					fc.GetCurrentFiler()
+				}
+			}()
+		}
+		ready.Wait()
+		fc.SwitchCurrentFiler(homeA, peerB)
+		stop.Store(true)
+		done.Wait()
+
+		if got := fc.GetCurrentFiler(); got != peerB {
+			t.Fatalf("iteration %d: returned home inside the backoff, current %s", iter, got)
+		}
+	}
+}

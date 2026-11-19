@@ -72,7 +72,7 @@ type FilerClient struct {
 	homeFiler pb.ServerAddress
 	now       func() time.Time // clock; nil means time.Now
 
-	homeMu         sync.Mutex
+	homeMu         sync.Mutex    // serializes current-filer switches with the fields below
 	homeBackoff    time.Duration // wait after leaving home before returning to it
 	homeEligibleAt time.Time     // home is not returned to before this time
 	lastReturnHome time.Time     // when the client last returned home
@@ -239,14 +239,17 @@ func (fc *FilerClient) currentIndexPreferHomeLocked() int32 {
 		return 0
 	}
 	home := fc.homeIndexLocked()
-	if home >= 0 && home != index && fc.homeEligibleLocked() {
-		if fc.casCurrentIndexLocked(index, home, switchReturnHome) {
-			return home
-		}
-		// Another request switched the client meanwhile; follow it.
-		if index = fc.loadIndexLocked(); index < 0 {
-			return 0
-		}
+	if home < 0 || home == index {
+		return index
+	}
+	fc.homeMu.Lock()
+	defer fc.homeMu.Unlock()
+	if index = fc.loadIndexLocked(); index < 0 {
+		return 0
+	}
+	if index != home && fc.homeEligibleLocked(home) {
+		fc.moveCurrentIndexLocked(fc.filerAddresses[index], home, switchReturnHome)
+		return home
 	}
 	return index
 }
@@ -265,19 +268,17 @@ func (fc *FilerClient) homeIndexLocked() int32 {
 	return -1
 }
 
-// homeEligibleLocked reports whether the client may return to the home filer:
-// it is listed, its circuit breaker is closed or due for a re-check, and the
-// return backoff has passed. The caller holds filerAddressesMu.
-func (fc *FilerClient) homeEligibleLocked() bool {
-	home := fc.homeIndexLocked()
+// homeEligibleLocked reports whether the client may return to the home filer
+// at index home: it is listed, its circuit breaker is closed or due for a
+// re-check, and the return backoff has passed. The caller holds
+// filerAddressesMu and homeMu.
+func (fc *FilerClient) homeEligibleLocked(home int32) bool {
 	if home < 0 || int(home) >= len(fc.filerHealth) {
 		return false
 	}
 	if fc.shouldSkipUnhealthyFilerWithHealth(fc.filerHealth[home]) {
 		return false
 	}
-	fc.homeMu.Lock()
-	defer fc.homeMu.Unlock()
 	return !fc.clock().Before(fc.homeEligibleAt)
 }
 
@@ -324,13 +325,15 @@ func (fc *FilerClient) SwitchCurrentFiler(from, to pb.ServerAddress) {
 // switchCurrentFilerLocked switches from `from` to `to` if `from` is current.
 // The caller holds filerAddressesMu (read or write).
 func (fc *FilerClient) switchCurrentFilerLocked(from, to pb.ServerAddress, reason string) {
+	fc.homeMu.Lock()
+	defer fc.homeMu.Unlock()
 	cur := fc.loadIndexLocked()
 	if cur < 0 || !sameFiler(fc.filerAddresses[cur], from) {
 		return
 	}
 	for i, f := range fc.filerAddresses {
 		if sameFiler(f, to) {
-			fc.casCurrentIndexLocked(cur, int32(i), reason)
+			fc.moveCurrentIndexLocked(fc.filerAddresses[cur], int32(i), reason)
 			return
 		}
 	}
@@ -650,13 +653,15 @@ func (fc *FilerClient) applyDiscoveredFilersLocked(discoveredFilers map[pb.Serve
 			}
 		}
 	}
+	fc.homeMu.Lock()
 	if newIndex < 0 {
 		newIndex = 0
-		if home := fc.homeIndexLocked(); home >= 0 && fc.homeEligibleLocked() {
+		if home := fc.homeIndexLocked(); home >= 0 && fc.homeEligibleLocked(home) {
 			newIndex = home
 		}
 	}
-	fc.setCurrentIndexFrom(currentFiler, newIndex, switchDiscovery)
+	fc.moveCurrentIndexLocked(currentFiler, newIndex, switchDiscovery)
+	fc.homeMu.Unlock()
 
 	if len(removedFilers) > 0 {
 		glog.V(0).Infof("FilerClient: removed %d filer(s) no longer in group '%s': %v", len(removedFilers), fc.filerGroup, removedFilers)
@@ -679,27 +684,14 @@ func sameFiler(a, b pb.ServerAddress) bool {
 	return filerKey(a) == filerKey(b)
 }
 
-// casCurrentIndexLocked moves the current index from oldIndex to newIndex if
-// no other request moved it first, and reports whether it did. Only the winner
-// logs the switch and feeds the home-filer bookkeeping, so concurrent failovers
-// count once. The caller holds filerAddressesMu (read or write).
-func (fc *FilerClient) casCurrentIndexLocked(oldIndex, newIndex int32, reason string) bool {
-	if oldIndex == newIndex || !atomic.CompareAndSwapInt32(&fc.filerIndex, oldIndex, newIndex) {
-		return false
-	}
-	fc.logSwitchLocked(fc.filerAddresses[oldIndex], newIndex, reason)
-	return true
-}
-
-// setCurrentIndexFrom stores newIndex unconditionally; only discovery uses it,
-// under the write lock. When that changes which filer is current, it logs the
-// switch and lets the home-filer bookkeeping see it.
-func (fc *FilerClient) setCurrentIndexFrom(from pb.ServerAddress, newIndex int32, reason string) {
+// moveCurrentIndexLocked makes newIndex current and, when that changes which
+// filer is current, logs the switch and feeds the home-filer bookkeeping. The
+// caller holds filerAddressesMu and homeMu, so the check that chose newIndex,
+// the move and the bookkeeping form one step: a request that sees the new
+// index also sees the return backoff it started, and concurrent failovers
+// from one filer count once.
+func (fc *FilerClient) moveCurrentIndexLocked(from pb.ServerAddress, newIndex int32, reason string) {
 	atomic.StoreInt32(&fc.filerIndex, newIndex)
-	fc.logSwitchLocked(from, newIndex, reason)
-}
-
-func (fc *FilerClient) logSwitchLocked(from pb.ServerAddress, newIndex int32, reason string) {
 	if newIndex < 0 || newIndex >= int32(len(fc.filerAddresses)) {
 		return
 	}
@@ -714,10 +706,9 @@ func (fc *FilerClient) logSwitchLocked(from pb.ServerAddress, newIndex int32, re
 // noteSwitchLocked records a change of the current filer for the home-filer
 // return logic and reports the return backoff now in effect. Leaving home on a
 // failover starts the backoff; leaving it again soon after a return doubles it,
-// up to homeBackoffCap; a return that held for homeHoldReset resets it.
+// up to homeBackoffCap; a return that held for homeHoldReset resets it. The
+// caller holds homeMu.
 func (fc *FilerClient) noteSwitchLocked(from, to pb.ServerAddress, reason string) time.Duration {
-	fc.homeMu.Lock()
-	defer fc.homeMu.Unlock()
 	if fc.homeBackoff <= 0 {
 		fc.homeBackoff = fc.resetTimeout
 	}
