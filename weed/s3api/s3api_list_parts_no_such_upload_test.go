@@ -366,3 +366,44 @@ func TestListPartsPagesOverRepeatedAttempts(t *testing.T) {
 		t.Fatalf("page 2 IsTruncated/NextPartNumberMarker = %v/%v, want false/nil", aws.BoolValue(output.IsTruncated), output.NextPartNumberMarker)
 	}
 }
+
+// An empty re-upload has no chunks, so it has no chunk write time; it must
+// still supersede the earlier non-empty attempt.
+func TestListPartsEmptyReplacementSupersedesEarlierAttempt(t *testing.T) {
+	const emptyETag = "d41d8cd98f00b204e9800998ecf8427e"
+	for _, tc := range []struct {
+		name               string
+		olderTs, newerTs   int64
+		olderSec, newerSec int64
+	}{
+		{name: "commit stamps", olderTs: 100, newerTs: 200},
+		{name: "mtime without commit stamps", olderSec: 1, newerSec: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			older := partAttempt("0001_99999999-9999-9999-9999-999999999999.part", 1_500_000_000, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+			older.CommitTsNs = tc.olderTs
+			older.Attributes.Mtime = tc.olderSec
+			newer := &filer_pb.Entry{
+				Name:       "0001_11111111-1111-1111-1111-111111111111.part",
+				Attributes: &filer_pb.FuseAttributes{Mtime: tc.newerSec},
+				Extended:   map[string][]byte{s3_constants.ExtETagKey: []byte(emptyETag)},
+				CommitTsNs: tc.newerTs,
+			}
+			s3a := newListPartsServer(t, &fakePartsFiler{
+				uploadEntry: uploadRecordEntry("open-upload"),
+				parts:       []*filer_pb.Entry{older, newer},
+			})
+
+			output, code := s3a.listObjectParts(listPartsInput("open-upload"))
+			if code != s3err.ErrNone {
+				t.Fatalf("code = %v, want ErrNone", code)
+			}
+			if got := partNumbers(output); len(got) != 1 || got[0] != 1 {
+				t.Fatalf("parts = %v, want [1]", got)
+			}
+			if got := partETags(output)[0]; got != "\""+emptyETag+"\"" || aws.Int64Value(output.Part[0].Size) != 0 {
+				t.Fatalf("part 1 = %s/%d, want the empty replacement", got, aws.Int64Value(output.Part[0].Size))
+			}
+		})
+	}
+}

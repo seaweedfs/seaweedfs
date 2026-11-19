@@ -1890,17 +1890,27 @@ func (s3a *S3ApiServer) applyMultipartEncryptionConfig(entry *filer_pb.Entry, co
 	}
 }
 
+// sortEntriesByLatestChunk orders part attempts newest first: by the filer's
+// commit stamp when both carry one, else by the later of the first chunk's
+// write time and the entry mtime, so a chunkless (empty) attempt still ranks.
 func sortEntriesByLatestChunk(entries []*filer_pb.Entry) {
 	slices.SortFunc(entries, func(a, b *filer_pb.Entry) int {
-		var aTs, bTs int64
-		if len(a.Chunks) > 0 {
-			aTs = a.Chunks[0].ModifiedTsNs
+		if a.CommitTsNs > 0 && b.CommitTsNs > 0 {
+			return cmp.Compare(b.CommitTsNs, a.CommitTsNs)
 		}
-		if len(b.Chunks) > 0 {
-			bTs = b.Chunks[0].ModifiedTsNs
-		}
-		return cmp.Compare(bTs, aTs)
+		return cmp.Compare(partAttemptTsNs(b), partAttemptTsNs(a))
 	})
+}
+
+func partAttemptTsNs(entry *filer_pb.Entry) int64 {
+	var tsNs int64
+	if len(entry.Chunks) > 0 {
+		tsNs = entry.Chunks[0].ModifiedTsNs
+	}
+	if entry.Attributes != nil {
+		tsNs = max(tsNs, entry.Attributes.Mtime*int64(time.Second)+int64(entry.Attributes.MtimeNs))
+	}
+	return tsNs
 }
 
 func calculateMultipartETag(partEntries map[int][]*filer_pb.Entry, completedPartNumbers []int) string {
