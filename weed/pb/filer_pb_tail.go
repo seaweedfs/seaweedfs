@@ -9,6 +9,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
@@ -91,7 +92,7 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 		if option.GetResumeTsNs != nil {
 			sinceNs = option.GetResumeTsNs()
 		}
-		stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
+		stream, err := client.SubscribeMetadata(security.WithMetadataSubscriptionCredentials(ctx), &filer_pb.SubscribeMetadataRequest{
 			ClientName:                   option.ClientName,
 			PathPrefix:                   option.PathPrefix,
 			PathPrefixes:                 option.AdditionalPathPrefixes,
