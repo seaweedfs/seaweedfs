@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -87,7 +88,7 @@ func requireTakenBack(t *testing.T, store *storage.Store, written <-chan error, 
 
 // A replica delete that arrives while the write it undoes is in its fsync
 // finds nothing, yet the write must not land live afterwards. A plain delete
-// that finds nothing is not sent on to the replicas, so it leaves the write.
+// on an unreplicated volume that finds nothing leaves the write.
 func TestDeleteHandlerCancelsAWriteInItsFsyncWindow(t *testing.T) {
 	for _, tc := range []struct {
 		query string
@@ -106,6 +107,59 @@ func TestDeleteHandlerCancelsAWriteInItsFsyncWindow(t *testing.T) {
 			requireTakenBack(t, store, written, !tc.live)
 		})
 	}
+}
+
+// A delete whose fan-out failed was already applied here, so the client's
+// retry finds nothing locally; it must still reach the replica that kept the
+// needle, or the replicas stay different.
+func TestDeleteHandlerRetryReachesTheReplicaAfterAFailedFanOut(t *testing.T) {
+	vid := needle.VolumeId(849300202)
+	allocate := func(vs *VolumeServer) {
+		vs.store = newTraversalTestStore(t.TempDir())
+		t.Cleanup(vs.store.Close)
+		_, err := vs.AllocateVolume(context.Background(), &volume_server_pb.AllocateVolumeRequest{VolumeId: uint32(vid), Replication: "001", Version: uint32(needle.GetCurrentVersion())})
+		require.NoError(t, err)
+		vs.guard = security.NewGuard(nil, "", 0, "", 0)
+	}
+	replicaVs := &VolumeServer{}
+	allocate(replicaVs)
+	var failNext atomic.Bool
+	failNext.Store(true)
+	replica := newProxyTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if failNext.CompareAndSwap(true, false) {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		replicaVs.DeleteHandler(w, r)
+	}))
+
+	primary := &master_pb.Location{}
+	vs := newProxyTestVolumeServer(t, vid.String(), []*master_pb.Location{primary, {Url: strings.TrimPrefix(replica.URL, "http://")}}, nil)
+	allocate(vs)
+	primary.Url = util.JoinHostPort(vs.store.Ip, vs.store.Port)
+
+	fid := needle.NewFileId(vid, 1, 0x1234)
+	for _, s := range []*storage.Store{vs.store, replicaVs.store} {
+		n := &needle.Needle{Id: fid.Key, Cookie: fid.Cookie, Data: []byte("replicated delete")}
+		n.Checksum = needle.NewCRC(n.Data)
+		_, err := s.WriteVolumeNeedle(vid, n, true, false)
+		require.NoError(t, err)
+	}
+	live := func(s *storage.Store) bool {
+		_, err := s.ReadVolumeNeedle(vid, &needle.Needle{Id: fid.Key, Cookie: fid.Cookie}, nil, nil)
+		return err == nil
+	}
+
+	resp := httptest.NewRecorder()
+	vs.DeleteHandler(resp, httptest.NewRequest(http.MethodDelete, "/"+fid.String(), nil))
+	require.Equal(t, http.StatusInternalServerError, resp.Code, resp.Body.String())
+	require.False(t, live(vs.store))
+	require.True(t, live(replicaVs.store))
+
+	resp = httptest.NewRecorder()
+	vs.DeleteHandler(resp, httptest.NewRequest(http.MethodDelete, "/"+fid.String(), nil))
+	require.Equal(t, http.StatusNotFound, resp.Code, resp.Body.String())
+	require.False(t, live(replicaVs.store))
 }
 
 // A batch delete that skips the cookie check still cancels the in-flight
