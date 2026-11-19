@@ -28,7 +28,8 @@ func TestReadWriteNeedleBlobAndMetaRoundTrip(t *testing.T) {
 	const volumeID = uint32(83)
 	const sourceNeedleID = uint64(333333)
 	const sourceCookie = uint32(0xABCD0102)
-	const clonedNeedleID = uint64(333334)
+	const otherNeedleID = uint64(333334)
+	const copyVolumeID = uint32(183)
 
 	framework.AllocateVolume(t, grpcClient, volumeID, "")
 
@@ -87,7 +88,24 @@ func TestReadWriteNeedleBlobAndMetaRoundTrip(t *testing.T) {
 
 	_, err = grpcClient.WriteNeedleBlob(ctx, &volume_server_pb.WriteNeedleBlobRequest{
 		VolumeId:   volumeID,
-		NeedleId:   clonedNeedleID,
+		NeedleId:   otherNeedleID,
+		Size:       size,
+		NeedleBlob: blobResp.GetNeedleBlob(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "blob header holds needle") {
+		t.Fatalf("WriteNeedleBlob under another needle id should be refused, got %v", err)
+	}
+	if _, err = grpcClient.VolumeNeedleStatus(ctx, &volume_server_pb.VolumeNeedleStatusRequest{
+		VolumeId: volumeID,
+		NeedleId: otherNeedleID,
+	}); err == nil {
+		t.Fatalf("refused blob should not be indexed under needle %d", otherNeedleID)
+	}
+
+	framework.AllocateVolume(t, grpcClient, copyVolumeID, "")
+	_, err = grpcClient.WriteNeedleBlob(ctx, &volume_server_pb.WriteNeedleBlobRequest{
+		VolumeId:   copyVolumeID,
+		NeedleId:   sourceNeedleID,
 		Size:       size,
 		NeedleBlob: blobResp.GetNeedleBlob(),
 	})
@@ -95,27 +113,27 @@ func TestReadWriteNeedleBlobAndMetaRoundTrip(t *testing.T) {
 		t.Fatalf("WriteNeedleBlob failed: %v", err)
 	}
 
-	clonedStatus, err := grpcClient.VolumeNeedleStatus(ctx, &volume_server_pb.VolumeNeedleStatusRequest{
-		VolumeId: volumeID,
-		NeedleId: clonedNeedleID,
+	copiedStatus, err := grpcClient.VolumeNeedleStatus(ctx, &volume_server_pb.VolumeNeedleStatusRequest{
+		VolumeId: copyVolumeID,
+		NeedleId: sourceNeedleID,
 	})
 	if err != nil {
-		t.Fatalf("VolumeNeedleStatus for cloned needle failed: %v", err)
+		t.Fatalf("VolumeNeedleStatus for copied needle failed: %v", err)
 	}
-	if clonedStatus.GetNeedleId() != sourceNeedleID {
-		t.Fatalf("cloned needle status id mismatch: got %d want %d", clonedStatus.GetNeedleId(), sourceNeedleID)
+	if copiedStatus.GetNeedleId() != sourceNeedleID {
+		t.Fatalf("copied needle status id mismatch: got %d want %d", copiedStatus.GetNeedleId(), sourceNeedleID)
 	}
-	if clonedStatus.GetCookie() != sourceCookie {
-		t.Fatalf("cloned needle cookie mismatch: got %d want %d", clonedStatus.GetCookie(), sourceCookie)
+	if copiedStatus.GetCookie() != sourceCookie {
+		t.Fatalf("copied needle cookie mismatch: got %d want %d", copiedStatus.GetCookie(), sourceCookie)
 	}
 
-	clonedReadResp := framework.ReadBytes(t, client, clusterHarness.VolumeAdminURL(), framework.NewFileID(volumeID, clonedNeedleID, sourceCookie))
-	clonedReadBody := framework.ReadAllAndClose(t, clonedReadResp)
-	if clonedReadResp.StatusCode != 200 {
-		t.Fatalf("cloned needle GET expected 200, got %d", clonedReadResp.StatusCode)
+	copiedReadResp := framework.ReadBytes(t, client, clusterHarness.VolumeAdminURL(), framework.NewFileID(copyVolumeID, sourceNeedleID, sourceCookie))
+	copiedReadBody := framework.ReadAllAndClose(t, copiedReadResp)
+	if copiedReadResp.StatusCode != 200 {
+		t.Fatalf("copied needle GET expected 200, got %d", copiedReadResp.StatusCode)
 	}
-	if string(clonedReadBody) != string(payload) {
-		t.Fatalf("cloned needle body mismatch: got %q want %q", string(clonedReadBody), string(payload))
+	if string(copiedReadBody) != string(payload) {
+		t.Fatalf("copied needle body mismatch: got %q want %q", string(copiedReadBody), string(payload))
 	}
 }
 
