@@ -185,7 +185,7 @@ func (v *Volume) RelocateIndexTo(newIdxDir string) error {
 func (v *Volume) Version() needle.Version {
 	v.superBlockAccessLock.Lock()
 	defer v.superBlockAccessLock.Unlock()
-	if v.volumeInfo.Version != 0 {
+	if v.volumeInfo.Version != 0 && v.SuperBlock.Version != needle.Version(v.volumeInfo.Version) {
 		v.SuperBlock.Version = needle.Version(v.volumeInfo.Version)
 	}
 	return v.SuperBlock.Version
