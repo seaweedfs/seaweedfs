@@ -107,6 +107,9 @@ func testReadOpenHandleAfterChunkMerge(t *testing.T, framework *FuseTestFramewor
 			return false
 		}
 		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return false
+		}
 		for _, c := range replaced {
 			if mergeChunkStatus(master, c, true) != http.StatusNotFound {
 				return false
