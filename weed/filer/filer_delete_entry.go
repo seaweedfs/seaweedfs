@@ -284,9 +284,9 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 	}
 
 	f.NotifyUpdateEvent(ctx, deleteEventEntry(ctx, entry), nil, shouldDeleteChunks, isFromOtherCluster, signatures)
-	if rule := f.FilerConf.MatchStorageRule(string(entry.FullPath)); !rule.DisableChunkDeletion {
+	if !f.FilerConf.MatchStorageRule(string(entry.FullPath)).DisableChunkDeletion {
 		// a child's own path decides fsync, as when it is deleted alone
-		f.doDeleteChunks(ctx, chunksToDelete, rule.GetFsync())
+		f.doDeleteChunks(ctx, chunksToDelete, false)
 		f.doDeleteChunks(ctx, fsyncChunksToDelete, true)
 	}
 

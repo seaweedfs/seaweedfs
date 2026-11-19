@@ -288,13 +288,13 @@ func TestQueueDeletionsMarksBeforePublishing(t *testing.T) {
 func TestRecursiveDeleteFsyncFollowsChildPaths(t *testing.T) {
 	store := newStubFilerStore()
 	f := newTestFiler(t, store, NewFilerRemoteStorage())
-	for _, prefix := range []string{"/data/", "/mix/important"} {
-		if err := f.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: prefix, Fsync: proto.Bool(true)}); err != nil {
+	for prefix, fsync := range map[string]bool{"/data/": true, "/mix/important": true, "/keep": true, "/keep/tmp-": false} {
+		if err := f.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: prefix, Fsync: proto.Bool(fsync)}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	ctx := context.Background()
-	for _, dir := range []string{"/data", "/data/sub", "/mix"} {
+	for _, dir := range []string{"/data", "/data/sub", "/mix", "/keep"} {
 		if err := f.CreateEntry(ctx, &Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir | 0755}}, nil, false, false, nil, true, 255); err != nil {
 			t.Fatal(err)
 		}
@@ -304,6 +304,8 @@ func TestRecursiveDeleteFsyncFollowsChildPaths(t *testing.T) {
 		"/data/sub/b":        "5,02637037d6",
 		"/mix/important.txt": "5,03637037d6",
 		"/mix/other.txt":     "5,04637037d6",
+		"/keep/y":            "5,05637037d6",
+		"/keep/tmp-x":        "5,06637037d6",
 	}
 	for path, fid := range files {
 		entry := &Entry{FullPath: util.FullPath(path), Attr: Attr{Mode: 0644, Mtime: time.Now()}, Chunks: []*filer_pb.FileChunk{{FileId: fid}}}
@@ -312,7 +314,7 @@ func TestRecursiveDeleteFsyncFollowsChildPaths(t *testing.T) {
 		}
 	}
 
-	for _, dir := range []string{"/data", "/mix"} {
+	for _, dir := range []string{"/data", "/mix", "/keep"} {
 		if err := f.DeleteEntryMetaAndData(ctx, util.FullPath(dir), true, false, true, false, nil, time.Time{}); err != nil {
 			t.Fatal(err)
 		}
@@ -321,10 +323,14 @@ func TestRecursiveDeleteFsyncFollowsChildPaths(t *testing.T) {
 	if n := f.pendingDeletionCount(); n != len(files) {
 		t.Fatalf("pending deletions %d, want %d", n, len(files))
 	}
-	marked := f.fsyncDeletionIds([]string{"5,01637037d6", "5,02637037d6", "5,03637037d6", "5,04637037d6"})
+	var fids []string
+	for _, fid := range files {
+		fids = append(fids, fid)
+	}
+	marked := f.fsyncDeletionIds(fids)
 	for path, fid := range files {
 		_, got := marked[fid]
-		if want := path != "/mix/other.txt"; got != want {
+		if want := path != "/mix/other.txt" && path != "/keep/tmp-x"; got != want {
 			t.Errorf("%s: fsync mark %v, want %v", path, got, want)
 		}
 	}
