@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"net/http/httptest"
 	"sort"
 	"strings"
 	"testing"
@@ -364,5 +365,31 @@ func TestSubscribeLocalMetadataScopedEndToEnd(t *testing.T) {
 				t.Fatal("subscription did not end on cancel")
 			}
 		})
+	}
+}
+
+// A subscription token opens no filer HTTP read or write, also when an
+// operator reuses the read or write key as the subscribe key.
+func TestMetadataSubscriptionTokenRefusedOverHTTP(t *testing.T) {
+	for _, keys := range []struct{ write, read, subscribe string }{
+		{"write-key", "read-key", "sub-key"},
+		{"write-key", "same", "same"},
+		{"same", "read-key", "same"},
+		{"same", "same", "same"},
+	} {
+		fs := &FilerServer{filerGuard: security.NewGuard(nil, keys.write, 0, keys.read, 0)}
+		token := string(security.GenJwtForMetadataSubscription(security.SigningKey(keys.subscribe), 60, []string{"/buckets/uploads"}))
+		for _, c := range []struct {
+			method  string
+			isWrite bool
+		}{{"GET", false}, {"HEAD", false}, {"PUT", true}, {"POST", true}, {"DELETE", true}} {
+			for _, target := range []string{"/buckets/uploads/a.txt", "/buckets/uploads/", "/etc/iam/identity.json"} {
+				r := httptest.NewRequest(c.method, target, nil)
+				r.Header.Set("Authorization", "Bearer "+token)
+				if fs.maybeCheckJwtAuthorization(r, c.isWrite) {
+					t.Errorf("keys %+v: %s %s accepted a subscription token", keys, c.method, target)
+				}
+			}
+		}
 	}
 }
