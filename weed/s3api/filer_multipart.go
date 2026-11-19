@@ -1893,15 +1893,15 @@ func (s3a *S3ApiServer) applyMultipartEncryptionConfig(entry *filer_pb.Entry, co
 }
 
 // sortEntriesByLatestChunk orders part attempts newest first: by the filer's
-// commit stamp when both carry one, else by the later of the first chunk's
-// write time and the entry mtime, so a chunkless (empty) attempt still ranks.
+// commit stamp (unstamped entries predate it), then by the later of the first
+// chunk's write time and the entry mtime, so a chunkless attempt still ranks.
 func sortEntriesByLatestChunk(entries []*filer_pb.Entry) {
 	slices.SortFunc(entries, compareLatestPartAttempt)
 }
 
 func compareLatestPartAttempt(a, b *filer_pb.Entry) int {
-	if a.CommitTsNs > 0 && b.CommitTsNs > 0 {
-		return cmp.Compare(b.CommitTsNs, a.CommitTsNs)
+	if c := cmp.Compare(b.CommitTsNs, a.CommitTsNs); c != 0 {
+		return c
 	}
 	return cmp.Compare(partAttemptTsNs(b), partAttemptTsNs(a))
 }
