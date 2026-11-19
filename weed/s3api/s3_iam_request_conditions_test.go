@@ -61,6 +61,14 @@ func TestSTSSessionPolicyEvaluatesRequestConditions(t *testing.T) {
 					"Bool": {"aws:SecureTransport": "false"},
 				},
 			},
+			{
+				Effect:   "Deny",
+				Action:   []string{"s3:PutObject"},
+				Resource: []string{"arn:aws:s3:::cond-bucket/*"},
+				Condition: map[string]map[string]interface{}{
+					"StringEquals": {"s3:authType": "REST-QUERY-STRING"},
+				},
+			},
 		},
 	}))
 	require.NoError(t, iamManager.CreateRole(ctx, "", "RequestConditionRole", &integration.RoleDefinition{
@@ -87,12 +95,15 @@ func TestSTSSessionPolicyEvaluatesRequestConditions(t *testing.T) {
 	tests := []struct {
 		name    string
 		bucket  string
+		query   string
 		headers map[string]string
 		secure  bool
 		want    s3err.ErrorCode
 	}{
 		{name: "plain write", bucket: "cond-bucket", want: s3err.ErrNone},
 		{name: "object lock mode", bucket: "cond-bucket", headers: map[string]string{"X-Amz-Object-Lock-Mode": "GOVERNANCE"}, want: s3err.ErrAccessDenied},
+		{name: "presigned v4", bucket: "cond-bucket", query: "?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=key%2F20261119%2Fus-east-1%2Fs3%2Faws4_request", want: s3err.ErrAccessDenied},
+		{name: "presigned v2", bucket: "cond-bucket", query: "?AWSAccessKeyId=key&Expires=1&Signature=sig", want: s3err.ErrAccessDenied},
 		{name: "request object tag", bucket: "cond-bucket", headers: map[string]string{"X-Amz-Tagging": "classification=secret"}, want: s3err.ErrAccessDenied},
 		{name: "other request object tag", bucket: "cond-bucket", headers: map[string]string{"X-Amz-Tagging": "classification=public"}, want: s3err.ErrNone},
 		{name: "kms encryption", bucket: "kms-bucket", headers: map[string]string{"X-Amz-Server-Side-Encryption": "aws:kms"}, want: s3err.ErrNone},
@@ -104,8 +115,10 @@ func TestSTSSessionPolicyEvaluatesRequestConditions(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPut, "/"+tt.bucket+"/file.txt", http.NoBody)
-			req.Header.Set("Authorization", "Bearer "+identity.SessionToken)
+			req := httptest.NewRequest(http.MethodPut, "/"+tt.bucket+"/file.txt"+tt.query, http.NoBody)
+			if tt.query == "" {
+				req.Header.Set("Authorization", "Bearer "+identity.SessionToken)
+			}
 			for k, v := range tt.headers {
 				req.Header.Set(k, v)
 			}

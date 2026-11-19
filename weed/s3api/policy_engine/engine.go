@@ -475,7 +475,7 @@ func RequestConditionValues(r *http.Request) map[string][]string {
 		} else if strings.HasPrefix(authHeader, "AWS ") {
 			values["s3:authType"] = []string{"REST-HEADER"}
 		}
-	} else if r.URL.Query().Get("AWSAccessKeyId") != "" {
+	} else if query := r.URL.Query(); query.Get("AWSAccessKeyId") != "" || query.Get("X-Amz-Credential") != "" {
 		values["s3:authType"] = []string{"REST-QUERY-STRING"}
 	}
 
