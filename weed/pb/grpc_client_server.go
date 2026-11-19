@@ -487,7 +487,12 @@ func shouldInvalidateConnection(ctx context.Context, err error) bool {
 	if s, ok := status.FromError(err); ok {
 		code := s.Code()
 		switch code {
-		case codes.Unavailable, codes.Aborted, codes.Internal:
+		case codes.Unavailable:
+			// gRPC raises its own Unavailable without details, so one that
+			// carries details is the peer answering over a working channel,
+			// e.g. a master follower turning down an assign.
+			return len(s.Proto().GetDetails()) == 0
+		case codes.Aborted, codes.Internal:
 			return true
 		case codes.ResourceExhausted:
 			// Server-side backpressure on a healthy channel (e.g. the master's
