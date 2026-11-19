@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"math"
 	"math/rand/v2"
 	"time"
 
@@ -72,6 +73,10 @@ type scopedMetadataStream struct {
 	ctx   context.Context
 	scope *security.MetadataSubscriptionScope
 }
+
+// scopedClientEpoch is below every other epoch, so a scoped registration
+// never replaces another one, even if its id gets taken after it was chosen.
+const scopedClientEpoch = math.MinInt32
 
 // unusedClientId gives a scoped caller a registration id of its own, so it
 // cannot replace or squat on another subscriber's registration.

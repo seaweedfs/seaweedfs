@@ -169,3 +169,18 @@ func TestScopedSubscriptionKeepsOtherRegistrations(t *testing.T) {
 		t.Fatal("scoped caller removed the unrestricted registration on exit")
 	}
 }
+
+func TestScopedRegistrationNeverReplacesLaterRegistration(t *testing.T) {
+	h := newSubscribeHarness(t)
+	id := h.fs.unusedClientId()
+	if replacing, _, _ := h.fs.addClient("", "mount", "10.0.0.1:1", "/", id, 1); !replacing {
+		t.Fatal("unrestricted registration was not added")
+	}
+	if replacing, alreadyKnown, _ := h.fs.addClient("", "scoped", "10.0.0.2:1", "/t", id, scopedClientEpoch); replacing || !alreadyKnown {
+		t.Fatalf("scoped registration replacing=%v alreadyKnown=%v, want refused", replacing, alreadyKnown)
+	}
+	h.fs.deleteClient("", "scoped", id, scopedClientEpoch)
+	if !h.fs.hasClient(id, 1) {
+		t.Fatal("unrestricted registration lost to a scoped caller")
+	}
+}
