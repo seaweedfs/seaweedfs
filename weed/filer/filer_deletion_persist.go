@@ -312,10 +312,14 @@ func (f *Filer) snapshotDeletionLedger() {
 	for id := range f.pendingDeletions {
 		ids = append(ids, id)
 	}
+	fsyncIds := make([]string, 0, len(f.fsyncDeletions))
+	for id := range f.fsyncDeletions {
+		fsyncIds = append(fsyncIds, id)
+	}
 	f.deletionLedgerDirty = false
 	f.deletionLedgerLock.Unlock()
 
-	if err := f.writeDeletionLedger(ids); err != nil {
+	if err := f.writeDeletionLedger(ids, fsyncIds); err != nil {
 		glog.Warningf("failed to persist deletion ledger (%d ids): %v", len(ids), err)
 		f.deletionLedgerLock.Lock()
 		f.deletionLedgerDirty = true
@@ -338,7 +342,9 @@ func (f *Filer) tryUnblockDeletionLedger() bool {
 // atomically; a multipart set writes a new generation's part keys first and
 // only then the manifest, so a crash or failed write leaves the previously
 // published generation readable. Orphaned parts are retried on the next write.
-func (f *Filer) writeDeletionLedger(ids []string) error {
+// fsyncIds go into the trailing fsyncParts parts of a manifest, which older
+// filers read as plain ids.
+func (f *Filer) writeDeletionLedger(ids, fsyncIds []string) error {
 	ctx := context.Background()
 	key := f.deletionLedgerKey()
 
@@ -364,7 +370,7 @@ func (f *Filer) writeDeletionLedger(ids []string) error {
 		size = 2
 		return nil
 	}
-	for _, id := range ids {
+	add := func(id string) error {
 		if need := len(id) + 3; len(batch) > 0 && size+need > deletionLedgerPartSize {
 			if err := flush(); err != nil {
 				return err
@@ -372,14 +378,39 @@ func (f *Filer) writeDeletionLedger(ids []string) error {
 		}
 		batch = append(batch, id)
 		size += len(id) + 3
+		return nil
 	}
-	if len(batch) > 0 || len(parts) == 0 {
+	fsyncSet := make(map[string]struct{}, len(fsyncIds))
+	for _, id := range fsyncIds {
+		fsyncSet[id] = struct{}{}
+	}
+	for _, id := range ids {
+		if _, ok := fsyncSet[id]; ok {
+			continue
+		}
+		if err := add(id); err != nil {
+			return err
+		}
+	}
+	if len(batch) > 0 || (len(parts) == 0 && len(fsyncSet) == 0) {
 		if err := flush(); err != nil {
 			return err
 		}
 	}
+	plainParts := len(parts)
+	for id := range fsyncSet {
+		if err := add(id); err != nil {
+			return err
+		}
+	}
+	if len(batch) > 0 {
+		if err := flush(); err != nil {
+			return err
+		}
+	}
+	fsyncParts := len(parts) - plainParts
 
-	if len(parts) == 1 {
+	if len(parts) == 1 && fsyncParts == 0 {
 		if err := f.Store.KvPut(ctx, []byte(key), parts[0]); err != nil {
 			return err
 		}
@@ -397,10 +428,7 @@ func (f *Filer) writeDeletionLedger(ids []string) error {
 			}
 			wrote++
 		}
-		manifest, _ := json.Marshal(struct {
-			Parts int `json:"parts"`
-			Gen   int `json:"gen,omitempty"`
-		}{len(parts), gen})
+		manifest, _ := json.Marshal(deletionLedgerManifest{Parts: len(parts), Gen: gen, FsyncParts: fsyncParts})
 		if err := f.Store.KvPut(ctx, []byte(key), manifest); err != nil {
 			f.markStaleLedgerParts(key, gen, wrote)
 			return err
@@ -555,42 +583,49 @@ func (f *Filer) pruneLedgerIndex(ctx context.Context, key string) {
 	_ = f.Store.KvPut(ctx, []byte(KvKeyDeletionLedgerIndex), payload)
 }
 
+type deletionLedgerManifest struct {
+	Parts      int `json:"parts"`
+	Gen        int `json:"gen,omitempty"`
+	FsyncParts int `json:"fsyncParts,omitempty"`
+}
+
 // readDeletionLedger reads the manifest key: a JSON array is the whole set; a
 // {"parts":N,"gen":G} manifest points at that generation's part keys. A part
 // the manifest references but the store lacks is corruption, not absence, so
-// it surfaces as a wrapped error rather than ErrKvNotFound.
-func (f *Filer) readDeletionLedger(key string) (ids []string, gen, parts int, err error) {
+// it surfaces as a wrapped error rather than ErrKvNotFound. ids holds every
+// id; fsyncIds repeats the ones from the trailing fsyncParts parts.
+func (f *Filer) readDeletionLedger(key string) (ids, fsyncIds []string, gen, parts int, err error) {
 	ctx := context.Background()
 
 	payload, err := f.Store.KvGet(ctx, []byte(key))
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, nil, 0, 0, err
 	}
 	if !bytes.HasPrefix(bytes.TrimSpace(payload), []byte("{")) {
 		if err := json.Unmarshal(payload, &ids); err != nil {
-			return nil, 0, 0, err
+			return nil, nil, 0, 0, err
 		}
-		return ids, 0, 0, nil
+		return ids, nil, 0, 0, nil
 	}
-	var manifest struct {
-		Parts int `json:"parts"`
-		Gen   int `json:"gen,omitempty"`
-	}
+	var manifest deletionLedgerManifest
 	if err := json.Unmarshal(payload, &manifest); err != nil {
-		return nil, 0, 0, err
+		return nil, nil, 0, 0, err
 	}
 	for i := 0; i < manifest.Parts; i++ {
 		partPayload, err := f.Store.KvGet(ctx, deletionLedgerGenPartKey(key, manifest.Gen, i))
 		if err != nil {
-			return nil, 0, 0, fmt.Errorf("deletion ledger part %d of %s unreadable: %w", i, key, err)
+			return nil, nil, 0, 0, fmt.Errorf("deletion ledger part %d of %s unreadable: %w", i, key, err)
 		}
 		var part []string
 		if err := json.Unmarshal(partPayload, &part); err != nil {
-			return nil, 0, 0, fmt.Errorf("deletion ledger part %d of %s corrupt: %w", i, key, err)
+			return nil, nil, 0, 0, fmt.Errorf("deletion ledger part %d of %s corrupt: %w", i, key, err)
 		}
 		ids = append(ids, part...)
+		if i >= manifest.Parts-manifest.FsyncParts {
+			fsyncIds = append(fsyncIds, part...)
+		}
 	}
-	return ids, manifest.Gen, manifest.Parts, nil
+	return ids, fsyncIds, manifest.Gen, manifest.Parts, nil
 }
 
 // recoverForeignDeletionLedgers runs when the scoped key is absent: the ledger
@@ -600,18 +635,19 @@ func (f *Filer) readDeletionLedger(key string) (ids []string, gen, parts int, er
 // deleted only after that write succeeds. A live peer's ledger claimed here is
 // rewritten by the peer's next snapshot, so the ids only get processed twice —
 // deletions are not owner-specific.
-func (f *Filer) recoverForeignDeletionLedgers(key string) (ids []string, err error) {
+func (f *Filer) recoverForeignDeletionLedgers(key string) (ids, fsyncIds []string, err error) {
 	ctx := context.Background()
 
 	claimed := map[string]ledgerClaim{} // source key -> what was read
-	lIds, lGen, lParts, lErr := f.readDeletionLedger(KvKeyDeletionLedger)
+	lIds, lFsyncIds, lGen, lParts, lErr := f.readDeletionLedger(KvKeyDeletionLedger)
 	switch {
 	case lErr == nil:
 		ids = append(ids, lIds...)
+		fsyncIds = append(fsyncIds, lFsyncIds...)
 		claimed[KvKeyDeletionLedger] = ledgerClaim{lIds, lGen, lParts}
 		f.loadStaleLedgerParts(ctx, KvKeyDeletionLedger)
 	case lErr != ErrKvNotFound:
-		return nil, lErr
+		return nil, nil, lErr
 	}
 
 	// Any read failure aborts the whole claim so reload retries: skipping an
@@ -619,41 +655,48 @@ func (f *Filer) recoverForeignDeletionLedgers(key string) (ids []string, err err
 	// the index is never searched again.
 	indexKeys, idxErr := f.readLedgerIndex(ctx)
 	if idxErr != nil && idxErr != ErrKvNotFound {
-		return nil, idxErr
+		return nil, nil, idxErr
 	}
 	for _, other := range indexKeys {
 		if other == key {
 			continue
 		}
-		oIds, oGen, oParts, oErr := f.readDeletionLedger(other)
+		oIds, oFsyncIds, oGen, oParts, oErr := f.readDeletionLedger(other)
 		if oErr == ErrKvNotFound {
 			f.pruneLedgerIndex(ctx, other)
 			continue
 		}
 		if oErr != nil {
-			return nil, fmt.Errorf("deletion ledger %s unreadable: %w", other, oErr)
+			return nil, nil, fmt.Errorf("deletion ledger %s unreadable: %w", other, oErr)
 		}
 		ids = append(ids, oIds...)
+		fsyncIds = append(fsyncIds, oFsyncIds...)
 		claimed[other] = ledgerClaim{oIds, oGen, oParts}
 		f.loadStaleLedgerParts(ctx, other)
 	}
 
 	if len(claimed) == 0 {
-		return nil, ErrKvNotFound
+		return nil, nil, ErrKvNotFound
 	}
-	if err := f.writeDeletionLedger(ids); err != nil {
-		return nil, err
+	if err := f.writeDeletionLedger(ids, fsyncIds); err != nil {
+		return nil, nil, err
 	}
 	mergedMore := false
 	for src, claim := range claimed {
 		// A source republished since we read it belongs to a live filer
 		// (or a racing claimer): merge the newer ids and leave it in place.
-		curIds, curGen, curParts, rerr := f.readDeletionLedger(src)
+		curIds, curFsyncIds, curGen, curParts, rerr := f.readDeletionLedger(src)
 		if rerr != nil || curGen != claim.gen || curParts != claim.parts || !sameStringSet(curIds, claim.ids) {
 			if rerr == nil {
 				for _, id := range curIds {
 					if !containsId(ids, id) {
 						ids = append(ids, id)
+						mergedMore = true
+					}
+				}
+				for _, id := range curFsyncIds {
+					if !containsId(fsyncIds, id) {
+						fsyncIds = append(fsyncIds, id)
 						mergedMore = true
 					}
 				}
@@ -669,11 +712,11 @@ func (f *Filer) recoverForeignDeletionLedgers(key string) (ids []string, err err
 	if mergedMore {
 		// Ids from a changed source are durable only under that source's key;
 		// rewrite our ledger so they survive under ours too.
-		if err := f.writeDeletionLedger(ids); err != nil {
-			return nil, err
+		if err := f.writeDeletionLedger(ids, fsyncIds); err != nil {
+			return nil, nil, err
 		}
 	}
-	return ids, nil
+	return ids, fsyncIds, nil
 }
 
 func containsId(ids []string, id string) bool {
@@ -724,10 +767,10 @@ func (f *Filer) reloadDeletionLedger() bool {
 	}
 
 	key := f.deletionLedgerKey()
-	ids, gen, parts, err := f.readDeletionLedger(key)
+	ids, fsyncIds, gen, parts, err := f.readDeletionLedger(key)
 	stateWritten := false
 	if err == ErrKvNotFound && key != KvKeyDeletionLedger {
-		ids, err = f.recoverForeignDeletionLedgers(key)
+		ids, fsyncIds, err = f.recoverForeignDeletionLedgers(key)
 		stateWritten = err == nil
 	}
 	if err != nil {
@@ -755,6 +798,14 @@ func (f *Filer) reloadDeletionLedger() bool {
 					f.deletionSeq++
 					f.pendingDeletions[id] = f.deletionSeq
 				}
+			}
+		}
+		for _, id := range fsyncIds {
+			if _, exists := f.pendingDeletions[id]; exists {
+				if f.fsyncDeletions == nil {
+					f.fsyncDeletions = make(map[string]struct{}, len(fsyncIds))
+				}
+				f.fsyncDeletions[id] = struct{}{}
 			}
 		}
 	}

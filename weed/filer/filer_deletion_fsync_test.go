@@ -2,6 +2,8 @@ package filer
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"strconv"
@@ -13,6 +15,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -134,5 +137,117 @@ func TestDeleteChunksFsyncSurvivesRetry(t *testing.T) {
 	}
 	if n := f.pendingDeletionCount(); n != 0 {
 		t.Errorf("pending deletions %d, want 0", n)
+	}
+}
+
+// readLedgerAsOlderFiler decodes the ledger the way a filer without fsync
+// marks does: a JSON array, or a {parts, gen} manifest over its part keys.
+func readLedgerAsOlderFiler(t *testing.T, f *Filer) []string {
+	t.Helper()
+	ctx := context.Background()
+	key := f.deletionLedgerKey()
+	raw, err := f.Store.KvGet(ctx, []byte(key))
+	if err != nil {
+		t.Fatalf("read ledger: %v", err)
+	}
+	var ids []string
+	if json.Unmarshal(raw, &ids) == nil {
+		return ids
+	}
+	var manifest struct {
+		Parts int `json:"parts"`
+		Gen   int `json:"gen,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatalf("ledger %q is neither an array nor a manifest: %v", raw, err)
+	}
+	for i := 0; i < manifest.Parts; i++ {
+		part, err := f.Store.KvGet(ctx, deletionLedgerGenPartKey(key, manifest.Gen, i))
+		if err != nil {
+			t.Fatalf("read part %d: %v", i, err)
+		}
+		var partIds []string
+		if err := json.Unmarshal(part, &partIds); err != nil {
+			t.Fatalf("part %d: %v", i, err)
+		}
+		ids = append(ids, partIds...)
+	}
+	return ids
+}
+
+func TestDeletionLedgerKeepsFsyncMarks(t *testing.T) {
+	for _, n := range []int{1, 4000} {
+		t.Run(strconv.Itoa(n), func(t *testing.T) {
+			withPersistedConfig(t, true)
+			store := newStubFilerStore()
+			f := newLedgerTestFiler(store)
+			var plain, synced []string
+			for i := 0; i < n; i++ {
+				plain = append(plain, fmt.Sprintf("7,%08xbeefcafe", i))
+				synced = append(synced, fmt.Sprintf("8,%08xbeefcafe", i))
+			}
+			f.queueDeletions(false, plain...)
+			f.queueDeletions(true, synced...)
+			f.snapshotDeletionLedger()
+
+			if got := readLedgerAsOlderFiler(t, f); len(got) != 2*n || !contains(got, plain[0]) || !contains(got, synced[n-1]) {
+				t.Fatalf("older filer reads %d ids, want all %d", len(got), 2*n)
+			}
+
+			f2 := newLedgerTestFiler(store)
+			if !f2.reloadDeletionLedger() {
+				t.Fatalf("ledger should reload")
+			}
+			if got := f2.pendingDeletionCount(); got != 2*n {
+				t.Fatalf("recovered %d ids, want %d", got, 2*n)
+			}
+			if got := f2.fsyncDeletionIds(append(append([]string(nil), plain...), synced...)); len(got) != n {
+				t.Fatalf("recovered %d fsync marks, want %d", len(got), n)
+			}
+			if got := f2.fsyncDeletionIds(plain); len(got) != 0 {
+				t.Fatalf("plain ids came back marked: %d", len(got))
+			}
+
+			for _, id := range synced {
+				f2.forgetDeletion(id)
+			}
+			f2.snapshotDeletionLedger()
+			f3 := newLedgerTestFiler(store)
+			f3.reloadDeletionLedger()
+			if got := f3.fsyncDeletionIds(synced); len(got) != 0 || f3.pendingDeletionCount() != n {
+				t.Fatalf("after forgetting the marked ids: %d marks, %d pending", len(got), f3.pendingDeletionCount())
+			}
+			if n == 1 {
+				if _, ok := readPersistedLedger(t, f2); !ok {
+					t.Fatalf("a ledger without marks should be a single array again")
+				}
+			}
+		})
+	}
+}
+
+func TestDeletionLedgerClaimKeepsFsyncMarks(t *testing.T) {
+	withPersistedConfig(t, true)
+	store := newStubFilerStore()
+	fOld := newLedgerTestFiler(store)
+	fOld.Dlm = lock_manager.NewDistributedLockManager("filer-old:8888")
+	fOld.queueDeletions(false, "1,01")
+	fOld.queueDeletions(true, "1,02")
+	fOld.snapshotDeletionLedger()
+
+	fNew := newLedgerTestFiler(store)
+	fNew.Dlm = lock_manager.NewDistributedLockManager("filer-new:9999")
+	if !fNew.reloadDeletionLedger() {
+		t.Fatalf("reload should claim the stranded ledger")
+	}
+	if got := fNew.fsyncDeletionIds([]string{"1,01", "1,02"}); len(got) != 1 {
+		t.Fatalf("claimed fsync marks %v, want only 1,02", got)
+	}
+
+	fNext := newLedgerTestFiler(store)
+	fNext.Dlm = lock_manager.NewDistributedLockManager("filer-new:9999")
+	fNext.reloadDeletionLedger()
+	if _, ok := fNext.fsyncDeletionIds([]string{"1,02"})["1,02"]; !ok {
+		t.Fatalf("claimed fsync mark was not persisted under the new key")
 	}
 }
