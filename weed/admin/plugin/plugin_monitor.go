@@ -650,25 +650,8 @@ func (r *Plugin) BuildJobDetail(jobID string, activityLimit int, relatedLimit in
 
 	if history, err := r.store.LoadRunHistory(detailJob.JobType); err != nil {
 		return nil, true, err
-	} else if history != nil {
-		for i := range history.SuccessfulRuns {
-			record := history.SuccessfulRuns[i]
-			if strings.TrimSpace(record.JobID) == normalizedJobID {
-				recordCopy := record
-				detail.RunRecord = &recordCopy
-				break
-			}
-		}
-		if detail.RunRecord == nil {
-			for i := range history.ErrorRuns {
-				record := history.ErrorRuns[i]
-				if strings.TrimSpace(record.JobID) == normalizedJobID {
-					recordCopy := record
-					detail.RunRecord = &recordCopy
-					break
-				}
-			}
-		}
+	} else {
+		detail.RunRecord = newestRunRecord(history, normalizedJobID)
 	}
 
 	if relatedLimit > 0 {
@@ -1247,16 +1230,39 @@ func (r *Plugin) findRunRecord(jobID string) (*JobRunRecord, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, runs := range [][]JobRunRecord{history.SuccessfulRuns, history.ErrorRuns} {
-			for i := range runs {
-				if strings.TrimSpace(runs[i].JobID) == jobID {
-					record := runs[i]
-					return &record, nil
-				}
-			}
+		if record := newestRunRecord(history, jobID); record != nil {
+			return record, nil
 		}
 	}
 	return nil, nil
+}
+
+// newestRunRecord picks across both outcome lists, since a job id can be
+// run again and end the other way.
+func newestRunRecord(history *JobTypeRunHistory, jobID string) *JobRunRecord {
+	if history == nil {
+		return nil
+	}
+	var newest *JobRunRecord
+	for _, runs := range [][]JobRunRecord{history.SuccessfulRuns, history.ErrorRuns} {
+		for i := range runs {
+			if strings.TrimSpace(runs[i].JobID) != jobID {
+				continue
+			}
+			if newest == nil || runCompletedAt(runs[i]).After(runCompletedAt(*newest)) {
+				record := runs[i]
+				newest = &record
+			}
+		}
+	}
+	return newest
+}
+
+func runCompletedAt(record JobRunRecord) time.Time {
+	if record.CompletedAt == nil {
+		return time.Time{}
+	}
+	return *record.CompletedAt
 }
 
 func trackedJobFromRunRecord(record *JobRunRecord) *TrackedJob {

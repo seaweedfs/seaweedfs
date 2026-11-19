@@ -672,6 +672,38 @@ func TestBuildJobDetailFallsBackToRunRecordAfterPrune(t *testing.T) {
 	}
 }
 
+func TestBuildJobDetailUsesNewestRunRecord(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	first := time.Now().UTC().Add(-time.Minute)
+	second := first.Add(30 * time.Second)
+	for _, record := range []*JobRunRecord{
+		{RunID: "req-1", JobID: "job-rerun", JobType: "vacuum", Outcome: RunOutcomeSuccess, CompletedAt: &first},
+		{RunID: "req-2", JobID: "job-rerun", JobType: "vacuum", Outcome: RunOutcomeError, Message: "volume busy", CompletedAt: &second},
+	} {
+		if err := pluginSvc.store.AppendRunRecord("vacuum", record); err != nil {
+			t.Fatalf("AppendRunRecord: %v", err)
+		}
+	}
+
+	detail, found, err := pluginSvc.BuildJobDetail("job-rerun", 100, 0)
+	if err != nil || !found || detail == nil || detail.Job == nil {
+		t.Fatalf("BuildJobDetail: found=%v err=%v", found, err)
+	}
+	if detail.Job.State != StateFailed {
+		t.Fatalf("job state = %q, want %q", detail.Job.State, StateFailed)
+	}
+	if detail.RunRecord == nil || detail.RunRecord.RunID != "req-2" {
+		t.Fatalf("expected the newer error run, got=%+v", detail.RunRecord)
+	}
+}
+
 func TestBuildJobDetailKeepsFailedJobResult(t *testing.T) {
 	t.Parallel()
 
