@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -38,7 +40,8 @@ func (fs *FilerServer) LookupDirectoryEntries(ctx context.Context, req *filer_pb
 		return nil, err
 	}
 	if fs.volumeGuard != nil {
-		populateBatchReadAuth(response, fs.maybeGetVolumeReadJwtAuthorizationToken)
+		readSigningEnabled := len(fs.volumeGuard.ReadSigningKey()) > 0
+		populateReadAuth(ctx, response, readSigningEnabled, fs.filer.MasterClient.GetLookupFileIdFunction(), fs.filer.MasterClient, fs.maybeGetVolumeReadJwtAuthorizationToken)
 	}
 	return response, nil
 }
@@ -67,6 +70,78 @@ func populateBatchReadAuth(response *filer_pb.LookupDirectoryEntriesResponse, mi
 			if token := mint(fid); token != "" {
 				response.ReadAuth[fid] = token
 			}
+		}
+	}
+}
+
+// populateReadAuth mints read_auth tokens for every chunk a reader must fetch:
+// the chunks listed on each entry, plus the chunks behind any manifest chunks --
+// the data chunks and any intermediate (nested) manifest chunks, since the entry
+// lists only the top-level manifests and a client reading with filer-issued
+// tokens could fetch those but not the chunks they resolve to.
+//
+// It resolves manifests first and mints every token afterwards. Read JWTs are
+// short-lived (default 60s), so a token must not be signed before the manifest
+// downloads this lookup needs have run: otherwise a token minted early -- for a
+// listed chunk, an ordinary file, or an earlier entry's chunks -- could expire
+// while later entries' manifests download, and the response would carry an
+// already-expired token.
+func populateReadAuth(ctx context.Context, response *filer_pb.LookupDirectoryEntriesResponse, readSigningEnabled bool, lookupFileIdFn wdclient.LookupFileIdFunctionType, invalidator filer.CacheInvalidator, mint func(string) string) {
+	manifestBackedFids := resolveFidsBehindManifests(ctx, response, readSigningEnabled, lookupFileIdFn, invalidator)
+	populateBatchReadAuth(response, mint)
+	mintReadAuth(response, manifestBackedFids, mint)
+}
+
+// resolveFidsBehindManifests returns the fids a reader must fetch to read the
+// files behind the response's manifest chunks: the leaf data chunks and every
+// intermediate (nested) manifest chunk ResolveChunkManifest traverses to reach
+// them. The top-level manifest chunks are listed on the entry and already minted
+// by populateBatchReadAuth; the dedup in mintReadAuth drops that overlap, so the
+// net new tokens are the data chunks and any nested manifests.
+//
+// It resolves manifests -- which downloads and expands them from the volume
+// servers -- only when read signing is enabled: with no read key the volume
+// server does not enforce read JWTs and mint returns "" for every chunk, so the
+// download would be wasted I/O that yields no token. The invalidator (the master
+// client, as the filer's own resolveManifest read path passes) lets a manifest
+// whose volume moved refresh the stale cached location and retry instead of
+// failing and leaving its data chunks without tokens.
+func resolveFidsBehindManifests(ctx context.Context, response *filer_pb.LookupDirectoryEntriesResponse, readSigningEnabled bool, lookupFileIdFn wdclient.LookupFileIdFunctionType, invalidator filer.CacheInvalidator) []string {
+	if !readSigningEnabled {
+		return nil
+	}
+	var fids []string
+	for _, result := range response.Results {
+		if result == nil || result.Entry == nil || !filer.HasChunkManifest(result.Entry.Chunks) {
+			continue
+		}
+		dataChunks, manifestChunks, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, result.Entry.Chunks, 0, math.MaxInt64, invalidator)
+		if err != nil {
+			glog.V(1).InfofCtx(ctx, "read auth: resolve manifests of %s: %v", result.Entry.Name, err)
+			continue
+		}
+		for _, chunk := range dataChunks {
+			if fid := chunk.GetFileIdString(); fid != "" {
+				fids = append(fids, fid)
+			}
+		}
+		for _, chunk := range manifestChunks {
+			if fid := chunk.GetFileIdString(); fid != "" {
+				fids = append(fids, fid)
+			}
+		}
+	}
+	return fids
+}
+
+// mintReadAuth adds a read_auth token for each fid not already covered.
+func mintReadAuth(response *filer_pb.LookupDirectoryEntriesResponse, fids []string, mint func(string) string) {
+	for _, fid := range fids {
+		if response.ReadAuth[fid] != "" {
+			continue
+		}
+		if token := mint(fid); token != "" {
+			response.ReadAuth[fid] = token
 		}
 	}
 }

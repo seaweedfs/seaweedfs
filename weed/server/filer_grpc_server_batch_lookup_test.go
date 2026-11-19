@@ -1,13 +1,19 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"math"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestLookupDirectoryEntriesRejectsInvalidRequests(t *testing.T) {
@@ -130,6 +137,230 @@ func TestPopulateBatchReadAuthMintsExactFidCapabilities(t *testing.T) {
 		"8,def": "jwt:8,def",
 	}) {
 		t.Fatalf("read auth = %#v", response.ReadAuth)
+	}
+}
+
+// manifestEntryChunks manifestizes filer.ManifestBatch+1 one-byte data chunks
+// and returns the listed chunks (which include the manifest chunks), the data
+// chunks they cover, and a map of the manifest payloads keyed by fid.
+func manifestEntryChunks(t *testing.T) (chunks, dataChunks []*filer_pb.FileChunk, stored map[string][]byte) {
+	t.Helper()
+	stored = map[string][]byte{}
+	for i := 0; i <= filer.ManifestBatch; i++ {
+		dataChunks = append(dataChunks, &filer_pb.FileChunk{FileId: fmt.Sprintf("3,%x", i+1), Offset: int64(i), Size: 1})
+	}
+	manifests := 0
+	save := func(reader io.Reader, name string, offset int64, tsNs int64, expectedDataSize uint64) (*filer_pb.FileChunk, error) {
+		var buf bytes.Buffer
+		if _, err := io.Copy(&buf, reader); err != nil {
+			return nil, err
+		}
+		manifests++
+		fid := fmt.Sprintf("9,%x", manifests)
+		stored[fid] = buf.Bytes()
+		return &filer_pb.FileChunk{FileId: fid, Offset: offset, Size: uint64(buf.Len())}, nil
+	}
+	chunks, err := filer.MaybeManifestize(save, nil, dataChunks)
+	if err != nil {
+		t.Fatalf("manifestize: %v", err)
+	}
+	if !filer.HasChunkManifest(chunks) {
+		t.Fatalf("%d chunks were not manifestized", len(dataChunks))
+	}
+	return chunks, dataChunks, stored
+}
+
+// A file above filer.ManifestBatch chunks lists only its manifest chunks; a
+// reader that holds only filer-issued tokens must also get tokens for the
+// data chunks the manifests point to, or the file cannot be read.
+func TestPopulateReadAuthCoversDataChunksBehindManifests(t *testing.T) {
+	chunks, dataChunks, stored := manifestEntryChunks(t)
+	volume := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, found := stored[strings.TrimPrefix(r.URL.Path, "/")]
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(data)
+	}))
+	defer volume.Close()
+	lookup := func(_ context.Context, fid string) ([]string, error) {
+		return []string{volume.URL + "/" + fid}, nil
+	}
+
+	response := &filer_pb.LookupDirectoryEntriesResponse{Results: []*filer_pb.LookupDirectoryEntryResult{
+		{Found: true, Entry: &filer_pb.Entry{Name: "big", Chunks: chunks}},
+	}}
+	mint := func(fid string) string { return "jwt:" + fid }
+	populateReadAuth(context.Background(), response, true, lookup, nil, mint)
+	for _, chunk := range dataChunks {
+		if got := response.ReadAuth[chunk.FileId]; got != "jwt:"+chunk.FileId {
+			t.Fatalf("data chunk %s behind a manifest: read auth %q", chunk.FileId, got)
+		}
+	}
+	for _, chunk := range chunks {
+		if response.ReadAuth[chunk.GetFileIdString()] == "" {
+			t.Fatalf("listed chunk %s lost its read auth", chunk.GetFileIdString())
+		}
+	}
+
+	// A manifest that cannot be fetched leaves its chunks without tokens.
+	clear(stored)
+	failed := &filer_pb.LookupDirectoryEntriesResponse{Results: []*filer_pb.LookupDirectoryEntryResult{
+		{Found: true, Entry: &filer_pb.Entry{Name: "big", Chunks: chunks}},
+	}}
+	populateReadAuth(context.Background(), failed, true, lookup, nil, mint)
+	if got := failed.ReadAuth[dataChunks[0].FileId]; got != "" {
+		t.Fatalf("unresolvable manifest: data chunk got read auth %q", got)
+	}
+}
+
+// storeManifestChunk serializes a FileChunkManifest over children (mirroring
+// filer.mergeIntoManifest), stores it under fid, and returns the manifest chunk
+// pointing at it. children are cloned so BeforeEntrySerialization (which clears
+// FileId) does not mutate the caller's chunks.
+func storeManifestChunk(t *testing.T, fid string, children []*filer_pb.FileChunk, stored map[string][]byte) *filer_pb.FileChunk {
+	t.Helper()
+	clones := make([]*filer_pb.FileChunk, len(children))
+	minOffset, maxOffset := int64(math.MaxInt64), int64(math.MinInt64)
+	for i, c := range children {
+		clones[i] = proto.Clone(c).(*filer_pb.FileChunk)
+		if c.Offset < minOffset {
+			minOffset = c.Offset
+		}
+		if int64(c.Size)+c.Offset > maxOffset {
+			maxOffset = int64(c.Size) + c.Offset
+		}
+	}
+	filer_pb.BeforeEntrySerialization(clones)
+	data, err := proto.Marshal(&filer_pb.FileChunkManifest{Chunks: clones})
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	stored[fid] = data
+	return &filer_pb.FileChunk{FileId: fid, IsChunkManifest: true, Offset: minOffset, Size: uint64(maxOffset - minOffset)}
+}
+
+// ResolveChunkManifest resolves manifests recursively, so a manifest can point
+// to another manifest (M0 -> M1 -> data). The entry lists only M0; a reader
+// using exact-fid tokens must also get a token for the intermediate manifest M1,
+// or it cannot fetch M1 to reach the data behind it.
+func TestPopulateReadAuthCoversNestedManifests(t *testing.T) {
+	stored := map[string][]byte{}
+	volume := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, found := stored[strings.TrimPrefix(r.URL.Path, "/")]
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(data)
+	}))
+	defer volume.Close()
+	lookup := func(_ context.Context, fid string) ([]string, error) {
+		return []string{volume.URL + "/" + fid}, nil
+	}
+
+	data := []*filer_pb.FileChunk{
+		{FileId: "3,1", Offset: 0, Size: 1},
+		{FileId: "3,2", Offset: 1, Size: 1},
+	}
+	m1 := storeManifestChunk(t, "9,1", data, stored)                      // M1 -> data chunks
+	m0 := storeManifestChunk(t, "9,2", []*filer_pb.FileChunk{m1}, stored) // M0 -> M1 (nested)
+
+	response := &filer_pb.LookupDirectoryEntriesResponse{Results: []*filer_pb.LookupDirectoryEntryResult{
+		{Found: true, Entry: &filer_pb.Entry{Name: "nested", Chunks: []*filer_pb.FileChunk{m0}}},
+	}}
+	mint := func(fid string) string { return "jwt:" + fid }
+	populateReadAuth(context.Background(), response, true, lookup, nil, mint)
+	// Every fid a reader must fetch: the listed M0, the intermediate M1, and the data chunks.
+	for _, fid := range []string{"9,2", "9,1", "3,1", "3,2"} {
+		if got := response.ReadAuth[fid]; got != "jwt:"+fid {
+			t.Fatalf("nested manifest: %s read auth %q", fid, got)
+		}
+	}
+}
+
+// With read signing disabled the volume server does not enforce read JWTs and
+// no token can be minted, so manifests must not be resolved at all: resolving
+// downloads and expands each manifest from the volume servers for nothing.
+func TestResolveFidsBehindManifestsSkipsWhenSigningDisabled(t *testing.T) {
+	chunks, _, _ := manifestEntryChunks(t)
+	response := &filer_pb.LookupDirectoryEntriesResponse{Results: []*filer_pb.LookupDirectoryEntryResult{
+		{Found: true, Entry: &filer_pb.Entry{Name: "big", Chunks: chunks}},
+	}}
+	lookupCalled := false
+	lookup := func(_ context.Context, fid string) ([]string, error) {
+		lookupCalled = true
+		return nil, nil
+	}
+	if fids := resolveFidsBehindManifests(context.Background(), response, false, lookup, nil); fids != nil {
+		t.Fatalf("read signing disabled: resolved %d fids", len(fids))
+	}
+	if lookupCalled {
+		t.Fatal("read signing disabled: manifests were resolved (lookup called) for no token")
+	}
+
+	// The whole read-auth pass issues nothing when signing is off.
+	populateReadAuth(context.Background(), response, false, lookup, nil, func(string) string { return "" })
+	if len(response.ReadAuth) != 0 {
+		t.Fatalf("read signing disabled: read auth = %#v", response.ReadAuth)
+	}
+}
+
+// Read JWTs are short-lived, so no token may be signed before the manifest
+// downloads this lookup needs have finished: a token minted first (for a listed
+// chunk, an ordinary file, or an earlier entry) could expire while later
+// manifests download. Every mint must happen after the last lookup.
+func TestPopulateReadAuthMintsAfterManifestDownloads(t *testing.T) {
+	chunks, _, stored := manifestEntryChunks(t)
+	volume := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, found := stored[strings.TrimPrefix(r.URL.Path, "/")]
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(data)
+	}))
+	defer volume.Close()
+
+	// ResolveChunkManifest fetches manifest chunks concurrently, so the lookup fn
+	// is called from several goroutines; guard the recorder.
+	var mu sync.Mutex
+	var events []string
+	record := func(e string) {
+		mu.Lock()
+		events = append(events, e)
+		mu.Unlock()
+	}
+	lookup := func(_ context.Context, fid string) ([]string, error) {
+		record("lookup")
+		return []string{volume.URL + "/" + fid}, nil
+	}
+	mint := func(fid string) string {
+		record("mint")
+		return "jwt:" + fid
+	}
+	// An ordinary file and a manifest-backed file in the same batch.
+	response := &filer_pb.LookupDirectoryEntriesResponse{Results: []*filer_pb.LookupDirectoryEntryResult{
+		{Found: true, Entry: &filer_pb.Entry{Name: "small", Chunks: []*filer_pb.FileChunk{{FileId: "7,abc"}}}},
+		{Found: true, Entry: &filer_pb.Entry{Name: "big", Chunks: chunks}},
+	}}
+	populateReadAuth(context.Background(), response, true, lookup, nil, mint)
+
+	lastLookup, firstMint := -1, len(events)
+	for i, e := range events {
+		if e == "lookup" {
+			lastLookup = i
+		}
+		if e == "mint" && i < firstMint {
+			firstMint = i
+		}
+	}
+	if lastLookup == -1 {
+		t.Fatal("manifest was never resolved")
+	}
+	if firstMint < lastLookup {
+		t.Fatalf("a token was minted before manifest downloads finished: %v", events)
 	}
 }
 

@@ -187,8 +187,26 @@ catalog.s3.path-style-access = "true"
 	return configDir
 }
 
+var icebergJars = []struct{ artifact, sha256 string }{
+	{"iceberg-spark-runtime-3.5_2.12", "2aec4b78d806cc81d4e50325b351f6349c90de641544e644c6032f000938618b"},
+	{"iceberg-aws-bundle", "f4398dcdfefc0b186b899d500651e6e5ac62abe26e25d5cbe28403eaaec24c20"},
+}
+
+const (
+	icebergVersion  = "1.5.2"
+	sparkJarsDir    = "/opt/iceberg-jars"
+	sparkJarsConfig = sparkJarsDir + "/iceberg-spark-runtime-3.5_2.12-" + icebergVersion + ".jar," +
+		sparkJarsDir + "/iceberg-aws-bundle-" + icebergVersion + ".jar"
+)
+
 func (env *TestEnvironment) startSparkContainer(t *testing.T, configDir string) {
 	t.Helper()
+
+	mounts := testcontainers.Mounts(testcontainers.BindMount(configDir, "/config"))
+	for _, jar := range icebergJars {
+		path := testutil.MavenJar(t, "org.apache.iceberg", jar.artifact, icebergVersion, jar.sha256)
+		mounts = append(mounts, testcontainers.BindMount(path, testcontainers.ContainerMountTarget(sparkJarsDir+"/"+filepath.Base(path))))
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -196,9 +214,7 @@ func (env *TestEnvironment) startSparkContainer(t *testing.T, configDir string) 
 	req := testcontainers.ContainerRequest{
 		Image:        "apache/spark:3.5.1",
 		ExposedPorts: []string{"4040/tcp"},
-		Mounts: testcontainers.Mounts(
-			testcontainers.BindMount(configDir, "/config"),
-		),
+		Mounts:       mounts,
 		Env: map[string]string{
 			"SPARK_LOCAL_IP": "localhost",
 		},
@@ -266,8 +282,6 @@ import sys
 spark_home = os.environ.get("SPARK_HOME", "/opt/spark")
 python_path = os.path.join(spark_home, "python")
 py4j_glob = glob.glob(os.path.join(python_path, "lib", "py4j-*.zip"))
-ivy_dir = "/tmp/ivy"
-os.makedirs(ivy_dir, exist_ok=True)
 os.environ["AWS_REGION"] = "us-west-2"
 os.environ["AWS_DEFAULT_REGION"] = "us-west-2"
 os.environ["AWS_ACCESS_KEY_ID"] = "test"
@@ -281,8 +295,7 @@ from pyspark.sql import SparkSession
 
 spark = (SparkSession.builder
     .appName("SeaweedFS Iceberg Test")
-    .config("spark.jars.ivy", ivy_dir)
-    .config("spark.jars.packages", "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2,org.apache.iceberg:iceberg-aws-bundle:1.5.2")
+    .config("spark.jars", "%s")
     .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
     .config("spark.sql.catalog.iceberg", "org.apache.iceberg.spark.SparkCatalog")
     .config("spark.sql.catalog.iceberg.type", "rest")
@@ -303,7 +316,7 @@ spark = (SparkSession.builder
     .getOrCreate())
 
 %s
-`, icebergPort, s3Port, sql)
+`, sparkJarsConfig, icebergPort, s3Port, sql)
 
 	code, out, err := container.Exec(ctx, []string{"python3", "-c", pythonScript})
 	var output string
