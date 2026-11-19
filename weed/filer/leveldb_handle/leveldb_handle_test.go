@@ -2,6 +2,11 @@ package leveldb_handle
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -9,6 +14,9 @@ import (
 	"time"
 
 	"github.com/syndtr/goleveldb/leveldb"
+	leveldb_errors "github.com/syndtr/goleveldb/leveldb/errors"
+	"github.com/syndtr/goleveldb/leveldb/filter"
+	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/storage"
 )
 
@@ -293,7 +301,7 @@ func TestReopenKeepsFileDatabase(t *testing.T) {
 	if err := db.Put([]byte("a"), []byte("1"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if !db.reopen(db.db) {
+	if !db.reopen(db.db, nil) {
 		t.Fatal("reopen failed")
 	}
 	if err := db.Put([]byte("b"), []byte("2"), nil); err != nil {
@@ -356,5 +364,231 @@ func TestFailedReopenReportsErrorsUntilOpen(t *testing.T) {
 	expectValue(t, db, "a", "1")
 	if err := db.Put([]byte("b"), []byte("2"), nil); err != nil {
 		t.Fatalf("put after the reopen succeeded: %v", err)
+	}
+}
+
+// damagedTableDB writes keys k0000..k1999, k1000 in several versions, into
+// tables and zeroes part of the first data block of each table, as a power
+// loss can leave it.
+func damagedTableDB(t *testing.T) (dir string, opts *opt.Options, value string) {
+	t.Helper()
+	dir = t.TempDir()
+	opts = &opt.Options{Filter: filter.NewBloomFilter(8)}
+	value = strings.Repeat("v", 100)
+	raw, err := leveldb.OpenFile(dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"old1", "old2"} {
+		if err := raw.Put([]byte("k1000"), []byte(v), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 2000; i++ {
+		if err := raw.Put([]byte(fmt.Sprintf("k%04d", i)), []byte(value), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Reopening flushes the journal into one level-0 table that keeps every
+	// version of k1000.
+	for reopen := 0; reopen < 2; reopen++ {
+		if err := raw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if raw, err = leveldb.OpenFile(dir, opts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	tables, _ := filepath.Glob(filepath.Join(dir, "*.ldb"))
+	if len(tables) == 0 {
+		t.Fatal("no table files")
+	}
+	for _, table := range tables {
+		f, err := os.OpenFile(table, os.O_RDWR, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = f.WriteAt(make([]byte, 64), 64)
+		f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir, opts, value
+}
+
+func TestOpenRecoversDamagedTable(t *testing.T) {
+	dir, opts, value := damagedTableDB(t)
+	if err := os.Remove(filepath.Join(dir, "CURRENT")); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := OpenFile(dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectValue(t, db, "k1000", value)
+	expectValue(t, db, "k1999", value)
+	if err := db.Put([]byte("after"), []byte("1"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = OpenFile(dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	expectValue(t, db, "k1999", value)
+	expectValue(t, db, "after", "1")
+}
+
+func TestWriteRecoversFromCorruptedTable(t *testing.T) {
+	dir, opts, value := damagedTableDB(t)
+	opts.WriteBuffer = 64 * 1024
+	opts.CompactionTotalSize = 64 * 1024
+	db, err := OpenFile(dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Get([]byte("k0000"), nil); !leveldb_errors.IsCorrupted(err) {
+		t.Fatalf("get from the damaged block: %v", err)
+	}
+	db.mu.RLock()
+	damaged := db.db
+	db.mu.RUnlock()
+
+	// Overwrite the keys until a background compaction reads the damaged
+	// table and goleveldb fails every later write.
+	for round := 0; ; round++ {
+		db.mu.RLock()
+		recovered := db.db != damaged
+		db.mu.RUnlock()
+		if recovered {
+			break
+		}
+		if round == 100 {
+			t.Fatal("no compaction reached the damaged table")
+		}
+		for i := 0; i < 1000; i++ {
+			if err := db.Put([]byte(fmt.Sprintf("k%04d", i)), []byte("new"), nil); err != nil {
+				t.Fatalf("put after a compaction hit the damaged table: %v", err)
+			}
+		}
+	}
+	if err := db.Put([]byte("after"), []byte("1"), nil); err != nil {
+		t.Fatal(err)
+	}
+	expectValue(t, db, "k0999", "new")
+	expectValue(t, db, "k1000", value)
+	expectValue(t, db, "k1999", value)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = OpenFile(dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	expectValue(t, db, "after", "1")
+	expectValue(t, db, "k0000", "new")
+	expectValue(t, db, "k1000", value)
+	expectValue(t, db, "k1999", value)
+}
+
+func TestOpenDropsUnreadableTable(t *testing.T) {
+	dir := t.TempDir()
+	opts := &opt.Options{Filter: filter.NewBloomFilter(8)}
+	for _, key := range []string{"a", "b", "c"} {
+		raw, err := leveldb.OpenFile(dir, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := raw.Put([]byte(key), []byte(key), nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := raw.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Each reopen flushed the previous journal, so "a" and "b" have a table
+	// each and "c" is still in the journal.
+	tables, _ := filepath.Glob(filepath.Join(dir, "*.ldb"))
+	if len(tables) != 2 {
+		t.Fatalf("tables: %v", tables)
+	}
+	sort.Strings(tables)
+	if err := os.Truncate(tables[0], 10); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "CURRENT")); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := OpenFile(dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Get([]byte("a"), nil); err != leveldb.ErrNotFound {
+		t.Fatalf("get from the unreadable table: %v", err)
+	}
+	expectValue(t, db, "b", "b")
+	expectValue(t, db, "c", "c")
+	if err := db.Put([]byte("d"), []byte("d"), nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStrictRecoveryDropsDamagedTable(t *testing.T) {
+	dir, opts, _ := damagedTableDB(t)
+	if err := os.Remove(filepath.Join(dir, "CURRENT")); err != nil {
+		t.Fatal(err)
+	}
+	opts.Strict = opt.DefaultStrict | opt.StrictRecovery
+
+	db, err := OpenFile(dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Get([]byte("k1999"), nil); err != leveldb.ErrNotFound {
+		t.Fatalf("get from the dropped table: %v", err)
+	}
+}
+
+func TestRebuildLeavesTablesOfAnOpenDatabase(t *testing.T) {
+	dir, opts, _ := damagedTableDB(t)
+	stor, err := storage.OpenFile(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stor.Close()
+	raw, err := leveldb.Open(stor, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	tables, _ := filepath.Glob(filepath.Join(dir, "*.ldb"))
+	before, err := os.ReadFile(tables[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := rebuildDamagedTables(stor, opts); err != storage.ErrLocked {
+		t.Fatalf("rebuild under an open database: %v", err)
+	}
+	after, err := os.ReadFile(tables[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("table rewritten under an open database")
 	}
 }
