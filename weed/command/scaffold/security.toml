@@ -40,6 +40,18 @@ ui = false
 [filer.expose_directory_metadata]
 enabled = true
 
+# HTTP Basic Auth on the filer HTTP ports (-port and -port.readonly). Once the
+# password is set, every request needs these credentials or a valid filer JWT
+# (see [jwt.filer_signing]), and an access level without a JWT key is no longer
+# open. /healthz and /readyz stay open. Components that call the filer HTTP
+# port (mount, filer.sync and filer.backup with -filerProxy, sftp, volume.fsck)
+# authenticate with the filer JWT, so set jwt.filer_signing.key, and
+# jwt.filer_signing.read.key for their reads, if you run them.
+# Env: WEED_FILER_BASIC_AUTH_USER, WEED_FILER_BASIC_AUTH_PASSWORD
+[filer.basic_auth]
+user = ""
+password = ""
+
 # this jwt signing key is read by master and volume server, and it is used for read operations:
 # - the Master server generates the JWT, which can be used to read a certain file on a volume server
 # - the Volume server validates the JWT on reading
