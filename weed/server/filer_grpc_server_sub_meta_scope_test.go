@@ -2,6 +2,8 @@ package weed_server
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -259,5 +261,108 @@ func TestScopedStreamSendMsgIsFiltered(t *testing.T) {
 		if msgs := inner.snapshot(); len(msgs) != 1 || msgs[0].Directory != "/a" {
 			t.Errorf("%T sent %v", s, msgs)
 		}
+	}
+}
+
+func scopedLogEntry(tsNs int64, dir, name, newParent string, oldEntry bool) *filer_pb.LogEntry {
+	n := &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: name}, NewParentPath: newParent}
+	if oldEntry {
+		n.OldEntry = &filer_pb.Entry{Name: name}
+	}
+	data, err := proto.Marshal(&filer_pb.SubscribeMetadataResponse{Directory: dir, EventNotification: n, TsNs: tsNs})
+	if err != nil {
+		panic(err)
+	}
+	return &filer_pb.LogEntry{TsNs: tsNs, Data: data, Key: []byte(dir + "/" + name)}
+}
+
+// The real subscribe loop with a scoped token: flushed backlog, the memory
+// tail and live events are all filtered, and log file references are not sent
+// although the client asks for them.
+func TestSubscribeLocalMetadataScopedEndToEnd(t *testing.T) {
+	for _, enforce := range []bool{true, false} {
+		t.Run(map[bool]string{true: "scoped", false: "key unset"}[enforce], func(t *testing.T) {
+			h := newSubscribeHarness(t)
+			if enforce {
+				v := util.GetViper()
+				v.Set("jwt.filer_signing.subscribe.key", "sub-key")
+				t.Cleanup(func() { v.Set("jwt.filer_signing.subscribe.key", "") })
+			}
+
+			ts := func(i int) int64 { return h.base + int64(i)*int64(time.Millisecond) }
+			entries := []*filer_pb.LogEntry{
+				scopedLogEntry(ts(0), "/buckets/uploads", "in-flushed", "", false),
+				scopedLogEntry(ts(1), "/buckets/uploads-private", "sibling", "", false),
+				scopedLogEntry(ts(2), "/etc/iam", "identity.json", "", false),
+				scopedLogEntry(ts(3), "/buckets/uploads/..", "climb", "", false),
+				scopedLogEntry(ts(4), "/buckets/uploads", "renamed-out", "/buckets/other", true),
+				scopedLogEntry(ts(5), "/buckets/uploads/2026", "in-memory", "", false),
+				scopedLogEntry(ts(6), "/buckets/uploads%2F..%2Fother", "encoded", "", false),
+			}
+			for i, e := range entries {
+				if err := h.f.LocalMetaLogBuffer.AddLogEntryToBuffer(e); err != nil {
+					t.Fatal(err)
+				}
+				if i == 4 {
+					h.f.LocalMetaLogBuffer.ForceFlush()
+				}
+			}
+
+			token := security.GenJwtForMetadataSubscription(security.SigningKey("sub-key"), 60, []string{"/buckets/uploads"})
+			ctx, cancel := context.WithCancel(metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+string(token))))
+			defer cancel()
+			stream := &fakeSubscribeStream{ctx: ctx}
+			done := make(chan error, 1)
+			go func() {
+				done <- h.fs.SubscribeLocalMetadata(&filer_pb.SubscribeMetadataRequest{
+					ClientName: "scope-test", ClientId: 9, ClientEpoch: 1, PathPrefix: "/",
+					ClientSupportsMetadataChunks: true,
+				}, stream)
+			}()
+
+			time.Sleep(100 * time.Millisecond)
+			for _, e := range []*filer_pb.LogEntry{
+				scopedLogEntry(ts(8), "/", "outside-live", "", false),
+				scopedLogEntry(ts(7), "/buckets/uploads", "in-live", "", false),
+			} {
+				if err := h.f.LocalMetaLogBuffer.AddLogEntryToBuffer(e); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			want := "in-flushed,in-live,in-memory"
+			var got []string
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				got = got[:0]
+				for _, m := range stream.snapshot() {
+					if enforce && len(m.LogFileRefs) > 0 {
+						t.Fatal("a scoped subscriber was sent log file references")
+					}
+					for _, e := range append([]*filer_pb.SubscribeMetadataResponse{m}, m.Events...) {
+						if n := e.GetEventNotification(); n.GetNewEntry() != nil {
+							got = append(got, n.NewEntry.Name)
+						}
+					}
+				}
+				if (enforce && len(got) >= 3) || (!enforce && strings.Contains(strings.Join(got, ","), "outside-live")) {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			sort.Strings(got)
+			if enforce && strings.Join(got, ",") != want {
+				t.Fatalf("delivered %v, want %s", got, want)
+			}
+			if !enforce && !strings.Contains(strings.Join(got, ","), "outside-live") {
+				t.Fatalf("without the subscribe key every event must still arrive; got %v", got)
+			}
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("subscription did not end on cancel")
+			}
+		})
 	}
 }
