@@ -107,9 +107,11 @@ type Filer struct {
 	// to the store so a restart does not leak chunks. Guarded by
 	// deletionLedgerLock; nil-safe for Filer literals in tests.
 	// pendingDeletions maps each id to its enqueue epoch so an expiry-forget
-	// cannot erase a re-queued id.
+	// cannot erase a re-queued id. fsyncDeletions marks pending ids whose
+	// volume deletes must be durable.
 	deletionLedgerLock  sync.Mutex
 	pendingDeletions    map[string]uint64
+	fsyncDeletions      map[string]struct{}
 	deletionSeq         uint64
 	deletionLedgerDirty bool
 	deletionLedgerParts int

@@ -163,7 +163,9 @@ func (f *Filer) signalLedgerFlush() {
 // pipeline. It keeps the in-memory hot queue AND the durable ledger in sync.
 // Safe on a zero-value Filer (tests build struct literals without NewFiler):
 // the map is lazily created and the mutex is zero-value friendly.
-func (f *Filer) queueDeletions(fileIds ...string) {
+// fsync marks the ids for a durable volume delete; the mark stays until the
+// record is forgotten, so a later enqueue without fsync keeps it.
+func (f *Filer) queueDeletions(fsync bool, fileIds ...string) {
 	if len(fileIds) == 0 {
 		return
 	}
@@ -187,6 +189,15 @@ func (f *Filer) queueDeletions(fileIds ...string) {
 		if !exists {
 			f.deletionLedgerDirty = true
 		}
+		if fsync {
+			if f.fsyncDeletions == nil {
+				f.fsyncDeletions = make(map[string]struct{})
+			}
+			if _, marked := f.fsyncDeletions[id]; !marked {
+				f.fsyncDeletions[id] = struct{}{}
+				f.deletionLedgerDirty = true
+			}
+		}
 	}
 	f.deletionLedgerLock.Unlock()
 	f.signalLedgerFlush()
@@ -208,6 +219,25 @@ func (f *Filer) deletionEpoch(fileId string) uint64 {
 	return f.pendingDeletions[fileId]
 }
 
+// fsyncDeletionIds returns the subset of fileIds whose deletes must be durable.
+func (f *Filer) fsyncDeletionIds(fileIds []string) map[string]struct{} {
+	f.deletionLedgerLock.Lock()
+	defer f.deletionLedgerLock.Unlock()
+	if len(f.fsyncDeletions) == 0 {
+		return nil
+	}
+	var ids map[string]struct{}
+	for _, id := range fileIds {
+		if _, ok := f.fsyncDeletions[id]; ok {
+			if ids == nil {
+				ids = make(map[string]struct{})
+			}
+			ids[id] = struct{}{}
+		}
+	}
+	return ids
+}
+
 // forgetDeletion removes a fileId from the ledger once its deletion is terminal
 // (deleted or already absent: the chunks are gone, so any pending record — even
 // a re-queued one — refers to work that no longer exists). Non-terminal
@@ -219,6 +249,7 @@ func (f *Filer) forgetDeletion(fileId string) {
 	f.deletionLedgerLock.Lock()
 	if _, exists := f.pendingDeletions[fileId]; exists {
 		delete(f.pendingDeletions, fileId)
+		delete(f.fsyncDeletions, fileId)
 		f.deletionLedgerDirty = true
 	}
 	f.deletionLedgerLock.Unlock()
@@ -237,6 +268,7 @@ func (f *Filer) forgetDeletionEpoch(fileId string, epoch uint64) bool {
 	f.deletionLedgerLock.Lock()
 	if cur, exists := f.pendingDeletions[fileId]; exists && cur == epoch {
 		delete(f.pendingDeletions, fileId)
+		delete(f.fsyncDeletions, fileId)
 		f.deletionLedgerDirty = true
 		removed = true
 	}
@@ -751,7 +783,7 @@ func (f *Filer) reloadDeletionLedger() bool {
 		// for peer meta-aggregation to settle. The ledger is deliberately NOT
 		// cleared here: it shrinks only as the delete pipeline confirms each
 		// id terminal, so a second crash mid-recovery replays everything.
-		f.queueDeletions(ids...)
+		f.queueDeletions(false, ids...)
 		glog.V(0).Infof("re-queued %d recovered pending deletions", len(ids))
 	}()
 	return true

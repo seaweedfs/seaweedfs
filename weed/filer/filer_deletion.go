@@ -362,7 +362,7 @@ func (f *Filer) processDeletionBatch(ctx context.Context, toDeleteFileIds []stri
 	}
 
 	// Delete files and classify outcomes
-	outcomes := deleteFilesAndClassify(ctx, f.volumeGrpcDialOption(), uniqueFileIdsSlice, lookupFunc)
+	outcomes := deleteFilesAndClassify(ctx, f.volumeGrpcDialOption(), uniqueFileIdsSlice, f.fsyncDeletionIds(uniqueFileIdsSlice), lookupFunc)
 
 	// Process outcomes
 	var successCount, notFoundCount, retryableErrorCount, permanentErrorCount int
@@ -432,10 +432,24 @@ type deletionOutcome struct {
 	errorMsg string
 }
 
-// deleteFilesAndClassify performs deletion and classifies outcomes for a list of file IDs
-func deleteFilesAndClassify(ctx context.Context, grpcDialOption grpc.DialOption, fileIds []string, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) map[string]deletionOutcome {
-	// Perform deletion
-	results := operation.DeleteFileIdsWithLookupVolumeId(ctx, grpcDialOption, fileIds, false, lookupFunc)
+// deleteFilesAndClassify performs deletion and classifies outcomes for a list of file IDs.
+// Ids in fsyncIds are deleted durably.
+func deleteFilesAndClassify(ctx context.Context, grpcDialOption grpc.DialOption, fileIds []string, fsyncIds map[string]struct{}, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) map[string]deletionOutcome {
+	var plainIds, syncedIds []string
+	for _, fileId := range fileIds {
+		if _, ok := fsyncIds[fileId]; ok {
+			syncedIds = append(syncedIds, fileId)
+		} else {
+			plainIds = append(plainIds, fileId)
+		}
+	}
+	var results []*volume_server_pb.DeleteResult
+	if len(plainIds) > 0 {
+		results = operation.DeleteFileIdsWithLookupVolumeId(ctx, grpcDialOption, plainIds, false, lookupFunc)
+	}
+	if len(syncedIds) > 0 {
+		results = append(results, operation.DeleteFileIdsWithLookupVolumeId(ctx, grpcDialOption, syncedIds, true, lookupFunc)...)
+	}
 
 	// Group results by file ID to handle multiple results for replicated volumes
 	resultsByFileId := make(map[string][]*volume_server_pb.DeleteResult)
@@ -553,7 +567,7 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 					// recorded. A surviving newer record still needs work, so
 					// it goes back through the hot queue.
 					if !f.forgetDeletionEpoch(item.FileId, item.ledgerEpoch) {
-						f.queueDeletions(item.FileId)
+						f.queueDeletions(false, item.FileId)
 					}
 				}
 				if len(readyItems) == 0 {
@@ -582,7 +596,7 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 	}
 
 	// Delete files and classify outcomes
-	outcomes := deleteFilesAndClassify(context.Background(), f.volumeGrpcDialOption(), fileIds, lookupFunc)
+	outcomes := deleteFilesAndClassify(context.Background(), f.volumeGrpcDialOption(), fileIds, f.fsyncDeletionIds(fileIds), lookupFunc)
 
 	// Process outcomes - iterate over readyItems to ensure all items are accounted for
 	var successCount, notFoundCount, retryCount, permanentErrorCount int
@@ -612,7 +626,7 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 			// gave up: drop the record, unless the id was re-queued meanwhile
 			// — a surviving newer record goes back through the hot queue.
 			if !f.forgetDeletionEpoch(item.FileId, item.ledgerEpoch) {
-				f.queueDeletions(item.FileId)
+				f.queueDeletions(false, item.FileId)
 			}
 			glog.Warningf("permanent error on retry for %s after %d attempts: %s", item.FileId, item.RetryCount, outcome.errorMsg)
 		}
@@ -630,7 +644,7 @@ func (f *Filer) processRetryBatch(readyItems []*DeletionRetryItem, lookupFunc fu
 }
 
 func (f *Filer) DeleteUncommittedChunks(ctx context.Context, chunks []*filer_pb.FileChunk) {
-	f.doDeleteChunks(ctx, chunks)
+	f.doDeleteChunks(ctx, chunks, false)
 }
 
 func (f *Filer) DeleteChunks(ctx context.Context, fullpath util.FullPath, chunks []*filer_pb.FileChunk) {
@@ -638,13 +652,13 @@ func (f *Filer) DeleteChunks(ctx context.Context, fullpath util.FullPath, chunks
 	if rule.DisableChunkDeletion {
 		return
 	}
-	f.doDeleteChunks(ctx, chunks)
+	f.doDeleteChunks(ctx, chunks, rule.GetFsync())
 }
 
-func (f *Filer) doDeleteChunks(ctx context.Context, chunks []*filer_pb.FileChunk) {
+func (f *Filer) doDeleteChunks(ctx context.Context, chunks []*filer_pb.FileChunk, fsync bool) {
 	for _, chunk := range chunks {
 		if !chunk.IsChunkManifest {
-			f.queueDeletions(chunk.GetFileIdString())
+			f.queueDeletions(fsync, chunk.GetFileIdString())
 			continue
 		}
 		dataChunks, manifestResolveErr := ResolveOneChunkManifest(ctx, f.MasterClient.LookupFileId, chunk, f.MasterClient)
@@ -652,15 +666,15 @@ func (f *Filer) doDeleteChunks(ctx context.Context, chunks []*filer_pb.FileChunk
 			glog.V(0).InfofCtx(ctx, "failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
 		}
 		for _, dChunk := range dataChunks {
-			f.queueDeletions(dChunk.GetFileIdString())
+			f.queueDeletions(fsync, dChunk.GetFileIdString())
 		}
-		f.queueDeletions(chunk.GetFileIdString())
+		f.queueDeletions(fsync, chunk.GetFileIdString())
 	}
 }
 
 func (f *Filer) DeleteChunksNotRecursive(chunks []*filer_pb.FileChunk) {
 	for _, chunk := range chunks {
-		f.queueDeletions(chunk.GetFileIdString())
+		f.queueDeletions(false, chunk.GetFileIdString())
 	}
 }
 
