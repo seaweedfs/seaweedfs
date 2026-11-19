@@ -2,6 +2,10 @@ package leveldb_handle
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -9,7 +13,10 @@ import (
 	"time"
 
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/filter"
+	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/storage"
+	leveldb_util "github.com/syndtr/goleveldb/leveldb/util"
 )
 
 type failingStorage struct {
@@ -357,4 +364,71 @@ func TestFailedReopenReportsErrorsUntilOpen(t *testing.T) {
 	if err := db.Put([]byte("b"), []byte("2"), nil); err != nil {
 		t.Fatalf("put after the reopen succeeded: %v", err)
 	}
+}
+
+// damagedTableDB writes keys k0000..k1999 into tables and zeroes part of the
+// first data block of each table, as a power loss can leave it.
+func damagedTableDB(t *testing.T) (dir string, opts *opt.Options, value string) {
+	t.Helper()
+	dir = t.TempDir()
+	opts = &opt.Options{Filter: filter.NewBloomFilter(8)}
+	value = strings.Repeat("v", 100)
+	raw, err := leveldb.OpenFile(dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2000; i++ {
+		if err := raw.Put([]byte(fmt.Sprintf("k%04d", i)), []byte(value), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := raw.CompactRange(leveldb_util.Range{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	tables, _ := filepath.Glob(filepath.Join(dir, "*.ldb"))
+	if len(tables) == 0 {
+		t.Fatal("no table files")
+	}
+	for _, table := range tables {
+		f, err := os.OpenFile(table, os.O_RDWR, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = f.WriteAt(make([]byte, 64), 64)
+		f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir, opts, value
+}
+
+func TestOpenRecoversDamagedTable(t *testing.T) {
+	dir, opts, value := damagedTableDB(t)
+	if err := os.Remove(filepath.Join(dir, "CURRENT")); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := OpenFile(dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectValue(t, db, "k1999", value)
+	if err := db.Put([]byte("after"), []byte("1"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = OpenFile(dir, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	expectValue(t, db, "k1999", value)
+	expectValue(t, db, "after", "1")
 }
