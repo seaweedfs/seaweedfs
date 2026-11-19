@@ -82,8 +82,9 @@ expires_after_seconds = 10           # seconds
 # key. That token is an HS256 JWT with "exp", "allowed_methods" (a subset of
 # SubscribeMetadata and SubscribeLocalMetadata) and "allowed_prefixes"
 # (absolute paths); its holder only receives events whose paths are all under
-# one of the prefixes. Without mTLS, set jwt.filer_signing.key and this key on
-# every filer, S3 gateway, mount and filer.sync too, so they keep full access.
+# one of the prefixes. Mint one with "fs.meta.token" in weed shell. Without
+# mTLS, set jwt.filer_signing.key and this key on every filer, S3 gateway,
+# mount and filer.sync too, so they keep full access.
 [jwt.filer_signing.subscribe]
 key = ""
 
