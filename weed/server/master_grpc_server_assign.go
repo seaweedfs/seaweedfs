@@ -53,7 +53,7 @@ func (ms *MasterServer) StreamAssign(server master_pb.Seaweed_StreamAssignServer
 func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest) (*master_pb.AssignResponse, error) {
 
 	if !ms.Topo.IsLeader() {
-		return nil, raft.NotLeaderError
+		return nil, status.Error(codes.Unavailable, raft.NotLeaderError.Error())
 	}
 
 	if req.Count == 0 {
