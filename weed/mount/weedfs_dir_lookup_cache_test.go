@@ -581,13 +581,17 @@ func TestLookupDoesNotWaitOutSlowRebuild(t *testing.T) {
 	if status != fuse.OK || name != "a" {
 		t.Fatalf("lookupEntry a: status=%v name=%q", status, name)
 	}
-	select {
-	case <-started:
-	default:
-		t.Fatal("lookup should have started a rebuild")
-	}
 	if got := fake.lookupCalls.Load() - lookupCallsBefore; got != 1 {
 		t.Errorf("LookupDirectoryEntry RPCs = %d, want 1 (fall back to the per-entry RPC)", got)
+	}
+	// The build runs on its own goroutine and may reach the filer only after
+	// the lookup stopped waiting for it, so wait for its listing to arrive
+	// rather than reading how far it got when the lookup returned. From here
+	// on that listing is in flight, parked at the gate, and already counted.
+	select {
+	case <-started:
+	case <-time.After(deadline):
+		t.Fatal("lookup should have started a rebuild")
 	}
 
 	// The wait that timed out counts as a rebuild attempt, so until the
