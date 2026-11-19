@@ -124,7 +124,7 @@ func (s3a *S3ApiServer) withFilerClientFailover(ctx context.Context, preferred p
 		if err == nil {
 			s3a.filerClient.RecordFilerSuccess(filer)
 			if filer != currentFiler && filer != preferred {
-				s3a.filerClient.SetCurrentFiler(filer)
+				s3a.filerClient.SwitchCurrentFiler(currentFiler, filer)
 				glog.V(1).Infof("WithFilerClient: failover from %s to %s succeeded", currentFiler, filer)
 			}
 			return nil

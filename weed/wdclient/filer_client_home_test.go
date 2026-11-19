@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"reflect"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -81,10 +82,22 @@ func TestDiscoveryCurrentGoneFallsToFirstSorted(t *testing.T) {
 	}
 }
 
-type fakeClock struct{ t time.Time }
+type fakeClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
 
-func (c *fakeClock) now() time.Time          { return c.t }
-func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
+func (c *fakeClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *fakeClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
+}
 
 const (
 	homeA = pb.ServerAddress("10.0.0.1:8888.18888")
@@ -228,11 +241,15 @@ func TestDiscoveryPrefersHealthyHomeWhenCurrentGone(t *testing.T) {
 // countingFiler answers LookupVolume with no locations and counts the calls.
 type countingFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	calls atomic.Int32
+	calls    atomic.Int32
+	onLookup func() // optional, runs inside each LookupVolume call
 }
 
 func (s *countingFiler) LookupVolume(context.Context, *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
 	s.calls.Add(1)
+	if s.onLookup != nil {
+		s.onLookup()
+	}
 	return &filer_pb.LookupVolumeResponse{}, nil
 }
 
@@ -268,5 +285,96 @@ func TestLookupStartsFromEligibleHome(t *testing.T) {
 	}
 	if homeSrv.calls.Load() != 1 || peerSrv.calls.Load() != 0 {
 		t.Fatalf("lookup calls: home=%d peer=%d, want home=1 peer=0", homeSrv.calls.Load(), peerSrv.calls.Load())
+	}
+}
+
+// A lookup that started on the peer and finishes after the client has returned
+// home must not drag the client back to the peer: home never failed.
+func TestLookupInFlightDuringReturnDoesNotLeaveHome(t *testing.T) {
+	home, _ := startCountingFiler(t)
+	peer, peerSrv := startCountingFiler(t)
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	fc := newTestFilerClient(home, peer)
+	fc.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+	fc.grpcTimeout = 5 * time.Second
+	fc.maxRetries = 1
+	fc.failureThreshold = 3
+	fc.resetTimeout = 30 * time.Second
+	fc.homeFiler = home
+	fc.homeBackoff = fc.resetTimeout
+	fc.now = clock.now
+
+	for i := 0; i < 3; i++ {
+		fc.RecordFilerFailure(home)
+	}
+	fc.SetCurrentFiler(peer)
+	clock.advance(10 * time.Second) // home still in breaker: the lookup starts on the peer
+
+	peerSrv.onLookup = func() {
+		clock.advance(25 * time.Second) // home becomes eligible mid-lookup
+		if got := fc.GetCurrentFiler(); got != home {
+			t.Errorf("mid-lookup return: want home %s, got %s", home, got)
+		}
+	}
+	if _, err := (&filerVolumeProvider{filerClient: fc}).LookupVolumeIds(context.Background(), []string{"4"}); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+
+	if got := fc.filerAddresses[atomic.LoadInt32(&fc.filerIndex)]; got != home {
+		t.Fatalf("after the lookup: want current home %s, got %s", home, got)
+	}
+	if fc.homeBackoff != 30*time.Second {
+		t.Fatalf("backoff: want unchanged 30s, got %v", fc.homeBackoff)
+	}
+}
+
+// A failover decided against a filer that is no longer current is stale and
+// must not move the client.
+func TestStaleFailoverDoesNotMoveClient(t *testing.T) {
+	peerC := pb.ServerAddress("10.0.0.3:8888.18888")
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	fc := newTestFilerClient(homeA, peerB, peerC)
+	fc.failureThreshold = 3
+	fc.resetTimeout = 30 * time.Second
+	fc.homeFiler = homeA
+	fc.homeBackoff = fc.resetTimeout
+	fc.now = clock.now
+
+	fc.SwitchCurrentFiler(peerB, peerC) // the caller saw B as current; it is home
+
+	if got := fc.filerAddresses[atomic.LoadInt32(&fc.filerIndex)]; got != homeA {
+		t.Fatalf("stale failover moved the client to %s", got)
+	}
+	if !fc.homeEligibleAt.IsZero() {
+		t.Fatalf("stale failover started the return backoff")
+	}
+}
+
+// Many requests failing on home at once are one departure from home, not many.
+func TestConcurrentFailoversFromHomeCountOnce(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	fc := newHomeTestClient(clock)
+	failHome(fc)
+	clock.advance(31 * time.Second)
+	if got := fc.GetCurrentFiler(); got != homeA {
+		t.Fatalf("setup: want home, got %s", got)
+	}
+	clock.advance(time.Second)
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			fc.SwitchCurrentFiler(homeA, peerB)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if fc.homeBackoff != 60*time.Second {
+		t.Fatalf("backoff: want one doubling to 60s, got %v", fc.homeBackoff)
 	}
 }
