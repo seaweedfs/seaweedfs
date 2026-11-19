@@ -10,7 +10,6 @@ import (
 	"os"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func forgetUnreachable(t *testing.T) {
@@ -22,7 +21,10 @@ func forgetUnreachable(t *testing.T) {
 		})
 	}
 	forget()
-	t.Cleanup(forget)
+	t.Cleanup(func() {
+		probes.Wait()
+		forget()
+	})
 }
 
 func assertOrder(t *testing.T, got []string, want ...string) {
@@ -59,28 +61,11 @@ func expireUnreachable(t *testing.T, host string) {
 	unreachable.Store(host, failure)
 }
 
-// waitProbe waits until the background probe started by ReachableFirst has
-// settled host, by clearing it or by recording a failure after the claim.
-func waitProbe(t *testing.T, host string) (stillUnreachable bool) {
-	t.Helper()
-	v, found := unreachable.Load(host)
-	if !found {
-		return false
-	}
-	claimedAt := v.(unanswered).at
-	deadline := time.Now().Add(2 * reachabilityProbeTimeout)
-	for time.Now().Before(deadline) {
-		v, found := unreachable.Load(host)
-		if !found {
-			return false
-		}
-		if v.(unanswered).at.After(claimedAt) {
-			return true
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("probe of %s did not settle", host)
-	return false
+// waitProbe waits for the background probe started by ReachableFirst.
+func waitProbe(host string) (stillUnreachable bool) {
+	probes.Wait()
+	_, stillUnreachable = unreachable.Load(host)
+	return stillUnreachable
 }
 
 func TestReachableFirstProbesInBackgroundAfterRetryInterval(t *testing.T) {
@@ -96,7 +81,7 @@ func TestReachableFirstProbesInBackgroundAfterRetryInterval(t *testing.T) {
 
 	// the read that finds the interval passed still tries the host last
 	assertOrder(t, ReachableFirst(urls), urls[1], urls[0])
-	if waitProbe(t, host) {
+	if waitProbe(host) {
 		t.Fatalf("an answering server stayed unreachable")
 	}
 	assertOrder(t, ReachableFirst(urls), urls...)
@@ -130,7 +115,7 @@ func TestReachableFirstKeepsHostLastWhenProbeFails(t *testing.T) {
 		expireUnreachable(t, host)
 
 		assertOrder(t, ReachableFirst(urls), urls[1], urls[0])
-		if !waitProbe(t, host) {
+		if !waitProbe(host) {
 			t.Fatalf("%s was cleared by a probe it did not answer", host)
 		}
 		assertOrder(t, ReachableFirst(urls), urls[1], urls[0])

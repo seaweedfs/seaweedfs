@@ -28,6 +28,8 @@ type unanswered struct {
 // every volume it held, so this is kept per host rather than per volume.
 var unreachable sync.Map
 
+var probes sync.WaitGroup
+
 // recordUnreachable keys a failure by machine when the dial never reached it,
 // so every server on a powered-off node is tried last after one failure.
 func recordUnreachable(host string, err error) {
@@ -86,7 +88,7 @@ func isUnanswering(host string) bool {
 		failure := v.(unanswered)
 		if time.Since(failure.at) >= unreachableRetryInterval &&
 			unreachable.CompareAndSwap(key, failure, unanswered{at: time.Now(), addr: failure.addr}) {
-			go probeReachability(failure.addr)
+			probes.Go(func() { probeReachability(failure.addr) })
 		}
 		return true
 	}
