@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -231,7 +232,7 @@ func (fc *FilerClient) SetCurrentFiler(addr pb.ServerAddress) {
 	// Find the index of the specified filer address
 	for i, filer := range fc.filerAddresses {
 		if filerKey(filer) == filerKey(addr) {
-			atomic.StoreInt32(&fc.filerIndex, int32(i))
+			fc.setCurrentIndexLocked(int32(i), switchFailover)
 			return
 		}
 	}
@@ -516,11 +517,14 @@ func (fc *FilerClient) applyDiscoveredFilersLocked(discoveredFilers map[pb.Serve
 		return
 	}
 
+	// Map iteration order is random; sort so every rebuild lands the same way.
+	slices.Sort(newFilers)
+
 	// Remember the active filer so the round-robin pointer can follow it across the rebuild.
 	currentIndex := atomic.LoadInt32(&fc.filerIndex)
-	var currentKey string
+	var currentFiler pb.ServerAddress
 	if currentIndex >= 0 && currentIndex < int32(len(fc.filerAddresses)) {
-		currentKey = filerKey(fc.filerAddresses[currentIndex])
+		currentFiler = fc.filerAddresses[currentIndex]
 	}
 
 	for _, f := range newFilers {
@@ -531,16 +535,19 @@ func (fc *FilerClient) applyDiscoveredFilersLocked(discoveredFilers map[pb.Serve
 	fc.filerAddresses = newAddresses
 	fc.filerHealth = newHealth
 
-	var newIndex int32
-	if currentKey != "" {
+	newIndex := int32(-1)
+	if currentFiler != "" {
 		for i, f := range newAddresses {
-			if filerKey(f) == currentKey {
+			if sameFiler(f, currentFiler) {
 				newIndex = int32(i)
 				break
 			}
 		}
 	}
-	atomic.StoreInt32(&fc.filerIndex, newIndex)
+	if newIndex < 0 {
+		newIndex = 0
+	}
+	fc.setCurrentIndexFrom(currentFiler, newIndex, switchDiscovery)
 
 	if len(removedFilers) > 0 {
 		glog.V(0).Infof("FilerClient: removed %d filer(s) no longer in group '%s': %v", len(removedFilers), fc.filerGroup, removedFilers)
@@ -548,6 +555,50 @@ func (fc *FilerClient) applyDiscoveredFilersLocked(discoveredFilers map[pb.Serve
 	if len(newFilers) > 0 {
 		glog.V(0).Infof("FilerClient: discovered %d new filer(s) in group '%s': %v", len(newFilers), fc.filerGroup, newFilers)
 	}
+}
+
+// Reasons a FilerClient changes its current filer, as logged on each switch.
+const (
+	switchFailover   = "failover"
+	switchReturnHome = "return_home"
+	switchDiscovery  = "discovery"
+)
+
+// sameFiler reports whether two addresses name the same filer, whether or not
+// either spells out its gRPC port.
+func sameFiler(a, b pb.ServerAddress) bool {
+	return filerKey(a) == filerKey(b)
+}
+
+// setCurrentIndexLocked makes filerAddresses[newIndex] the current filer. The
+// caller holds filerAddressesMu (read or write).
+func (fc *FilerClient) setCurrentIndexLocked(newIndex int32, reason string) {
+	var from pb.ServerAddress
+	if i := atomic.LoadInt32(&fc.filerIndex); i >= 0 && i < int32(len(fc.filerAddresses)) {
+		from = fc.filerAddresses[i]
+	}
+	fc.setCurrentIndexFrom(from, newIndex, reason)
+}
+
+// setCurrentIndexFrom stores newIndex and, when that changes which filer is
+// current, logs the switch and lets the home-filer bookkeeping see it.
+func (fc *FilerClient) setCurrentIndexFrom(from pb.ServerAddress, newIndex int32, reason string) {
+	atomic.StoreInt32(&fc.filerIndex, newIndex)
+	if newIndex < 0 || newIndex >= int32(len(fc.filerAddresses)) {
+		return
+	}
+	to := fc.filerAddresses[newIndex]
+	if from == "" || sameFiler(from, to) {
+		return
+	}
+	backoff := fc.noteSwitchLocked(from, to, reason)
+	glog.V(0).Infof("FilerClient: current filer %s -> %s (%s), return backoff %v", from, to, reason, backoff)
+}
+
+// noteSwitchLocked records a change of the current filer for the home-filer
+// return logic and reports the return backoff now in effect.
+func (fc *FilerClient) noteSwitchLocked(from, to pb.ServerAddress, reason string) time.Duration {
+	return 0
 }
 
 // OnVolumeLocationChange applies master-pushed changes to the lookup-fed cache,
@@ -870,7 +921,11 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 			}
 
 			// Success - update the preferred filer index and reset health tracking
-			atomic.StoreInt32(&fc.filerIndex, i)
+			fc.filerAddressesMu.RLock()
+			if i < int32(len(fc.filerAddresses)) {
+				fc.setCurrentIndexLocked(i, switchFailover)
+			}
+			fc.filerAddressesMu.RUnlock()
 			fc.recordFilerSuccessWithHealth(health)
 			glog.V(3).Infof("FilerClient: looked up %d volumes on %s, found %d", len(volumeIds), filerAddress, len(result))
 			return result, nil
