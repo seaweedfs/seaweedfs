@@ -6372,7 +6372,7 @@ impl Volume {
         let old_dat_file = File::open(&old_dat_path)?;
 
         for (key, (needle_offset, size)) in incremented_entries {
-            if !needle_offset.is_zero() && !size.is_deleted() && size.0 > 0 {
+            if !needle_offset.is_zero() && !size.is_deleted() {
                 let actual_size = crate::storage::needle::needle::get_actual_size(size, version);
                 let mut blob = vec![0u8; actual_size as usize];
 
@@ -10990,6 +10990,43 @@ mod tests {
         };
         v.read_needle(&mut got).unwrap();
         assert_eq!(got.data, b"late-write");
+    }
+
+    #[test]
+    fn test_commit_compact_keeps_empty_needle_written_during_compaction() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+
+        for i in 1..=3u64 {
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: format!("data-{}", i).into_bytes(),
+                data_size: format!("data-{}", i).len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+
+        v.compact_by_index(0, 0, |_| true).unwrap();
+
+        let mut empty = Needle {
+            id: NeedleId(10),
+            cookie: Cookie(0x0abc_def0),
+            ..Needle::default()
+        };
+        v.write_needle(&mut empty, true, false).unwrap();
+
+        v.commit_compact().unwrap();
+
+        let mut got = Needle {
+            id: NeedleId(10),
+            cookie: Cookie(0x0abc_def0),
+            ..Needle::default()
+        };
+        v.read_needle(&mut got).unwrap();
+        assert!(got.data.is_empty());
     }
 
     /// Mirrors Go's TestConcurrentWriteCrossesOffsetBoundary (issue #11410):
