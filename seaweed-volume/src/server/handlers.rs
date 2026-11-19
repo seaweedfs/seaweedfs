@@ -859,7 +859,12 @@ async fn do_replicated_request(
 
         futures.push(async move {
             match req_builder.send().await {
-                Ok(r) if r.status().is_success() => Ok(()),
+                Ok(r)
+                    if r.status().is_success()
+                        || (allow_delete && r.status() == StatusCode::NOT_FOUND) =>
+                {
+                    Ok(())
+                }
                 Ok(r) => {
                     crate::metrics::UPLOAD_ERROR_COUNTER
                         .with_label_values(&[&r.status().as_u16().to_string()])
@@ -5103,6 +5108,34 @@ mod tests {
             }
         });
         (addr, receipts)
+    }
+
+    /// A replica that no longer holds the needle answers a forwarded delete
+    /// with 404, which means it is gone there too.
+    #[tokio::test]
+    async fn test_replicated_delete_takes_a_replica_404_as_done() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let app = axum::Router::new().fallback(|| async { StatusCode::NOT_FOUND });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let state = remote_manifest_state(&tmp, spawn_lookup(peer).await);
+        for (method, done) in [
+            (axum::http::Method::DELETE, true),
+            (axum::http::Method::POST, false),
+        ] {
+            let sent = do_replicated_request(
+                &state,
+                1,
+                method.clone(),
+                "/1,01ab",
+                "",
+                &axum::http::HeaderMap::new(),
+                None,
+            )
+            .await;
+            assert_eq!(sent.is_ok(), done, "{method}: {sent:?}");
+        }
     }
 
     /// The whole replicated write path, not only the request builder: the
