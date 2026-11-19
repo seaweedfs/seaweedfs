@@ -593,7 +593,7 @@ func (v *Volume) makeupDiff(newDatFileName, newIdxFileName, oldDatFileName, oldI
 			}
 		}
 		//updated needle
-		if !increIdxEntry.offset.IsZero() && increIdxEntry.size != 0 && increIdxEntry.size.IsValid() {
+		if !increIdxEntry.offset.IsZero() && !increIdxEntry.size.IsDeleted() {
 			//even the needle cache in memory is hit, the need_bytes is correct
 			glog.V(4).Infof("file %d offset %d size %d", key, increIdxEntry.offset.ToActualOffset(), increIdxEntry.size)
 			var needleBytes []byte
