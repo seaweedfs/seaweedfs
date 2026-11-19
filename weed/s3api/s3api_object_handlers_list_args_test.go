@@ -16,7 +16,7 @@ func TestGetListObjectsV2ArgsContinuationToken(t *testing.T) {
 		want    string
 		wantErr s3err.ErrorCode
 	}{
-		{query: "continuation-token=", wantErr: s3err.ErrInvalidContinuationToken},
+		{query: "continuation-token=&start-after=a", want: ""},
 		{query: "continuation-token=photos%2F2006%2FJanuary%2Fsample.jpg", want: "photos/2006/January/sample.jpg"},
 		{query: "continuation-token=" + encodeListContinuationToken("ctrl/\x01key"), want: "ctrl/\x01key"},
 		{query: "continuation-token=base64%3Aplain", want: "base64:plain"},
@@ -28,6 +28,7 @@ func TestGetListObjectsV2ArgsContinuationToken(t *testing.T) {
 		_, _, _, token, _, _, _, _, errCode := getListObjectsV2Args(values)
 		assert.Equal(t, tc.wantErr, errCode, tc.query)
 		if tc.wantErr == s3err.ErrNone {
+			assert.Equal(t, values.Has("continuation-token"), token.set, tc.query)
 			assert.Equal(t, tc.want, decodeListContinuationToken(token.string), tc.query)
 		}
 	}
@@ -69,10 +70,10 @@ func TestListObjectVersionsEncodeURL(t *testing.T) {
 		Name:          "b",
 		Prefix:        "dir a/",
 		Delimiter:     "/",
-		KeyMarker:     encodeListContinuationToken("dir a/café+1"),
+		KeyMarker:     encodeListContinuationToken("dir a/résumé+1"),
 		NextKeyMarker: encodeListContinuationToken("dir a/100%"),
 		Entries: []VersionListEntry{
-			{Version: &VersionEntry{Key: "dir a/café+1"}},
+			{Version: &VersionEntry{Key: "dir a/résumé+1"}},
 			{DeleteMarker: &DeleteMarkerEntry{Key: "dir a/100%"}},
 			{Prefix: &PrefixEntry{Prefix: "dir a/sub dir/"}},
 		},
@@ -85,27 +86,31 @@ func TestListObjectVersionsEncodeURL(t *testing.T) {
 	for _, want := range []string{
 		"<Prefix>dir%20a/</Prefix>",
 		"<Delimiter>/</Delimiter>",
-		"<KeyMarker>dir%20a/caf%C3%A9%2B1</KeyMarker>",
+		"<KeyMarker>dir%20a/r%C3%A9sum%C3%A9%2B1</KeyMarker>",
 		"<NextKeyMarker>dir%20a/100%25</NextKeyMarker>",
-		"<Version><Key>dir%20a/caf%C3%A9%2B1</Key>",
+		"<Version><Key>dir%20a/r%C3%A9sum%C3%A9%2B1</Key>",
 		"<DeleteMarker><Key>dir%20a/100%25</Key>",
 		"<CommonPrefixes><Prefix>dir%20a/sub%20dir/</Prefix></CommonPrefixes>",
 		"<EncodingType>url</EncodingType>",
 	} {
 		assert.Contains(t, body, want)
 	}
-	decoded, err := url.PathUnescape("dir%20a/caf%C3%A9%2B1")
+	decoded, err := url.PathUnescape("dir%20a/r%C3%A9sum%C3%A9%2B1")
 	require.NoError(t, err)
-	assert.Equal(t, "dir a/café+1", decoded)
+	assert.Equal(t, "dir a/résumé+1", decoded)
 }
 
-func TestListObjectsV1EncodesPrefixAndDelimiter(t *testing.T) {
-	response := ListBucketResult{Name: "b", Prefix: "dir a/café+", Delimiter: "/", MaxKeys: 1000, EncodingType: "url"}
+func TestListObjectsV1EncodesDelimiterNotPrefix(t *testing.T) {
+	response := ListBucketResult{Name: "b", Prefix: "dir a/\n+", Delimiter: " ", MaxKeys: 1000, EncodingType: "url"}
 	body := string(s3err.EncodeXMLResponse(toListBucketResultV1(response)))
-	assert.Contains(t, body, "<Prefix>dir%20a/caf%C3%A9%2B</Prefix>")
-	assert.Contains(t, body, "<Delimiter>/</Delimiter>")
+	assert.Contains(t, body, "<Prefix>dir a/&#xA;+</Prefix>")
+	assert.Contains(t, body, "<Delimiter>%20</Delimiter>")
+
+	response.Prefix = "dir a/\x01"
+	body = string(s3err.EncodeXMLResponse(toListBucketResultV1(response)))
+	assert.Contains(t, body, "<Prefix>dir%20a/%01</Prefix>")
 
 	response.EncodingType = ""
 	body = string(s3err.EncodeXMLResponse(toListBucketResultV1(response)))
-	assert.Contains(t, body, "<Prefix>dir a/café+</Prefix>")
+	assert.Contains(t, body, "<Delimiter> </Delimiter>")
 }
