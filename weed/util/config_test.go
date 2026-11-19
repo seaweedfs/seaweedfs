@@ -2,6 +2,8 @@ package util
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -50,4 +52,36 @@ func TestNewViperProxyWrapsGivenViper(t *testing.T) {
 	p := NewViperProxy(v)
 	assert.Equal(t, "z", p.GetString("x.y"))
 	assert.Equal(t, map[string]interface{}{"y": "z"}, p.GetStringMap("x"))
+}
+
+func TestReadConfigurationDropsKeysTheFileNoLongerSets(t *testing.T) {
+	dir := t.TempDir()
+	saved := ConfigurationFileDirectory
+	ConfigurationFileDirectory = DirectoryValueType(dir)
+	t.Cleanup(func() { ConfigurationFileDirectory = saved })
+	t.Setenv("WEED_READCONF_ENV", "from-env")
+	write := func(content string) {
+		if err := os.WriteFile(filepath.Join(dir, "readconf_test.toml"), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	v, err := ReadConfiguration("readconf_test")
+	assert.NoError(t, err, "missing file")
+	assert.Equal(t, "from-env", v.GetString("readconf.env"))
+
+	write("[readconf]\nkey = \"v1\"\n")
+	v, err = ReadConfiguration("readconf_test")
+	assert.NoError(t, err)
+	assert.Equal(t, "v1", v.GetString("readconf.key"))
+
+	write("[readconf]\n")
+	v, err = ReadConfiguration("readconf_test")
+	assert.NoError(t, err)
+	assert.Empty(t, v.GetString("readconf.key"))
+	assert.Equal(t, "from-env", v.GetString("readconf.env"))
+
+	write("[readconf\n")
+	_, err = ReadConfiguration("readconf_test")
+	assert.Error(t, err, "unparsable file")
 }
