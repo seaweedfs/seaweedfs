@@ -700,7 +700,10 @@ func (v *Volume) copyDataAndGenerateIndexFile(opts *CompactOptions) (err error) 
 		return err
 	}
 
-	return nm.SaveToIdx(opts.destIdxPath)
+	if err = nm.SaveToIdx(opts.destIdxPath); err != nil {
+		return err
+	}
+	return v.loadTmpNeedleMap(opts.destIdxPath)
 }
 
 func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
@@ -825,15 +828,21 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	if err != nil {
 		return err
 	}
+	return v.loadTmpNeedleMap(opts.destIdxPath)
+}
 
-	indexFile, err := os.OpenFile(opts.destIdxPath, os.O_RDWR|os.O_CREATE, 0644)
+// loadTmpNeedleMap loads the compacted index into v.tmpNm. CommitCompact's
+// makeupDiff applies the writes and deletes that landed during the copy on top
+// of it, so every compaction path must build it.
+func (v *Volume) loadTmpNeedleMap(idxPath string) (err error) {
+	indexFile, err := os.OpenFile(idxPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
-		glog.Errorf("cannot open Volume Index %s: %v", opts.destIdxPath, err)
+		glog.Errorf("cannot open Volume Index %s: %v", idxPath, err)
 		return err
 	}
 	defer func() {
 		if syncErr := indexFile.Sync(); syncErr != nil && err == nil {
-			err = fmt.Errorf("sync compacted idx %s: %v", opts.destIdxPath, syncErr)
+			err = fmt.Errorf("sync compacted idx %s: %v", idxPath, syncErr)
 		}
 		indexFile.Close()
 	}()
