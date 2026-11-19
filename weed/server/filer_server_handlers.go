@@ -276,7 +276,10 @@ func (fs *FilerServer) authenticateFilerJwt(r *http.Request, isWrite bool) (*sec
 		signingKey = fs.filerGuard.ReadSigningKey()
 	}
 	if len(signingKey) == 0 {
-		return nil, basicAuth == nil
+		// Reload turns the new credential on before the old one off, so
+		// loading Basic Auth on both sides of the key read never sees both off
+		// while a switch is in flight.
+		return nil, basicAuth == nil && fs.basicAuth.Load() == nil
 	}
 
 	tokenStr := security.GetJwt(r)
