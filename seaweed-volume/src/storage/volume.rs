@@ -897,6 +897,13 @@ impl NeedleReadPlan {
             self.io_errors.check_read_write_error(Some(e));
         }
         result?;
+        if n.id != self.needle_id {
+            warn!(
+                "index entry for needle {} resolves to needle {}; reporting not-found",
+                self.needle_id.0, n.id.0
+            );
+            return Err(VolumeError::NotFound);
+        }
         if needle_expired(n) {
             return Err(VolumeError::NotFound);
         }
@@ -11199,6 +11206,42 @@ mod tests {
             bad_end,
             dat_size
         );
+    }
+
+    #[test]
+    fn test_read_meta_rejects_index_entry_naming_another_needle() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+
+        for id in [1u64, 2] {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(0xDEADBEEF),
+                data: vec![id as u8; 2048],
+                data_size: 2048,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+        // point key 9 at needle 2's record with the record's own size
+        {
+            let mut io = v.io.write().unwrap();
+            let nm = io.nm.as_mut().unwrap();
+            let nv = nm.get(NeedleId(2)).unwrap().unwrap();
+            nm.put(NeedleId(9), nv.offset, nv.size).unwrap();
+        }
+
+        let mut read_n = Needle {
+            id: NeedleId(9),
+            cookie: Cookie(0xDEADBEEF),
+            ..Needle::default()
+        };
+        let mut plan = v.needle_read_plan(NeedleId(9), false).unwrap();
+        assert!(matches!(
+            plan.read_meta(&mut read_n),
+            Err(VolumeError::NotFound)
+        ));
     }
 
     #[test]
