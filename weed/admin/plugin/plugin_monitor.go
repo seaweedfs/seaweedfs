@@ -618,7 +618,13 @@ func (r *Plugin) BuildJobDetail(jobID string, activityLimit int, relatedLimit in
 	}
 
 	if trackedSnapshot == nil && detailJob == nil {
-		return nil, false, nil
+		// Run history keeps the last runs per job type, so it can still
+		// list a job pruned from tracking; show what the record holds.
+		record, err := r.findRunRecord(normalizedJobID)
+		if err != nil || record == nil {
+			return nil, false, err
+		}
+		detailJob = trackedJobFromRunRecord(record)
 	}
 	if detailJob == nil && trackedSnapshot != nil {
 		clone := cloneTrackedJob(*trackedSnapshot)
@@ -1229,6 +1235,45 @@ func (r *Plugin) appendActivity(activity JobActivity) {
 	}
 	r.dirtyActivities = true
 	r.activitiesMu.Unlock()
+}
+
+func (r *Plugin) findRunRecord(jobID string) (*JobRunRecord, error) {
+	jobTypes, err := r.store.ListJobTypes()
+	if err != nil {
+		return nil, err
+	}
+	for _, jobType := range jobTypes {
+		history, err := r.store.LoadRunHistory(jobType)
+		if err != nil {
+			return nil, err
+		}
+		for _, runs := range [][]JobRunRecord{history.SuccessfulRuns, history.ErrorRuns} {
+			for i := range runs {
+				if strings.TrimSpace(runs[i].JobID) == jobID {
+					record := runs[i]
+					return &record, nil
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func trackedJobFromRunRecord(record *JobRunRecord) *TrackedJob {
+	job := &TrackedJob{
+		JobID:       record.JobID,
+		JobType:     record.JobType,
+		WorkerID:    record.WorkerID,
+		State:       StateSucceeded,
+		Message:     record.Message,
+		UpdatedAt:   record.CompletedAt,
+		CompletedAt: record.CompletedAt,
+	}
+	if record.Outcome == RunOutcomeError {
+		job.State = StateFailed
+		job.ErrorMessage = record.Message
+	}
+	return job
 }
 
 func (r *Plugin) pruneTrackedJobsLocked() {

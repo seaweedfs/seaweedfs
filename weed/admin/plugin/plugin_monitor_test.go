@@ -594,6 +594,55 @@ func TestBuildJobDetailIncludesActivitiesAndRunRecord(t *testing.T) {
 	}
 }
 
+func TestBuildJobDetailFallsBackToRunRecordAfterPrune(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.trackExecutionStart("req-pruned", "worker-p", &plugin_pb.JobSpec{
+		JobId:   "job-pruned",
+		JobType: "vacuum",
+	}, 1)
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		RequestId:    "req-pruned",
+		JobId:        "job-pruned",
+		JobType:      "vacuum",
+		Success:      false,
+		ErrorMessage: "volume busy",
+		CompletedAt:  timestamppb.Now(),
+	})
+
+	// What pruneTrackedJobsLocked does once newer jobs push this one out.
+	pluginSvc.jobsMu.Lock()
+	delete(pluginSvc.jobs, "job-pruned")
+	pluginSvc.jobsMu.Unlock()
+	if err := pluginSvc.store.DeleteJobDetail("job-pruned"); err != nil {
+		t.Fatalf("DeleteJobDetail: %v", err)
+	}
+
+	detail, found, err := pluginSvc.BuildJobDetail("job-pruned", 100, 5)
+	if err != nil {
+		t.Fatalf("BuildJobDetail error: %v", err)
+	}
+	if !found || detail == nil || detail.Job == nil {
+		t.Fatalf("expected a detail built from the run record")
+	}
+	if detail.Job.JobType != "vacuum" || detail.Job.WorkerID != "worker-p" || detail.Job.State != StateFailed {
+		t.Fatalf("unexpected job from run record: %+v", detail.Job)
+	}
+	if detail.RunRecord == nil || detail.RunRecord.Outcome != RunOutcomeError {
+		t.Fatalf("expected the error run record, got=%+v", detail.RunRecord)
+	}
+
+	if _, found, err := pluginSvc.BuildJobDetail("job-unknown", 100, 0); err != nil || found {
+		t.Fatalf("unknown job: found=%v err=%v", found, err)
+	}
+}
+
 func TestBuildJobDetailKeepsFailedJobResult(t *testing.T) {
 	t.Parallel()
 
