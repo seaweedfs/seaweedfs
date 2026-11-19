@@ -173,6 +173,19 @@ func TestFilerBasicAuthReloadDropsRemovedPassword(t *testing.T) {
 	fs.basicAuth.Store(security.NewBasicAuth("admin", "pw"))
 	fs.Reload()
 	if fs.basicAuth.Load() == nil {
-		t.Error("an unreadable file turned Basic Auth off")
+		t.Error("an unparsable file turned Basic Auth off")
+	}
+	if err := os.Remove(filepath.Join(dir, "security.toml")); err != nil {
+		t.Fatal(err)
+	}
+	fs.Reload()
+	if fs.basicAuth.Load() == nil {
+		t.Error("a missing file turned Basic Auth off")
+	}
+
+	write("[filer.basic_auth\n")
+	t.Setenv("WEED_FILER_BASIC_AUTH_PASSWORD", "env")
+	if loadBasicAuth(nil) == nil {
+		t.Error("an unparsable file dropped the environment password at startup")
 	}
 }

@@ -66,22 +66,23 @@ func TestReadConfigurationDropsKeysTheFileNoLongerSets(t *testing.T) {
 		}
 	}
 
-	v, err := ReadConfiguration("readconf_test")
-	assert.NoError(t, err, "missing file")
+	v, loaded := ReadConfiguration("readconf_test")
+	assert.False(t, loaded, "missing file")
 	assert.Equal(t, "from-env", v.GetString("readconf.env"))
 
 	write("[readconf]\nkey = \"v1\"\n")
-	v, err = ReadConfiguration("readconf_test")
-	assert.NoError(t, err)
+	v, loaded = ReadConfiguration("readconf_test")
+	assert.True(t, loaded)
 	assert.Equal(t, "v1", v.GetString("readconf.key"))
 
 	write("[readconf]\n")
-	v, err = ReadConfiguration("readconf_test")
-	assert.NoError(t, err)
+	v, loaded = ReadConfiguration("readconf_test")
+	assert.True(t, loaded)
 	assert.Empty(t, v.GetString("readconf.key"))
 	assert.Equal(t, "from-env", v.GetString("readconf.env"))
 
 	write("[readconf\n")
-	_, err = ReadConfiguration("readconf_test")
-	assert.Error(t, err, "unparsable file")
+	v, loaded = ReadConfiguration("readconf_test")
+	assert.False(t, loaded, "unparsable file")
+	assert.Equal(t, "from-env", v.GetString("readconf.env"))
 }

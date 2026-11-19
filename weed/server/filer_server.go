@@ -758,16 +758,15 @@ func (fs *FilerServer) leaveLockRing(removalTimeout time.Duration) {
 	time.Sleep(time.Until(until))
 }
 
-// loadBasicAuth reads [filer.basic_auth] from security.toml alone: the shared
-// viper merges every reload into what it held, so it would keep a password
-// the file no longer sets. An unreadable file keeps current.
+// loadBasicAuth reads [filer.basic_auth] from security.toml and the WEED_
+// environment alone: the shared viper merges every reload into what it held,
+// so it would keep a password the file no longer sets. A non-nil current is
+// kept when the file cannot be read.
 func loadBasicAuth(current *security.BasicAuth) *security.BasicAuth {
-	v, err := util.ReadConfiguration("security")
-	if err != nil {
-		glog.Warningf("filer.basic_auth unchanged: %v", err)
-		return current
+	if v, loaded := util.ReadConfiguration("security"); loaded || current == nil {
+		return security.NewBasicAuth(v.GetString("filer.basic_auth.user"), v.GetString("filer.basic_auth.password"))
 	}
-	return security.NewBasicAuth(v.GetString("filer.basic_auth.user"), v.GetString("filer.basic_auth.password"))
+	return current
 }
 
 func (fs *FilerServer) Reload() {

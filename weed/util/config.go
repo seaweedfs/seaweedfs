@@ -1,7 +1,6 @@
 package util
 
 import (
-	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -73,19 +72,17 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 
 // ReadConfiguration reads configFileName into a new viper with the WEED_
 // environment overrides. Unlike LoadConfiguration it does not merge, so a key
-// the file no longer sets reads as unset. A missing file leaves only the
-// environment.
-func ReadConfiguration(configFileName string) (*ViperProxy, error) {
-	v := viper.New()
-	setEnvOverrides(v)
-	setConfigurationPaths(v, configFileName)
-	if err := v.ReadInConfig(); err != nil {
-		var notFound viper.ConfigFileNotFoundError
-		if !errors.As(err, &notFound) {
-			return nil, err
-		}
+// the file no longer sets reads as unset. loaded is false when the file was
+// not found or could not be read; the environment still applies then.
+func ReadConfiguration(configFileName string) (v *ViperProxy, loaded bool) {
+	fresh := viper.New()
+	setEnvOverrides(fresh)
+	setConfigurationPaths(fresh, configFileName)
+	if err := fresh.ReadInConfig(); err != nil {
+		glog.V(1).Infof("Reading %s: %v", configFileName, err)
+		return NewViperProxy(fresh), false
 	}
-	return NewViperProxy(v), nil
+	return NewViperProxy(fresh), true
 }
 
 func setConfigurationPaths(v *viper.Viper, configFileName string) {
