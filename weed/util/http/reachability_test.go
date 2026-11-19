@@ -2,10 +2,14 @@ package http
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -39,7 +43,7 @@ func TestReachableFirstTriesUnansweringHostLast(t *testing.T) {
 	urls := []string{"http://a:8080/3,x", "http://b:8080/3,x", "http://c:8080/3,x"}
 
 	assertOrder(t, ReachableFirst(urls), urls...)
-	recordUnreachable("a:8080")
+	recordUnreachable("a:8080", io.EOF)
 	assertOrder(t, ReachableFirst(urls), urls[1], urls[2], urls[0])
 	recordReachable("a:8080")
 	assertOrder(t, ReachableFirst(urls), urls...)
@@ -80,7 +84,7 @@ func TestReachableFirstProbesInBackgroundAfterRetryInterval(t *testing.T) {
 	defer listener.Close()
 	host := listener.Addr().String()
 	urls := []string{"http://" + host + "/3,x", "http://b:8080/3,x"}
-	recordUnreachable(host)
+	recordUnreachable(host, io.EOF)
 	expireUnreachable(t, host)
 
 	// the read that finds the interval passed still tries the host last
@@ -98,12 +102,41 @@ func TestReachableFirstKeepsHostLastWhenProbeFails(t *testing.T) {
 	host := listener.Addr().String()
 	listener.Close()
 	urls := []string{"http://" + host + "/3,x", "http://b:8080/3,x"}
-	recordUnreachable(host)
+	recordUnreachable(host, io.EOF)
 	expireUnreachable(t, host)
 
 	assertOrder(t, ReachableFirst(urls), urls[1], urls[0])
 	waitUnreachable(t, host, true)
 	assertOrder(t, ReachableFirst(urls), urls[1], urls[0])
+}
+
+func dialError(err error) error {
+	return &url.Error{Op: "Get", URL: "http://10.0.0.9:9501/3,x", Err: &net.OpError{Op: "dial", Net: "tcp", Err: err}}
+}
+
+func TestReachableFirstTriesEveryServerOfAnUnansweringMachineLast(t *testing.T) {
+	forgetUnreachable(t)
+	urls := []string{"http://10.0.0.9:9502/3,x", "http://10.0.0.8:9501/3,x"}
+
+	recordUnreachable("10.0.0.9:9501", dialError(os.ErrDeadlineExceeded))
+	assertOrder(t, ReachableFirst(urls), urls[1], urls[0])
+	recordReachable("10.0.0.9:9503")
+	assertOrder(t, ReachableFirst(urls), urls...)
+}
+
+func TestReachableFirstKeepsOtherPortsFirstWhenOneRefuses(t *testing.T) {
+	forgetUnreachable(t)
+	urls := []string{"http://10.0.0.9:9501/3,x", "http://10.0.0.9:9502/3,x", "http://10.0.0.8:9501/3,x"}
+	refused := dialError(os.NewSyscallError("connect", syscall.ECONNREFUSED))
+
+	recordUnreachable("10.0.0.9:9501", refused)
+	assertOrder(t, ReachableFirst(urls), urls[1], urls[2], urls[0])
+
+	// a refusal shows the machine answers again
+	recordUnreachable("10.0.0.9:9502", dialError(os.ErrDeadlineExceeded))
+	assertOrder(t, ReachableFirst(urls), urls[2], urls[0], urls[1])
+	recordUnreachable("10.0.0.9:9501", refused)
+	assertOrder(t, ReachableFirst(urls), urls[1], urls[2], urls[0])
 }
 
 // hangupServer accepts the connection and drops it without answering, the way

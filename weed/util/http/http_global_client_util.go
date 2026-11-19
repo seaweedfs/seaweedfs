@@ -112,7 +112,7 @@ func GetAuthenticated(ctx context.Context, url, jwt string) ([]byte, bool, error
 	response, err := GetGlobalHttpClient().Do(request)
 	if err != nil {
 		if ctx.Err() == nil {
-			recordUnreachable(request.URL.Host)
+			recordUnreachable(request.URL.Host, err)
 		}
 		return nil, true, err
 	}
@@ -401,7 +401,7 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 	r, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
 		if ctx.Err() == nil {
-			recordUnreachable(req.URL.Host)
+			recordUnreachable(req.URL.Host, err)
 		}
 		return true, err
 	}
@@ -801,7 +801,7 @@ func readUrlDirectToBuffer(ctx context.Context, fileUrl, jwt string, buffer []by
 	r, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
 		if ctx.Err() == nil {
-			recordUnreachable(req.URL.Host)
+			recordUnreachable(req.URL.Host, err)
 		}
 		return 0, true, err
 	}

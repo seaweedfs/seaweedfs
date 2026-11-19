@@ -2,8 +2,11 @@ package http
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/url"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -22,17 +25,40 @@ type unanswered struct {
 	addr string
 }
 
-// unreachable maps a host to its last failure. A dead replica sits in the
-// location list of every volume it held, so this is kept per host rather than
-// per volume.
+// unreachable maps a host:port, or the bare host when the whole machine did
+// not answer, to its last failure. A dead replica sits in the location list of
+// every volume it held, so this is kept per host rather than per volume.
 var unreachable sync.Map
 
-func recordUnreachable(host string) {
-	unreachable.Store(host, unanswered{at: time.Now(), addr: host})
+// recordUnreachable keys a failure by machine when the dial never reached it,
+// so every server on a powered-off node is tried last after one failure.
+func recordUnreachable(host string, err error) {
+	failure := unanswered{at: time.Now(), addr: host}
+	machine := machineOf(host)
+	if hostDown(err) {
+		unreachable.Store(machine, failure)
+		return
+	}
+	unreachable.Store(host, failure)
+	if machine != host && errors.Is(err, syscall.ECONNREFUSED) {
+		unreachable.Delete(machine)
+	}
 }
 
 func recordReachable(host string) {
 	unreachable.Delete(host)
+	unreachable.Delete(machineOf(host))
+}
+
+// hostDown reports whether a dial got no answer from the machine at all, unlike
+// a refused connection, which shows the machine is up.
+func hostDown(err error) bool {
+	var opErr *net.OpError
+	if !errors.As(err, &opErr) || opErr.Op != "dial" {
+		return false
+	}
+	return opErr.Timeout() || errors.Is(err, syscall.EHOSTUNREACH) ||
+		errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTDOWN)
 }
 
 // ReachableFirst orders urls so that hosts which recently failed to answer
@@ -55,16 +81,19 @@ func ReachableFirst(urls []string) []string {
 }
 
 func isUnanswering(host string) bool {
-	v, found := unreachable.Load(host)
-	if !found {
-		return false
+	for _, key := range [2]string{host, machineOf(host)} {
+		v, found := unreachable.Load(key)
+		if !found {
+			continue
+		}
+		failure := v.(unanswered)
+		if time.Since(failure.at) >= unreachableRetryInterval &&
+			unreachable.CompareAndSwap(key, failure, unanswered{at: time.Now(), addr: failure.addr}) {
+			go probeReachability(failure.addr)
+		}
+		return true
 	}
-	failure := v.(unanswered)
-	if time.Since(failure.at) >= unreachableRetryInterval &&
-		unreachable.CompareAndSwap(host, failure, unanswered{at: time.Now(), addr: failure.addr}) {
-		go probeReachability(failure.addr)
-	}
-	return true
+	return false
 }
 
 func probeReachability(addr string) {
@@ -72,7 +101,7 @@ func probeReachability(addr string) {
 	defer cancel()
 	conn, err := util.OutboundDialContext(ctx, "tcp", addr)
 	if err != nil {
-		recordUnreachable(addr)
+		recordUnreachable(addr, err)
 		return
 	}
 	conn.Close()
@@ -85,4 +114,11 @@ func hostOf(rawUrl string) string {
 		return ""
 	}
 	return parsed.Host
+}
+
+func machineOf(host string) string {
+	if machine, _, err := net.SplitHostPort(host); err == nil {
+		return machine
+	}
+	return host
 }
