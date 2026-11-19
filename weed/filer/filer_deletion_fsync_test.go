@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"sync"
 	"testing"
@@ -278,4 +279,49 @@ func TestQueueDeletionsMarksBeforePublishing(t *testing.T) {
 		}
 	}
 	<-done
+}
+
+func TestRecursiveDeleteFsyncFollowsChildPaths(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	for _, prefix := range []string{"/data/", "/mix/important"} {
+		if err := f.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: prefix, Fsync: proto.Bool(true)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := context.Background()
+	for _, dir := range []string{"/data", "/data/sub", "/mix"} {
+		if err := f.CreateEntry(ctx, &Entry{FullPath: util.FullPath(dir), Attr: Attr{Mode: os.ModeDir | 0755}}, nil, false, false, nil, true, 255); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]string{
+		"/data/a":            "5,01637037d6",
+		"/data/sub/b":        "5,02637037d6",
+		"/mix/important.txt": "5,03637037d6",
+		"/mix/other.txt":     "5,04637037d6",
+	}
+	for path, fid := range files {
+		entry := &Entry{FullPath: util.FullPath(path), Attr: Attr{Mode: 0644, Mtime: time.Now()}, Chunks: []*filer_pb.FileChunk{{FileId: fid}}}
+		if err := f.CreateEntry(ctx, entry, nil, false, false, nil, true, 255); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, dir := range []string{"/data", "/mix"} {
+		if err := f.DeleteEntryMetaAndData(ctx, util.FullPath(dir), true, false, true, false, nil, time.Time{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if n := f.pendingDeletionCount(); n != len(files) {
+		t.Fatalf("pending deletions %d, want %d", n, len(files))
+	}
+	marked := f.fsyncDeletionIds([]string{"5,01637037d6", "5,02637037d6", "5,03637037d6", "5,04637037d6"})
+	for path, fid := range files {
+		_, got := marked[fid]
+		if want := path != "/mix/other.txt"; got != want {
+			t.Errorf("%s: fsync mark %v, want %v", path, got, want)
+		}
+	}
 }
