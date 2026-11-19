@@ -1060,21 +1060,46 @@ func (mc *MetaCache) vacateDuringWipe(ctx context.Context, events []*filer_pb.Su
 		if _, wiping := mc.rebuildWipeInserts[oldDir]; !wiping {
 			continue
 		}
-		oldPath := oldDir.Child(event.EventNotification.OldEntry.Name)
+		old := event.EventNotification.OldEntry
+		oldPath := oldDir.Child(old.Name)
 		if newDir, hasNew := metadataNewParentDir(event); hasNew && newDir.Child(event.EventNotification.NewEntry.Name) == oldPath {
 			continue // rewritten in place
 		}
 		if event.TsNs != 0 && mc.entryVersionBlocksLocked(ctx, oldPath, event.TsNs, true) {
 			continue // older than what is cached there
 		}
-		if err := mc.localStore.DeleteEntry(ctx, oldPath); err != nil {
+		// A placeholder is unversioned and fenced against nothing, so a late
+		// removal of an earlier file of the same name is told apart by the
+		// file it took away.
+		cached, err := mc.localStore.FindEntry(ctx, oldPath)
+		if err != nil || cached == nil || !isCachedFile(old, cached) {
+			continue
+		}
+		// OP=MV, as where a replayed event vacates a path: taking a name out
+		// of the cache is not an unlink of a hard link's shared record.
+		if err := mc.localStore.DeleteEntry(context.WithValue(ctx, "OP", "MV"), oldPath); err != nil {
 			glog.V(1).Infof("vacate %s while its directory is wiped: %v", oldPath, err)
 			continue
 		}
 		// The placeholder's record goes with it, or the name would stay
-		// unversioned and fenced against nothing.
+		// unversioned.
 		mc.clearEntryVersionLocked(ctx, oldPath)
 	}
+}
+
+// isCachedFile reports whether old, the entry an event took away, is the file
+// cached at its path: the same inode, or with no inode to compare, the same
+// creation time. An event that only names the file cannot tell, and is taken
+// at its word.
+func isCachedFile(old *filer_pb.Entry, cached *filer.Entry) bool {
+	attributes := old.GetAttributes()
+	if attributes == nil {
+		return true
+	}
+	if attributes.Inode != 0 && cached.Attr.Inode != 0 {
+		return attributes.Inode == cached.Attr.Inode
+	}
+	return attributes.Crtime == 0 || attributes.Crtime == cached.Attr.Crtime.Unix()
 }
 
 func (mc *MetaCache) applyMetadataResponseDirect(ctx context.Context, resp *filer_pb.SubscribeMetadataResponse, options MetadataResponseApplyOptions, allowUncachedInsert bool) error {

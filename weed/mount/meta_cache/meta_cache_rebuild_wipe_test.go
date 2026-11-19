@@ -401,6 +401,76 @@ func TestRebuildWipeKeepsAnEntryNewerThanTheRemoval(t *testing.T) {
 	}
 }
 
+// TestRebuildWipeTellsAPlaceholderFromAnEarlierFile: a removal can arrive late,
+// after a new file was created under its name. A placeholder is unversioned, so
+// only the file the event took away tells whether it is the one cached there.
+func TestRebuildWipeTellsAPlaceholderFromAnEarlierFile(t *testing.T) {
+	for _, tc := range []struct {
+		desc    string
+		removed *filer_pb.FuseAttributes
+		want    []string
+	}{
+		{"another inode", &filer_pb.FuseAttributes{Inode: 7, Crtime: 1}, []string{"zz-new"}},
+		{"no inode and another creation time", &filer_pb.FuseAttributes{Crtime: 5}, []string{"zz-new"}},
+		{"the same inode", &filer_pb.FuseAttributes{Inode: 42, Crtime: 1}, nil},
+		{"no inode and the same creation time", &filer_pb.FuseAttributes{Crtime: 1}, nil},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+			defer mc.Shutdown()
+			mc.SetPinnedChildFn(pinInode42)
+
+			finishWipe := midRebuildWipe(t, mc)
+			insertPinnedCacheEntry(t, mc, "/dir/zz-new") // inode 42, created at 1
+			removal := &filer_pb.SubscribeMetadataResponse{Directory: "/dir", TsNs: 100, EventNotification: &filer_pb.EventNotification{
+				OldEntry: &filer_pb.Entry{Name: "zz-new", Attributes: tc.removed},
+			}}
+			if err := mc.ApplyMetadataResponse(context.Background(), removal, SubscriberMetadataResponseApplyOptions); err != nil {
+				t.Fatalf("apply removal: %v", err)
+			}
+			finishWipe()
+
+			if got := cachedChildNames(t, mc, "/dir"); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("children left by the wipe = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRebuildWipeRenameKeepsTheHardLinkCount: taking a renamed name out of the
+// cache removes no link, so the count the other names of the file share stays.
+func TestRebuildWipeRenameKeepsTheHardLinkCount(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	defer mc.Shutdown()
+	mc.SetPinnedChildFn(pinInode42)
+	ctx := context.Background()
+
+	finishWipe := midRebuildWipe(t, mc)
+	for _, path := range []util.FullPath{"/dir/zz-link", "/elsewhere/link"} {
+		if err := mc.InsertEntry(ctx, &filer.Entry{
+			FullPath:        path,
+			Attr:            filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(1, 0), Mode: 0100644, FileSize: 1, Inode: 42},
+			HardLinkId:      filer.HardLinkId{1, 2, 3, 4},
+			HardLinkCounter: 2,
+		}, 0); err != nil {
+			t.Fatalf("insert %s: %v", path, err)
+		}
+	}
+	applyDirEvent(t, mc, LocalMetadataResponseApplyOptions, 100, "zz-link", "zz-moved")
+	finishWipe()
+
+	if got := cachedChildNames(t, mc, "/dir"); len(got) != 0 {
+		t.Errorf("children left by the wipe = %v, want none: zz-link was renamed", got)
+	}
+	other, _, err := mc.FindEntry(ctx, "/elsewhere/link")
+	if err != nil {
+		t.Fatalf("find the other link: %v", err)
+	}
+	if other.HardLinkCounter != 2 {
+		t.Errorf("hard link count of the other name = %d, want 2: a rename removes no link", other.HardLinkCounter)
+	}
+}
+
 // TestRemovalAfterTheWipeIsLeftToTheReplay: once the wipe is over the store
 // holds what the listing put there, and a removal from before the snapshot can
 // still arrive. If its name was created again by then, the entry it would take
