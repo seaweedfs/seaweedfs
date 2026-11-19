@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/notification"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
@@ -212,7 +213,11 @@ func (f *Filer) LocalFlushedThroughTsNs(nowNs int64) int64 {
 // write certain to be visible yet, and a peer aggregator turns the claim into
 // its delivery low-watermark.
 func (f *Filer) LocalDeliveredThroughTsNs(nowNs int64) int64 {
-	return f.metaLogInflight.claimThrough(nowNs)
+	claim := f.metaLogInflight.claimThrough(nowNs)
+	// export how far this filer's delivery claim trails the clock (peer
+	// aggregators turn the claim into their delivery low-watermark)
+	stats.FilerMetaDeliveryClaimAgeSeconds.Set(float64(nowNs-claim) / 1e9)
+	return claim
 }
 
 // StampMetaLogInflightForTest and DoneMetaLogInflightForTest let tests in

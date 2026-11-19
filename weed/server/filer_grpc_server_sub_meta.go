@@ -703,7 +703,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	defer gapStall.close()
 
 	var unsyncedEvents int64
-	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName, &unsyncedEvents)
+	eachEventNotificationFn := fs.eachEventNotificationFn("aggregated", req, sender, clientName, &unsyncedEvents)
 
 	// lastSeenTsNs tracks how far the subscriber has read so idle heartbeats are
 	// only emitted once it is caught up to the buffer head. It is read and
@@ -765,6 +765,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	// False: context ended.
 	waitHeld := func(scope string, watermarkChan <-chan struct{}) bool {
 		stats.FilerSubscribeWatermarkHolds.WithLabelValues(scope).Inc()
+		heldStartNs := time.Now().UnixNano()
 		glog.V(3).Infof("held at %v (deliveredUpTo %v, flushLow %v, deliveryLow %v) for %v",
 			time.Unix(0, heldAtTsNs), time.Unix(0, deliveredUpToTsNs),
 			time.Unix(0, fs.filer.MetaAggregator.PeerLowFlushWatermarkTsNs()),
@@ -780,6 +781,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			return false
 		case <-time.After(unflushedGapRetryInterval):
 		}
+		stats.FilerSubscribeHoldSeconds.WithLabelValues(scope).Observe(float64(time.Now().UnixNano()-heldStartNs) / 1e9)
 		return true
 	}
 
@@ -1028,6 +1030,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 				continue
 			}
 			if errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) {
+				stats.FilerSubscribeResumeFromDisk.WithLabelValues("aggregated").Inc()
 				// Fell off the ring: resume the disk pass from the anchor, not
 				// the (possibly bumped) cursor - redelivery is within the
 				// at-least-once contract, skipping is not. For an anchored
@@ -1173,7 +1176,7 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	defer gapStall.close()
 
 	var unsyncedEvents int64
-	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName, &unsyncedEvents)
+	eachEventNotificationFn := fs.eachEventNotificationFn("local", req, sender, clientName, &unsyncedEvents)
 
 	// lastSeenTsNs tracks how far the subscriber has read so idle heartbeats are
 	// only emitted once it is caught up to the buffer head. It is read and
@@ -1324,6 +1327,7 @@ func (fs *FilerServer) subscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 				return errAggregationUpgrade
 			}
 			if errors.Is(readInMemoryLogErr, log_buffer.ResumeFromDiskError) {
+				stats.FilerSubscribeResumeFromDisk.WithLabelValues("local").Inc()
 				// Fell behind the ring: back to the disk pass (it re-runs when
 				// the flush or the cursor moved), and from there to the gap
 				// resolution above if the disk has nothing either.
@@ -1691,7 +1695,7 @@ func deltaLogFileRefs(refs []*filer_pb.LogFileChunkRef, sent map[string]sentRefS
 	return out
 }
 
-func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, clientName string, filtered *int64) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
+func (fs *FilerServer) eachEventNotificationFn(scope string, req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, clientName string, filtered *int64) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
 	return func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64, mutationTsNs int64) error {
 		defer func() {
 			if *filtered > MaxUnsyncedEvents {
@@ -1752,6 +1756,7 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 			glog.V(0).Infof("=> client %v: %+v", clientName, err)
 			return err
 		}
+		stats.FilerSubscribeDeliveryLagSeconds.WithLabelValues(scope).Observe(float64(time.Now().UnixNano()-tsNs) / 1e9)
 		*filtered = 0
 		return nil
 	}
