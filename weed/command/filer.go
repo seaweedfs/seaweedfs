@@ -307,7 +307,7 @@ func runFiler(cmd *Command, args []string) bool {
 	// -ip.bind is unset and the bind address falls back to -ip. This must be
 	// captured before startFiler fills *f.bindIp in place.
 	filerBindIpUnset := *f.bindIp == ""
-	filerAddress := pb.NewServerAddress(*f.ip, *f.port, *f.portGrpc).String()
+	filerAddress := string(pb.NewServerAddress(*f.ip, *f.port, *f.portGrpc))
 	startDelay := time.Duration(2)
 	if *filerStartS3 {
 		filerS3Options.filer = &filerAddress

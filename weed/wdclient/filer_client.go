@@ -230,7 +230,7 @@ func (fc *FilerClient) SetCurrentFiler(addr pb.ServerAddress) {
 
 	// Find the index of the specified filer address
 	for i, filer := range fc.filerAddresses {
-		if filer == addr {
+		if filerKey(filer) == filerKey(addr) {
 			atomic.StoreInt32(&fc.filerIndex, int32(i))
 			return
 		}
@@ -246,7 +246,7 @@ func (fc *FilerClient) ShouldSkipUnhealthyFiler(addr pb.ServerAddress) bool {
 
 	// Find the health for this filer address
 	for i, filer := range fc.filerAddresses {
-		if filer == addr {
+		if filerKey(filer) == filerKey(addr) {
 			if i < len(fc.filerHealth) {
 				return fc.shouldSkipUnhealthyFilerWithHealth(fc.filerHealth[i])
 			}
@@ -264,7 +264,7 @@ func (fc *FilerClient) RecordFilerSuccess(addr pb.ServerAddress) {
 
 	// Find the health for this filer address
 	for i, filer := range fc.filerAddresses {
-		if filer == addr {
+		if filerKey(filer) == filerKey(addr) {
 			if i < len(fc.filerHealth) {
 				fc.recordFilerSuccessWithHealth(fc.filerHealth[i])
 			}
@@ -280,7 +280,7 @@ func (fc *FilerClient) RecordFilerFailure(addr pb.ServerAddress) {
 
 	// Find the health for this filer address
 	for i, filer := range fc.filerAddresses {
-		if filer == addr {
+		if filerKey(filer) == filerKey(addr) {
 			if i < len(fc.filerHealth) {
 				fc.recordFilerFailureWithHealth(fc.filerHealth[i])
 			}
@@ -413,12 +413,16 @@ func (fc *FilerClient) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, _ time.
 	fc.filerAddressesMu.Lock()
 	defer fc.filerAddressesMu.Unlock()
 
+	changed := false
 	filers := make(map[pb.ServerAddress]struct{}, len(fc.filerAddresses)+1)
 	for _, f := range fc.filerAddresses {
+		if f != addr && filerKey(f) == filerKey(addr) {
+			f = addr
+			changed = true
+		}
 		filers[f] = struct{}{}
 	}
 
-	changed := false
 	if update.IsAdd {
 		// A rejoin cancels its deferred leave; bumping the generation keeps an
 		// in-flight snapshot that lacks the rejoined filer from pruning it.
@@ -461,45 +465,64 @@ func (fc *FilerClient) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, _ time.
 	fc.applyDiscoveredFilersLocked(filers)
 }
 
+// filerKey identifies a filer regardless of whether its address carries the
+// gRPC port explicitly (host:port.grpcPort) or implies it (host:port).
+func filerKey(addr pb.ServerAddress) string {
+	return addr.ToGrpcAddress()
+}
+
 func (fc *FilerClient) applyDiscoveredFilersLocked(discoveredFilers map[pb.ServerAddress]struct{}) {
-	existingFilers := make(map[pb.ServerAddress]struct{}, len(fc.filerAddresses))
-	for _, f := range fc.filerAddresses {
-		existingFilers[f] = struct{}{}
+	discovered := make(map[string]pb.ServerAddress, len(discoveredFilers))
+	for addr := range discoveredFilers {
+		k := filerKey(addr)
+		if prev, dup := discovered[k]; !dup || addr > prev {
+			discovered[k] = addr
+		}
+	}
+
+	// Survivors take the discovered address form and keep their health counters.
+	changed := false
+	kept := make(map[string]struct{}, len(fc.filerAddresses))
+	var removedFilers []pb.ServerAddress
+	newAddresses := make([]pb.ServerAddress, 0, len(discovered))
+	newHealth := make([]*filerHealth, 0, len(discovered))
+	for i, f := range fc.filerAddresses {
+		k := filerKey(f)
+		addr, found := discovered[k]
+		if !found {
+			removedFilers = append(removedFilers, f)
+			continue
+		}
+		if _, dup := kept[k]; dup {
+			changed = true
+			continue
+		}
+		kept[k] = struct{}{}
+		if addr != f {
+			changed = true
+		}
+		newAddresses = append(newAddresses, addr)
+		newHealth = append(newHealth, fc.filerHealth[i])
 	}
 
 	var newFilers []pb.ServerAddress
-	for addr := range discoveredFilers {
-		if _, found := existingFilers[addr]; !found {
+	for k, addr := range discovered {
+		if _, found := kept[k]; !found {
 			newFilers = append(newFilers, addr)
 		}
 	}
 
-	var removedFilers []pb.ServerAddress
-	for _, f := range fc.filerAddresses {
-		if _, found := discoveredFilers[f]; !found {
-			removedFilers = append(removedFilers, f)
-		}
-	}
-
-	if len(newFilers) == 0 && len(removedFilers) == 0 {
+	if !changed && len(newFilers) == 0 && len(removedFilers) == 0 {
 		return
 	}
 
 	// Remember the active filer so the round-robin pointer can follow it across the rebuild.
 	currentIndex := atomic.LoadInt32(&fc.filerIndex)
-	var currentFiler pb.ServerAddress
+	var currentKey string
 	if currentIndex >= 0 && currentIndex < int32(len(fc.filerAddresses)) {
-		currentFiler = fc.filerAddresses[currentIndex]
+		currentKey = filerKey(fc.filerAddresses[currentIndex])
 	}
 
-	newAddresses := make([]pb.ServerAddress, 0, len(fc.filerAddresses)-len(removedFilers)+len(newFilers))
-	newHealth := make([]*filerHealth, 0, cap(newAddresses))
-	for i, f := range fc.filerAddresses {
-		if _, found := discoveredFilers[f]; found {
-			newAddresses = append(newAddresses, f)
-			newHealth = append(newHealth, fc.filerHealth[i])
-		}
-	}
 	for _, f := range newFilers {
 		newAddresses = append(newAddresses, f)
 		newHealth = append(newHealth, &filerHealth{})
@@ -509,9 +532,9 @@ func (fc *FilerClient) applyDiscoveredFilersLocked(discoveredFilers map[pb.Serve
 	fc.filerHealth = newHealth
 
 	var newIndex int32
-	if currentFiler != "" {
+	if currentKey != "" {
 		for i, f := range newAddresses {
-			if f == currentFiler {
+			if filerKey(f) == currentKey {
 				newIndex = int32(i)
 				break
 			}
