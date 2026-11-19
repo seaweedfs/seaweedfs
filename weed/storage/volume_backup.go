@@ -282,14 +282,27 @@ func (v *Volume) locateLastAppendEntry() (key NeedleId, offset Offset, size Size
 	return
 }
 
+// readNeedleAt skips the data, so its checksum is not verified here.
 func (v *Volume) readNeedleAt(offset Offset) (*needle.Needle, error) {
-	n, _, bodyLength, err := needle.ReadNeedleHeader(v.DataBackend, v.SuperBlock.Version, offset.ToActualOffset())
+	actualOffset := offset.ToActualOffset()
+	n, _, bodyLength, err := needle.ReadNeedleHeader(v.DataBackend, v.SuperBlock.Version, actualOffset)
 	if err != nil {
-		return nil, fmt.Errorf("ReadNeedleHeader %s [%d,%d): %v", v.DataBackend.Name(), offset.ToActualOffset(), offset.ToActualOffset()+NeedleHeaderSize, err)
+		return nil, fmt.Errorf("ReadNeedleHeader %s [%d,%d): %v", v.DataBackend.Name(), actualOffset, actualOffset+NeedleHeaderSize, err)
 	}
-	_, err = n.ReadNeedleBody(v.DataBackend, v.SuperBlock.Version, offset.ToActualOffset()+NeedleHeaderSize, bodyLength)
+	if n.Size < 0 {
+		return nil, fmt.Errorf("needle %v at offset %d has size %d: %w", n.Id, actualOffset, n.Size, needle.ErrorCorrupted)
+	}
+	trailer := make([]byte, bodyLength-int64(n.Size))
+	trailerOffset := actualOffset + NeedleHeaderSize + int64(n.Size)
+	readCount, err := v.DataBackend.ReadAt(trailer, trailerOffset)
+	if err == io.EOF && readCount == len(trailer) {
+		err = nil
+	}
+	if err == nil {
+		err = n.ParseNeedleTrailer(trailer, v.SuperBlock.Version)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("ReadNeedleBody offset %d, bodyLength %d: %v", offset.ToActualOffset(), bodyLength, err)
+		return nil, fmt.Errorf("needle trailer offset %d, length %d: %v", trailerOffset, len(trailer), err)
 	}
 	return n, nil
 }
