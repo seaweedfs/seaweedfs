@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 )
@@ -640,6 +641,18 @@ func (p *gapPass) park(ctx context.Context, cursor *log_buffer.MessagePosition, 
 }
 
 func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) (err error) {
+	scope, err := metadataSubscriptionScope(stream.Context(), security.MethodSubscribeMetadata)
+	if err != nil {
+		return err
+	}
+	if scope != nil {
+		req.ClientSupportsMetadataChunks = false
+		req.ClientId, req.ClientEpoch = fs.unusedClientId(), scopedClientEpoch
+		scoped, cancel := newScopedMetadataStream(stream.Context(), scope)
+		defer cancel()
+		defer func() { err = scoped.endErr(err) }()
+		stream = &scopedSubscribeStream{SeaweedFiler_SubscribeMetadataServer: stream, scopedMetadataStream: scoped}
+	}
 	// A filer that has not learned remote peers yet serves the local log and
 	// upgrades when the first one appears. RemotePeerArrivedChan takes the
 	// arrival channel under the same lock as the peer check, so a peer
@@ -1122,7 +1135,19 @@ func (fs *FilerServer) endOfSubscription(stream context.Context, err error) erro
 	return err
 }
 
-func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeLocalMetadataServer) error {
+func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeLocalMetadataServer) (err error) {
+	scope, err := metadataSubscriptionScope(stream.Context(), security.MethodSubscribeLocalMetadata)
+	if err != nil {
+		return err
+	}
+	if scope != nil {
+		req.ClientSupportsMetadataChunks = false
+		req.ClientId, req.ClientEpoch = fs.unusedClientId(), scopedClientEpoch
+		scoped, cancel := newScopedMetadataStream(stream.Context(), scope)
+		defer cancel()
+		defer func() { err = scoped.endErr(err) }()
+		stream = &scopedSubscribeLocalStream{SeaweedFiler_SubscribeLocalMetadataServer: stream, scopedMetadataStream: scoped}
+	}
 	return fs.subscribeLocalMetadata(req, stream, nil)
 }
 

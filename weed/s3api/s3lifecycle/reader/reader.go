@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
 // Event is one in-shard meta-log event delivered to the router.
@@ -157,7 +158,7 @@ func (r *Reader) Run(ctx context.Context, client filer_pb.SeaweedFilerClient, cl
 	// Own context: aborting the RPC is the only way to unblock Recv.
 	streamCtx, cancelStream := context.WithCancel(ctx)
 	defer cancelStream()
-	stream, err := client.SubscribeMetadata(streamCtx, &filer_pb.SubscribeMetadataRequest{
+	stream, err := client.SubscribeMetadata(security.WithMetadataSubscriptionCredentials(streamCtx, nil), &filer_pb.SubscribeMetadataRequest{
 		ClientName:             clientName,
 		PathPrefix:             r.BucketsPath,
 		SinceNs:                sinceNs,

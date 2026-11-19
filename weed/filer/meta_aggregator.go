@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"google.golang.org/grpc"
@@ -724,7 +725,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			return NewChunkStreamReaderFromLookup(ctx, lookupFn, chunks), nil
 		}
 
-		stream, err := client.SubscribeLocalMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
+		stream, err := client.SubscribeLocalMetadata(security.WithMetadataSubscriptionCredentials(ctx, nil), &filer_pb.SubscribeMetadataRequest{
 			ClientName:                   "filer:" + string(self),
 			PathPrefix:                   "/",
 			SinceNs:                      lastTsNs,
