@@ -5666,13 +5666,22 @@ impl Volume {
                 ),
             )));
         }
-        let (_, _, header_size) = Needle::parse_header(needle_blob);
+        let (_, header_id, header_size) = Needle::parse_header(needle_blob);
         if header_size != size {
             return Err(VolumeError::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
                     "needle {} size {} does not match its blob header size {}",
                     needle_id.0, size.0, header_size.0
+                ),
+            )));
+        }
+        if header_id != needle_id {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "needle {} blob header holds needle {}",
+                    needle_id.0, header_id.0
                 ),
             )));
         }
@@ -10731,6 +10740,15 @@ mod tests {
         assert!(matches!(err, VolumeError::Io(_)), "got {err:?}");
         assert_eq!(v.dat_file_size().unwrap(), dat_size_before);
 
+        // needle 1's blob is not stored under key 2
+        let err = v
+            .write_needle_blob_and_index(NeedleId(2), &blob, n.size)
+            .unwrap_err();
+        assert!(matches!(err, VolumeError::Io(_)), "got {err:?}");
+        assert_eq!(v.dat_file_size().unwrap(), dat_size_before);
+
+        let mut blob = blob;
+        NeedleId(2).to_bytes(&mut blob[COOKIE_SIZE..COOKIE_SIZE + NEEDLE_ID_SIZE]);
         v.write_needle_blob_and_index(NeedleId(2), &blob, n.size)
             .unwrap();
     }
@@ -10753,7 +10771,8 @@ mod tests {
         };
         n.checksum = CRC::new(&n.data);
         let (offset, _, _) = v.write_needle(&mut n, true, false).unwrap();
-        let blob = v.read_needle_blob(offset as i64, n.size).unwrap();
+        let mut blob = v.read_needle_blob(offset as i64, n.size).unwrap();
+        NeedleId(2).to_bytes(&mut blob[COOKIE_SIZE..COOKIE_SIZE + NEEDLE_ID_SIZE]);
 
         let dat_size_before = v.dat_file_size().unwrap();
 
