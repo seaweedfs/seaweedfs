@@ -45,14 +45,7 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 	vp.Lock()
 	defer vp.Unlock()
 
-	// find a filer store
-	viper.SetConfigName(configFileName)                                   // name of config file (without extension)
-	viper.AddConfigPath(ResolvePath(ConfigurationFileDirectory.String())) // path to look for the config file in
-	viper.AddConfigPath(".")                                              // optionally look for config in the working directory
-	viper.AddConfigPath("$HOME/.seaweedfs")                               // call multiple times to add many search paths
-	viper.AddConfigPath("/usr/local/etc/seaweedfs/")                      // search path for bsd-style config directory in
-	viper.AddConfigPath("/etc/seaweedfs/")                                // path to look for the config file in
-
+	setConfigurationPaths(viper.GetViper(), configFileName)
 	if err := viper.MergeInConfig(); err != nil { // Handle errors reading the config file
 		if strings.Contains(err.Error(), "Not Found") {
 			glog.V(1).Infof("Reading %s: %v", viper.ConfigFileUsed(), err)
@@ -75,6 +68,41 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 	glog.V(1).Infof("Reading %s.toml from %s", configFileName, viper.ConfigFileUsed())
 
 	return true
+}
+
+// ReadConfiguration reads configFileName into a new viper with the WEED_
+// environment overrides. Unlike LoadConfiguration it does not merge, so a key
+// the file no longer sets reads as unset. A non-empty configFile is read in
+// place of searching the configuration directories. used is the file read, or
+// empty when none could be; the environment still applies then.
+func ReadConfiguration(configFileName, configFile string) (v *ViperProxy, used string) {
+	fresh := viper.New()
+	setEnvOverrides(fresh)
+	if configFile != "" {
+		fresh.SetConfigFile(configFile)
+	} else {
+		setConfigurationPaths(fresh, configFileName)
+	}
+	if err := fresh.ReadInConfig(); err != nil {
+		glog.V(1).Infof("Reading %s: %v", configFileName, err)
+		return NewViperProxy(fresh), ""
+	}
+	return NewViperProxy(fresh), fresh.ConfigFileUsed()
+}
+
+func setConfigurationPaths(v *viper.Viper, configFileName string) {
+	v.SetConfigName(configFileName)
+	v.AddConfigPath(ResolvePath(ConfigurationFileDirectory.String()))
+	v.AddConfigPath(".")
+	v.AddConfigPath("$HOME/.seaweedfs")
+	v.AddConfigPath("/usr/local/etc/seaweedfs/")
+	v.AddConfigPath("/etc/seaweedfs/")
+}
+
+func setEnvOverrides(v *viper.Viper) {
+	v.AutomaticEnv()
+	v.SetEnvPrefix("weed")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 }
 
 // ViperProxy serializes access to the global viper. The wrapped Viper is a
@@ -207,9 +235,7 @@ func GetViper() *ViperProxy {
 
 	if vp.v == nil {
 		vp.v = viper.GetViper()
-		vp.v.AutomaticEnv()
-		vp.v.SetEnvPrefix("weed")
-		vp.v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+		setEnvOverrides(vp.v)
 	}
 
 	return vp

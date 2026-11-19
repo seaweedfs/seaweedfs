@@ -2,6 +2,8 @@ package util
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -50,4 +52,57 @@ func TestNewViperProxyWrapsGivenViper(t *testing.T) {
 	p := NewViperProxy(v)
 	assert.Equal(t, "z", p.GetString("x.y"))
 	assert.Equal(t, map[string]interface{}{"y": "z"}, p.GetStringMap("x"))
+}
+
+func TestReadConfigurationDropsKeysTheFileNoLongerSets(t *testing.T) {
+	dir := t.TempDir()
+	saved := ConfigurationFileDirectory
+	ConfigurationFileDirectory = DirectoryValueType(dir)
+	t.Cleanup(func() { ConfigurationFileDirectory = saved })
+	t.Setenv("WEED_READCONF_ENV", "from-env")
+	write := func(content string) {
+		if err := os.WriteFile(filepath.Join(dir, "readconf_test.toml"), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	v, used := ReadConfiguration("readconf_test", "")
+	assert.Empty(t, used, "missing file")
+	assert.Equal(t, "from-env", v.GetString("readconf.env"))
+
+	write("[readconf]\nkey = \"v1\"\n")
+	v, used = ReadConfiguration("readconf_test", "")
+	assert.Equal(t, filepath.Join(dir, "readconf_test.toml"), used)
+	assert.Equal(t, "v1", v.GetString("readconf.key"))
+
+	write("[readconf]\n")
+	v, used = ReadConfiguration("readconf_test", "")
+	assert.NotEmpty(t, used)
+	assert.Empty(t, v.GetString("readconf.key"))
+	assert.Equal(t, "from-env", v.GetString("readconf.env"))
+
+	write("[readconf\n")
+	v, used = ReadConfiguration("readconf_test", "")
+	assert.Empty(t, used, "unparsable file")
+	assert.Equal(t, "from-env", v.GetString("readconf.env"))
+}
+
+func TestReadConfigurationReadsTheGivenFile(t *testing.T) {
+	searched, given := t.TempDir(), filepath.Join(t.TempDir(), "readconf_test.toml")
+	saved := ConfigurationFileDirectory
+	ConfigurationFileDirectory = DirectoryValueType(searched)
+	t.Cleanup(func() { ConfigurationFileDirectory = saved })
+	if err := os.WriteFile(filepath.Join(searched, "readconf_test.toml"), []byte("[readconf]\nkey = \"searched\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, used := ReadConfiguration("readconf_test", given)
+	assert.Empty(t, used, "missing given file must not fall back to a search")
+
+	if err := os.WriteFile(given, []byte("[readconf]\nkey = \"given\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	v, used := ReadConfiguration("readconf_test", given)
+	assert.Equal(t, given, used)
+	assert.Equal(t, "given", v.GetString("readconf.key"))
 }

@@ -41,7 +41,7 @@ func (fs *FilerServer) tusHandler(w http.ResponseWriter, r *http.Request) {
 
 		var authenticated bool
 		if claims, authenticated = fs.authenticateFilerJwt(r, r.Method != http.MethodHead); !authenticated {
-			writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
+			fs.writeUnauthorized(w, r)
 			return
 		}
 	}
