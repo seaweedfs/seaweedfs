@@ -49,6 +49,7 @@ import (
 
 type S3ApiServerOption struct {
 	Filers                    []pb.ServerAddress
+	HomeFiler                 pb.ServerAddress   // filer of the embedding process, preferred whenever healthy
 	Masters                   []pb.ServerAddress // For filer discovery
 	Port                      int
 	Config                    string
@@ -248,6 +249,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			MasterClient:      masterClient,
 			FilerGroup:        option.FilerGroup,
 			DiscoveryInterval: 5 * time.Minute,
+			HomeFiler:         option.HomeFiler,
 		})
 		masterClient.SetOnPeerUpdateFn(filerClient.OnPeerUpdate)
 		masterClient.SetOnVolumeLocationChangeFn(filerClient.OnVolumeLocationChange)
@@ -259,7 +261,9 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		glog.V(1).Infof("S3 API initialized FilerClient with %d filer(s) and discovery enabled (group: %s, masters: %v)",
 			len(option.Filers), option.FilerGroup, option.Masters)
 	} else {
-		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter)
+		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter, &wdclient.FilerClientOption{
+			HomeFiler: option.HomeFiler,
+		})
 		glog.V(1).Infof("S3 API initialized FilerClient with %d filer(s) (no discovery)", len(option.Filers))
 	}
 

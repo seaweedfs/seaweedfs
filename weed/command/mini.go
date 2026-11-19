@@ -1564,8 +1564,9 @@ func runMini(cmd *Command, args []string) bool {
 	// credential manager can also serve static users.
 	miniFilerOptions.s3ConfigFile = miniS3Config
 
-	filerAddress := string(pb.NewServerAddress(*miniIp, *miniFilerOptions.port, *miniFilerOptions.portGrpc))
+	filerAddress := embeddedFilerAddress(*miniIp, *miniFilerOptions.port, miniFilerOptions.portGrpc)
 	miniS3Options.filer = &filerAddress
+	miniS3Options.homeFiler = filerAddress
 	miniWebDavOptions.filer = &filerAddress
 
 	// Register Unix socket paths for gRPC services so local inter-service
