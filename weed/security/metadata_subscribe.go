@@ -131,14 +131,16 @@ func CheckGrpcMetadataSubscription(ctx context.Context, subscribeKey, adminKey S
 }
 
 // WithMetadataSubscriptionCredentials adds an admin token to a subscription
-// call when this process has both jwt.filer_signing.key and
-// jwt.filer_signing.subscribe.key, so internal subscribers keep full access.
-func WithMetadataSubscriptionCredentials(ctx context.Context) context.Context {
-	v := util.GetViper()
-	if v.GetString("jwt.filer_signing.subscribe.key") == "" {
-		return ctx
+// call: from jwtProvider when the caller has per-cluster keys, else when this
+// process has both jwt.filer_signing.key and jwt.filer_signing.subscribe.key,
+// so internal subscribers keep full access.
+func WithMetadataSubscriptionCredentials(ctx context.Context, jwtProvider FilerJwtProvider) context.Context {
+	var token EncodedJwt
+	if jwtProvider != nil {
+		token = jwtProvider(true)
+	} else if v := util.GetViper(); v.GetString("jwt.filer_signing.subscribe.key") != "" {
+		token = GenJwtForFilerAdmin(SigningKey(v.GetString("jwt.filer_signing.key")), v.GetInt("jwt.filer_signing.expires_after_seconds"))
 	}
-	token := GenJwtForFilerAdmin(SigningKey(v.GetString("jwt.filer_signing.key")), v.GetInt("jwt.filer_signing.expires_after_seconds"))
 	if token == "" {
 		return ctx
 	}

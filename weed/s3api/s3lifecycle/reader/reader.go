@@ -158,7 +158,7 @@ func (r *Reader) Run(ctx context.Context, client filer_pb.SeaweedFilerClient, cl
 	// Own context: aborting the RPC is the only way to unblock Recv.
 	streamCtx, cancelStream := context.WithCancel(ctx)
 	defer cancelStream()
-	stream, err := client.SubscribeMetadata(security.WithMetadataSubscriptionCredentials(streamCtx), &filer_pb.SubscribeMetadataRequest{
+	stream, err := client.SubscribeMetadata(security.WithMetadataSubscriptionCredentials(streamCtx, nil), &filer_pb.SubscribeMetadataRequest{
 		ClientName:             clientName,
 		PathPrefix:             r.BucketsPath,
 		SinceNs:                sinceNs,

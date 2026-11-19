@@ -40,6 +40,9 @@ type MetadataFollowOption struct {
 	// the server sends log file chunk fids instead of streaming events,
 	// and the client reads directly from volume servers.
 	LogFileReaderFn LogFileReaderFn
+	// FilerJwtProvider, when non-nil, signs the subscription with the source
+	// cluster's own filer key instead of this process's configuration.
+	FilerJwtProvider security.FilerJwtProvider
 	// OnIdleHeartbeat, when non-nil, opts in to idle heartbeats: while the
 	// subscriber is caught up the server periodically sends an empty response
 	// carrying the current time, and this is called with that timestamp. It is
@@ -92,7 +95,7 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 		if option.GetResumeTsNs != nil {
 			sinceNs = option.GetResumeTsNs()
 		}
-		stream, err := client.SubscribeMetadata(security.WithMetadataSubscriptionCredentials(ctx), &filer_pb.SubscribeMetadataRequest{
+		stream, err := client.SubscribeMetadata(security.WithMetadataSubscriptionCredentials(ctx, option.FilerJwtProvider), &filer_pb.SubscribeMetadataRequest{
 			ClientName:                   option.ClientName,
 			PathPrefix:                   option.PathPrefix,
 			PathPrefixes:                 option.AdditionalPathPrefixes,

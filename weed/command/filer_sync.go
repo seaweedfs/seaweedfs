@@ -495,6 +495,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		StartTsNs:              sourceFilerOffsetTsNs,
 		StopTsNs:               0,
 		EventErrorType:         pb.RetryForeverOnError,
+		FilerJwtProvider:       sourceJwtProvider,
 		GetResumeTsNs: func() int64 {
 			return resumeTsNsFor(processor)
 		},

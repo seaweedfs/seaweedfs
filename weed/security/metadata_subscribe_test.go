@@ -123,15 +123,27 @@ func TestWithMetadataSubscriptionCredentials(t *testing.T) {
 	defer v.Set("jwt.filer_signing.subscribe.key", "")
 
 	v.Set("jwt.filer_signing.key", "admin-key")
-	if md, _ := metadata.FromOutgoingContext(WithMetadataSubscriptionCredentials(context.Background())); len(md.Get("authorization")) != 0 {
+	if md, _ := metadata.FromOutgoingContext(WithMetadataSubscriptionCredentials(context.Background(), nil)); len(md.Get("authorization")) != 0 {
 		t.Fatal("no admin token without the subscribe key")
 	}
 
 	v.Set("jwt.filer_signing.subscribe.key", "subscribe-key")
-	md, _ := metadata.FromOutgoingContext(WithMetadataSubscriptionCredentials(context.Background()))
+	md, _ := metadata.FromOutgoingContext(WithMetadataSubscriptionCredentials(context.Background(), nil))
 	in := metadata.NewIncomingContext(context.Background(), md)
 	scope, err := CheckGrpcMetadataSubscription(in, SigningKey("subscribe-key"), SigningKey("admin-key"), MethodSubscribeLocalMetadata)
 	if err != nil || scope != nil {
 		t.Fatalf("scope=%v err=%v, want unrestricted", scope, err)
+	}
+
+	clusterKey := SigningKey("cluster-b-key")
+	md, _ = metadata.FromOutgoingContext(WithMetadataSubscriptionCredentials(context.Background(), func(bool) EncodedJwt {
+		return GenJwtForFilerServer(clusterKey, 10)
+	}))
+	if len(md.Get("authorization")) != 1 {
+		t.Fatalf("want only the per-cluster token, got %v", md.Get("authorization"))
+	}
+	scope, err = CheckGrpcMetadataSubscription(metadata.NewIncomingContext(context.Background(), md), SigningKey("subscribe-b"), clusterKey, MethodSubscribeMetadata)
+	if err != nil || scope != nil {
+		t.Fatalf("per-cluster token: scope=%v err=%v, want unrestricted", scope, err)
 	}
 }
