@@ -112,6 +112,86 @@ func TestApplyDiscoveredFilersNoChangeIsNoop(t *testing.T) {
 	}
 }
 
+func TestApplyDiscoveredFilersKeepsFilerListedWithGrpcPort(t *testing.T) {
+	local := pb.ServerAddress("10.0.0.1:8888")
+	registered := pb.ServerAddress("10.0.0.1:8888.18888")
+	peers := []pb.ServerAddress{"10.0.0.2:8888.18888", "10.0.0.3:8888.18888"}
+
+	for i := 0; i < 200; i++ {
+		fc := newTestFilerClient(local)
+		health := fc.filerHealth[0]
+		fc.applyDiscoveredFilers(map[pb.ServerAddress]struct{}{
+			registered: {},
+			peers[0]:   {},
+			peers[1]:   {},
+		})
+
+		if got := fc.GetCurrentFiler(); got != registered {
+			t.Fatalf("current filer = %s, want %s", got, registered)
+		}
+		if fc.filerHealth[0] != health {
+			t.Fatalf("local filer lost its health entry")
+		}
+		if got := filerAddressList(fc); len(got) != 3 {
+			t.Fatalf("expected 3 filers, got %v", got)
+		}
+	}
+}
+
+func TestApplyDiscoveredFilersAdoptsAddressForm(t *testing.T) {
+	a := pb.ServerAddress("10.0.0.1:8888")
+	b := pb.ServerAddress("10.0.0.2:8888.18888")
+
+	fc := newTestFilerClient(a, b)
+	atomic.StoreInt32(&fc.filerIndex, 1)
+	fc.applyDiscoveredFilers(map[pb.ServerAddress]struct{}{
+		"10.0.0.1:8888.18888": {},
+		b:                     {},
+	})
+
+	got := filerAddressList(fc)
+	if len(got) != 2 || got[0] != "10.0.0.1:8888.18888" || got[1] != b {
+		t.Fatalf("expected [10.0.0.1:8888.18888 %s], got %v", b, got)
+	}
+	if idx := atomic.LoadInt32(&fc.filerIndex); idx != 1 {
+		t.Errorf("filerIndex = %d, want 1", idx)
+	}
+	fc.RecordFilerFailure(a)
+	if atomic.LoadInt32(&fc.filerHealth[0].failureCount) != 1 {
+		t.Errorf("failure recorded under the old address form was dropped")
+	}
+}
+
+func TestApplyDiscoveredFilersPrunesFilerWithOtherGrpcPort(t *testing.T) {
+	old := pb.ServerAddress("10.0.0.1:8888")
+	moved := pb.ServerAddress("10.0.0.1:8888.19999")
+
+	fc := newTestFilerClient(old)
+	fc.applyDiscoveredFilers(map[pb.ServerAddress]struct{}{moved: {}})
+
+	if got := filerAddressList(fc); len(got) != 1 || got[0] != moved {
+		t.Fatalf("expected [%s], got %v", moved, got)
+	}
+}
+
+func TestOnPeerUpdateMatchesFilerListedWithGrpcPort(t *testing.T) {
+	local := pb.ServerAddress("10.0.0.1:8888")
+	registered := pb.ServerAddress("10.0.0.1:8888.18888")
+	peer := pb.ServerAddress("10.0.0.2:8888.18888")
+
+	fc := newTestFilerClient(local)
+	fc.OnPeerUpdate(filerUpdate(registered, true), time.Now())
+	if got := filerAddressList(fc); len(got) != 1 || got[0] != registered {
+		t.Fatalf("expected [%s] after the join, got %v", registered, got)
+	}
+
+	fc.OnPeerUpdate(filerUpdate(peer, true), time.Now())
+	fc.OnPeerUpdate(filerUpdate(registered, false), time.Now())
+	if got := filerAddressList(fc); len(got) != 1 || got[0] != peer {
+		t.Fatalf("expected [%s] after the leave, got %v", peer, got)
+	}
+}
+
 func filerUpdate(addr pb.ServerAddress, isAdd bool) *master_pb.ClusterNodeUpdate {
 	return &master_pb.ClusterNodeUpdate{NodeType: cluster.FilerType, Address: string(addr), IsAdd: isAdd}
 }
