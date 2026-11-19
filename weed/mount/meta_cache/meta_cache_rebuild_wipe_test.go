@@ -445,10 +445,12 @@ func TestRebuildWipeTellsAPlaceholderFromAnEarlierFile(t *testing.T) {
 			// An unversioned listing replays every buffered event, so the
 			// removal the wipe declined must not reach the placeholder there,
 			// nor the handle that holds it.
+			mc.WaitForEntryInvalidations()
 			invalidatedBefore := len(invalidations.paths())
 			if err := mc.CompleteDirectoryBuild(context.Background(), "/dir", 0, nil); err != nil {
 				t.Fatalf("complete build: %v", err)
 			}
+			mc.WaitForEntryInvalidations()
 			if got := cachedChildNames(t, mc, "/dir"); !reflect.DeepEqual(got, tc.built) {
 				t.Errorf("children after an unversioned listing = %v, want %v", got, tc.built)
 			}
