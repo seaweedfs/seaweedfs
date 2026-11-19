@@ -31,3 +31,7 @@ already-running server, and see the top of `run.sh` for the other overrides.
   to path-style access with a `sed` patch.
 - `NOT_ACCESSIBLE_BUCKET` is a real bucket carrying a deny-all bucket policy,
   which is how the suite's `AccessDenied` negative tests are satisfied.
+- CI runs Maven with `maven-settings.xml`, which adds Google's Maven Central
+  mirror in front of Central, so a 429 from one falls through to the other.
+  Locally, pass it with
+  `MAVEN_ARGS="-s $PWD/test/s3/snowflake/maven-settings.xml"`.
