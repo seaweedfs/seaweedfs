@@ -11020,13 +11020,17 @@ mod tests {
 
         v.commit_compact().unwrap();
 
-        let mut got = Needle {
-            id: NeedleId(10),
-            cookie: Cookie(0x0abc_def0),
-            ..Needle::default()
+        let nv = {
+            let io = v.io.read().unwrap();
+            io.nm.as_ref().unwrap().get(NeedleId(10)).unwrap().unwrap()
         };
-        v.read_needle(&mut got).unwrap();
-        assert!(got.data.is_empty());
+        assert_eq!(nv.size, Size(0));
+        let mut record = Needle::default();
+        v.read_needle_data_at(&mut record, nv.offset.to_actual_offset(), nv.size)
+            .unwrap();
+        assert_eq!(record.id, NeedleId(10));
+        assert_eq!(record.cookie, Cookie(0x0abc_def0));
+        assert!(record.data.is_empty());
     }
 
     /// Mirrors Go's TestConcurrentWriteCrossesOffsetBoundary (issue #11410):
