@@ -159,6 +159,14 @@ var (
 			Help:      "Current number of volumes that do not have enough replicas per collection/layout. 0 = healthy.",
 		}, []string{"collection", "disk", "rp", "ttl"})
 
+	MasterWritableVolumesPerDisk = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemMaster,
+			Name:      "writable_volumes_per_disk",
+			Help:      "Number of writable volumes of a volume layout with a replica on the disk; state=crowded counts those past the grow threshold.",
+		}, []string{"collection", "disk", "rp", "ttl", "data_center", "rack", "node", "disk_id", "state"})
+
 	// MasterVolumeCreationCounter counts volume creation (growth) operations by result (success, failure).
 	// Volume growth is orchestrated by the master, so this metric is exported by the master process.
 	MasterVolumeCreationCounter = prometheus.NewCounterVec(
@@ -1121,6 +1129,7 @@ func init() {
 	Gather.MustRegister(VolumeServerECRebuildCounter)
 	Gather.MustRegister(VolumeServerECReconstructedIntervalCounter)
 	Gather.MustRegister(MasterUnderReplicatedVolumes)
+	Gather.MustRegister(MasterWritableVolumesPerDisk)
 	Gather.MustRegister(MasterVolumeCreationCounter)
 
 	Gather.MustRegister(S3RequestCounter)
@@ -1264,6 +1273,7 @@ func DeleteCollectionMetrics(collection string) {
 	c += MasterVolumeLayoutWritable.DeletePartialMatch(labels)
 	c += MasterVolumeLayoutCrowded.DeletePartialMatch(labels)
 	c += MasterUnderReplicatedVolumes.DeletePartialMatch(labels)
+	c += MasterWritableVolumesPerDisk.DeletePartialMatch(labels)
 	c += VolumeServerDiskSizeGauge.DeletePartialMatch(labels)
 	c += VolumeServerVolumeGauge.DeletePartialMatch(labels)
 	c += VolumeServerReadOnlyVolumeGauge.DeletePartialMatch(labels)
