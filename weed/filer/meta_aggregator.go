@@ -332,7 +332,7 @@ func (ma *MetaAggregator) PeerLowFlushWatermarkTsNs() int64 {
 	ma.peerWatermarksLock.Lock()
 	defer ma.peerWatermarksLock.Unlock()
 	ma.dropExpiredRemovedPeersLocked()
-	return lowWatermarkOf(ma.peerFlushWatermarks)
+	return observeLowWatermark("flush", lowWatermarkOf(ma.peerFlushWatermarks))
 }
 
 // PeerLowWatermarkTsNs returns the minimum received-through timestamp across
@@ -343,7 +343,18 @@ func (ma *MetaAggregator) PeerLowWatermarkTsNs() int64 {
 	ma.peerWatermarksLock.Lock()
 	defer ma.peerWatermarksLock.Unlock()
 	ma.dropExpiredRemovedPeersLocked()
-	return lowWatermarkOf(ma.peerWatermarks)
+	return observeLowWatermark("delivery", lowWatermarkOf(ma.peerWatermarks))
+}
+
+// observeLowWatermark exports how far a low-watermark trails the clock (-1
+// while a tracked peer has not signalled) and hands the value back.
+func observeLowWatermark(kind string, lowTsNs int64) int64 {
+	age := -1.0
+	if lowTsNs > 0 {
+		age = float64(time.Now().UnixNano()-lowTsNs) / 1e9
+	}
+	stats.FilerMetaPeerLowWatermarkAgeSeconds.WithLabelValues(kind).Set(age)
+	return lowTsNs
 }
 
 // DeliveryWatermarkAdvancedChan returns a channel closed the next time the

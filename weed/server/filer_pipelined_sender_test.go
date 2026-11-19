@@ -9,7 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 type recordingStream struct {
@@ -49,7 +52,7 @@ func (s *recordingStream) snapshot() []*filer_pb.SubscribeMetadataResponse {
 // event. Everything must arrive, in order, whatever the batcher does.
 func TestPipelinedSenderRefsNeverBatched(t *testing.T) {
 	stream := &recordingStream{slow: 2 * time.Millisecond} // let the queue back up so batching engages
-	sender := newPipelinedSender(context.Background(), stream, 64, true)
+	sender := newPipelinedSender(context.Background(), stream, 64, true, "local")
 
 	oldTs := time.Now().Add(-time.Hour).UnixNano() // far behind: the batch heuristic fires
 	var wantOrder []string
@@ -129,7 +132,7 @@ func TestPipelinedSenderUnblocksOnCancel(t *testing.T) {
 	stream := &blockedStream{release: make(chan struct{})}
 	defer close(stream.release)
 	ctx, cancel := context.WithCancel(context.Background())
-	sender := newPipelinedSender(ctx, stream, 1, false)
+	sender := newPipelinedSender(ctx, stream, 1, false, "local")
 
 	msg := &filer_pb.SubscribeMetadataResponse{EventNotification: &filer_pb.EventNotification{}}
 	if err := sender.Send(msg); err != nil { // consumed by the blocked sendLoop
@@ -163,7 +166,7 @@ func TestPipelinedSenderUnblocksOnCancel(t *testing.T) {
 func TestPipelinedSenderStopsSendingOnCancel(t *testing.T) {
 	stream := &blockedStream{release: make(chan struct{}), entered: make(chan struct{}, 1)}
 	ctx, cancel := context.WithCancel(context.Background())
-	sender := newPipelinedSender(ctx, stream, 4, false)
+	sender := newPipelinedSender(ctx, stream, 4, false, "local")
 
 	msg := &filer_pb.SubscribeMetadataResponse{EventNotification: &filer_pb.EventNotification{}}
 	if err := sender.Send(msg); err != nil {
@@ -189,5 +192,93 @@ func TestPipelinedSenderStopsSendingOnCancel(t *testing.T) {
 	}
 	if n := stream.sends.Load(); n != 1 {
 		t.Fatalf("stream.Send ran %d times, want 1; a new send started after cancel", n)
+	}
+}
+
+// deliveryLagSnapshot returns the delivery-lag histogram's sample count and sum
+// for a scope, so a test can assert what one send added.
+func deliveryLagSnapshot(t *testing.T, scope string) (uint64, float64) {
+	t.Helper()
+	var m dto.Metric
+	if err := stats.FilerSubscribeDeliveryLagSeconds.WithLabelValues(scope).(prometheus.Metric).Write(&m); err != nil {
+		t.Fatalf("read delivery-lag metric: %v", err)
+	}
+	return m.GetHistogram().GetSampleCount(), m.GetHistogram().GetSampleSum()
+}
+
+// gatedStream blocks Send until release is closed, signalling on entered the
+// first time Send is called, so a test can inspect state while a send is in
+// flight (i.e. before it has succeeded).
+type gatedStream struct {
+	recordingStream
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *gatedStream) Send(m *filer_pb.SubscribeMetadataResponse) error {
+	select {
+	case s.entered <- struct{}{}:
+	default:
+	}
+	<-s.release
+	return s.recordingStream.Send(m)
+}
+
+// TestPipelinedSenderObservesDeliveryLagAfterSend proves delivery lag is sampled
+// after the real stream send (through the queue + Close), measured from the
+// event's mutation stamp (not the moved stream position), and that control
+// messages and empty progress markers are not sampled.
+func TestPipelinedSenderObservesDeliveryLagAfterSend(t *testing.T) {
+	const scope = "delivery-lag-test"
+	beforeCount, beforeSum := deliveryLagSnapshot(t, scope)
+
+	stream := &gatedStream{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	sender := newPipelinedSender(context.Background(), stream, 64, false, scope)
+
+	mutationNs := time.Now().Add(-5 * time.Second).UnixNano()
+	// A real event whose stream position (TsNs) has moved well past its original
+	// mutation stamp; lag must be measured from the mutation stamp.
+	event := &filer_pb.SubscribeMetadataResponse{
+		TsNs:              time.Now().UnixNano(),
+		MutationTsNs:      mutationNs,
+		EventNotification: &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{Name: "e"}},
+	}
+	// A control message (heartbeat): no EventNotification -> must not be sampled.
+	control := &filer_pb.SubscribeMetadataResponse{TsNs: time.Now().UnixNano()}
+	// A progress marker (sent after MaxUnsyncedEvents filtered entries): a
+	// non-nil but empty EventNotification carrying the filtered entry's TsNs ->
+	// must not be sampled either.
+	marker := &filer_pb.SubscribeMetadataResponse{
+		TsNs:              time.Now().UnixNano(),
+		EventNotification: &filer_pb.EventNotification{},
+	}
+	if err := sender.Send(event); err != nil {
+		t.Fatalf("send event: %v", err)
+	}
+	// Wait until the send loop is blocked inside stream.Send for the event, then
+	// confirm nothing was sampled yet: the observation must come after the send
+	// succeeds, not when the event entered the queue.
+	<-stream.entered
+	if midCount, _ := deliveryLagSnapshot(t, scope); midCount != beforeCount {
+		t.Fatalf("delivery-lag sampled %d while the send was still blocked; it must observe only after stream.Send succeeds", midCount-beforeCount)
+	}
+	close(stream.release)
+
+	if err := sender.Send(control); err != nil {
+		t.Fatalf("send control: %v", err)
+	}
+	if err := sender.Send(marker); err != nil {
+		t.Fatalf("send marker: %v", err)
+	}
+	if err := sender.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	afterCount, afterSum := deliveryLagSnapshot(t, scope)
+	if afterCount != beforeCount+1 {
+		t.Fatalf("delivery-lag samples added = %d, want 1 (only the real event; control and progress markers skipped)", afterCount-beforeCount)
+	}
+	if lag := afterSum - beforeSum; lag < 4 || lag > 60 {
+		t.Fatalf("delivery lag = %.2fs, want ~5s from the mutation stamp (not ~0 from the moved TsNs)", lag)
 	}
 }
