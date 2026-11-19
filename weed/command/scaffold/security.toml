@@ -43,7 +43,9 @@ enabled = true
 # HTTP Basic Auth on the filer HTTP ports (-port and -port.readonly). Once the
 # password is set, every request needs these credentials or a valid filer JWT
 # (see [jwt.filer_signing]), and an access level without a JWT key is no longer
-# open. /healthz and /readyz stay open. Components that call the filer HTTP
+# open. /healthz and /readyz stay open. A browser request from another website
+# (an Origin other than the filer's own host) can use these credentials only if
+# its origin is listed in cors.allowed_origins. Components that call the filer HTTP
 # port (mount, filer.sync and filer.backup with -filerProxy, sftp, volume.fsck)
 # authenticate with the filer JWT, so set jwt.filer_signing.key, and
 # jwt.filer_signing.read.key for their reads, if you run them.

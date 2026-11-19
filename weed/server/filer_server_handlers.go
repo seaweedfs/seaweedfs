@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"path"
 	"slices"
 	"strconv"
@@ -264,7 +265,7 @@ func (fs *FilerServer) checkJwtAuthorization(r *http.Request, isWrite bool, scop
 // (the TUS session target) only after the caller's credential is verified.
 func (fs *FilerServer) authenticateFilerJwt(r *http.Request, isWrite bool) (*security.SeaweedFilerClaims, bool) {
 	basicAuth := fs.basicAuth.Load()
-	if basicAuth != nil && basicAuth.Allows(r) {
+	if basicAuth != nil && basicAuth.Allows(r) && fs.basicAuthOriginAllowed(r) {
 		return nil, true
 	}
 
@@ -319,6 +320,28 @@ func (fs *FilerServer) authenticateFilerJwt(r *http.Request, isWrite bool) (*sec
 	}
 
 	return claims, true
+}
+
+// basicAuthOriginAllowed keeps other websites from riding on Basic credentials
+// a browser cached for the filer: a request with an Origin header must come
+// from the filer's own host or an origin listed in cors.allowed_origins.
+func (fs *FilerServer) basicAuthOriginAllowed(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	if u, err := url.Parse(origin); err == nil && u.Host != "" && strings.EqualFold(u.Host, r.Host) {
+		return true
+	}
+	if fs.option != nil {
+		for _, allowed := range fs.option.AllowedOrigins {
+			if allowed != "*" && origin == allowed {
+				return true
+			}
+		}
+	}
+	glog.V(1).Infof("basic auth refused for origin %q from %s", origin, r.RemoteAddr)
+	return false
 }
 
 // writeUnauthorized answers a request that failed authentication. With Basic

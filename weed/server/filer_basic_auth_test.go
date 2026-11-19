@@ -73,6 +73,44 @@ func TestFilerBasicAuth(t *testing.T) {
 	}
 }
 
+func TestFilerBasicAuthOrigin(t *testing.T) {
+	fs := &FilerServer{
+		filerGuard: security.NewGuard(nil, "", 0, "", 0),
+		option:     &FilerOption{AllowedOrigins: []string{"https://ui.example.com"}},
+	}
+	fs.basicAuth.Store(security.NewBasicAuth("admin", "pw"))
+	tests := []struct {
+		origin string
+		want   bool
+	}{
+		{origin: "", want: true},
+		{origin: "http://filer:8888", want: true},
+		{origin: "http://FILER:8888", want: true},
+		{origin: "https://ui.example.com", want: true},
+		{origin: "https://evil.example.com"},
+		{origin: "http://filer:9999"},
+		{origin: "null"},
+	}
+	for _, tt := range tests {
+		r := httptest.NewRequest(http.MethodPost, "http://filer:8888/new?mv.from=/old", nil)
+		r.SetBasicAuth("admin", "pw")
+		if tt.origin != "" {
+			r.Header.Set("Origin", tt.origin)
+		}
+		if got := fs.maybeCheckJwtAuthorization(r, true); got != tt.want {
+			t.Errorf("origin %q: got %v, want %v", tt.origin, got, tt.want)
+		}
+	}
+
+	fs.option.AllowedOrigins = []string{"*"}
+	r := httptest.NewRequest(http.MethodPost, "http://filer:8888/new", nil)
+	r.SetBasicAuth("admin", "pw")
+	r.Header.Set("Origin", "https://evil.example.com")
+	if fs.maybeCheckJwtAuthorization(r, true) {
+		t.Error("the default allowed origin \"*\" let another website use Basic credentials")
+	}
+}
+
 func TestFilerBasicAuthChallenge(t *testing.T) {
 	fs := &FilerServer{filerGuard: security.NewGuard(nil, "", 0, "", 0)}
 	fs.basicAuth.Store(security.NewBasicAuth("admin", "pw"))
