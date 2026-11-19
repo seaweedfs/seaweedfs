@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -462,7 +463,8 @@ func deleteFilesAndClassify(ctx context.Context, grpcDialOption grpc.DialOption,
 	// Classify outcome for each file
 	outcomes := make(map[string]deletionOutcome, len(fileIds))
 	for _, fileId := range fileIds {
-		outcomes[fileId] = classifyDeletionOutcome(fileId, resultsByFileId)
+		_, durable := fsyncIds[fileId]
+		outcomes[fileId] = classifyDeletionOutcome(fileId, resultsByFileId, durable)
 	}
 
 	return outcomes
@@ -471,7 +473,9 @@ func deleteFilesAndClassify(ctx context.Context, grpcDialOption grpc.DialOption,
 // classifyDeletionOutcome examines all deletion results for a file ID and determines the overall outcome
 // Uses a single pass through results with early return for permanent errors (highest priority)
 // Priority: Permanent > Retryable > Success > Not Found
-func classifyDeletionOutcome(fileId string, resultsByFileId map[string][]*volume_server_pb.DeleteResult) deletionOutcome {
+// A durable delete the volume server could not sync is rolled back and
+// answered with a 5xx, so for a durable delete that answer stays retryable.
+func classifyDeletionOutcome(fileId string, resultsByFileId map[string][]*volume_server_pb.DeleteResult, durable bool) deletionOutcome {
 	fileIdResults, found := resultsByFileId[fileId]
 	if !found || len(fileIdResults) == 0 {
 		return deletionOutcome{
@@ -492,7 +496,7 @@ func classifyDeletionOutcome(fileId string, resultsByFileId map[string][]*volume
 			continue
 		}
 
-		if isRetryableError(res.Error) {
+		if isRetryableError(res.Error) || (durable && res.Status >= http.StatusInternalServerError) {
 			if firstRetryableError == "" {
 				firstRetryableError = res.Error
 			}

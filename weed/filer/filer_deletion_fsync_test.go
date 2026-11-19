@@ -28,6 +28,7 @@ type fsyncRecordingVolumeServer struct {
 	mu       sync.Mutex
 	fsync    map[string][]bool
 	failOnce map[string]string
+	failCode int32
 	inFlight func(req *volume_server_pb.BatchDeleteRequest)
 }
 
@@ -42,7 +43,11 @@ func (v *fsyncRecordingVolumeServer) BatchDelete(_ context.Context, req *volume_
 		v.fsync[fid] = append(v.fsync[fid], req.Fsync)
 		if msg, ok := v.failOnce[fid]; ok {
 			delete(v.failOnce, fid)
-			resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{FileId: fid, Status: http.StatusServiceUnavailable, Error: msg})
+			code := v.failCode
+			if code == 0 {
+				code = http.StatusServiceUnavailable
+			}
+			resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{FileId: fid, Status: code, Error: msg})
 			continue
 		}
 		resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{FileId: fid, Status: http.StatusAccepted})
@@ -361,5 +366,31 @@ func TestPlainDeleteKeepsANewerFsyncMark(t *testing.T) {
 	}
 	if n := f.pendingDeletionCount(); n != 0 {
 		t.Errorf("pending deletions %d, want 0", n)
+	}
+}
+
+func TestDurableDeleteRetriesAServerError(t *testing.T) {
+	withPersistedConfig(t, false)
+	v, lookup := startFsyncRecordingVolumeServer(t)
+	v.failCode = http.StatusInternalServerError
+	f := newFsyncRuleTestFiler(t)
+	ctx := context.Background()
+	durable, plain := "7,01637037d6", "7,02637037d6"
+	v.failOnce[durable] = "sync /data/7.dat: input/output error"
+	v.failOnce[plain] = "sync /data/7.dat: input/output error"
+
+	f.DeleteChunks(ctx, util.FullPath("/buckets/b/obj"), []*filer_pb.FileChunk{{FileId: durable}})
+	f.DeleteChunks(ctx, util.FullPath("/other/file"), []*filer_pb.FileChunk{{FileId: plain}})
+	f.FlushFileIdDeletionQueue(ctx, lookup)
+
+	f.DeletionRetryQueue.lock.Lock()
+	_, durableQueued := f.DeletionRetryQueue.itemIndex[durable]
+	_, plainQueued := f.DeletionRetryQueue.itemIndex[plain]
+	f.DeletionRetryQueue.lock.Unlock()
+	if !durableQueued || plainQueued {
+		t.Fatalf("retry queued: durable %v, plain %v; want durable only", durableQueued, plainQueued)
+	}
+	if _, ok := f.fsyncDeletionIds([]string{durable})[durable]; !ok || f.pendingDeletionCount() != 1 {
+		t.Fatalf("the failed durable delete lost its pending record or fsync mark")
 	}
 }
