@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -39,8 +41,35 @@ func (fs *FilerServer) LookupDirectoryEntries(ctx context.Context, req *filer_pb
 	}
 	if fs.volumeGuard != nil {
 		populateBatchReadAuth(response, fs.maybeGetVolumeReadJwtAuthorizationToken)
+		populateManifestReadAuth(ctx, response, fs.filer.MasterClient.GetLookupFileIdFunction(), fs.maybeGetVolumeReadJwtAuthorizationToken)
 	}
 	return response, nil
+}
+
+// populateManifestReadAuth mints read_auth for the data chunks behind manifest
+// chunks: the entry lists only the manifests, so a client reading with
+// filer-issued tokens could fetch those but not the chunks they point to. A
+// manifest that cannot be resolved leaves its chunks without tokens.
+func populateManifestReadAuth(ctx context.Context, response *filer_pb.LookupDirectoryEntriesResponse, lookupFileIdFn wdclient.LookupFileIdFunctionType, mint func(string) string) {
+	for _, result := range response.Results {
+		if result == nil || result.Entry == nil || !filer.HasChunkManifest(result.Entry.Chunks) {
+			continue
+		}
+		dataChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, result.Entry.Chunks, 0, math.MaxInt64, nil)
+		if err != nil {
+			glog.V(1).InfofCtx(ctx, "read auth: resolve manifests of %s: %v", result.Entry.Name, err)
+			continue
+		}
+		for _, chunk := range dataChunks {
+			fid := chunk.GetFileIdString()
+			if fid == "" || response.ReadAuth[fid] != "" {
+				continue
+			}
+			if token := mint(fid); token != "" {
+				response.ReadAuth[fid] = token
+			}
+		}
+	}
 }
 
 func selectFilerBatchVolumeLookup(req *filer_pb.LookupDirectoryEntriesRequest, cached, authoritative filerBatchVolumeLookup) filerBatchVolumeLookup {

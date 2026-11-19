@@ -1,9 +1,13 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"sort"
 	"strconv"
@@ -130,6 +134,76 @@ func TestPopulateBatchReadAuthMintsExactFidCapabilities(t *testing.T) {
 		"8,def": "jwt:8,def",
 	}) {
 		t.Fatalf("read auth = %#v", response.ReadAuth)
+	}
+}
+
+// A file above filer.ManifestBatch chunks lists only its manifest chunks; a
+// reader that holds only filer-issued tokens must also get tokens for the
+// data chunks the manifests point to, or the file cannot be read.
+func TestPopulateManifestReadAuthCoversDataChunksBehindManifests(t *testing.T) {
+	stored := map[string][]byte{}
+	volume := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, found := stored[strings.TrimPrefix(r.URL.Path, "/")]
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(data)
+	}))
+	defer volume.Close()
+	lookup := func(_ context.Context, fid string) ([]string, error) {
+		return []string{volume.URL + "/" + fid}, nil
+	}
+
+	var dataChunks []*filer_pb.FileChunk
+	for i := 0; i <= filer.ManifestBatch; i++ {
+		dataChunks = append(dataChunks, &filer_pb.FileChunk{FileId: fmt.Sprintf("3,%x", i+1), Offset: int64(i), Size: 1})
+	}
+	manifests := 0
+	save := func(reader io.Reader, name string, offset int64, tsNs int64, expectedDataSize uint64) (*filer_pb.FileChunk, error) {
+		var buf bytes.Buffer
+		if _, err := io.Copy(&buf, reader); err != nil {
+			return nil, err
+		}
+		manifests++
+		fid := fmt.Sprintf("9,%x", manifests)
+		stored[fid] = buf.Bytes()
+		return &filer_pb.FileChunk{FileId: fid, Offset: offset, Size: uint64(buf.Len())}, nil
+	}
+	chunks, err := filer.MaybeManifestize(save, nil, dataChunks)
+	if err != nil {
+		t.Fatalf("manifestize: %v", err)
+	}
+	if !filer.HasChunkManifest(chunks) {
+		t.Fatalf("%d chunks were not manifestized", len(dataChunks))
+	}
+
+	response := &filer_pb.LookupDirectoryEntriesResponse{Results: []*filer_pb.LookupDirectoryEntryResult{
+		{Found: true, Entry: &filer_pb.Entry{Name: "big", Chunks: chunks}},
+	}}
+	mint := func(fid string) string { return "jwt:" + fid }
+	populateBatchReadAuth(response, mint)
+	populateManifestReadAuth(context.Background(), response, lookup, mint)
+	for _, chunk := range dataChunks {
+		if got := response.ReadAuth[chunk.FileId]; got != "jwt:"+chunk.FileId {
+			t.Fatalf("data chunk %s behind a manifest: read auth %q", chunk.FileId, got)
+		}
+	}
+	for _, chunk := range chunks {
+		if response.ReadAuth[chunk.GetFileIdString()] == "" {
+			t.Fatalf("listed chunk %s lost its read auth", chunk.GetFileIdString())
+		}
+	}
+
+	// A manifest that cannot be fetched leaves its chunks without tokens.
+	clear(stored)
+	failed := &filer_pb.LookupDirectoryEntriesResponse{Results: []*filer_pb.LookupDirectoryEntryResult{
+		{Found: true, Entry: &filer_pb.Entry{Name: "big", Chunks: chunks}},
+	}}
+	populateBatchReadAuth(failed, mint)
+	populateManifestReadAuth(context.Background(), failed, lookup, mint)
+	if got := failed.ReadAuth[dataChunks[0].FileId]; got != "" {
+		t.Fatalf("unresolvable manifest: data chunk got read auth %q", got)
 	}
 }
 
