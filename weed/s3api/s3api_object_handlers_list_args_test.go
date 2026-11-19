@@ -16,7 +16,7 @@ func TestGetListObjectsV2ArgsContinuationToken(t *testing.T) {
 		want    string
 		wantErr s3err.ErrorCode
 	}{
-		{query: "continuation-token=", wantErr: s3err.ErrInvalidContinuationToken},
+		{query: "continuation-token=&start-after=a", want: ""},
 		{query: "continuation-token=photos%2F2006%2FJanuary%2Fsample.jpg", want: "photos/2006/January/sample.jpg"},
 		{query: "continuation-token=" + encodeListContinuationToken("ctrl/\x01key"), want: "ctrl/\x01key"},
 		{query: "continuation-token=base64%3Aplain", want: "base64:plain"},
@@ -28,6 +28,7 @@ func TestGetListObjectsV2ArgsContinuationToken(t *testing.T) {
 		_, _, _, token, _, _, _, _, errCode := getListObjectsV2Args(values)
 		assert.Equal(t, tc.wantErr, errCode, tc.query)
 		if tc.wantErr == s3err.ErrNone {
+			assert.Equal(t, values.Has("continuation-token"), token.set, tc.query)
 			assert.Equal(t, tc.want, decodeListContinuationToken(token.string), tc.query)
 		}
 	}
