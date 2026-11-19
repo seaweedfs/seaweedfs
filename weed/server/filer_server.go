@@ -763,13 +763,19 @@ func (fs *FilerServer) Reload() {
 
 	util.LoadConfiguration("security", false)
 	v := util.GetViper()
+	// Turn the new credential on before the old one goes off, so a switch
+	// between Basic Auth and JWT never leaves a window with neither.
+	basicAuth := security.NewBasicAuth(v.GetString("filer.basic_auth.user"), v.GetString("filer.basic_auth.password"))
+	if basicAuth != nil {
+		fs.basicAuth.Store(basicAuth)
+	}
 	fs.filerGuard.UpdateSigningKeys(
 		v.GetString("jwt.filer_signing.key"),
 		v.GetInt("jwt.filer_signing.expires_after_seconds"),
 		v.GetString("jwt.filer_signing.read.key"),
 		v.GetInt("jwt.filer_signing.read.expires_after_seconds"),
 	)
-	fs.basicAuth.Store(security.NewBasicAuth(v.GetString("filer.basic_auth.user"), v.GetString("filer.basic_auth.password")))
+	fs.basicAuth.Store(basicAuth)
 	fs.volumeGuard.UpdateSigningKeys(
 		v.GetString("jwt.signing.key"),
 		v.GetInt("jwt.signing.expires_after_seconds"),
