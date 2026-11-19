@@ -1276,7 +1276,7 @@ impl VolumeServer for VolumeGrpcService {
                     Some(vol) if vol.is_no_write_or_delete() => {
                         Err(crate::storage::volume::VolumeError::ReadOnly(file_id.volume_id))
                     }
-                    Some(vol) => vol.delete_needle(&mut n, false),
+                    Some(vol) => vol.delete_needle(&mut n, req.fsync),
                 };
                 match delete_result {
                     Ok(size) => {
@@ -14237,6 +14237,7 @@ mod tests {
             .batch_delete(Request::new(volume_server_pb::BatchDeleteRequest {
                 file_ids: vec![fid.to_string()],
                 skip_cookie_check,
+                fsync: false,
             }))
             .await
             .unwrap()
@@ -14288,6 +14289,57 @@ mod tests {
             "a batch delete must not read the needle's payload ({} bytes): {reads:?}",
             data.len()
         );
+    }
+
+    /// Go's TestBatchDeleteFsyncsOnlyWhenAsked.
+    #[tokio::test]
+    async fn test_batch_delete_fsyncs_only_when_asked() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        for (id, fsync) in [(0x6e7a_0c01u64, false), (0x6e7a_0c02, true)] {
+            let mut n = Needle {
+                id: NeedleId(id),
+                cookie: Cookie(0x3344),
+                data: b"chunk".to_vec(),
+                data_size: 5,
+                ..Needle::default()
+            };
+            service
+                .state
+                .store
+                .write()
+                .unwrap()
+                .write_volume_needle(VolumeId(1), &mut n, false)
+                .unwrap();
+            let syncs = || {
+                let store = service.state.store.read().unwrap();
+                let (_, vol) = store.find_volume(VolumeId(1)).unwrap();
+                vol.sync_counts_for_test()
+            };
+            let before = syncs();
+            let fid = needle::FileId::new(VolumeId(1), NeedleId(id), Cookie(0x3344));
+            let resp = service
+                .batch_delete(Request::new(volume_server_pb::BatchDeleteRequest {
+                    file_ids: vec![fid.to_string()],
+                    skip_cookie_check: true,
+                    fsync,
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            assert_eq!(resp.results[0].status, 202, "{:?}", resp.results);
+            let after = syncs();
+            if fsync {
+                assert!(
+                    after.0 > before.0 && after.1 > before.1,
+                    "the tombstone was not synced: {before:?} -> {after:?}"
+                );
+            } else {
+                assert_eq!(
+                    after, before,
+                    "a delete that did not ask for fsync paid for one"
+                );
+            }
+        }
     }
 
     const GO_EC_NEEDLE_NOT_FOUND: &str =
@@ -16327,6 +16379,7 @@ mod tests {
             Request::new(volume_server_pb::BatchDeleteRequest {
                 file_ids: vec!["1,b00003344".to_string()],
                 skip_cookie_check: false,
+                fsync: false,
             })
         };
 
@@ -16376,6 +16429,7 @@ mod tests {
                 .batch_delete(Request::new(volume_server_pb::BatchDeleteRequest {
                     file_ids: vec!["2,b00003344".to_string()],
                     skip_cookie_check,
+                    fsync: false,
                 }))
                 .await
                 .unwrap()

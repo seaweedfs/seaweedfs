@@ -185,6 +185,7 @@ type BatchDeleteRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	FileIds         []string               `protobuf:"bytes,1,rep,name=file_ids,json=fileIds,proto3" json:"file_ids,omitempty"`
 	SkipCookieCheck bool                   `protobuf:"varint,2,opt,name=skip_cookie_check,json=skipCookieCheck,proto3" json:"skip_cookie_check,omitempty"`
+	Fsync           bool                   `protobuf:"varint,3,opt,name=fsync,proto3" json:"fsync,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -229,6 +230,13 @@ func (x *BatchDeleteRequest) GetFileIds() []string {
 func (x *BatchDeleteRequest) GetSkipCookieCheck() bool {
 	if x != nil {
 		return x.SkipCookieCheck
+	}
+	return false
+}
+
+func (x *BatchDeleteRequest) GetFsync() bool {
+	if x != nil {
+		return x.Fsync
 	}
 	return false
 }
@@ -7334,10 +7342,11 @@ const file_volume_server_proto_rawDesc = "" +
 	"\x13volume_server.proto\x12\x10volume_server_pb\x1a\fremote.proto\"O\n" +
 	"\x11VolumeServerState\x12 \n" +
 	"\vmaintenance\x18\x01 \x01(\bR\vmaintenance\x12\x18\n" +
-	"\aversion\x18\x02 \x01(\rR\aversion\"[\n" +
+	"\aversion\x18\x02 \x01(\rR\aversion\"q\n" +
 	"\x12BatchDeleteRequest\x12\x19\n" +
 	"\bfile_ids\x18\x01 \x03(\tR\afileIds\x12*\n" +
-	"\x11skip_cookie_check\x18\x02 \x01(\bR\x0fskipCookieCheck\"O\n" +
+	"\x11skip_cookie_check\x18\x02 \x01(\bR\x0fskipCookieCheck\x12\x14\n" +
+	"\x05fsync\x18\x03 \x01(\bR\x05fsync\"O\n" +
 	"\x13BatchDeleteResponse\x128\n" +
 	"\aresults\x18\x01 \x03(\v2\x1e.volume_server_pb.DeleteResultR\aresults\"\x83\x01\n" +
 	"\fDeleteResult\x12\x17\n" +

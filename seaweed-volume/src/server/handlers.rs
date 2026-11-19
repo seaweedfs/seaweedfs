@@ -683,6 +683,7 @@ async fn batch_delete_file_ids(
             .batch_delete(volume_server_pb::BatchDeleteRequest {
                 file_ids: batch.clone(),
                 skip_cookie_check: true,
+                fsync: false,
             })
             .await
             .map_err(|e| format!("batch delete {}: {}", grpc_addr, e))?

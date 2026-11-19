@@ -3168,7 +3168,7 @@ func (s3a *S3ApiServer) deleteOrphanedChunks(chunks []*filer_pb.FileChunk) {
 	}
 
 	// Attempt deletion using the operation package's batch delete with custom lookup
-	deleteResults := operation.DeleteFileIdsWithLookupVolumeId(context.Background(), s3a.option.GrpcDialOption, fileIds, lookupFunc)
+	deleteResults := operation.DeleteFileIdsWithLookupVolumeId(context.Background(), s3a.option.GrpcDialOption, fileIds, false, lookupFunc)
 
 	// Log results - track successes and failures
 	successCount := 0
