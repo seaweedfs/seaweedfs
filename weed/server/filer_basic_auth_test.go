@@ -185,7 +185,40 @@ func TestFilerBasicAuthReloadDropsRemovedPassword(t *testing.T) {
 
 	write("[filer.basic_auth\n")
 	t.Setenv("WEED_FILER_BASIC_AUTH_PASSWORD", "env")
-	if loadBasicAuth(nil) == nil {
+	if auth, _ := loadBasicAuth(nil, ""); auth == nil {
 		t.Error("an unparsable file dropped the environment password at startup")
+	}
+}
+
+func TestFilerBasicAuthReloadStaysOnItsFile(t *testing.T) {
+	primary, fallback := t.TempDir(), t.TempDir()
+	saved := util.ConfigurationFileDirectory
+	util.ConfigurationFileDirectory = util.DirectoryValueType(primary)
+	t.Cleanup(func() { util.ConfigurationFileDirectory = saved })
+	t.Chdir(fallback)
+	for dir, content := range map[string]string{
+		primary:  "[filer.basic_auth]\nuser = \"admin\"\npassword = \"pw\"\n",
+		fallback: "# no Basic Auth\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, "security.toml"), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fs := &FilerServer{
+		filerGuard:  security.NewGuard(nil, "", 0, "", 0),
+		volumeGuard: security.NewGuard(nil, "", 0, "", 0),
+	}
+	fs.Reload()
+	if fs.basicAuth.Load() == nil {
+		t.Fatal("Basic Auth off after reloading a file that sets it")
+	}
+
+	// The search no longer reaches the primary directory, as when it turns
+	// unsearchable, so a fresh search would find the fallback file.
+	util.ConfigurationFileDirectory = util.DirectoryValueType(t.TempDir())
+	fs.Reload()
+	if fs.basicAuth.Load() == nil {
+		t.Error("reload switched to a lower-priority security.toml without Basic Auth")
 	}
 }

@@ -72,17 +72,22 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 
 // ReadConfiguration reads configFileName into a new viper with the WEED_
 // environment overrides. Unlike LoadConfiguration it does not merge, so a key
-// the file no longer sets reads as unset. loaded is false when the file was
-// not found or could not be read; the environment still applies then.
-func ReadConfiguration(configFileName string) (v *ViperProxy, loaded bool) {
+// the file no longer sets reads as unset. A non-empty configFile is read in
+// place of searching the configuration directories. used is the file read, or
+// empty when none could be; the environment still applies then.
+func ReadConfiguration(configFileName, configFile string) (v *ViperProxy, used string) {
 	fresh := viper.New()
 	setEnvOverrides(fresh)
-	setConfigurationPaths(fresh, configFileName)
+	if configFile != "" {
+		fresh.SetConfigFile(configFile)
+	} else {
+		setConfigurationPaths(fresh, configFileName)
+	}
 	if err := fresh.ReadInConfig(); err != nil {
 		glog.V(1).Infof("Reading %s: %v", configFileName, err)
-		return NewViperProxy(fresh), false
+		return NewViperProxy(fresh), ""
 	}
-	return NewViperProxy(fresh), true
+	return NewViperProxy(fresh), fresh.ConfigFileUsed()
 }
 
 func setConfigurationPaths(v *viper.Viper, configFileName string) {

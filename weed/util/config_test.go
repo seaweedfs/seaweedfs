@@ -66,23 +66,43 @@ func TestReadConfigurationDropsKeysTheFileNoLongerSets(t *testing.T) {
 		}
 	}
 
-	v, loaded := ReadConfiguration("readconf_test")
-	assert.False(t, loaded, "missing file")
+	v, used := ReadConfiguration("readconf_test", "")
+	assert.Empty(t, used, "missing file")
 	assert.Equal(t, "from-env", v.GetString("readconf.env"))
 
 	write("[readconf]\nkey = \"v1\"\n")
-	v, loaded = ReadConfiguration("readconf_test")
-	assert.True(t, loaded)
+	v, used = ReadConfiguration("readconf_test", "")
+	assert.Equal(t, filepath.Join(dir, "readconf_test.toml"), used)
 	assert.Equal(t, "v1", v.GetString("readconf.key"))
 
 	write("[readconf]\n")
-	v, loaded = ReadConfiguration("readconf_test")
-	assert.True(t, loaded)
+	v, used = ReadConfiguration("readconf_test", "")
+	assert.NotEmpty(t, used)
 	assert.Empty(t, v.GetString("readconf.key"))
 	assert.Equal(t, "from-env", v.GetString("readconf.env"))
 
 	write("[readconf\n")
-	v, loaded = ReadConfiguration("readconf_test")
-	assert.False(t, loaded, "unparsable file")
+	v, used = ReadConfiguration("readconf_test", "")
+	assert.Empty(t, used, "unparsable file")
 	assert.Equal(t, "from-env", v.GetString("readconf.env"))
+}
+
+func TestReadConfigurationReadsTheGivenFile(t *testing.T) {
+	searched, given := t.TempDir(), filepath.Join(t.TempDir(), "readconf_test.toml")
+	saved := ConfigurationFileDirectory
+	ConfigurationFileDirectory = DirectoryValueType(searched)
+	t.Cleanup(func() { ConfigurationFileDirectory = saved })
+	if err := os.WriteFile(filepath.Join(searched, "readconf_test.toml"), []byte("[readconf]\nkey = \"searched\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, used := ReadConfiguration("readconf_test", given)
+	assert.Empty(t, used, "missing given file must not fall back to a search")
+
+	if err := os.WriteFile(given, []byte("[readconf]\nkey = \"given\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	v, used := ReadConfiguration("readconf_test", given)
+	assert.Equal(t, given, used)
+	assert.Equal(t, "given", v.GetString("readconf.key"))
 }

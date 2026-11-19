@@ -132,6 +132,7 @@ type FilerServer struct {
 	filer                *filer.Filer
 	filerGuard           *security.Guard
 	basicAuth            atomic.Pointer[security.BasicAuth]
+	basicAuthFile        string
 	volumeGuard          *security.Guard
 	grpcDialOption       grpc.DialOption
 	grpcDialOptionMaster grpc.DialOption
@@ -327,7 +328,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Warningf("filer: guard.white_list is configured but the IP whitelist feature is currently disabled. See https://github.com/seaweedfs/seaweedfs/issues/7094")
 	}
 	fs.filerGuard = security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
-	fs.basicAuth.Store(loadBasicAuth(nil))
+	basicAuth, basicAuthFile := loadBasicAuth(nil, "")
+	fs.basicAuth.Store(basicAuth)
+	fs.basicAuthFile = basicAuthFile
 	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec)
 
 	fs.checkWithMaster()
@@ -760,13 +763,19 @@ func (fs *FilerServer) leaveLockRing(removalTimeout time.Duration) {
 
 // loadBasicAuth reads [filer.basic_auth] from security.toml and the WEED_
 // environment alone: the shared viper merges every reload into what it held,
-// so it would keep a password the file no longer sets. A non-nil current is
-// kept when the file cannot be read.
-func loadBasicAuth(current *security.BasicAuth) *security.BasicAuth {
-	if v, loaded := util.ReadConfiguration("security"); loaded || current == nil {
-		return security.NewBasicAuth(v.GetString("filer.basic_auth.user"), v.GetString("filer.basic_auth.password"))
+// so it would keep a password the file no longer sets. Once a file is read,
+// later reads stay on it rather than search again, so a directory that turns
+// unsearchable cannot hand over a lower-priority security.toml. A non-nil
+// current is kept when the file cannot be read.
+func loadBasicAuth(current *security.BasicAuth, file string) (*security.BasicAuth, string) {
+	v, used := util.ReadConfiguration("security", file)
+	if used == "" {
+		if current != nil {
+			return current, file
+		}
+		used = file
 	}
-	return current
+	return security.NewBasicAuth(v.GetString("filer.basic_auth.user"), v.GetString("filer.basic_auth.password")), used
 }
 
 func (fs *FilerServer) Reload() {
@@ -776,7 +785,8 @@ func (fs *FilerServer) Reload() {
 	v := util.GetViper()
 	// Turn the new credential on before the old one goes off, so a switch
 	// between Basic Auth and JWT never leaves a window with neither.
-	basicAuth := loadBasicAuth(fs.basicAuth.Load())
+	basicAuth, basicAuthFile := loadBasicAuth(fs.basicAuth.Load(), fs.basicAuthFile)
+	fs.basicAuthFile = basicAuthFile
 	if basicAuth != nil {
 		fs.basicAuth.Store(basicAuth)
 	}
