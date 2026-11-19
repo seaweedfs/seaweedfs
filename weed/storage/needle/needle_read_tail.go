@@ -33,6 +33,15 @@ func (n *Needle) readNeedleTail(needleBody []byte, version Version) error {
 	return nil
 }
 
+// ParseNeedleTrailer parses the fields that follow a record's data. With n.Data
+// empty, as after ReadNeedleHeader, the checksum is taken as stored.
+func (n *Needle) ParseNeedleTrailer(trailer []byte, version Version) error {
+	if len(trailer) < int(NeedleBodyLength(0, version)-int64(PaddingLength(0, version))) {
+		return fmt.Errorf("needle %v trailer of %d bytes is too short: %w", n.Id, len(trailer), ErrorCorrupted)
+	}
+	return n.readNeedleTail(trailer, version)
+}
+
 func PaddingLength(needleSize Size, version Version) Size {
 	if version == Version3 {
 		// this is same value as version2, but just listed here for clarity
