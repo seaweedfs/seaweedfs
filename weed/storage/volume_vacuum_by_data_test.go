@@ -10,7 +10,7 @@ import (
 )
 
 // A write or delete that lands between CompactByVolumeData and CommitCompact
-// must be carried into the compacted volume (or the commit must fail cleanly).
+// must be carried into the compacted volume by a successful commit.
 // CompactByVolumeData never builds the temporary needle map that makeupDiff
 // loads the incremental index into, so the commit used to dereference a nil
 // v.tmpNm and panic.
@@ -75,8 +75,7 @@ func testCommitAfterCompactByVolumeData(t *testing.T, kind NeedleMapKind, change
 		commitErr = v.CommitCompact()
 	}()
 	if commitErr != nil {
-		// A clean refusal is acceptable; the volume must keep serving its data.
-		t.Logf("CommitCompact refused: %v", commitErr)
+		t.Fatalf("CommitCompact after CompactByVolumeData with a concurrent %s: %v", change, commitErr)
 	}
 
 	for i := uint64(1); i <= 6; i++ {
