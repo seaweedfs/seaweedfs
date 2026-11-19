@@ -27,6 +27,10 @@ const (
 // mergeHTTP bounds every HTTP call the test makes to the cluster.
 var mergeHTTP = &http.Client{Timeout: 30 * time.Second}
 
+// mergeVacuumHTTP outlasts a master vacuum, which waits up to 30 s per volume
+// for writes assigned to it to drain before compacting it.
+var mergeVacuumHTTP = &http.Client{Timeout: 3 * time.Minute}
+
 // TestReadOpenHandleAfterChunkMerge covers a file a flush merged while a
 // descriptor kept it open. The merge rewrites the file into new chunks and the
 // filer deletes the chunks it replaced, so after a vacuum only the new chunks
@@ -98,18 +102,21 @@ func testReadOpenHandleAfterChunkMerge(t *testing.T, framework *FuseTestFramewor
 		return true
 	}, 30*time.Second, 200*time.Millisecond, "the replaced chunks were never deleted")
 	require.Eventually(t, func() bool {
-		resp, err := mergeHTTP.Get(fmt.Sprintf("http://%s/vol/vacuum?garbageThreshold=0.0001", master))
+		resp, err := mergeVacuumHTTP.Get(fmt.Sprintf("http://%s/vol/vacuum?garbageThreshold=0.0001", master))
 		if err != nil {
 			return false
 		}
 		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return false
+		}
 		for _, c := range replaced {
 			if mergeChunkStatus(master, c, true) != http.StatusNotFound {
 				return false
 			}
 		}
 		return true
-	}, 60*time.Second, time.Second, "vacuum left the replaced chunks on disk")
+	}, 4*time.Minute, time.Second, "vacuum left the replaced chunks on disk")
 
 	if unflushedWrite {
 		_, err = held.WriteAt(mergePagePattern(mergePages-1, 99), int64((mergePages-1)*mergePageSize))
