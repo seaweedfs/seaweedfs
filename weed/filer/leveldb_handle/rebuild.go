@@ -25,6 +25,11 @@ func rebuildDamagedTables(stor storage.Storage, o *opt.Options) error {
 	if o.GetStrict(opt.StrictRecovery) {
 		return nil
 	}
+	lock, err := stor.Lock()
+	if err != nil {
+		return err
+	}
+	defer lock.Unlock()
 	fds, err := stor.List(storage.TypeTable)
 	if err != nil {
 		return err

@@ -562,3 +562,33 @@ func TestStrictRecoveryDropsDamagedTable(t *testing.T) {
 		t.Fatalf("get from the dropped table: %v", err)
 	}
 }
+
+func TestRebuildLeavesTablesOfAnOpenDatabase(t *testing.T) {
+	dir, opts, _ := damagedTableDB(t)
+	stor, err := storage.OpenFile(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stor.Close()
+	raw, err := leveldb.Open(stor, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	tables, _ := filepath.Glob(filepath.Join(dir, "*.ldb"))
+	before, err := os.ReadFile(tables[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := rebuildDamagedTables(stor, opts); err != storage.ErrLocked {
+		t.Fatalf("rebuild under an open database: %v", err)
+	}
+	after, err := os.ReadFile(tables[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("table rewritten under an open database")
+	}
+}
