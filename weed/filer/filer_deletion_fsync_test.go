@@ -251,3 +251,31 @@ func TestDeletionLedgerClaimKeepsFsyncMarks(t *testing.T) {
 		t.Fatalf("claimed fsync mark was not persisted under the new key")
 	}
 }
+
+func TestQueueDeletionsMarksBeforePublishing(t *testing.T) {
+	f := newLedgerTestFiler(newStubFilerStore())
+	const n = 20000
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < n; i++ {
+			f.queueDeletions(true, fmt.Sprintf("9,%08xbeefcafe", i))
+		}
+	}()
+	seen := 0
+	for seen < n {
+		f.FileIdDeletionQueue.Consume(func(ids []string) {
+			marked := f.fsyncDeletionIds(ids)
+			for _, id := range ids {
+				if _, ok := marked[id]; !ok {
+					t.Errorf("%s reached the deletion queue before its fsync mark", id)
+				}
+			}
+			seen += len(ids)
+		})
+		if t.Failed() {
+			break
+		}
+	}
+	<-done
+}

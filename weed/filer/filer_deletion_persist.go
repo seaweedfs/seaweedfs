@@ -169,12 +169,10 @@ func (f *Filer) queueDeletions(fsync bool, fileIds ...string) {
 	if len(fileIds) == 0 {
 		return
 	}
-	// Hot path: existing in-memory queue, unchanged.
-	f.FileIdDeletionQueue.EnQueue(fileIds...)
-
 	// Durable ledger: record what still needs deleting. Every enqueue bumps the
 	// id's epoch so an expiry-forget carrying an older epoch cannot erase the
-	// re-queued intent.
+	// re-queued intent. The record goes in before the id reaches the hot queue,
+	// so the delete loop never sees an id without its epoch and fsync mark.
 	f.deletionLedgerLock.Lock()
 	if f.pendingDeletions == nil {
 		f.pendingDeletions = make(map[string]uint64, len(fileIds))
@@ -200,6 +198,7 @@ func (f *Filer) queueDeletions(fsync bool, fileIds ...string) {
 		}
 	}
 	f.deletionLedgerLock.Unlock()
+	f.FileIdDeletionQueue.EnQueue(fileIds...)
 	f.signalLedgerFlush()
 }
 
