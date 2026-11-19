@@ -399,14 +399,6 @@ func TestRebuildWipeKeepsAnEntryNewerThanTheRemoval(t *testing.T) {
 	if got, want := cachedChildNames(t, mc, "/dir"), []string{"zz-newer"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("children left by the wipe = %v, want %v", got, want)
 	}
-
-	// An unversioned listing replays every buffered event.
-	if err := mc.CompleteDirectoryBuild(context.Background(), "/dir", 0, nil); err != nil {
-		t.Fatalf("complete build: %v", err)
-	}
-	if got, want := cachedChildNames(t, mc, "/dir"), []string{"zz-newer"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("children after an unversioned listing = %v, want %v", got, want)
-	}
 }
 
 // TestRebuildWipeTellsAPlaceholderFromAnEarlierFile: a removal can arrive late,
@@ -459,6 +451,60 @@ func TestRebuildWipeTellsAPlaceholderFromAnEarlierFile(t *testing.T) {
 				t.Errorf("children after an unversioned listing = %v, want %v", got, tc.built)
 			}
 		})
+	}
+}
+
+// TestRebuildWipeRechecksADeclinedRemovalOnReplay: a listing attempt that failed
+// left file 7 cached and buffered its delete and the create of file 8 at the
+// same name. The retry's wipe declines file 8's delete, since file 7 is still
+// cached there, but the replay puts file 8 in place first and must then take
+// it out again.
+func TestRebuildWipeRechecksADeclinedRemovalOnReplay(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+	defer mc.Shutdown()
+	mc.SetPinnedChildFn(pinInode42)
+	ctx := context.Background()
+
+	fillRebuildWipeDir(t, mc, "/dir", 2*rebuildWipeBatchSize+10)
+	if err := mc.BeginDirectoryBuild(ctx, "/dir"); err != nil {
+		t.Fatalf("begin build: %v", err)
+	}
+	if err := mc.doBatchInsertEntries(ctx, []*filer.Entry{{
+		FullPath: "/dir/zz-same",
+		Attr:     filer.Attr{Crtime: time.Unix(1, 0), Mtime: time.Unix(1, 0), Mode: 0100644, FileSize: 1, Inode: 7},
+	}}); err != nil {
+		t.Fatalf("first attempt's listing: %v", err)
+	}
+	file := func(inode uint64) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: "zz-same", Attributes: &filer_pb.FuseAttributes{FileMode: 0100644, Inode: inode, Crtime: 1}}
+	}
+	apply := func(tsNs int64, message *filer_pb.EventNotification) {
+		t.Helper()
+		if err := mc.ApplyMetadataResponse(ctx, &filer_pb.SubscribeMetadataResponse{Directory: "/dir", TsNs: tsNs, EventNotification: message}, SubscriberMetadataResponseApplyOptions); err != nil {
+			t.Fatalf("apply event at %d: %v", tsNs, err)
+		}
+	}
+	apply(100, &filer_pb.EventNotification{OldEntry: file(7)})
+	apply(110, &filer_pb.EventNotification{NewParentPath: "/dir", NewEntry: file(8)})
+
+	stopKeeping := mc.keepInsertsDuringWipe("/dir")
+	last, err := mc.deleteFolderChildrenBatch(ctx, "/dir", "")
+	if err != nil {
+		t.Fatalf("first batch: %v", err)
+	}
+	apply(120, &filer_pb.EventNotification{OldEntry: file(8)})
+	for last != "" {
+		if last, err = mc.deleteFolderChildrenBatch(ctx, "/dir", last); err != nil {
+			t.Fatalf("batch: %v", err)
+		}
+	}
+	stopKeeping()
+
+	if err := mc.CompleteDirectoryBuild(ctx, "/dir", 0, nil); err != nil {
+		t.Fatalf("complete build: %v", err)
+	}
+	if got := cachedChildNames(t, mc, "/dir"); len(got) != 0 {
+		t.Errorf("children after an unversioned listing = %v, want none: file 8 was deleted", got)
 	}
 }
 

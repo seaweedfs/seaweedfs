@@ -89,6 +89,9 @@ var (
 
 type directoryBuildState struct {
 	bufferedEvents []*filer_pb.SubscribeMetadataResponse
+	// removals the rebuild wipe declined as being of another file than the
+	// one cached; the replay checks them again against what it finds
+	declinedRemovals map[*filer_pb.SubscribeMetadataResponse]struct{}
 }
 
 const recentEventDedupWindow = 4096
@@ -1033,7 +1036,13 @@ func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_p
 		if state == nil {
 			continue
 		}
-		state.bufferedEvents = append(state.bufferedEvents, mc.vacateDuringWipe(ctx, events)...)
+		state.bufferedEvents = append(state.bufferedEvents, events...)
+		for _, declined := range mc.vacateDuringWipe(ctx, events) {
+			if state.declinedRemovals == nil {
+				state.declinedRemovals = make(map[*filer_pb.SubscribeMetadataResponse]struct{})
+			}
+			state.declinedRemovals[declined] = struct{}{}
+		}
 	}
 	return nil
 }
@@ -1049,15 +1058,12 @@ func (mc *MetaCache) applyMetadataResponseNow(ctx context.Context, resp *filer_p
 // there, and a removal earlier than the snapshot may still arrive, so the
 // event is left to the replay again.
 //
-// It returns the events to buffer. A removal it declines keeps only the name
-// it puts in place: an unversioned listing replays every buffered event and
-// would take out the entry the wipe kept after all.
-func (mc *MetaCache) vacateDuringWipe(ctx context.Context, events []*filer_pb.SubscribeMetadataResponse) []*filer_pb.SubscribeMetadataResponse {
+// It returns the removals it declined as being of another file, which an
+// unversioned listing would otherwise replay over the entry the wipe kept.
+func (mc *MetaCache) vacateDuringWipe(ctx context.Context, events []*filer_pb.SubscribeMetadataResponse) (declined []*filer_pb.SubscribeMetadataResponse) {
 	mc.Lock()
 	defer mc.Unlock()
-	buffered := make([]*filer_pb.SubscribeMetadataResponse, 0, len(events))
 	for _, event := range events {
-		buffered = append(buffered, event)
 		oldDir, hasOld := metadataOldParentDir(event)
 		if !hasOld {
 			continue
@@ -1070,18 +1076,18 @@ func (mc *MetaCache) vacateDuringWipe(ctx context.Context, events []*filer_pb.Su
 		if newDir, hasNew := metadataNewParentDir(event); hasNew && newDir.Child(event.EventNotification.NewEntry.Name) == oldPath {
 			continue // rewritten in place
 		}
+		if event.TsNs != 0 && mc.entryVersionBlocksLocked(ctx, oldPath, event.TsNs, true) {
+			continue // older than what is cached there
+		}
+		// A placeholder is unversioned and fenced against nothing, so a late
+		// removal of an earlier file of the same name is told apart by the
+		// file it took away.
 		cached, err := mc.localStore.FindEntry(ctx, oldPath)
 		if err != nil || cached == nil {
 			continue
 		}
-		// Older than what is cached there, or, since a placeholder is
-		// unversioned and fenced against nothing, a late removal of an
-		// earlier file of the same name, told apart by the file it took away.
-		if (event.TsNs != 0 && mc.entryVersionBlocksLocked(ctx, oldPath, event.TsNs, true)) || !isCachedFile(old, cached) {
-			buffered = buffered[:len(buffered)-1]
-			if created := metadataCreateFragment(event); created != nil {
-				buffered = append(buffered, created)
-			}
+		if !isCachedFile(old, cached) {
+			declined = append(declined, event)
 			continue
 		}
 		// OP=MV, as where a replayed event vacates a path: taking a name out
@@ -1094,7 +1100,22 @@ func (mc *MetaCache) vacateDuringWipe(ctx context.Context, events []*filer_pb.Su
 		// unversioned.
 		mc.clearEntryVersionLocked(ctx, oldPath)
 	}
-	return buffered
+	return declined
+}
+
+// declinedRemovalForReplay returns the removal the wipe declined, or only the
+// name it puts in place if the entry the replay finds there is still another
+// file. Earlier buffered events may have replaced the one the wipe saw.
+func (mc *MetaCache) declinedRemovalForReplay(ctx context.Context, event *filer_pb.SubscribeMetadataResponse) *filer_pb.SubscribeMetadataResponse {
+	mc.Lock()
+	defer mc.Unlock()
+	oldDir, _ := metadataOldParentDir(event)
+	old := event.EventNotification.OldEntry
+	cached, err := mc.localStore.FindEntry(ctx, oldDir.Child(old.Name))
+	if err != nil || cached == nil || isCachedFile(old, cached) {
+		return event
+	}
+	return metadataCreateFragment(event)
 }
 
 // isCachedFile reports whether old, the entry an event took away, is the file
@@ -1314,6 +1335,11 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 		// client/server clock skew.
 		if snapshotTsNs != 0 && event.TsNs != 0 && event.TsNs <= snapshotTsNs {
 			continue
+		}
+		if _, declined := state.declinedRemovals[event]; declined {
+			if event = mc.declinedRemovalForReplay(ctx, event); event == nil {
+				continue
+			}
 		}
 		if err := mc.applyMetadataResponseDirect(ctx, event, MetadataResponseApplyOptions{}, true); err != nil {
 			return err
