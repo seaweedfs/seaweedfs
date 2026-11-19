@@ -247,6 +247,19 @@ func TestReadErrorWithoutBodyIsTheStatus(t *testing.T) {
 	}
 }
 
+func TestDeleteErrorWithoutBodyIsTheStatus(t *testing.T) {
+	InitGlobalHttpClient()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	if err := Delete(server.URL, ""); err == nil || err.Error() != "500 Internal Server Error" {
+		t.Errorf("got %v, want %q", err, "500 Internal Server Error")
+	}
+}
+
 func TestDeleteReturnsInvalidRequestErrorBeforeAddingAuth(t *testing.T) {
 	defer func() {
 		if r := recover(); r != nil {

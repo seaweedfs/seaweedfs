@@ -189,6 +189,9 @@ func Delete(url string, jwt string) error {
 			return errors.New(s)
 		}
 	}
+	if len(body) == 0 {
+		return errors.New(resp.Status)
+	}
 	return errors.New(string(body))
 }
 
