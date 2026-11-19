@@ -420,7 +420,7 @@ func TestRebuildWipeTellsAPlaceholderFromAnEarlierFile(t *testing.T) {
 		{"no inode and the same creation time", &filer_pb.FuseAttributes{Crtime: 1}, "", nil, nil},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
-			mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
+			mc, _, _, invalidations := newTestMetaCache(t, map[util.FullPath]bool{"/": true})
 			defer mc.Shutdown()
 			mc.SetPinnedChildFn(pinInode42)
 
@@ -443,12 +443,21 @@ func TestRebuildWipeTellsAPlaceholderFromAnEarlierFile(t *testing.T) {
 			}
 
 			// An unversioned listing replays every buffered event, so the
-			// removal the wipe declined must not reach the placeholder there.
+			// removal the wipe declined must not reach the placeholder there,
+			// nor the handle that holds it.
+			invalidatedBefore := len(invalidations.paths())
 			if err := mc.CompleteDirectoryBuild(context.Background(), "/dir", 0, nil); err != nil {
 				t.Fatalf("complete build: %v", err)
 			}
 			if got := cachedChildNames(t, mc, "/dir"); !reflect.DeepEqual(got, tc.built) {
 				t.Errorf("children after an unversioned listing = %v, want %v", got, tc.built)
+			}
+			if tc.want != nil {
+				for _, path := range invalidations.paths()[invalidatedBefore:] {
+					if path == "/dir/zz-new" {
+						t.Errorf("the build invalidated %s for the removal of another file", path)
+					}
+				}
 			}
 		})
 	}

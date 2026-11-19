@@ -1327,7 +1327,15 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 	}
 	mc.Unlock()
 
-	for _, event := range state.bufferedEvents {
+	for i, event := range state.bufferedEvents {
+		// Decided here for the invalidations below too.
+		if _, declined := state.declinedRemovals[event]; declined {
+			event = mc.declinedRemovalForReplay(ctx, event)
+			state.bufferedEvents[i] = event
+			if event == nil {
+				continue
+			}
+		}
 		// When the server provided a snapshot timestamp, skip events that
 		// the listing already included. When snapshotTsNs == 0 (empty
 		// directory — server returned no entries and no snapshot), replay
@@ -1335,11 +1343,6 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 		// client/server clock skew.
 		if snapshotTsNs != 0 && event.TsNs != 0 && event.TsNs <= snapshotTsNs {
 			continue
-		}
-		if _, declined := state.declinedRemovals[event]; declined {
-			if event = mc.declinedRemovalForReplay(ctx, event); event == nil {
-				continue
-			}
 		}
 		if err := mc.applyMetadataResponseDirect(ctx, event, MetadataResponseApplyOptions{}, true); err != nil {
 			return err
@@ -1352,6 +1355,9 @@ func (mc *MetaCache) completeDirectoryBuildNow(ctx context.Context, dirPath util
 	// so a handle can hold older state than the completed directory. After
 	// markCachedFn, versioned at the snapshot to outrank the mid-build install.
 	for _, event := range state.bufferedEvents {
+		if event == nil {
+			continue
+		}
 		if event.TsNs < snapshotTsNs {
 			event.TsNs = snapshotTsNs
 		}
