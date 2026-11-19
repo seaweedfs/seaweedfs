@@ -754,11 +754,14 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	// the timing and the read records the whole hold once -- when it passes the
 	// held entry, or the subscription ends -- not per retry, which would turn a
 	// long hold into many short samples. holdScope is memory or disk.
-	var holdEntryTsNs, holdStartNs int64
+	var holdEntryTsNs int64
+	var holdStart time.Time
 	var holdScope string
 	flushHold := func() {
 		if holdEntryTsNs != 0 {
-			stats.FilerSubscribeHoldSeconds.WithLabelValues(holdScope).Observe(float64(time.Now().UnixNano()-holdStartNs) / 1e9)
+			// time.Since uses the monotonic clock, so a wall-clock step back
+			// mid-hold cannot produce a negative duration.
+			stats.FilerSubscribeHoldSeconds.WithLabelValues(holdScope).Observe(time.Since(holdStart).Seconds())
 			holdEntryTsNs = 0
 		}
 	}
@@ -823,7 +826,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			// A different entry is now held: the previous hold (if any) was
 			// released, so record it and start timing this one.
 			flushHold()
-			holdEntryTsNs, holdStartNs, holdScope = heldAtTsNs, time.Now().UnixNano(), scope
+			holdEntryTsNs, holdStart, holdScope = heldAtTsNs, time.Now(), scope
 		}
 		glog.V(3).Infof("held at %v (deliveredUpTo %v, flushLow %v, deliveryLow %v) for %v",
 			time.Unix(0, heldAtTsNs), time.Unix(0, deliveredUpToTsNs),
