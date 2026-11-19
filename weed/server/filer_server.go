@@ -131,6 +131,7 @@ type FilerServer struct {
 	option               *FilerOption
 	filer                *filer.Filer
 	filerGuard           *security.Guard
+	basicAuth            atomic.Pointer[security.BasicAuth]
 	volumeGuard          *security.Guard
 	grpcDialOption       grpc.DialOption
 	grpcDialOptionMaster grpc.DialOption
@@ -326,6 +327,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Warningf("filer: guard.white_list is configured but the IP whitelist feature is currently disabled. See https://github.com/seaweedfs/seaweedfs/issues/7094")
 	}
 	fs.filerGuard = security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
+	fs.basicAuth.Store(security.NewBasicAuth(v.GetString("filer.basic_auth.user"), v.GetString("filer.basic_auth.password")))
 	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec)
 
 	fs.checkWithMaster()
@@ -767,6 +769,7 @@ func (fs *FilerServer) Reload() {
 		v.GetString("jwt.filer_signing.read.key"),
 		v.GetInt("jwt.filer_signing.read.expires_after_seconds"),
 	)
+	fs.basicAuth.Store(security.NewBasicAuth(v.GetString("filer.basic_auth.user"), v.GetString("filer.basic_auth.password")))
 	fs.volumeGuard.UpdateSigningKeys(
 		v.GetString("jwt.signing.key"),
 		v.GetInt("jwt.signing.expires_after_seconds"),

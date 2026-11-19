@@ -68,7 +68,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 
 	isReadHttpCall := r.Method == http.MethodGet || r.Method == http.MethodHead
 	if !fs.maybeCheckJwtAuthorization(r, !isReadHttpCall) {
-		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
+		fs.writeUnauthorized(w, r)
 		return
 	}
 
@@ -214,7 +214,7 @@ func (fs *FilerServer) readonlyFilerHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if !fs.maybeCheckJwtAuthorization(r, false) {
-		writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
+		fs.writeUnauthorized(w, r)
 		return
 	}
 
@@ -257,10 +257,16 @@ func (fs *FilerServer) checkJwtAuthorization(r *http.Request, isWrite bool, scop
 }
 
 // authenticateFilerJwt verifies the JWT signature and method claims. A nil claims
-// with ok true means authentication is disabled for this access level. Splitting
+// with ok true means authentication is disabled for this access level, or the
+// request passed Basic Auth, which grants every access level. With Basic Auth
+// on, an access level without a signing key is no longer open. Splitting
 // authentication from path authorization lets a handler load an indirect resource
 // (the TUS session target) only after the caller's credential is verified.
 func (fs *FilerServer) authenticateFilerJwt(r *http.Request, isWrite bool) (*security.SeaweedFilerClaims, bool) {
+	basicAuth := fs.basicAuth.Load()
+	if basicAuth != nil && basicAuth.Allows(r) {
+		return nil, true
+	}
 
 	var signingKey security.SigningKey
 	if isWrite {
@@ -269,7 +275,7 @@ func (fs *FilerServer) authenticateFilerJwt(r *http.Request, isWrite bool) (*sec
 		signingKey = fs.filerGuard.ReadSigningKey()
 	}
 	if len(signingKey) == 0 {
-		return nil, true
+		return nil, basicAuth == nil
 	}
 
 	tokenStr := security.GetJwt(r)
@@ -313,6 +319,15 @@ func (fs *FilerServer) authenticateFilerJwt(r *http.Request, isWrite bool) (*sec
 	}
 
 	return claims, true
+}
+
+// writeUnauthorized answers a request that failed authentication. With Basic
+// Auth on, the challenge makes browsers prompt for the credentials.
+func (fs *FilerServer) writeUnauthorized(w http.ResponseWriter, r *http.Request) {
+	if fs.basicAuth.Load() != nil {
+		w.Header().Set("WWW-Authenticate", `Basic realm="SeaweedFS Filer", charset="UTF-8"`)
+	}
+	writeJsonError(w, r, http.StatusUnauthorized, errors.New("wrong jwt"))
 }
 
 // authorizeFilerJwtPaths checks the resource scope after authentication. A
