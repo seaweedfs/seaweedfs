@@ -3719,15 +3719,23 @@ pub async fn delete_handler(
         match found {
             Ok(_) => {}
             Err(e) => {
+                // 404 tells the forwarding replica the needle is gone here, so a
+                // read that failed for any other reason must not answer it
+                if !matches!(
+                    e,
+                    crate::storage::volume::VolumeError::NotFound
+                        | crate::storage::volume::VolumeError::Deleted
+                ) {
+                    return json_error_with_query(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Deletion Failed: {}", e),
+                        Some(&del_query),
+                    );
+                }
                 // a retry of a delete whose replica fan-out failed finds nothing
                 // here, but the other replicas may still hold the needle
                 if !is_replicate
                     && replicated
-                    && matches!(
-                        e,
-                        crate::storage::volume::VolumeError::NotFound
-                            | crate::storage::volume::VolumeError::Deleted
-                    )
                     && let Err(e) = do_replicated_request(
                         &state,
                         vid.0,
@@ -9109,6 +9117,36 @@ mod tests {
         assert!(!live(&peer_volume));
         master_server.abort();
         peer_server.abort();
+    }
+
+    /// A forwarding replica takes a 404 as the needle being gone here, so a
+    /// delete whose read fails for another reason answers 500.
+    #[tokio::test]
+    async fn test_delete_whose_read_fails_is_not_a_404() {
+        use std::os::unix::fs::FileExt;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let id = 0x6e7a_0c07u64;
+        let path = put_test_needle(&state, id, b"unreadable");
+        let dat = state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1
+            .dat_path();
+        let file = std::fs::OpenOptions::new().write(true).open(dat).unwrap();
+        // the needle's size field, right after the superblock, cookie and id
+        file.write_all_at(&u32::MAX.to_be_bytes(), 8 + 4 + 8)
+            .unwrap();
+        for query in ["", "?type=replicate"] {
+            assert_eq!(
+                send_delete(&state, &format!("{path}{query}")).await,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "{query}"
+            );
+        }
     }
 
     #[tokio::test]
