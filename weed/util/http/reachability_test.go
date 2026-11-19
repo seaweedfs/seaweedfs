@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -156,10 +155,29 @@ func TestReachableFirstTriesEveryServerOfAnUnansweringMachineLast(t *testing.T) 
 	assertOrder(t, ReachableFirst(urls), urls...)
 }
 
+func refusedDial(t *testing.T) error {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := listener.Addr().String()
+	listener.Close()
+	conn, err := net.Dial("tcp", addr)
+	if err == nil {
+		conn.Close()
+		t.Skip("closed port accepted a connection")
+	}
+	if !connRefused(err) {
+		t.Fatalf("dial to a closed port: %v is not a refusal", err)
+	}
+	return &url.Error{Op: "Get", URL: "http://" + addr + "/3,x", Err: err}
+}
+
 func TestReachableFirstKeepsOtherPortsFirstWhenOneRefuses(t *testing.T) {
 	forgetUnreachable(t)
 	urls := []string{"http://10.0.0.9:9501/3,x", "http://10.0.0.9:9502/3,x", "http://10.0.0.8:9501/3,x"}
-	refused := dialError(os.NewSyscallError("connect", syscall.ECONNREFUSED))
+	refused := refusedDial(t)
 
 	recordUnreachable("10.0.0.9:9501", refused)
 	assertOrder(t, ReachableFirst(urls), urls[1], urls[2], urls[0])

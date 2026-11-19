@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -37,7 +36,7 @@ func recordUnreachable(host string, err error) {
 	unreachable.Store(host, failure)
 	if hostDown(err) {
 		unreachable.Store(machine, failure)
-	} else if machine != host && errors.Is(err, syscall.ECONNREFUSED) {
+	} else if machine != host && connRefused(err) {
 		unreachable.Delete(machine)
 	}
 }
@@ -56,8 +55,7 @@ func hostDown(err error) bool {
 	if !errors.As(err, &opErr) || opErr.Op != "dial" {
 		return false
 	}
-	return opErr.Timeout() || errors.Is(err, syscall.EHOSTUNREACH) ||
-		errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EHOSTDOWN)
+	return opErr.Timeout() || noRoute(err)
 }
 
 // ReachableFirst orders urls so that hosts which recently failed to answer
