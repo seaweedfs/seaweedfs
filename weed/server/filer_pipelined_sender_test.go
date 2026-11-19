@@ -206,10 +206,6 @@ func deliveryLagSnapshot(t *testing.T, scope string) (uint64, float64) {
 	return m.GetHistogram().GetSampleCount(), m.GetHistogram().GetSampleSum()
 }
 
-// TestPipelinedSenderObservesDeliveryLagAfterSend proves delivery lag is sampled
-// after the real stream send (through the queue + Close), measured from the
-// event's mutation stamp (not the moved stream position), and that control
-// messages without an event are not sampled.
 // gatedStream blocks Send until release is closed, signalling on entered the
 // first time Send is called, so a test can inspect state while a send is in
 // flight (i.e. before it has succeeded).
@@ -228,6 +224,10 @@ func (s *gatedStream) Send(m *filer_pb.SubscribeMetadataResponse) error {
 	return s.recordingStream.Send(m)
 }
 
+// TestPipelinedSenderObservesDeliveryLagAfterSend proves delivery lag is sampled
+// after the real stream send (through the queue + Close), measured from the
+// event's mutation stamp (not the moved stream position), and that control
+// messages and empty progress markers are not sampled.
 func TestPipelinedSenderObservesDeliveryLagAfterSend(t *testing.T) {
 	const scope = "delivery-lag-test"
 	beforeCount, beforeSum := deliveryLagSnapshot(t, scope)

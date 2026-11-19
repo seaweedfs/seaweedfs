@@ -750,10 +750,10 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	// disk hold keeps the pass re-reading until the entry is served.
 	var heldAtTsNs, diskHeldAtTsNs int64
 
-	// A watermark hold on one entry spans many waitHeld retries; measure the
-	// whole hold once -- when a different entry becomes held, or the
-	// subscription ends -- not per retry, which would turn a long hold into
-	// many short samples. holdScope is memory or disk.
+	// A watermark hold on one entry spans many waitHeld retries; waitHeld starts
+	// the timing and the read records the whole hold once -- when it passes the
+	// held entry, or the subscription ends -- not per retry, which would turn a
+	// long hold into many short samples. holdScope is memory or disk.
 	var holdEntryTsNs, holdStartNs int64
 	var holdScope string
 	flushHold := func() {
@@ -778,6 +778,12 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			if logEntry.TsNs > holdFn() {
 				heldAtTsNs = logEntry.TsNs
 				return false, errHeldByPeerWatermark
+			}
+			if holdEntryTsNs != 0 && logEntry.TsNs >= holdEntryTsNs {
+				// The read passed the held entry: the hold is over, so record
+				// its duration now. >= also covers a cursor the gap machinery
+				// moved past the held entry.
+				flushHold()
 			}
 			lastSeenTsNs = logEntry.TsNs
 			deliveredUpToTsNs = logEntry.TsNs
