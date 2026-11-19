@@ -125,6 +125,9 @@ type FilerServer struct {
 	lockRingUnhealthySince atomic.Int64
 	lockRingResets         atomic.Int64
 
+	// metadataSubscribeAuth is jwt.filer_signing.read.require_for_metadata_subscription.
+	metadataSubscribeAuth atomic.Bool
+
 	inFlightDataLimitCond *sync.Cond
 
 	filer_pb.UnimplementedSeaweedFilerServer
@@ -279,6 +282,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		posixLocks:            posixlock.NewManager(),
 	}
 	fs.subscriptionsStopped, fs.stopSubscriptions = context.WithCancel(context.Background())
+	fs.loadMetadataSubscribeAuth(v)
 	fs.startPosixLockSweeper()
 	fs.mountPeerRegistry = filer.NewMountPeerRegistry()
 	go fs.runMountPeerRegistrySweeper()
@@ -773,5 +777,6 @@ func (fs *FilerServer) Reload() {
 		v.GetString("jwt.signing.read.key"),
 		v.GetInt("jwt.signing.read.expires_after_seconds"),
 	)
+	fs.loadMetadataSubscribeAuth(v)
 	util_http.ReloadJwtSigningReadConfig()
 }

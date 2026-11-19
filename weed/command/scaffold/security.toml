@@ -74,6 +74,15 @@ expires_after_seconds = 10           # seconds
 [jwt.filer_signing.read]
 key = ""
 expires_after_seconds = 10           # seconds
+# Off by default. When true, the filer's SubscribeMetadata and
+# SubscribeLocalMetadata gRPC calls require an mTLS-verified peer, an admin
+# token (jwt.filer_signing.key), or a subscription token signed with the key
+# above whose allowed_methods name only those calls and whose allowed_prefixes
+# list the paths its holder may see events for; such a token must expire, and
+# events that name a path outside its prefixes are not sent. The filer's HTTP
+# API refuses subscription tokens. Mounts, S3 gateways, filer.sync and other
+# filers then need mTLS or an admin token to subscribe.
+require_for_metadata_subscription = false
 
 # gRPC mTLS configuration
 # All gRPC TLS authentications are mutual (mTLS)
