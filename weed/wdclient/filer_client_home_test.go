@@ -431,3 +431,28 @@ func TestDiscoverySkipsBackingOffHomeWhenCurrentGone(t *testing.T) {
 		t.Fatalf("current after discovery: want %s, got %s", peerC, got)
 	}
 }
+
+// Discovery landing on home is a return too: failing again soon after it
+// doubles the backoff like any other flap.
+func TestReturnHomeByDiscoveryCountsForBackoff(t *testing.T) {
+	peerC := pb.ServerAddress("10.0.0.3:8888.18888")
+	clock := &fakeClock{t: time.Unix(1_000_000, 0)}
+	fc := newHomeTestClient(clock)
+	fc.filerAddresses = []pb.ServerAddress{homeA, peerB, peerC}
+	fc.filerHealth = []*filerHealth{{}, {}, {}}
+	fc.RecordFilerFailure(homeA)
+	fc.SwitchCurrentFiler(homeA, peerB)
+
+	clock.advance(31 * time.Second)
+	fc.applyDiscoveredFilers(map[pb.ServerAddress]struct{}{homeA: {}, peerC: {}})
+	if got := fc.filerAddresses[atomic.LoadInt32(&fc.filerIndex)]; got != homeA {
+		t.Fatalf("setup: want discovery to return home, got %s", got)
+	}
+
+	clock.advance(9 * time.Second)
+	fc.RecordFilerFailure(homeA)
+	fc.SwitchCurrentFiler(homeA, peerC)
+	if fc.homeBackoff != 60*time.Second {
+		t.Fatalf("backoff after a flap following a discovery return: want 60s, got %v", fc.homeBackoff)
+	}
+}

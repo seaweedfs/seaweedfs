@@ -719,7 +719,7 @@ func (fc *FilerClient) noteSwitchLocked(from, to pb.ServerAddress, reason string
 	}
 	now := fc.clock()
 	switch {
-	case reason == switchReturnHome && sameFiler(to, fc.homeFiler):
+	case sameFiler(to, fc.homeFiler):
 		fc.lastReturnHome = now
 	case reason == switchFailover && sameFiler(from, fc.homeFiler) && !sameFiler(to, fc.homeFiler):
 		if !fc.lastReturnHome.IsZero() {
