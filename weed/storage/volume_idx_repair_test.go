@@ -240,6 +240,11 @@ func TestStaleIndexEntry_SameSizeStreamMisses(t *testing.T) {
 		t.Fatalf("plant stale index entry: %v", err)
 	}
 
+	meta := newEmptyNeedle(staleKey)
+	if _, err := v.readNeedle(meta, &ReadOption{AttemptMetaOnly: true, MustMetaOnly: true}, nil); err != ErrorNotFound {
+		t.Fatalf("stale-index meta read: want ErrorNotFound, got %v (needle %x)", err, uint64(meta.Id))
+	}
+
 	stream := newEmptyNeedle(staleKey)
 	stream.DataSize = written[2].DataSize
 	var out bytes.Buffer
