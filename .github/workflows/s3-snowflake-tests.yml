@@ -86,6 +86,8 @@ jobs:
 
       - name: Run Snowflake S3Compat API tests
         timeout-minutes: 20
+        env:
+          MAVEN_ARGS: -ntp -s ${{ github.workspace }}/test/s3/snowflake/maven-settings.xml
         run: |
           # Starts weed server, creates the buckets/objects the suite needs,
           # clones the upstream suite, and runs mvn -Dtest=S3CompatApiTest.
