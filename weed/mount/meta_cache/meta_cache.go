@@ -1440,7 +1440,8 @@ func metadataDeleteFragment(resp *filer_pb.SubscribeMetadataResponse) *filer_pb.
 	return &filer_pb.SubscribeMetadataResponse{
 		Directory: resp.Directory,
 		EventNotification: &filer_pb.EventNotification{
-			OldEntry: proto.Clone(resp.EventNotification.OldEntry).(*filer_pb.Entry),
+			OldEntry:   proto.Clone(resp.EventNotification.OldEntry).(*filer_pb.Entry),
+			Signatures: resp.EventNotification.Signatures,
 		},
 		TsNs: resp.TsNs,
 	}
@@ -1459,6 +1460,7 @@ func metadataCreateFragment(resp *filer_pb.SubscribeMetadataResponse) *filer_pb.
 		EventNotification: &filer_pb.EventNotification{
 			NewEntry:      proto.Clone(resp.EventNotification.NewEntry).(*filer_pb.Entry),
 			NewParentPath: newDir,
+			Signatures:    resp.EventNotification.Signatures,
 		},
 		TsNs: resp.TsNs,
 	}
