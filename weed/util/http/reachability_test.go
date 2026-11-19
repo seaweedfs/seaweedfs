@@ -144,11 +144,15 @@ func dialError(err error) error {
 
 func TestReachableFirstTriesEveryServerOfAnUnansweringMachineLast(t *testing.T) {
 	forgetUnreachable(t)
-	urls := []string{"http://10.0.0.9:9502/3,x", "http://10.0.0.8:9501/3,x"}
+	urls := []string{"http://10.0.0.9:9501/3,x", "http://10.0.0.9:9502/3,x", "http://10.0.0.8:9501/3,x"}
 
 	recordUnreachable("10.0.0.9:9501", dialError(os.ErrDeadlineExceeded))
-	assertOrder(t, ReachableFirst(urls), urls[1], urls[0])
-	recordReachable("10.0.0.9:9503")
+	assertOrder(t, ReachableFirst(urls), urls[2], urls[0], urls[1])
+
+	// a sibling port answering clears the machine, not the port that timed out
+	recordReachable("10.0.0.9:9502")
+	assertOrder(t, ReachableFirst(urls), urls[1], urls[2], urls[0])
+	recordReachable("10.0.0.9:9501")
 	assertOrder(t, ReachableFirst(urls), urls...)
 }
 
@@ -160,9 +164,12 @@ func TestReachableFirstKeepsOtherPortsFirstWhenOneRefuses(t *testing.T) {
 	recordUnreachable("10.0.0.9:9501", refused)
 	assertOrder(t, ReachableFirst(urls), urls[1], urls[2], urls[0])
 
-	// a refusal shows the machine answers again
 	recordUnreachable("10.0.0.9:9502", dialError(os.ErrDeadlineExceeded))
 	assertOrder(t, ReachableFirst(urls), urls[2], urls[0], urls[1])
+
+	// a refusal shows the machine answers again
+	forgetUnreachable(t)
+	recordUnreachable("10.0.0.9:9503", dialError(os.ErrDeadlineExceeded))
 	recordUnreachable("10.0.0.9:9501", refused)
 	assertOrder(t, ReachableFirst(urls), urls[1], urls[2], urls[0])
 }

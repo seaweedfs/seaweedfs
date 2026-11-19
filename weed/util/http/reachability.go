@@ -34,16 +34,16 @@ var unreachable sync.Map
 func recordUnreachable(host string, err error) {
 	failure := unanswered{at: time.Now(), addr: host}
 	machine := machineOf(host)
+	unreachable.Store(host, failure)
 	if hostDown(err) {
 		unreachable.Store(machine, failure)
-		return
-	}
-	unreachable.Store(host, failure)
-	if machine != host && errors.Is(err, syscall.ECONNREFUSED) {
+	} else if machine != host && errors.Is(err, syscall.ECONNREFUSED) {
 		unreachable.Delete(machine)
 	}
 }
 
+// recordReachable clears the machine verdict too, but a sibling port that
+// failed on its own stays last until it answers.
 func recordReachable(host string) {
 	unreachable.Delete(host)
 	unreachable.Delete(machineOf(host))
