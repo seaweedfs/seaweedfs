@@ -59,6 +59,7 @@ func TestCheckGrpcMetadataSubscription(t *testing.T) {
 		{"relative prefix", incomingBearer(sign(subKey, SeaweedFilerClaims{AllowedPrefixes: []string{"/a", "b"}, AllowedMethods: subscribeOnly, RegisteredClaims: exp})), subKey, MethodSubscribeMetadata, nil, codes.Unauthenticated},
 		{"session token", incomingBearer(sign(subKey, SeaweedFilerClaims{SessionId: "s", AllowedPrefixes: []string{"/a"}, AllowedMethods: subscribeOnly, RegisteredClaims: exp})), subKey, MethodSubscribeMetadata, nil, codes.Unauthenticated},
 		{"token without expiry", incomingBearer(sign(subKey, SeaweedFilerClaims{AllowedPrefixes: []string{"/a"}, AllowedMethods: subscribeOnly})), subKey, MethodSubscribeMetadata, nil, codes.Unauthenticated},
+		{"HS384 token", incomingBearer(signWith(jwt.SigningMethodHS384, subKey, SeaweedFilerClaims{AllowedPrefixes: []string{"/a"}, AllowedMethods: subscribeOnly, RegisteredClaims: exp})), subKey, MethodSubscribeMetadata, nil, codes.Unauthenticated},
 		{"HS512 token", incomingBearer(signWith(jwt.SigningMethodHS512, subKey, SeaweedFilerClaims{AllowedPrefixes: []string{"/a"}, AllowedMethods: subscribeOnly, RegisteredClaims: exp})), subKey, MethodSubscribeMetadata, nil, codes.Unauthenticated},
 		{"expired token", incomingBearer(sign(subKey, SeaweedFilerClaims{AllowedPrefixes: []string{"/a"}, AllowedMethods: subscribeOnly, RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(-time.Hour))}})), subKey, MethodSubscribeMetadata, nil, codes.Unauthenticated},
 	}
