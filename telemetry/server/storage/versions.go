@@ -74,9 +74,15 @@ func (s *PrometheusStorage) GetVersionSeries(days, limit int) VersionSeries {
 
 	if limit > 0 && len(series.Versions) > limit {
 		// Old releases are a long tail of one-cluster bands; keep the versions
-		// most of the fleet is on now and sum the rest into one band.
+		// most of the fleet is on now and sum the rest into one band. The
+		// newest release is kept too, while it is still too small to rank, or
+		// clusters upgrading to it look like they left the named versions.
+		newest := newestRelease(series.Versions, last)
 		ranked := append([]VersionCounts(nil), series.Versions...)
 		sort.Slice(ranked, func(i, j int) bool {
+			if (ranked[i].Version == newest) != (ranked[j].Version == newest) {
+				return ranked[i].Version == newest
+			}
 			if ranked[i].Clusters[last] != ranked[j].Clusters[last] {
 				return ranked[i].Clusters[last] > ranked[j].Clusters[last]
 			}
@@ -102,6 +108,21 @@ func (s *PrometheusStorage) GetVersionSeries(days, limit int) VersionSeries {
 		series.Other = &other
 	}
 	return series
+}
+
+// newestRelease is the newest plain release, without a build suffix, that
+// clusters run on the last day.
+func newestRelease(versions []VersionCounts, last int) string {
+	newest := ""
+	for _, v := range versions {
+		if _, suffix, ok := versionParts(v.Version); !ok || suffix != "" || v.Clusters[last] == 0 {
+			continue
+		}
+		if newest == "" || versionLess(newest, v.Version) {
+			newest = v.Version
+		}
+	}
+	return newest
 }
 
 // versionedHistories drops the samples recorded before the reported version was
