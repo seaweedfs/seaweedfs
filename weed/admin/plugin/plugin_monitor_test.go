@@ -1,6 +1,8 @@
 package plugin
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -701,6 +703,40 @@ func TestBuildJobDetailUsesNewestRunRecord(t *testing.T) {
 	}
 	if detail.RunRecord == nil || detail.RunRecord.RunID != "req-2" {
 		t.Fatalf("expected the newer error run, got=%+v", detail.RunRecord)
+	}
+}
+
+func TestBuildJobDetailSkipsUnreadableRunHistory(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	brokenDir := filepath.Join(pluginSvc.store.baseDir, jobTypesDirName, "aaa_broken")
+	if err := os.MkdirAll(brokenDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(brokenDir, runsJSONFileName), []byte("{"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := pluginSvc.store.AppendRunRecord("vacuum", &JobRunRecord{
+		RunID: "req-1", JobID: "job-kept", JobType: "vacuum", Outcome: RunOutcomeSuccess,
+	}); err != nil {
+		t.Fatalf("AppendRunRecord: %v", err)
+	}
+
+	detail, found, err := pluginSvc.BuildJobDetail("job-kept", 100, 0)
+	if err != nil || !found || detail == nil || detail.Job == nil {
+		t.Fatalf("BuildJobDetail: found=%v err=%v", found, err)
+	}
+	if detail.Job.JobType != "vacuum" {
+		t.Fatalf("job type = %q, want vacuum", detail.Job.JobType)
+	}
+	if _, found, err := pluginSvc.BuildJobDetail("job-unknown", 100, 0); err == nil || found {
+		t.Fatalf("unknown job with an unreadable history: found=%v err=%v", found, err)
 	}
 }
 

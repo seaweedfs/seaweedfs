@@ -1229,16 +1229,20 @@ func (r *Plugin) findRunRecord(jobID string) (*JobRunRecord, error) {
 	if err != nil {
 		return nil, err
 	}
+	var loadErr error
 	for _, jobType := range jobTypes {
 		history, err := r.store.LoadRunHistory(jobType)
 		if err != nil {
-			return nil, err
+			if loadErr == nil {
+				loadErr = err
+			}
+			continue
 		}
 		if record := newestRunRecord(history, jobID); record != nil {
 			return record, nil
 		}
 	}
-	return nil, nil
+	return nil, loadErr
 }
 
 // newestRunRecord picks across both outcome lists, since a job id can be
