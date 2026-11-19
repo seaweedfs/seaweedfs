@@ -9123,7 +9123,7 @@ mod tests {
     /// delete whose read fails for another reason answers 500.
     #[tokio::test]
     async fn test_delete_whose_read_fails_is_not_a_404() {
-        use std::os::unix::fs::FileExt;
+        use std::io::{Seek, SeekFrom, Write};
         let tmp = tempfile::TempDir::new().unwrap();
         let state = volume_test_state(&tmp);
         let id = 0x6e7a_0c07u64;
@@ -9136,10 +9136,11 @@ mod tests {
             .unwrap()
             .1
             .dat_path();
-        let file = std::fs::OpenOptions::new().write(true).open(dat).unwrap();
+        let mut file = std::fs::OpenOptions::new().write(true).open(dat).unwrap();
         // the needle's size field, right after the superblock, cookie and id
-        file.write_all_at(&u32::MAX.to_be_bytes(), 8 + 4 + 8)
-            .unwrap();
+        file.seek(SeekFrom::Start(8 + 4 + 8)).unwrap();
+        file.write_all(&u32::MAX.to_be_bytes()).unwrap();
+        file.sync_all().unwrap();
         for query in ["", "?type=replicate"] {
             assert_eq!(
                 send_delete(&state, &format!("{path}{query}")).await,
