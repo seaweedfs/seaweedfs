@@ -1664,21 +1664,57 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 // listPartAttempts returns the latest stored attempt of each of the next
 // max-parts part numbers after the marker. Each UploadPart writes its own
 // entry, so a part number uploaded twice has several, and they may straddle a
-// listing page.
+// listing page. Names sort as text, which puts the one five-digit part number
+// between "1000.part" and "1000_<uuid>.part", so it is listed last, apart.
 func (s3a *S3ApiServer) listPartAttempts(input *s3.ListPartsInput) (numbers []int, latest map[int]*filer_pb.Entry, truncated bool, err error) {
 	marker := *input.PartNumberMarker
 	maxParts := int(*input.MaxParts)
-	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
+	lastPart := s3_constants.MaxS3MultipartParts
 	latest = make(map[int]*filer_pb.Entry)
-	startFrom, inclusive := fmt.Sprintf("%04d", marker+1), true
-	var batch uint32
-	if maxParts > 0 {
-		batch = uint32(maxParts) + 1
+	visit := func(partNumber int, entry *filer_pb.Entry) (full bool) {
+		prior, seen := latest[partNumber]
+		if !seen {
+			if maxParts > 0 && len(numbers) == maxParts {
+				return true
+			}
+			numbers = append(numbers, partNumber)
+		}
+		if !seen || compareLatestPartAttempt(entry, prior) < 0 {
+			latest[partNumber] = entry
+		}
+		return false
 	}
+	if marker+1 < int64(lastPart) {
+		// the marker is exclusive even if a store ignores startFrom
+		truncated, err = s3a.scanPartAttempts(input, "", fmt.Sprintf("%04d", marker+1), func(partNumber int) bool {
+			return int64(partNumber) > marker && partNumber < lastPart
+		}, visit)
+		if err != nil || truncated {
+			return numbers, latest, truncated, err
+		}
+	}
+	if marker >= int64(lastPart) {
+		return numbers, latest, false, nil
+	}
+	truncated, err = s3a.scanPartAttempts(input, strconv.Itoa(lastPart), strconv.Itoa(lastPart), func(partNumber int) bool {
+		return partNumber == lastPart
+	}, visit)
+	return numbers, latest, truncated, err
+}
+
+// scanPartAttempts feeds the part entries named from startFrom on to visit, in
+// name order, until visit reports the page full.
+func (s3a *S3ApiServer) scanPartAttempts(input *s3.ListPartsInput, prefix, startFrom string, wanted func(int) bool, visit func(int, *filer_pb.Entry) bool) (full bool, err error) {
+	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
+	var batch uint32
+	if *input.MaxParts > 0 {
+		batch = uint32(*input.MaxParts) + 1
+	}
+	inclusive := true
 	for {
-		entries, isLast, listErr := s3a.uploadFiler(*input.Bucket, *input.Key).list(uploadDirectory, "", startFrom, inclusive, batch)
+		entries, isLast, listErr := s3a.uploadFiler(*input.Bucket, *input.Key).list(uploadDirectory, prefix, startFrom, inclusive, batch)
 		if listErr != nil {
-			return nil, nil, false, listErr
+			return false, listErr
 		}
 		priorStart := startFrom
 		for _, entry := range entries {
@@ -1691,23 +1727,12 @@ func (s3a *S3ApiServer) listPartAttempts(input *s3.ListPartsInput) (numbers []in
 				glog.Errorf("listObjectParts %s %s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, parseErr)
 				continue
 			}
-			// the marker is exclusive even if a store ignores startFrom
-			if int64(partNumber) <= marker {
-				continue
-			}
-			prior, seen := latest[partNumber]
-			if !seen {
-				if maxParts > 0 && len(numbers) == maxParts {
-					return numbers, latest, true, nil
-				}
-				numbers = append(numbers, partNumber)
-			}
-			if !seen || compareLatestPartAttempt(entry, prior) < 0 {
-				latest[partNumber] = entry
+			if wanted(partNumber) && visit(partNumber, entry) {
+				return true, nil
 			}
 		}
 		if isLast || batch == 0 || startFrom == priorStart {
-			return numbers, latest, false, nil
+			return false, nil
 		}
 	}
 }
