@@ -1411,9 +1411,12 @@ func (x *MetadataKey) GetSegments() uint32 {
 }
 
 type MetadataKeysResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Keys          []*MetadataKey         `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
-	Version       uint64                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Keys    []*MetadataKey         `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
+	Version uint64                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	// The table's rows, and its vector index type (empty without one).
+	Rows          uint64 `protobuf:"varint,3,opt,name=rows,proto3" json:"rows,omitempty"`
+	VectorIndex   string `protobuf:"bytes,4,opt,name=vector_index,json=vectorIndex,proto3" json:"vector_index,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1460,6 +1463,20 @@ func (x *MetadataKeysResponse) GetVersion() uint64 {
 		return x.Version
 	}
 	return 0
+}
+
+func (x *MetadataKeysResponse) GetRows() uint64 {
+	if x != nil {
+		return x.Rows
+	}
+	return 0
+}
+
+func (x *MetadataKeysResponse) GetVectorIndex() string {
+	if x != nil {
+		return x.VectorIndex
+	}
+	return ""
 }
 
 type UpdateMetadataKeyRequest struct {
@@ -1622,10 +1639,12 @@ const file_vector_proto_rawDesc = "" +
 	"\x04rows\x18\x05 \x01(\x04R\x04rows\x12\x1f\n" +
 	"\vindex_bytes\x18\x06 \x01(\x04R\n" +
 	"indexBytes\x12\x1a\n" +
-	"\bsegments\x18\a \x01(\rR\bsegments\"\\\n" +
+	"\bsegments\x18\a \x01(\rR\bsegments\"\x93\x01\n" +
 	"\x14MetadataKeysResponse\x12*\n" +
 	"\x04keys\x18\x01 \x03(\v2\x16.vector_pb.MetadataKeyR\x04keys\x12\x18\n" +
-	"\aversion\x18\x02 \x01(\x04R\aversion\"l\n" +
+	"\aversion\x18\x02 \x01(\x04R\aversion\x12\x12\n" +
+	"\x04rows\x18\x03 \x01(\x04R\x04rows\x12!\n" +
+	"\fvector_index\x18\x04 \x01(\tR\vvectorIndex\"l\n" +
 	"\x18UpdateMetadataKeyRequest\x12&\n" +
 	"\x05table\x18\x01 \x01(\v2\x10.vector_pb.TableR\x05table\x12\x10\n" +
 	"\x03key\x18\x02 \x01(\tR\x03key\x12\x16\n" +

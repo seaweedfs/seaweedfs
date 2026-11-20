@@ -356,9 +356,19 @@ async fn metadata_keys(dataset: &Dataset) -> Result<pb::MetadataKeysResponse> {
             column: key.column,
         });
     }
+    let vector_index = match index::index_names(dataset, VECTOR_COLUMN).await?.first() {
+        Some(name) => {
+            weed_lance_worker::vector_index::index_settings(dataset, name)
+                .await?
+                .index_type
+        }
+        None => String::new(),
+    };
     Ok(pb::MetadataKeysResponse {
         keys,
         version: dataset.version().version,
+        rows,
+        vector_index,
     })
 }
 

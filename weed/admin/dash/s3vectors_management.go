@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3vectors"
+	"golang.org/x/sync/errgroup"
 )
 
 type S3VectorsBucketsData struct {
@@ -36,6 +37,7 @@ type S3VectorsBucketData struct {
 	Bucket       S3VectorsBucketSummary `json:"bucket"`
 	Policy       string                 `json:"policy,omitempty"`
 	Indexes      []*s3vectors.Index     `json:"indexes"`
+	Panels       []S3VectorsIndexPanel  `json:"panels"`
 	Operations   VectorOperationsData   `json:"operations"`
 	TotalIndexes int                    `json:"total_indexes"`
 	Truncated    bool                   `json:"truncated,omitempty"`
@@ -159,6 +161,16 @@ func (s *AdminServer) GetS3VectorsBucketData(ctx context.Context, bucket string)
 	}
 	data.Operations = s.GetVectorOperationsData(ctx)
 	data.TotalIndexes = len(data.Indexes)
+	data.Panels = make([]S3VectorsIndexPanel, len(data.Indexes))
+	var panels errgroup.Group
+	panels.SetLimit(8)
+	for i, index := range data.Indexes {
+		panels.Go(func() error {
+			data.Panels[i] = s.s3VectorsIndexPanel(ctx, bucket, index, data.Operations.Engines)
+			return nil
+		})
+	}
+	_ = panels.Wait()
 	return data, nil
 }
 

@@ -193,6 +193,9 @@ message MetadataKey {
 message MetadataKeysResponse {
   repeated MetadataKey keys = 1;
   uint64 version = 2;
+  // The table's rows, and its vector index type (empty without one).
+  uint64 rows = 3;
+  string vector_index = 4;
 }
 
 message UpdateMetadataKeyRequest {
