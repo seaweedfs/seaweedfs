@@ -189,3 +189,28 @@ func TestReloadSigningKeysKeepsKeysInEffectOnReadFailure(t *testing.T) {
 	require.Equal(t, "new", string(key))
 	require.Equal(t, "old", string(previous))
 }
+
+func TestFilerAdminKeysKeepLastReadPairOnReadFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("HOME", dir)
+	v := util.GetViper()
+	v.Set("jwt.filer_signing.previous_key", "old")
+	t.Cleanup(func() { v.Set("jwt.filer_signing.previous_key", "") })
+	file := filepath.Join(dir, "security.toml")
+
+	require.NoError(t, os.WriteFile(file, []byte("[jwt.filer_signing]\nkey = \"new\"\n"), 0o600))
+	key, previous := FilerAdminKeys()
+	require.Equal(t, "new", string(key))
+	require.Empty(t, previous)
+
+	require.NoError(t, os.WriteFile(file, []byte("[jwt.filer_signing\nkey = \n"), 0o600))
+	key, previous = FilerAdminKeys()
+	require.Equal(t, "new", string(key))
+	require.Empty(t, previous, "a retired previous_key must not come back when the file cannot be read")
+
+	require.NoError(t, os.Remove(file))
+	key, previous = FilerAdminKeys()
+	require.Equal(t, "new", string(key))
+	require.Empty(t, previous)
+}

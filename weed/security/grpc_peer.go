@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"strings"
+	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -30,17 +31,24 @@ func CheckGrpcAdminPeer(ctx context.Context, signingKey SigningKey, previousKeys
 	return CheckGrpcAdminToken(ctx, signingKey, previousKeys...)
 }
 
+var lastFilerAdminKeys atomic.Pointer[[2]SigningKey]
+
 // FilerAdminKeys returns jwt.filer_signing.key and previous_key as
-// security.toml sets them now, else as merged, for admin-plane handlers in
-// processes that do not reload: they follow a rotation, and a previous_key
-// removed from the file stops verifying.
+// security.toml sets them now, for admin-plane handlers in processes that do
+// not reload: they follow a rotation, and a previous_key removed from the file
+// stops verifying. When the file cannot be read it returns the last pair read,
+// else the merged keys.
 func FilerAdminKeys() (signingKey, previousKey SigningKey) {
-	v := util.GetViper()
-	signingKey, previousKey = SigningKey(v.GetString("jwt.filer_signing.key")), SigningKey(v.GetString("jwt.filer_signing.previous_key"))
 	if fresh, used := util.ReadConfiguration("security", ""); used != "" {
-		signingKey, previousKey = SigningKey(freshKey(fresh, "jwt.filer_signing.key")), SigningKey(fresh.GetString("jwt.filer_signing.previous_key"))
+		keys := [2]SigningKey{SigningKey(freshKey(fresh, "jwt.filer_signing.key")), SigningKey(fresh.GetString("jwt.filer_signing.previous_key"))}
+		lastFilerAdminKeys.Store(&keys)
+		return keys[0], keys[1]
 	}
-	return signingKey, previousKey
+	if last := lastFilerAdminKeys.Load(); last != nil {
+		return last[0], last[1]
+	}
+	v := util.GetViper()
+	return SigningKey(v.GetString("jwt.filer_signing.key")), SigningKey(v.GetString("jwt.filer_signing.previous_key"))
 }
 
 // maxGrpcAdminAuthValues bounds the JWT parses one request can trigger; a
