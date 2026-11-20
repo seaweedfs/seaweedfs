@@ -466,11 +466,11 @@ func mergeTerminalDetailIntoTracked(tracked *TrackedJob, detail *TrackedJob) {
 	if !isActiveTrackedJobState(tracked.State) {
 		return
 	}
-	// a terminal detail of another attempt does not end this one
-	if detail.RequestID != "" && tracked.RequestID != "" && detail.RequestID != tracked.RequestID {
-		return
+	// the detail is written as each attempt changes while the job list is
+	// saved periodically, so the detail names the latest attempt
+	if detail.RequestID != "" {
+		tracked.RequestID = detail.RequestID
 	}
-
 	if detail.State != "" {
 		tracked.State = detail.State
 	}

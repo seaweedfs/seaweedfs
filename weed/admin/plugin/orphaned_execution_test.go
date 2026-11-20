@@ -585,8 +585,10 @@ func TestRestoredExpiryKeepsNewerAttemptDetail(t *testing.T) {
 	}
 }
 
-// A terminal detail of another attempt does not end the loaded record.
-func TestRestoreIgnoresTerminalDetailOfOtherAttempt(t *testing.T) {
+// A retry that finished after the job list was last saved is restored from
+// its detail, request id included, rather than as the running attempt the
+// job list still names.
+func TestRestoreTakesFinishedRetryFromDetail(t *testing.T) {
 	t.Parallel()
 	dataDir := t.TempDir()
 	store, err := NewConfigStore(dataDir)
@@ -594,12 +596,13 @@ func TestRestoreIgnoresTerminalDetailOfOtherAttempt(t *testing.T) {
 		t.Fatalf("NewConfigStore: %v", err)
 	}
 	now := time.Now().UTC()
-	const jobID = "job-two-attempts"
-	if err := store.SaveTrackedJobs([]TrackedJob{{JobID: jobID, JobType: orphanTestJobType, RequestID: "exec-b", State: restoredTestStateRunning,
-		CreatedAt: timeToPtr(now.Add(-time.Hour)), UpdatedAt: timeToPtr(now)}}); err != nil {
+	const jobID = "job-retried"
+	if err := store.SaveTrackedJobs([]TrackedJob{{JobID: jobID, JobType: orphanTestJobType, RequestID: "exec-a", State: restoredTestStateRunning,
+		CreatedAt: timeToPtr(now.Add(-time.Hour)), UpdatedAt: timeToPtr(now.Add(-time.Minute))}}); err != nil {
 		t.Fatalf("SaveTrackedJobs: %v", err)
 	}
-	if err := store.SaveJobDetail(TrackedJob{JobID: jobID, JobType: orphanTestJobType, RequestID: "exec-a", State: StateFailed}); err != nil {
+	if err := store.SaveJobDetail(TrackedJob{JobID: jobID, JobType: orphanTestJobType, RequestID: "exec-b", State: StateSucceeded,
+		UpdatedAt: timeToPtr(now), CompletedAt: timeToPtr(now)}); err != nil {
 		t.Fatalf("SaveJobDetail: %v", err)
 	}
 	p, err := New(Options{DataDir: dataDir})
@@ -607,7 +610,8 @@ func TestRestoreIgnoresTerminalDetailOfOtherAttempt(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	defer p.Shutdown()
-	if tracked, _ := p.GetTrackedJob(jobID); tracked == nil || tracked.State != restoredTestStateRunning {
-		t.Fatalf("attempt exec-b must stay running, got %+v", tracked)
+	tracked, _ := p.GetTrackedJob(jobID)
+	if tracked == nil || tracked.State != StateSucceeded || tracked.RequestID != "exec-b" {
+		t.Fatalf("want exec-b succeeded, got %+v", tracked)
 	}
 }
