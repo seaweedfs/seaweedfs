@@ -535,8 +535,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 	var dbErr error
 	routed := false
-	// A per-request fsync lives in ctx only, which the forwarded create cannot carry.
-	if (isAppend || isOffsetWrite) && !filer.SyncWrite(ctx) {
+	if isAppend || isOffsetWrite {
 		routed, dbErr = fs.forwardToWriteOwner(ctx, entryRouteKey(util.FullPath(path)), func(owner pb.ServerAddress) error {
 			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 				dir, _ := entry.FullPath.DirAndName()
@@ -545,6 +544,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 					Entry:                    entry.ToProtoEntry(),
 					IsMoved:                  true,
 					SkipCheckParentDirectory: skipCheckParentDirEntry(r),
+					Fsync:                    filer.SyncWrite(ctx),
 					Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
 						Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
 						ExpectedEntry: existingSnapshot,

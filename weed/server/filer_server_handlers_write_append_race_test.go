@@ -146,23 +146,28 @@ func ownerPath(t *testing.T, owner, other *FilerServer) string {
 // append another filer commits after this one read the entry: either both
 // acknowledged appends are in the final entry, or this append is refused.
 // The other append is injected at the store right after one of this filer's
-// reads of the entry, each read in turn.
+// reads of the entry, each read in turn, with and without fsync.
 func TestHttpAppendDoesNotOverwriteConcurrentAppend(t *testing.T) {
-	injected := 0
-	for read := 1; read <= 8; read++ {
-		t.Run(fmt.Sprintf("after_read_%d", read), func(t *testing.T) {
-			if httpAppendWithConcurrentAppend(t, read) {
-				injected++
-			}
-		})
-	}
-	if injected == 0 {
-		t.Fatal("the other filer's append was never injected: the race was not exercised")
+	for _, fsync := range []bool{false, true} {
+		injected := 0
+		for read := 1; read <= 8; read++ {
+			t.Run(fmt.Sprintf("fsync_%v/after_read_%d", fsync, read), func(t *testing.T) {
+				if httpAppendWithConcurrentAppend(t, read, fsync) {
+					injected++
+				}
+			})
+		}
+		if injected == 0 {
+			t.Fatalf("fsync=%v: the other filer's append was never injected: the race was not exercised", fsync)
+		}
 	}
 }
 
-func httpAppendWithConcurrentAppend(t *testing.T, atRead int) bool {
+func httpAppendWithConcurrentAppend(t *testing.T, atRead int, fsync bool) bool {
 	ctx := context.Background()
+	if fsync {
+		ctx = filer.WithSyncWrite(ctx)
+	}
 	oldContent := []byte("old-")
 	appendA := []byte("A-")
 	appendB := []byte("B-")
@@ -257,10 +262,21 @@ func httpAppendWithConcurrentAppend(t *testing.T, atRead int) bool {
 }
 
 // Without a concurrent writer, an append on a non-owner commits through the
-// owner and lands in full.
+// owner, keeping its fsync, and lands in full.
 func TestHttpAppendOnNonOwnerCommitsThroughOwner(t *testing.T) {
+	for _, fsync := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fsync_%v", fsync), func(t *testing.T) {
+			httpAppendOnNonOwner(t, fsync)
+		})
+	}
+}
+
+func httpAppendOnNonOwner(t *testing.T, fsync bool) {
 	ctx := context.Background()
-	owner, fs, store, _ := newAppendRaceFilers(t)
+	if fsync {
+		ctx = filer.WithSyncWrite(ctx)
+	}
+	owner, fs, store, ownerWrites := newAppendRaceFilers(t)
 	filePath := ownerPath(t, owner, fs)
 	fileName := util.FullPath(filePath).Name()
 	if err := store.renameTestStore.InsertEntry(ctx, &filer.Entry{
@@ -289,6 +305,9 @@ func TestHttpAppendOnNonOwnerCommitsThroughOwner(t *testing.T) {
 	}
 	if got := string(final.Content); got != "old-A-" {
 		t.Fatalf("entry is %q, want %q", got, "old-A-")
+	}
+	if got := ownerWrites.writes(util.FullPath(filePath)); len(got) != 1 || got[0] != fsync {
+		t.Errorf("the owner's writes asked for sync %v, want [%v]", got, fsync)
 	}
 }
 
