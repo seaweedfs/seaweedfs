@@ -19,6 +19,7 @@ use weed_lance_worker::catalog::TableDescription;
 use weed_lance_worker::dataset;
 use weed_lance_worker::direct_read::{DirectReads, Wrappers};
 use weed_lance_worker::jobs::vector_index::is_vector_table;
+use weed_lance_worker::metadata_index;
 use weed_vector_core::index;
 use weed_vector_core::maintenance::SharedLeases;
 use weed_vector_core::query::{self, Query};
@@ -167,14 +168,13 @@ fn batch_of(vectors: &[pb::Vector], dimension: usize, schema: Arc<Schema>) -> Re
     };
     let vectors_array =
         FixedSizeListArray::try_new(item_field.clone(), dimension as i32, values, None)?;
-    let metas = vectors
+    let json: Vec<Option<serde_json::Value>> = vectors
         .iter()
-        .map(|v| {
-            v.metadata
-                .as_ref()
-                .map(|m| serde_json::to_string(&struct_to_json(m)))
-                .transpose()
-        })
+        .map(|v| v.metadata.as_ref().map(struct_to_json))
+        .collect();
+    let metas = json
+        .iter()
+        .map(|m| m.as_ref().map(serde_json::to_string).transpose())
         .collect::<Result<Vec<_>, _>>()?;
     // The stored column is lance's jsonb (LargeBinary) once the field carries
     // the arrow.json extension; encode the strings, else keep the Utf8 batch.
@@ -187,11 +187,26 @@ fn batch_of(vectors: &[pb::Vector], dimension: usize, schema: Arc<Schema>) -> Re
         }
         _ => Arc::new(StringArray::from(metas)),
     };
-    RecordBatch::try_new(
-        schema,
-        vec![Arc::new(keys), Arc::new(vectors_array), metadata_array],
-    )
-    .map_err(Into::into)
+    let (keys, vectors_array): (ArrayRef, ArrayRef) = (Arc::new(keys), Arc::new(vectors_array));
+    // An indexed metadata key's column is derived from the row's metadata,
+    // whatever the key's state.
+    let columns = schema
+        .fields()
+        .iter()
+        .map(|field| match field.name().as_str() {
+            KEY_COLUMN => Ok(keys.clone()),
+            VECTOR_COLUMN => Ok(vectors_array.clone()),
+            METADATA_COLUMN => Ok(metadata_array.clone()),
+            name => match metadata_index::indexed_key(field) {
+                Some(indexed) => Ok(metadata_index::column_from_json(
+                    json.iter().map(Option::as_ref),
+                    &indexed.key,
+                )),
+                None => bail!("the table has a column {name} that PutVectors cannot fill"),
+            },
+        })
+        .collect::<Result<Vec<_>>>()?;
+    RecordBatch::try_new(schema, columns).map_err(Into::into)
 }
 
 fn struct_to_json(s: &Struct) -> serde_json::Value {
