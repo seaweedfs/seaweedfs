@@ -8,8 +8,9 @@
 //! index answers. Everything else, including `$ne` and `$nin`, stays on the
 //! JSON path.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use anyhow::Result;
 use jsonb::OwnedJsonb;
 use lance::Dataset;
 use lance::deps::datafusion::common::{Column, ScalarValue};
@@ -218,6 +219,105 @@ fn json_path_key(path: &str) -> Option<String> {
 fn jsonb_text(s: &str) -> Option<String> {
     let value: OwnedJsonb = serde_json::to_string(s).ok()?.parse().ok()?;
     Some(value.to_string())
+}
+
+/// How a filter compares a key.
+pub mod operand {
+    pub const STRING: u8 = 1;
+    pub const NUMBER: u8 = 2;
+    pub const BOOL: u8 = 4;
+    pub const EXISTS: u8 = 8;
+}
+
+/// The metadata keys `filter` reads, each with the [`operand`] kinds it is
+/// compared with.
+pub fn filter_keys(dataset: &Dataset, filter: &str) -> Result<BTreeMap<String, u8>> {
+    let mut scanner = dataset.scan();
+    scanner.filter(filter)?;
+    let mut keys = BTreeMap::new();
+    if let Some(expr) = scanner.get_expr_filter()? {
+        collect_keys(&expr, &mut keys);
+    }
+    Ok(keys)
+}
+
+fn literal_kind(text: &str) -> u8 {
+    match serde_json::from_str::<serde_json::Value>(text) {
+        Ok(serde_json::Value::String(_)) => operand::STRING,
+        Ok(serde_json::Value::Number(_)) => operand::NUMBER,
+        Ok(serde_json::Value::Bool(_)) => operand::BOOL,
+        // json_extract's text of a string with control characters is not
+        // JSON, but it is quoted.
+        _ if text.starts_with('"') => operand::STRING,
+        _ => 0,
+    }
+}
+
+fn collect_keys(expr: &Expr, keys: &mut BTreeMap<String, u8>) {
+    let mut note = |path: &str, kind: u8| {
+        if let Some(key) = json_path_key(path) {
+            *keys.entry(key).or_default() |= kind;
+        }
+    };
+    match expr {
+        Expr::TryCast(cast) if extract(&cast.expr).is_some() => {
+            note(extract(&cast.expr).unwrap_or_default(), operand::NUMBER);
+            return;
+        }
+        Expr::BinaryExpr(BinaryExpr { left, right, .. }) => {
+            if let (Some(path), Some(value)) = (extract(left), utf8(right)) {
+                note(path, literal_kind(value));
+                return;
+            }
+        }
+        Expr::InList(list) => {
+            if let Some(path) = extract(&list.expr) {
+                let kind = list
+                    .list
+                    .iter()
+                    .filter_map(utf8)
+                    .fold(0, |k, v| k | literal_kind(v));
+                note(path, kind);
+                return;
+            }
+        }
+        Expr::ScalarFunction(f) if is_json_function(f.func.name()) => {
+            if let [data, path, rest @ ..] = f.args.as_slice()
+                && is_metadata(data)
+                && let Some(path) = utf8(path)
+            {
+                let kind = match (f.func.name(), rest) {
+                    ("json_exists", _) => operand::EXISTS,
+                    (_, [value]) => utf8(value).map_or(0, literal_kind),
+                    _ => 0,
+                };
+                note(path, kind);
+                return;
+            }
+        }
+        _ => {}
+    }
+    for child in children(expr) {
+        collect_keys(child, keys);
+    }
+}
+
+fn extract(expr: &Expr) -> Option<&str> {
+    json_function(expr, "json_extract")
+}
+
+fn is_json_function(name: &str) -> bool {
+    matches!(name, "json_extract" | "json_exists" | "json_array_contains")
+}
+
+fn children(expr: &Expr) -> Vec<&Expr> {
+    use lance::deps::datafusion::common::tree_node::TreeNode;
+    let mut out = Vec::new();
+    let _ = expr.apply_children(|child| {
+        out.push(child);
+        Ok(lance::deps::datafusion::common::tree_node::TreeNodeRecursion::Continue)
+    });
+    out
 }
 
 #[cfg(test)]
@@ -475,5 +575,25 @@ mod tests {
         let plan = scanner.explain_plan(true).await.unwrap();
         assert!(plan.contains("LabelList"), "{plan}");
         assert!(!plan.contains("json_"), "{plan}");
+    }
+
+    #[tokio::test]
+    async fn filter_keys_note_how_each_key_is_compared() {
+        let dir = TempDir::new().unwrap();
+        let dataset = dataset(&dir, 100).await;
+        let filter = format!(
+            "{} AND TRY_CAST(json_extract(`metadata`, '$[\"n\"]') AS DOUBLE) > 3 AND NOT json_exists(`metadata`, '$[\"a.b\\\"c\"]') AND COALESCE(json_extract(`metadata`, '$[\"f\"]') = 'true', false)",
+            eq("author", "\"rare\"")
+        );
+        let keys = filter_keys(&dataset, &filter).unwrap();
+        assert_eq!(
+            keys,
+            BTreeMap::from([
+                ("a.b\"c".to_string(), operand::EXISTS),
+                ("author".to_string(), operand::STRING),
+                ("f".to_string(), operand::BOOL),
+                ("n".to_string(), operand::NUMBER),
+            ])
+        );
     }
 }

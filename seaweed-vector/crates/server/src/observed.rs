@@ -78,6 +78,15 @@ impl VectorService for ObservedService {
         }
         result
     }
+    async fn filter_stats(
+        &self,
+        request: Request<pb::FilterStatsRequest>,
+    ) -> Result<Response<pb::FilterStatsResponse>, Status> {
+        let mut in_flight = self.metrics.start("FilterStats");
+        let result = self.inner.filter_stats(request).await;
+        in_flight.complete(result.as_ref().err().map(|e| e.code()));
+        result
+    }
 }
 
 #[cfg(test)]

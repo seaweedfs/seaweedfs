@@ -21,6 +21,7 @@ use weed_lance_worker::direct_read::{DirectReads, Wrappers};
 use weed_lance_worker::jobs::vector_index::is_vector_table;
 use weed_lance_worker::metadata_index;
 use weed_vector_core::index;
+use weed_vector_core::indexed_filter;
 use weed_vector_core::maintenance::SharedLeases;
 use weed_vector_core::query::{self, Query};
 use weed_vector_core::table::VectorTable;
@@ -544,6 +545,7 @@ pub struct VectorServer {
     leases: SharedLeases,
     nprobes: Option<usize>,
     exact_match_limit: Option<usize>,
+    filter_stats: crate::filter_stats::FilterStats,
     /// URI schemes a table's location may have.
     schemes: &'static [&'static str],
 }
@@ -568,6 +570,7 @@ impl VectorServer {
             leases: SharedLeases::default(),
             nprobes: None,
             exact_match_limit: None,
+            filter_stats: Default::default(),
             schemes: &["s3"],
         }
     }
@@ -972,6 +975,7 @@ impl VectorService for VectorServer {
         &self,
         request: Request<pb::QueryVectorsRequest>,
     ) -> Result<Response<pb::QueryVectorsResponse>, Status> {
+        let started = std::time::Instant::now();
         let req = request.into_inner();
         let table = req
             .table
@@ -981,6 +985,11 @@ impl VectorService for VectorServer {
         // while this query runs against it.
         let _lease = self.leases.try_pin(&dataset).await.map_err(internal)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
+        let filter_keys = if req.filter.is_empty() {
+            Default::default()
+        } else {
+            indexed_filter::filter_keys(&dataset, &req.filter).unwrap_or_default()
+        };
         if req.query_vector.len() != resolved.dimension {
             return Err(Status::invalid_argument(format!(
                 "query vector carries {} floats, the index dimension is {}",
@@ -1081,7 +1090,22 @@ impl VectorService for VectorServer {
                 data: data_map.remove(&hit.key).unwrap_or_default(),
             });
         }
+        self.filter_stats
+            .record(&table.id.join("/"), &filter_keys, started.elapsed());
         Ok(Response::new(pb::QueryVectorsResponse { vectors }))
+    }
+
+    async fn filter_stats(
+        &self,
+        request: Request<pb::FilterStatsRequest>,
+    ) -> Result<Response<pb::FilterStatsResponse>, Status> {
+        let table = request
+            .into_inner()
+            .table
+            .ok_or_else(|| Status::invalid_argument("missing table"))?;
+        Ok(Response::new(
+            self.filter_stats.snapshot(&table.id.join("/")),
+        ))
     }
 }
 

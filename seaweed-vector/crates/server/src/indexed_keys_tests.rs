@@ -490,3 +490,35 @@ async fn a_scoped_query_is_exact_within_its_fragments() {
     };
     assert_same(&pairs(got), &pairs(want), "scoped bob");
 }
+
+/// The engine counts each index's filtered queries by key.
+#[tokio::test]
+async fn queries_are_counted_by_filter_key() {
+    let fixture = Fixture::new().await;
+    fixture
+        .put((0..50).map(|i| row(i, author(i))).collect())
+        .await;
+    for (_, filter, _) in &FILTERS[..3] {
+        fixture
+            .query(&fixture.server, 0, filter, 5, &vector_of(1))
+            .await;
+    }
+    let year = FILTERS[13].1;
+    fixture
+        .query(&fixture.server, 0, year, 5, &vector_of(1))
+        .await;
+    let stats = fixture
+        .server
+        .filter_stats(Request::new(pb::FilterStatsRequest {
+            table: Some(fixture.table.clone()),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let author = stats.keys.iter().find(|k| k.key == "author").unwrap();
+    assert_eq!(author.queries, 4);
+    assert!(author.string_operand && !author.number_operand);
+    let year = stats.keys.iter().find(|k| k.key == "year").unwrap();
+    assert_eq!(year.queries, 1);
+    assert!(year.number_operand && !year.string_operand);
+}

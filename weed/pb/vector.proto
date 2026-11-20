@@ -17,6 +17,9 @@ service VectorService {
   rpc DeleteVectors(DeleteVectorsRequest) returns (DeleteVectorsResponse);
   rpc ListVectors(ListVectorsRequest) returns (ListVectorsResponse);
   rpc QueryVectors(QueryVectorsRequest) returns (QueryVectorsResponse);
+  // How this engine's queries of an index filtered on each metadata key
+  // over the last hour.
+  rpc FilterStats(FilterStatsRequest) returns (FilterStatsResponse);
 }
 
 enum DistanceMetric {
@@ -138,4 +141,29 @@ message QueryResult {
 
 message QueryVectorsResponse {
   repeated QueryResult vectors = 1;
+}
+
+message FilterStatsRequest {
+  // Only the id is read.
+  Table table = 1;
+}
+
+message FilterKeyStats {
+  string key = 1;
+  uint64 queries = 2;
+  // Their total latency.
+  double seconds = 3;
+  // The operand types the key was compared with.
+  bool string_operand = 4;
+  bool number_operand = 5;
+  bool bool_operand = 6;
+}
+
+message FilterStatsResponse {
+  repeated FilterKeyStats keys = 1;
+  // The stats cover at most this long, less when the engine started later.
+  uint32 window_seconds = 2;
+  // Keys of this index not counted because the engine tracks a bounded
+  // number of them.
+  bool truncated = 3;
 }

@@ -1,5 +1,6 @@
 //! The VectorService gRPC server the S3 gateway talks to.
 
+pub mod filter_stats;
 #[cfg(test)]
 mod indexed_keys_tests;
 pub mod metrics;

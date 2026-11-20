@@ -26,6 +26,7 @@ const (
 	VectorService_DeleteVectors_FullMethodName = "/vector_pb.VectorService/DeleteVectors"
 	VectorService_ListVectors_FullMethodName   = "/vector_pb.VectorService/ListVectors"
 	VectorService_QueryVectors_FullMethodName  = "/vector_pb.VectorService/QueryVectors"
+	VectorService_FilterStats_FullMethodName   = "/vector_pb.VectorService/FilterStats"
 )
 
 // VectorServiceClient is the client API for VectorService service.
@@ -43,6 +44,9 @@ type VectorServiceClient interface {
 	DeleteVectors(ctx context.Context, in *DeleteVectorsRequest, opts ...grpc.CallOption) (*DeleteVectorsResponse, error)
 	ListVectors(ctx context.Context, in *ListVectorsRequest, opts ...grpc.CallOption) (*ListVectorsResponse, error)
 	QueryVectors(ctx context.Context, in *QueryVectorsRequest, opts ...grpc.CallOption) (*QueryVectorsResponse, error)
+	// How this engine's queries of an index filtered on each metadata key
+	// over the last hour.
+	FilterStats(ctx context.Context, in *FilterStatsRequest, opts ...grpc.CallOption) (*FilterStatsResponse, error)
 }
 
 type vectorServiceClient struct {
@@ -123,6 +127,16 @@ func (c *vectorServiceClient) QueryVectors(ctx context.Context, in *QueryVectors
 	return out, nil
 }
 
+func (c *vectorServiceClient) FilterStats(ctx context.Context, in *FilterStatsRequest, opts ...grpc.CallOption) (*FilterStatsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FilterStatsResponse)
+	err := c.cc.Invoke(ctx, VectorService_FilterStats_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VectorServiceServer is the server API for VectorService service.
 // All implementations must embed UnimplementedVectorServiceServer
 // for forward compatibility.
@@ -138,6 +152,9 @@ type VectorServiceServer interface {
 	DeleteVectors(context.Context, *DeleteVectorsRequest) (*DeleteVectorsResponse, error)
 	ListVectors(context.Context, *ListVectorsRequest) (*ListVectorsResponse, error)
 	QueryVectors(context.Context, *QueryVectorsRequest) (*QueryVectorsResponse, error)
+	// How this engine's queries of an index filtered on each metadata key
+	// over the last hour.
+	FilterStats(context.Context, *FilterStatsRequest) (*FilterStatsResponse, error)
 	mustEmbedUnimplementedVectorServiceServer()
 }
 
@@ -168,6 +185,9 @@ func (UnimplementedVectorServiceServer) ListVectors(context.Context, *ListVector
 }
 func (UnimplementedVectorServiceServer) QueryVectors(context.Context, *QueryVectorsRequest) (*QueryVectorsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method QueryVectors not implemented")
+}
+func (UnimplementedVectorServiceServer) FilterStats(context.Context, *FilterStatsRequest) (*FilterStatsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FilterStats not implemented")
 }
 func (UnimplementedVectorServiceServer) mustEmbedUnimplementedVectorServiceServer() {}
 func (UnimplementedVectorServiceServer) testEmbeddedByValue()                       {}
@@ -316,6 +336,24 @@ func _VectorService_QueryVectors_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VectorService_FilterStats_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FilterStatsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VectorServiceServer).FilterStats(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VectorService_FilterStats_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VectorServiceServer).FilterStats(ctx, req.(*FilterStatsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // VectorService_ServiceDesc is the grpc.ServiceDesc for VectorService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -350,6 +388,10 @@ var VectorService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "QueryVectors",
 			Handler:    _VectorService_QueryVectors_Handler,
+		},
+		{
+			MethodName: "FilterStats",
+			Handler:    _VectorService_FilterStats_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
