@@ -10,11 +10,7 @@ import (
 )
 
 func (store *TikvStore) KvPut(ctx context.Context, key []byte, value []byte) error {
-	tw, err := store.getTxn(ctx)
-	if err != nil {
-		return err
-	}
-	return tw.RunInTxn(ctx, func(txn *txnkv.KVTxn) error {
+	return store.runTxn(ctx, func(txn *txnkv.KVTxn) error {
 		return txn.Set(key, value)
 	})
 }
@@ -39,11 +35,7 @@ func (store *TikvStore) KvGet(ctx context.Context, key []byte) ([]byte, error) {
 }
 
 func (store *TikvStore) KvDelete(ctx context.Context, key []byte) error {
-	tw, err := store.getTxn(ctx)
-	if err != nil {
-		return err
-	}
-	return tw.RunInTxn(ctx, func(txn *txnkv.KVTxn) error {
+	return store.runTxn(ctx, func(txn *txnkv.KVTxn) error {
 		return txn.Delete(key)
 	})
 }
