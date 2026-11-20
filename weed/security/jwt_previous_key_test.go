@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -213,4 +215,50 @@ func TestFilerAdminKeysKeepLastReadPairOnReadFailure(t *testing.T) {
 	key, previous = FilerAdminKeys()
 	require.Equal(t, "new", string(key))
 	require.Empty(t, previous)
+}
+
+func TestFilerAdminKeysReadAndCacheUnderOneLock(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("HOME", dir)
+	file := filepath.Join(dir, "security.toml")
+	require.NoError(t, os.WriteFile(file, []byte("[jwt.filer_signing]\nkey = \"new\"\nprevious_key = \"old\"\n"), 0o600))
+
+	filerAdminKeysMu.Lock()
+	done := make(chan [2]SigningKey, 1)
+	go func() {
+		key, previous := FilerAdminKeys()
+		done <- [2]SigningKey{key, previous}
+	}()
+	waitForLockWaiter(t, "security.FilerAdminKeys(")
+	require.NoError(t, os.WriteFile(file, []byte("[jwt.filer_signing]\nkey = \"new\"\n"), 0o600))
+	filerAdminKeysMu.Unlock()
+	keys := <-done
+	require.Equal(t, "new", string(keys[0]))
+	require.Empty(t, keys[1], "a caller waiting for the lock must read the file after taking it")
+
+	require.NoError(t, os.WriteFile(file, []byte("[jwt.filer_signing\nkey = \n"), 0o600))
+	key, previous := FilerAdminKeys()
+	require.Equal(t, "new", string(key))
+	require.Empty(t, previous)
+}
+
+func waitForLockWaiter(t *testing.T, fn string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	buf := make([]byte, 1<<20)
+	for time.Now().Before(deadline) {
+		n := runtime.Stack(buf, true)
+		if n == len(buf) {
+			buf = make([]byte, 2*len(buf))
+			continue
+		}
+		for _, g := range strings.Split(string(buf[:n]), "\n\n") {
+			if strings.Contains(g, "sync.(*Mutex).lockSlow") && strings.Contains(g, fn) {
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("no goroutine in %s waited for the lock", fn)
 }
