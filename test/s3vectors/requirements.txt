@@ -1,2 +1,3 @@
 boto3>=1.40
 pytest>=8
+numpy>=1.26

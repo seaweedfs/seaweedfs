@@ -247,12 +247,12 @@ def run_cluster(param, tmp_path_factory, identities):
     with contextlib.ExitStack() as stack:
         with contextlib.ExitStack() as reservations:
             ports = []
-            for _ in range(15):
+            for _ in range(16):
                 sock = reservations.enter_context(socket.socket())
                 sock.bind(("127.0.0.1", 0))
                 ports.append(sock.getsockname()[1])
         (master, master_grpc, vol, vol_grpc, filer, filer_grpc, s3, s3_grpc, lance, vector, engine1, engine2,
-         admin, admin_grpc, vector_metrics) = ports
+         admin, admin_grpc, vector_metrics, volume_metrics) = ports
         master_addr = f"127.0.0.1:{master}.{master_grpc}"
         filer_addr = f"127.0.0.1:{filer}.{filer_grpc}"
 
@@ -279,9 +279,10 @@ def run_cluster(param, tmp_path_factory, identities):
                 env.pop(key)
             return env
 
-        def start(name, args, unset=()):
-            log = stack.enter_context((directory / f"{name}.log").open("w"))
-            process = subprocess.Popen(args, cwd=directory, stdout=log, stderr=log, env=process_env(unset))
+        def start(name, args, unset=(), env=None):
+            log = stack.enter_context((directory / f"{name}.log").open("a"))
+            process = subprocess.Popen(args, cwd=directory, stdout=log, stderr=log,
+                                       env={**process_env(unset), **(env or {})})
             processes[name] = process
             stack.callback(stop, process)
             return process
@@ -297,7 +298,7 @@ def run_cluster(param, tmp_path_factory, identities):
         start("volume", prefix + [f"{flag}{key}={value}" for key, value in {
             "master": master_addr, "ip": "127.0.0.1", "ip.bind": "127.0.0.1",
             "port": vol, "port.grpc": vol_grpc, "dir": directory / "volume",
-            "max": 64, "preStopSeconds": 0,
+            "max": 64, "preStopSeconds": 0, "metricsPort": volume_metrics,
         }.items()])
         wait_for(lambda: listening(vol_grpc), processes, "volume not ready")
         # VECTOR_ENCRYPT_VOLUMES=1 turns on the filer's volume encryption, which
@@ -331,6 +332,14 @@ def run_cluster(param, tmp_path_factory, identities):
             with urllib.request.urlopen(f"http://127.0.0.1:{vector_metrics}/ready", timeout=1) as response:
                 return response.status == 200
         wait_for(vector_ready, processes, "vector engine did not register with master")
+
+        def restart_engine(env=None):
+            """Restart the single engine with `env` added to its environment."""
+            old = processes["vector"]
+            stop(old)
+            start("vector", old.args, env=env)
+            wait_for(vector_ready, processes, "vector engine did not come back")
+
         if os.environ.get("VECTOR_TLS"):
             wait_for(lambda: listening(s3_grpc), processes, "s3 gRPC not ready")
             for name, port in (("master", master_grpc), ("volume", vol_grpc), ("filer", filer_grpc),
@@ -378,7 +387,8 @@ def run_cluster(param, tmp_path_factory, identities):
 
         yield {"endpoint": endpoint, "mode": mode, "processes": processes, "directory": directory, "filer": filer,
                "masters": master_addr, "filer_signing_key": filer_signing_key,
-               "vector_metrics": f"http://127.0.0.1:{vector_metrics}",
+               "vector_metrics": f"http://127.0.0.1:{vector_metrics}", "restart_engine": restart_engine,
+               "volume_metrics": f"http://127.0.0.1:{volume_metrics}",
                "catalog": f"http://127.0.0.1:{lance}", "admin": admin_url, "env": process_env()}
 
 
