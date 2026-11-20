@@ -189,23 +189,21 @@ func (g *Guard) UpdateSigningKeys(signingKey string, expiresAfterSec int, readSi
 // merged security.toml again. The merge keeps a key the file no longer sets,
 // so the keys are read from the file anew: a removed previous key stops
 // verifying, and a swapped pair comes from one read. A file that cannot be
-// read keeps the previous keys in effect.
+// read keeps the keys in effect.
 func (g *Guard) ReloadSigningKeys(section string) {
-	v := util.GetViper()
-	st := g.state.Load()
-	signingKey, readSigningKey := v.GetString(section+".key"), v.GetString(section+".read.key")
-	previousKey, previousReadKey := string(st.previousSigningKey), string(st.previousReadSigningKey)
-	if fresh, used := util.ReadConfiguration("security", ""); used != "" {
-		signingKey, readSigningKey = freshKey(fresh, section+".key"), freshKey(fresh, section+".read.key")
-		previousKey, previousReadKey = fresh.GetString(section+".previous_key"), fresh.GetString(section+".read.previous_key")
+	fresh, used := util.ReadConfiguration("security", "")
+	if used == "" {
+		glog.Warningf("reload %s: security.toml cannot be read, keeping the keys in effect", section)
+		return
 	}
+	v := util.GetViper()
 	g.UpdateSigningKeys(
-		signingKey,
+		freshKey(fresh, section+".key"),
 		v.GetInt(section+".expires_after_seconds"),
-		readSigningKey,
+		freshKey(fresh, section+".read.key"),
 		v.GetInt(section+".read.expires_after_seconds"),
-		previousKey,
-		previousReadKey,
+		fresh.GetString(section+".previous_key"),
+		fresh.GetString(section+".read.previous_key"),
 	)
 }
 

@@ -166,3 +166,26 @@ func TestFilerAdminKeysFollowSecurityFile(t *testing.T) {
 	require.Equal(t, "new", string(key))
 	require.Empty(t, previous, "a previous_key removed from the file must stop verifying")
 }
+
+func TestReloadSigningKeysKeepsKeysInEffectOnReadFailure(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("HOME", dir)
+	v := util.GetViper()
+	v.Set("jwt.signing.key", "old")
+	t.Cleanup(func() { v.Set("jwt.signing.key", "") })
+	file := filepath.Join(dir, "security.toml")
+	require.NoError(t, os.WriteFile(file, []byte("[jwt.signing]\nkey = \"new\"\nprevious_key = \"old\"\n"), 0o600))
+
+	g := NewGuard(nil, "old", 10, "", 60, "", "")
+	g.ReloadSigningKeys("jwt.signing")
+	key, previous := g.VerificationKeys(true)
+	require.Equal(t, "new", string(key))
+	require.Equal(t, "old", string(previous))
+
+	require.NoError(t, os.WriteFile(file, []byte("[jwt.signing\nkey = \n"), 0o600))
+	g.ReloadSigningKeys("jwt.signing")
+	key, previous = g.VerificationKeys(true)
+	require.Equal(t, "new", string(key))
+	require.Equal(t, "old", string(previous))
+}
