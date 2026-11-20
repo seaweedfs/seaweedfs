@@ -20,6 +20,7 @@ type MountOptions struct {
 	chunkSizeLimitMB     *int
 	concurrentWriters    *int
 	concurrentReaders    *int
+	volumeReadAuth       *bool
 	readerCacheSizeMB    *int64
 	memoryLimitMB        *int64
 	cacheMetaTtlSec      *int
@@ -110,6 +111,7 @@ func init() {
 	mountOptions.chunkSizeLimitMB = cmdMount.Flag.Int("chunkSizeLimitMB", 2, "local write buffer size, also chunk large files")
 	mountOptions.concurrentWriters = cmdMount.Flag.Int("concurrentWriters", 128, "limit concurrent goroutine writers")
 	mountOptions.concurrentReaders = cmdMount.Flag.Int("concurrentReaders", 128, "limit concurrent chunk fetches for read operations")
+	mountOptions.volumeReadAuth = cmdMount.Flag.Bool("volumeReadAuth", false, "read chunks with the exact-fid tokens the filer returns (LookupDirectoryEntries read_auth) instead of signing with jwt.signing.read.key")
 	mountOptions.memoryLimitMB = cmdMount.Flag.Int64("memoryLimitMB", 0, "soft Go runtime memory limit in MiB; 0 preserves GOMEMLIMIT; leave headroom below the container limit")
 	mountOptions.readerCacheSizeMB = cmdMount.Flag.Int64("readerCacheSizeMB", 256, "memory budget in MiB for downloaded and in-flight reader buffers across all files; must fit the largest pooled chunk buffer")
 	mountOptions.cacheDirForRead = cmdMount.Flag.String("cacheDir", os.TempDir(), "local cache directory for file chunks and meta data")

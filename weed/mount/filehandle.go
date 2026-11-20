@@ -175,6 +175,10 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 		if fh.entryChunkGroup != nil {
 			_ = fh.entryChunkGroup.Close()
 		}
+		// Record the chunk -> path index before the chunk group resolves any
+		// manifest chunk: that resolution reads the manifest from a volume server
+		// and needs the entry's read token.
+		fh.wfs.readAuth.Track(fh.FullPath(), entry.Chunks)
 		var resolveManifestErr error
 		fh.entryChunkGroup, resolveManifestErr = filer.NewChunkGroup(fh.wfs.LookupFn(), fh.wfs.chunkCache, entry.Chunks, fh.wfs.option.ConcurrentReaders, fh.wfs.CacheInvalidator(), fh.wfs.manifestCache, fh.wfs.readerCacheBudget)
 		if resolveManifestErr != nil {
@@ -409,6 +413,7 @@ func (fh *FileHandle) UpdateEntry(fn func(entry *filer_pb.Entry)) *filer_pb.Entr
 }
 
 func (fh *FileHandle) AddChunks(chunks []*filer_pb.FileChunk) {
+	fh.wfs.readAuth.Track(fh.FullPath(), chunks)
 	fh.entry.AppendChunks(chunks)
 }
 

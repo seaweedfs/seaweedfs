@@ -157,6 +157,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 			// set the new chunks and reset entry cache
 			entry.Chunks = chunks
 			if fh != nil {
+				fh.wfs.readAuth.Track(fh.FullPath(), chunks)
 				fh.entryChunkGroup.SetChunks(chunks)
 			}
 		}
