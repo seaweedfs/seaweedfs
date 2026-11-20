@@ -778,6 +778,11 @@ func loadBasicAuth(current *security.BasicAuth, file string) (*security.BasicAut
 	return security.NewBasicAuth(v.GetString("filer.basic_auth.user"), v.GetString("filer.basic_auth.password")), used
 }
 
+// FilerGuard holds the filer's reloadable jwt.filer_signing keys.
+func (fs *FilerServer) FilerGuard() *security.Guard {
+	return fs.filerGuard
+}
+
 func (fs *FilerServer) Reload() {
 	glog.V(0).Infoln("Reload filer server...")
 

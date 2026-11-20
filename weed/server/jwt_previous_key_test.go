@@ -5,7 +5,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestJwtRotationAcceptsPreviousKey(t *testing.T) {
@@ -60,4 +65,33 @@ func TestJwtRotationAcceptsPreviousKey(t *testing.T) {
 	fs.filerGuard.UpdateSigningKeys("filer-new", 10, "filer-read-new", 60, "", "")
 	vs.guard.UpdateSigningKeys("volume-new", 10, "volume-read-new", 60, "", "")
 	check(false)
+}
+
+func TestAdminGrpcChecksFollowFilerGuardReload(t *testing.T) {
+	cm, err := credential.NewCredentialManager(credential.StoreTypeMemory, nil, "")
+	if err != nil {
+		t.Fatalf("credential manager: %v", err)
+	}
+	guard := security.NewGuard(nil, "admin-new", 10, "", 60, "admin-old", "")
+	iam := NewIamGrpcServer(cm, guard)
+	fs := &FilerServer{filerGuard: guard}
+	v := util.GetViper()
+	v.Set("jwt.filer_signing.subscribe.key", "subscribe-key")
+	t.Cleanup(func() { v.Set("jwt.filer_signing.subscribe.key", "") })
+
+	oldAdmin := ctxWithBearer(string(security.GenJwtForFilerAdmin(security.SigningKey("admin-old"), 60)))
+	if _, err := iam.ListUsers(oldAdmin, &iam_pb.ListUsersRequest{}); err != nil {
+		t.Fatalf("IAM must accept an admin token signed with the previous key: %v", err)
+	}
+	if scope, err := fs.metadataSubscriptionScope(oldAdmin, security.MethodSubscribeMetadata); err != nil || scope != nil {
+		t.Fatalf("metadata subscription with the previous admin key: scope=%v err=%v", scope, err)
+	}
+
+	guard.UpdateSigningKeys("admin-new", 10, "", 60, "", "")
+	if _, err := iam.ListUsers(oldAdmin, &iam_pb.ListUsersRequest{}); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("IAM must refuse the removed previous key: %v", err)
+	}
+	if _, err := fs.metadataSubscriptionScope(oldAdmin, security.MethodSubscribeMetadata); err == nil {
+		t.Fatal("metadata subscription must refuse the removed previous key")
+	}
 }

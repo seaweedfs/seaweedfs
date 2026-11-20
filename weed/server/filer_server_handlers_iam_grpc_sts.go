@@ -38,7 +38,7 @@ var errSTSRequiresAuth = status.Error(codes.FailedPrecondition,
 	"OIDC provider and role management requires admin authentication: set jwt.filer_signing.key in security.toml")
 
 func (s *IamGrpcServer) requireOIDCProviderStore() (integration.OIDCProviderStore, error) {
-	if len(s.adminSigningKey) == 0 {
+	if len(s.adminGuard.SigningKey()) == 0 {
 		return nil, errSTSRequiresAuth
 	}
 	if s.oidcProviderStore == nil {
@@ -48,7 +48,7 @@ func (s *IamGrpcServer) requireOIDCProviderStore() (integration.OIDCProviderStor
 }
 
 func (s *IamGrpcServer) requireRoleStore() (integration.RoleStore, error) {
-	if len(s.adminSigningKey) == 0 {
+	if len(s.adminGuard.SigningKey()) == 0 {
 		return nil, errSTSRequiresAuth
 	}
 	if s.roleStore == nil {
