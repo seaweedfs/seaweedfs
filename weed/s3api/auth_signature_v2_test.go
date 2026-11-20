@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
+
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
@@ -514,6 +516,69 @@ func TestSignatureV2RejectsRepeatedSubresource(t *testing.T) {
 			req.URL.RawQuery = edit(req.URL.RawQuery)
 			if _, errCode := iam.doesSignV2Match(req); errCode != s3err.ErrSignatureDoesNotMatch {
 				t.Fatalf("signed PUT with a second versionId: got %v, want %v", errCode, s3err.ErrSignatureDoesNotMatch)
+			}
+		})
+	}
+}
+
+func TestSignatureV2SignsVirtualHostBucket(t *testing.T) {
+	iam := setupTestIAMForV2Auth()
+	cred := &Credential{
+		AccessKey: "AKIAIOSFODNN7EXAMPLE",
+		SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+	}
+	expires := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	date := time.Now().UTC().Format(http.TimeFormat)
+
+	presigned := func(host, path, resource, routedBucket string) *http.Request {
+		req, err := http.NewRequest(http.MethodGet, "http://"+host+path, nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		query := req.URL.Query()
+		query.Set("AWSAccessKeyId", cred.AccessKey)
+		query.Set("Expires", expires)
+		query.Set("Signature", calculateSignatureV2("GET\n\n\n"+expires+"\n"+resource, cred.SecretKey))
+		req.URL.RawQuery = query.Encode()
+		return mux.SetURLVars(req, map[string]string{"bucket": routedBucket})
+	}
+	signed := func(host, path, resource, routedBucket string) *http.Request {
+		req, err := http.NewRequest(http.MethodGet, "http://"+host+path, nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set("Date", date)
+		req.Header.Set("Authorization", signV2Algorithm+" "+cred.AccessKey+":"+calculateSignatureV2("GET\n\n\n"+date+"\n"+resource, cred.SecretKey))
+		return mux.SetURLVars(req, map[string]string{"bucket": routedBucket})
+	}
+
+	tests := []struct {
+		name, host, path, resource, routedBucket string
+		want                                     s3err.ErrorCode
+		domain                                   string
+	}{
+		{"path style", "s3.test:8333", "/alpha/key", "/alpha/key", "alpha", s3err.ErrNone, ""},
+		{"virtual host object", "alpha.s3.test:8333", "/key", "/alpha/key", "alpha", s3err.ErrNone, ""},
+		{"virtual host bucket root", "alpha.s3.test", "/", "/alpha/", "alpha", s3err.ErrNone, ""},
+		{"path style retargeted by host", "beta.s3.test:8333", "/alpha/key", "/alpha/key", "beta", s3err.ErrSignatureDoesNotMatch, ""},
+		{"virtual host retargeted by host", "beta.s3.test:8333", "/key", "/alpha/key", "beta", s3err.ErrSignatureDoesNotMatch, ""},
+		{"routed to another bucket", "alpha.s3.test:8333", "/key", "/alpha/key", "beta", s3err.ErrAccessDenied, ""},
+		{"port domain virtual host", "alpha.s3.test:8333", "/key", "/alpha/key", "alpha", s3err.ErrNone, "s3.test:8333"},
+		{"port domain retargeted by host", "beta.s3.test:8333", "/alpha/key", "/alpha/key", "beta", s3err.ErrSignatureDoesNotMatch, "s3.test:8333"},
+	}
+	for _, tt := range tests {
+		iam.domain = "s3.test"
+		if tt.domain != "" {
+			iam.domain = tt.domain
+		}
+		t.Run("presigned "+tt.name, func(t *testing.T) {
+			if _, errCode := iam.doesPresignV2SignatureMatch(presigned(tt.host, tt.path, tt.resource, tt.routedBucket)); errCode != tt.want {
+				t.Fatalf("got %v, want %v", errCode, tt.want)
+			}
+		})
+		t.Run("signed "+tt.name, func(t *testing.T) {
+			if _, errCode := iam.doesSignV2Match(signed(tt.host, tt.path, tt.resource, tt.routedBucket)); errCode != tt.want {
+				t.Fatalf("got %v, want %v", errCode, tt.want)
 			}
 		})
 	}

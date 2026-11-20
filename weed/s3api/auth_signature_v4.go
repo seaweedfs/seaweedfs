@@ -1133,19 +1133,29 @@ func bucketFromVirtualHost(host, domainConfig string) (string, bool) {
 	if domainConfig == "" {
 		return "", false
 	}
-	h := host
+	host = strings.ToLower(host)
+	hostWithoutPort := host
 	if hh, _, err := net.SplitHostPort(host); err == nil {
-		h = hh
+		hostWithoutPort = hh
 	}
-	h = strings.ToLower(h)
+	// The router matches a domain that names a port against the full host:port.
+	hostFor := func(domain string) string {
+		if strings.Contains(domain, ":") {
+			return host
+		}
+		return hostWithoutPort
+	}
 	pathStyleDomains, virtualHostDomains := classifyDomainNames(strings.Split(domainConfig, ","))
 	for _, domain := range pathStyleDomains {
-		if h == strings.ToLower(strings.TrimSpace(domain)) {
+		domain = strings.ToLower(strings.TrimSpace(domain))
+		if hostFor(domain) == domain {
 			return "", false
 		}
 	}
 	for _, domain := range virtualHostDomains {
-		suffix := "." + strings.ToLower(strings.TrimSpace(domain))
+		domain = strings.ToLower(strings.TrimSpace(domain))
+		h := hostFor(domain)
+		suffix := "." + domain
 		if strings.HasSuffix(h, suffix) {
 			bucket := h[:len(h)-len(suffix)]
 			if bucket != "" {
