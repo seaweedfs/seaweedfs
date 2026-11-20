@@ -267,3 +267,24 @@ async fn a_job_on_a_dropped_table_fails_and_leaves_it_dropped() {
         .await;
     }
 }
+
+/// A job that removes old versions itself, as a purge does, removes the
+/// manifest it opened: that is no drop, and its later writes go through.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_purge_through_the_guard_completes() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let dataset = table(&dir, 4).await;
+    let mut dataset = upsert(dataset, 0..100).await;
+    dataset.delete("key = 'k1' OR key = 'k2001'").await.unwrap();
+    let description = crate::catalog::TableDescription {
+        location: dir.path().to_str().unwrap().to_string(),
+        storage_options: Default::default(),
+        managed_versioning: false,
+    };
+    let mut guarded = crate::dataset::open_guarded(&description, None)
+        .await
+        .unwrap();
+    let stats = crate::jobs::purge::purge(&mut guarded, "t1").await.unwrap();
+    assert!(stats.served, "{stats:?}");
+    assert_eq!(guarded.count_rows(None).await.unwrap(), 3_998);
+}
