@@ -6,7 +6,7 @@ use std::fmt;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bytes::Bytes;
 use futures::StreamExt;
@@ -452,6 +452,34 @@ async fn a_rollback_keeps_the_manifest_of_a_table_created_again() {
     );
 }
 
+/// A table created again whose manifest at the job's path cannot be told
+/// from the job's, because the HEAD fails, keeps it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failed_rollback_probe_keeps_the_manifest_of_a_table_created_again() {
+    let dir = tempfile::TempDir::new().unwrap();
+    table(&dir, 1).await;
+    let s3_like: Arc<dyn WrappingObjectStore> = Arc::new(S3Like {
+        recreate: Some((dir.path().to_path_buf(), Arc::new(AtomicBool::new(false)))),
+        fail_head_after_manifest: true,
+        heads_before_failing: 1,
+        ..Default::default()
+    });
+    let mut job = crate::dataset::open_guarded(&guarded_description(&dir), Some(s3_like))
+        .await
+        .unwrap();
+    assert!(
+        job.update_config([("seaweedfs.test", "job")])
+            .await
+            .is_err()
+    );
+    let again = Dataset::open(dir.path().to_str().unwrap()).await.unwrap();
+    assert_eq!(again.version().version, 2);
+    assert_eq!(
+        again.config().get("seaweedfs.test").map(String::as_str),
+        Some("again")
+    );
+}
+
 /// A cleanup that picked its paths before the drop does not delete the files
 /// of the table created again there.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -507,6 +535,8 @@ async fn a_failed_probe_does_not_take_back_a_commit() {
 #[derive(Debug, Default)]
 struct S3Like {
     fail_head_after_manifest: bool,
+    /// HEADs let through after a manifest is written before one fails.
+    heads_before_failing: usize,
     /// The next HEAD fails.
     armed: Arc<AtomicBool>,
     aborted: Arc<AtomicBool>,
@@ -518,6 +548,8 @@ impl WrappingObjectStore for S3Like {
         Arc::new(S3LikeStore {
             inner: original,
             fail_head_after_manifest: self.fail_head_after_manifest,
+            heads_before_failing: self.heads_before_failing,
+            heads_left: Arc::new(AtomicUsize::new(0)),
             armed: self.armed.clone(),
             aborted: self.aborted.clone(),
             recreate: self.recreate.clone(),
@@ -529,6 +561,8 @@ impl WrappingObjectStore for S3Like {
 struct S3LikeStore {
     inner: Arc<dyn ObjectStore>,
     fail_head_after_manifest: bool,
+    heads_before_failing: usize,
+    heads_left: Arc<AtomicUsize>,
     armed: Arc<AtomicBool>,
     aborted: Arc<AtomicBool>,
     recreate: Option<(PathBuf, Arc<AtomicBool>)>,
@@ -551,6 +585,8 @@ impl ObjectStore for S3LikeStore {
         let put = self.inner.put_opts(location, payload, opts).await?;
         if location.extension() == Some("manifest") {
             if self.fail_head_after_manifest {
+                self.heads_left
+                    .store(self.heads_before_failing, Ordering::SeqCst);
                 self.armed.store(true, Ordering::SeqCst);
             }
             if let Some((dir, fired)) = &self.recreate
@@ -579,7 +615,14 @@ impl ObjectStore for S3LikeStore {
         }))
     }
     async fn get_opts(&self, location: &Path, options: GetOptions) -> Result<GetResult> {
-        if options.head && self.armed.swap(false, Ordering::SeqCst) {
+        if options.head
+            && self.armed.load(Ordering::SeqCst)
+            && self
+                .heads_left
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .is_err()
+            && self.armed.swap(false, Ordering::SeqCst)
+        {
             return Err(object_store::Error::Generic {
                 store: "S3Like",
                 source: "timed out".into(),
