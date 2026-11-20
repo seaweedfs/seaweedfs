@@ -1,12 +1,15 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -16,7 +19,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -442,5 +449,90 @@ func TestGetOrHeadHandlerDoesNotReproxyAProxiedRequest(t *testing.T) {
 	vs.GetOrHeadHandler(w, httptest.NewRequest(http.MethodGet, "/"+volumeID+",01637037d6?proxied=true", nil))
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+func TestGetOrHeadHandlerRangeOnCompressedNeedleServesDecodedBytes(t *testing.T) {
+	dir := t.TempDir()
+	store := storage.NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "store-id",
+		[]string{dir}, []int32{10}, []util.MinFreeSpace{{}}, "",
+		storage.NeedleMapInMemory, []types.DiskType{types.HardDriveType}, nil, 3, stats.DefaultDiskIOProbeConfig())
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-store.NewVolumesChan:
+			case <-store.DeletedVolumesChan:
+			case <-store.NewEcShardsChan:
+			case <-store.DeletedEcShardsChan:
+			case <-store.StateUpdateChan:
+			case <-done:
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		store.Close()
+		close(done)
+	})
+	if err := store.AddVolume(1, "", storage.NeedleMapInMemory, "000", "", 0, needle.GetCurrentVersion(), 0, types.HardDriveType, 0); err != nil {
+		t.Fatalf("add volume: %v", err)
+	}
+
+	plain := []byte(strings.Repeat("the quick brown fox jumps over the lazy dog\n", 200))
+	compressed, err := util.GzipData(plain)
+	if err != nil {
+		t.Fatalf("gzip: %v", err)
+	}
+	n := &needle.Needle{Id: 1, Cookie: 0x1234, Data: compressed}
+	n.SetIsCompressed()
+	n.Checksum = needle.NewCRC(n.Data)
+	if _, err := store.WriteVolumeNeedle(1, n, true, false); err != nil {
+		t.Fatalf("write needle: %v", err)
+	}
+	vs := &VolumeServer{store: store, ReadMode: "local", guard: security.NewGuard(nil, "", 0, "", 0)}
+
+	serve := func(method, rangeHeader string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, "/1,0100001234", nil)
+		r.Header.Set("Accept-Encoding", "gzip")
+		if rangeHeader != "" {
+			r.Header.Set("Range", rangeHeader)
+		}
+		w := httptest.NewRecorder()
+		vs.GetOrHeadHandler(w, r)
+		return w
+	}
+
+	// A range is over the decoded bytes, even past the compressed size.
+	start, end := len(compressed)+10, len(compressed)+69
+	w := serve(http.MethodGet, fmt.Sprintf("bytes=%d-%d", start, end))
+	if w.Code != http.StatusPartialContent {
+		t.Fatalf("ranged GET status %d, want 206", w.Code)
+	}
+	if ce := w.Header().Get("Content-Encoding"); ce != "" {
+		t.Fatalf("ranged GET Content-Encoding %q, want none", ce)
+	}
+	if want := fmt.Sprintf("bytes %d-%d/%d", start, end, len(plain)); w.Header().Get("Content-Range") != want {
+		t.Fatalf("ranged GET Content-Range %q, want %q", w.Header().Get("Content-Range"), want)
+	}
+	if got := w.Body.String(); got != string(plain[start:end+1]) {
+		t.Fatalf("ranged GET body %q, want %q", got, plain[start:end+1])
+	}
+
+	w = serve(http.MethodHead, "bytes=0-9")
+	if ce := w.Header().Get("Content-Encoding"); ce != "" {
+		t.Fatalf("ranged HEAD Content-Encoding %q, want none", ce)
+	}
+	if cl := w.Header().Get("Content-Length"); cl != strconv.Itoa(len(plain)) {
+		t.Fatalf("ranged HEAD Content-Length %s, want %d", cl, len(plain))
+	}
+
+	// A whole read still passes the stored gzip through.
+	w = serve(http.MethodGet, "")
+	if w.Code != http.StatusOK || w.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("whole GET status %d Content-Encoding %q, want 200 gzip", w.Code, w.Header().Get("Content-Encoding"))
+	}
+	if !bytes.Equal(w.Body.Bytes(), compressed) {
+		t.Fatalf("whole GET body is not the stored gzip")
 	}
 }
