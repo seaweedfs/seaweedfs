@@ -91,6 +91,9 @@ type S3Options struct {
 	allowBackslashInKey           *bool
 	iamSelfServiceRequiresGrant   *bool
 	preStopSeconds                *int
+	routedLookupTimeout           *time.Duration
+	unreachableOwnerTTL           *time.Duration
+	volumeLookupTimeout           *time.Duration
 	// shutdownCtx, when non-nil, tells startS3Server to gracefully shut down
 	// its HTTP/gRPC servers once the ctx is cancelled, in addition to on
 	// interrupt. Used by weed mini to orchestrate an ordered shutdown.
@@ -152,6 +155,9 @@ func init() {
 	s3StandaloneOptions.allowBackslashInKey = cmdS3.Flag.Bool("allowBackslashInKey", false, allowBackslashInKeyUsage)
 	s3StandaloneOptions.iamSelfServiceRequiresGrant = cmdS3.Flag.Bool("iam.selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
 	s3StandaloneOptions.preStopSeconds = cmdS3.Flag.Int("preStopSeconds", 0, s3PreStopSecondsUsage)
+	s3StandaloneOptions.routedLookupTimeout = cmdS3.Flag.Duration("routedLookupTimeout", defaultS3RoutedLookupTimeout, s3RoutedLookupTimeoutUsage)
+	s3StandaloneOptions.unreachableOwnerTTL = cmdS3.Flag.Duration("unreachableOwnerTTL", defaultS3UnreachableOwnerTTL, s3UnreachableOwnerTTLUsage)
+	s3StandaloneOptions.volumeLookupTimeout = cmdS3.Flag.Duration("volumeLookupTimeout", defaultS3VolumeLookupTimeout, s3VolumeLookupTimeoutUsage)
 }
 
 var cmdS3 = &Command{
@@ -425,6 +431,9 @@ func (s3opt *S3Options) startS3Server() bool {
 		AllowUntrustedRemoteEndpoints: *s3opt.allowUntrustedRemoteEndpoints,
 		AllowBackslashInKey:           *s3opt.allowBackslashInKey,
 		IamSelfServiceRequiresGrant:   *s3opt.iamSelfServiceRequiresGrant,
+		RoutedLookupTimeout:           *s3opt.routedLookupTimeout,
+		UnreachableOwnerTTL:           *s3opt.unreachableOwnerTTL,
+		VolumeLookupTimeout:           *s3opt.volumeLookupTimeout,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
