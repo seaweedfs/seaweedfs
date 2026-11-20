@@ -259,3 +259,38 @@ func TestManifestRetryStalledReadIsBounded(t *testing.T) {
 		t.Fatalf("manifest retry queue size %d, want the manifest requeued", f.manifestRetries().Size())
 	}
 }
+
+func TestManifestRetryPassLeavesRestQueued(t *testing.T) {
+	f, master := newManifestDeletionFiler(t, []*filer_pb.FileChunk{{FileId: "4,02637037d6", Size: 8}})
+	for _, fid := range []string{"3,01637037d6", "3,05637037d6", "3,06637037d6"} {
+		f.doDeleteChunks(context.Background(), []*filer_pb.FileChunk{{FileId: fid, Size: 8, IsChunkManifest: true}}, false)
+	}
+	master.available.Store(true)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	stall := func(w http.ResponseWriter) {
+		w.Header().Set("Content-Length", "64")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-release
+	}
+	master.onVolumeRead.Store(&stall)
+
+	defer func(old time.Duration) { manifestRetryTimeout = old }(manifestRetryTimeout)
+	manifestRetryTimeout = 200 * time.Millisecond
+	makeManifestRetryDue(f, 1)
+	f.processManifestRetries(context.Background())
+
+	q := f.manifestRetries()
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	untried := 0
+	for _, item := range q.heap {
+		if item.RetryCount == 1 {
+			untried++
+		}
+	}
+	if len(q.heap) != 3 || untried == 0 {
+		t.Fatalf("after one stalled pass: %d queued, %d untried; want all 3 queued and some untried", len(q.heap), untried)
+	}
+}

@@ -581,6 +581,12 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 
 	ticker := time.NewTicker(DeletionRetryPollInterval)
 	defer ticker.Stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		<-f.deletionQuit
+		cancel()
+	}()
 
 	for {
 		select {
@@ -612,7 +618,7 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 			if totalProcessed > 0 {
 				glog.V(1).Infof("retried deletion of %d files", totalProcessed)
 			}
-			f.processManifestRetries(context.Background())
+			f.processManifestRetries(ctx)
 		}
 	}
 }
@@ -738,20 +744,24 @@ func (f *Filer) manifestRetries() *DeletionRetryQueue {
 
 // processManifestRetries resolves manifests that failed to resolve on delete.
 // One that never resolves within MaxRetryAttempts is deleted alone, leaving
-// its sub-chunks to volume.fsck.
+// its sub-chunks to volume.fsck. A pass stops after manifestRetryTimeout and
+// leaves the rest queued, so the shared retry loop gets its turn.
 func (f *Filer) processManifestRetries(ctx context.Context) {
 	q := f.manifestRetries()
-	for {
-		ready, expired := q.GetReadyItems(DeletionRetryBatchSize)
+	passCtx, cancel := context.WithTimeout(ctx, manifestRetryTimeout)
+	defer cancel()
+	for passCtx.Err() == nil {
+		ready, expired := q.GetReadyItems(1)
 		for _, item := range expired {
 			f.queueDeletions(item.fsync, item.FileId)
 		}
 		if len(ready) == 0 {
-			return
+			if len(expired) == 0 {
+				return
+			}
+			continue
 		}
-		for _, item := range ready {
-			f.retryManifest(ctx, q, item)
-		}
+		f.retryManifest(ctx, q, ready[0])
 	}
 }
 
