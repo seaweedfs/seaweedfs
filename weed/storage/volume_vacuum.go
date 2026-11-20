@@ -782,7 +782,7 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 			if size.IsValid() {
 				skippedDataBytes += uint64(size)
 			}
-			glog.Warningf("vacuum volume %d: dropping unreadable needle key=%d offset=%d size=%d: %v",
+			glog.Errorf("vacuum volume %d: dropping unreadable needle key=%d offset=%d size=%d: %v",
 				v.Id, value.Key, offset.ToActualOffset(), size, err)
 			return nil
 		}
@@ -829,6 +829,9 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	err = newNm.SaveToIdx(opts.destIdxPath)
 	if err != nil {
 		return err
+	}
+	if skippedNeedles > 0 {
+		stats.VolumeServerVacuumingDroppedNeedlesCounter.WithLabelValues(v.Collection).Add(float64(skippedNeedles))
 	}
 	return v.loadTmpNeedleMap(opts.destIdxPath)
 }
