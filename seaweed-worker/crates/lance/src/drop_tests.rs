@@ -284,7 +284,27 @@ async fn a_purge_through_the_guard_completes() {
     let mut guarded = crate::dataset::open_guarded(&description, None)
         .await
         .unwrap();
-    let stats = crate::jobs::purge::purge(&mut guarded, "t1").await.unwrap();
-    assert!(stats.served, "{stats:?}");
+    // The job commits, then removes every older version, the one it opened
+    // with them.
+    guarded
+        .update_config([("seaweedfs.test", "1")])
+        .await
+        .unwrap();
+    let removed = lance::dataset::cleanup::cleanup_old_versions(
+        &guarded,
+        lance::dataset::cleanup::CleanupPolicy {
+            before_timestamp: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
+            before_version: Some(guarded.version().version),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(removed.old_versions > 0);
+    guarded
+        .update_config([("seaweedfs.test", "2")])
+        .await
+        .unwrap();
+    crate::jobs::purge::purge(&mut guarded, "t1").await.unwrap();
     assert_eq!(guarded.count_rows(None).await.unwrap(), 3_998);
 }
