@@ -137,8 +137,15 @@ func TestPutFallbackKeepsWriteCondition(t *testing.T) {
 	if code1 != s3err.ErrPreconditionFailed || code2 != s3err.ErrNone {
 		t.Fatalf("writer 1 got %v and writer 2 got %v, want ErrPreconditionFailed and ErrNone", code1, code2)
 	}
-	if deleted := volume.deleted(); len(deleted) != 1 {
-		t.Fatalf("deleted chunks %v, want only the refused writer's one chunk", deleted)
+	inner.mu.Lock()
+	winner := inner.entries[objectPath]
+	inner.mu.Unlock()
+	if len(winner.GetChunks()) != 1 {
+		t.Fatalf("stored entry %+v, want writer 2's one chunk", winner)
+	}
+	deleted := volume.deleted()
+	if len(deleted) != 1 || sameFileChunks([]*filer_pb.FileChunk{{FileId: deleted[0]}}, winner.GetChunks()) {
+		t.Fatalf("deleted chunks %v, want only the refused writer's one chunk, not the stored %s", deleted, winner.GetChunks()[0].GetFileIdString())
 	}
 }
 
