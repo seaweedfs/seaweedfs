@@ -553,6 +553,8 @@ impl From<master_pb::Location> for VolumeLocation {
     }
 }
 
+const LOOKUP_DIAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Lookups share one master channel, like Go's pooled master connection.
 static MASTER_LOOKUP_CHANNEL: std::sync::Mutex<Option<(String, tonic::transport::Channel)>> =
     std::sync::Mutex::new(None);
@@ -592,9 +594,20 @@ async fn lookup_volume(
     let resp = match cached_result {
         Some(Ok(resp)) => resp,
         _ => {
-            let channel = connect_channel(&grpc_addr, tls, GrpcDialOptions::unary())
-                .await
-                .map_err(|e| format!("lookup connect to master {}: {}", master_url, e))?;
+            // connect_channel bounds only the TCP connect; a master that
+            // stalls in the TLS handshake would hold the request forever.
+            let channel = tokio::time::timeout(
+                LOOKUP_DIAL_TIMEOUT,
+                connect_channel(&grpc_addr, tls, GrpcDialOptions::unary()),
+            )
+            .await
+            .map_err(|_| {
+                format!(
+                    "lookup connect to master {}: connection timeout",
+                    master_url
+                )
+            })?
+            .map_err(|e| format!("lookup connect to master {}: {}", master_url, e))?;
             *MASTER_LOOKUP_CHANNEL.lock().unwrap() = Some((grpc_addr, channel.clone()));
             master_lookup_once(channel, volume_id)
                 .await
@@ -6074,6 +6087,32 @@ mod tests {
             assert_eq!(locations[0].public_or_url(), "10.0.0.2:5301");
             assert_eq!(locations[0].grpc_port, 5311);
         }
+    }
+
+    /// A master that accepts the connection but never finishes the TLS
+    /// handshake fails the lookup at the dial bound.
+    #[tokio::test(start_paused = true)]
+    async fn test_lookup_volume_times_out_on_a_stalled_tls_master() {
+        crate::security::tls::install_default_crypto_provider();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _held = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+            drop(socket);
+        });
+        let tls = crate::server::grpc_client::OutgoingGrpcTlsConfig::self_signed_for_test();
+        let master_url = format!("127.0.0.1:1.{}", addr.port());
+        let started = tokio::time::Instant::now();
+        let looked_up = tokio::time::timeout(
+            std::time::Duration::from_secs(600),
+            super::lookup_volume(Some(&tls), &master_url, 9),
+        )
+        .await
+        .expect("lookup must not outlive its dial bound");
+        let err = looked_up.expect_err("a stalled master cannot answer");
+        assert!(err.contains("connection timeout"), "{err}");
+        assert!(started.elapsed() >= super::LOOKUP_DIAL_TIMEOUT);
     }
 
     /// The master answers a missing volume with a per-volume error. Go's
