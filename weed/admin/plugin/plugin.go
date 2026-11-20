@@ -78,6 +78,8 @@ type Plugin struct {
 
 	lanes map[SchedulerLane]*schedulerLaneState
 
+	schedulerExtension schedulerExtension
+
 	// Execution slots this admin holds on workers, one entry per job in
 	// flight; see executorLoadLocked for how they meet the heartbeat.
 	execResMu            sync.Mutex
@@ -239,6 +241,7 @@ func New(options Options) (*Plugin, error) {
 		shutdownCh:                make(chan struct{}),
 	}
 	plugin.ctx, plugin.ctxCancel = context.WithCancel(context.Background())
+	plugin.schedulerExtension = newSchedulerExtension(plugin)
 
 	if err := plugin.loadPersistedMonitorState(); err != nil {
 		glog.Warningf("Plugin failed to load persisted monitoring state: %v", err)
