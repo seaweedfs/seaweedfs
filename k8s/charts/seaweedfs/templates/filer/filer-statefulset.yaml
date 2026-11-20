@@ -57,6 +57,7 @@ spec:
       {{- end }}
       annotations:
         {{- toYaml $podAnnotations | nindent 8 }}
+      {{- with include "seaweedfs.volumeHttpsAnnotation" $ }}{{ . | nindent 8 }}{{ end }}
     spec:
       restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.filer.restartPolicy }}
       {{- if .Values.filer.affinity }}

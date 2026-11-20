@@ -55,6 +55,7 @@ spec:
       {{- with $volume.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with include "seaweedfs.volumeHttpsAnnotation" $ }}{{ . | nindent 8 }}{{ end }}
     spec:
       {{- if $volume.affinity }}
       affinity:

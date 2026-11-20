@@ -48,6 +48,7 @@ spec:
       {{- $_ := set $podAnnotations "checksum/master-config" (include "seaweedfs.master.configChecksum" .) }}
       annotations:
         {{- toYaml $podAnnotations | nindent 8 }}
+      {{- with include "seaweedfs.volumeHttpsAnnotation" $ }}{{ . | nindent 8 }}{{ end }}
     spec:
       restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.master.restartPolicy }}
       {{- if .Values.master.affinity }}
