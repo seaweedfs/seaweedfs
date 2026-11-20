@@ -278,6 +278,8 @@ function initS3TablesTables() {
         });
     });
 
+    initS3TablesTableSelection();
+
     document.querySelectorAll('.s3tables-table-policy-btn').forEach(button => {
         button.addEventListener('click', function () {
             document.getElementById('s3tablesTablePolicyBucketArn').value = dataBucketArn;
@@ -819,6 +821,75 @@ async function deleteS3TablesTable() {
     } catch (error) {
         alert('Failed to delete table: ' + error.message);
     }
+}
+
+function selectedS3TablesTableNames() {
+    return Array.from(document.querySelectorAll('.s3tables-select-table:checked')).map(box => box.value);
+}
+
+function initS3TablesTableSelection() {
+    const selectAll = document.getElementById('s3tablesSelectAllTables');
+    const deleteSelected = document.getElementById('s3tablesDeleteSelectedBtn');
+    if (!selectAll || !deleteSelected) return;
+    const boxes = Array.from(document.querySelectorAll('.s3tables-select-table'));
+    const refresh = () => {
+        const selected = boxes.filter(box => box.checked).length;
+        document.getElementById('s3tablesSelectedCount').textContent = selected;
+        deleteSelected.disabled = selected === 0;
+        selectAll.checked = boxes.length > 0 && selected === boxes.length;
+        selectAll.indeterminate = selected > 0 && selected < boxes.length;
+    };
+    selectAll.disabled = boxes.length === 0;
+    selectAll.addEventListener('change', () => {
+        boxes.forEach(box => { box.checked = selectAll.checked; });
+        refresh();
+    });
+    boxes.forEach(box => box.addEventListener('change', refresh));
+    const modal = new bootstrap.Modal(document.getElementById('deleteS3TablesSelectedModal'));
+    deleteSelected.addEventListener('click', () => {
+        const names = selectedS3TablesTableNames();
+        if (names.length === 0) return;
+        document.getElementById('deleteS3TablesSelectedCount').textContent = names.length;
+        const list = document.getElementById('deleteS3TablesSelectedNames');
+        list.replaceChildren(...names.map(name => {
+            const item = document.createElement('li');
+            item.textContent = name;
+            return item;
+        }));
+        modal.show();
+    });
+    refresh();
+}
+
+async function deleteSelectedS3TablesTables() {
+    const dataContainer = document.getElementById('s3tables-tables-content');
+    const names = selectedS3TablesTableNames();
+    if (names.length === 0) return;
+    const confirmBtn = document.getElementById('deleteS3TablesSelectedConfirm');
+    confirmBtn.disabled = true;
+    const failures = [];
+    for (const name of names) {
+        const query = new URLSearchParams({
+            bucket: dataContainer.dataset.bucketArn || '',
+            namespace: dataContainer.dataset.namespace || '',
+            name: name
+        });
+        try {
+            const response = await fetch(s3tBasePath(`/api/s3tables/tables?${query.toString()}`), { method: 'DELETE', headers: s3tWriteHeaders() });
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                failures.push(`${name}: ${data.error || response.status}`);
+            }
+        } catch (error) {
+            failures.push(`${name}: ${error.message}`);
+        }
+    }
+    if (failures.length > 0) {
+        alert(`Deleted ${names.length - failures.length} of ${names.length} tables. Failed:\n${failures.join('\n')}`);
+    } else {
+        alert(`Deleted ${names.length} tables`);
+    }
+    location.reload();
 }
 
 async function deleteIcebergTable() {
