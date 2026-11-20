@@ -13,9 +13,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	mathrand "math/rand"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +34,11 @@ import (
 const (
 	SSES3Algorithm = s3_constants.SSEAlgorithmAES256
 	SSES3KeySize   = 32 // 256 bits
+
+	// gcmNonceSize is the length of the nonce util.Encrypt puts in front of
+	// its output; the nonce and the rest are stored as separate SSE-S3
+	// metadata fields.
+	gcmNonceSize = 12
 )
 
 // SSES3Key represents a server-managed encryption key for SSE-S3
@@ -84,7 +89,7 @@ func GenerateSSES3Key() (*SSES3Key, error) {
 	}
 
 	// Generate a key ID for tracking
-	keyID := fmt.Sprintf("sse-s3-key-%d", mathrand.Int63())
+	keyID := fmt.Sprintf("sse-s3-key-%d", util.RandomUint64())
 
 	return &SSES3Key{
 		Key:       key,
@@ -364,24 +369,13 @@ func (km *SSES3KeyManager) wrapKEK(kek []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	block, err := aes.NewCipher(wrappingKey)
+	sealed, err := util.Encrypt(kek, wrappingKey) // nonce || ciphertext+tag
 	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, err
 	}
 
-	header := make([]byte, 0, len(kekWrappedV2Magic)+len(salt))
-	header = append(header, kekWrappedV2Magic...)
-	header = append(header, salt...)
-	sealed := gcm.Seal(append(header, nonce...), nonce, kek, nil) // magic || salt || nonce || ciphertext+tag
-	return []byte(base64.StdEncoding.EncodeToString(sealed)), nil
+	wrapped := slices.Concat(kekWrappedV2Magic, salt, sealed)
+	return []byte(base64.StdEncoding.EncodeToString(wrapped)), nil
 }
 
 // unwrapKEK decrypts a wrapped KEK produced by wrapKEK. Two on-disk formats
@@ -414,20 +408,7 @@ func (km *SSES3KeyManager) unwrapKEK(wrapped []byte) (kek []byte, isV2 bool, err
 	if err != nil {
 		return nil, false, err
 	}
-	block, err := aes.NewCipher(wrappingKey)
-	if err != nil {
-		return nil, false, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, false, err
-	}
-	if len(payload) < gcm.NonceSize() {
-		return nil, false, fmt.Errorf("wrapped KEK too short")
-	}
-	nonce := payload[:gcm.NonceSize()]
-	ciphertext := payload[gcm.NonceSize():]
-	out, err := gcm.Open(nil, nonce, ciphertext, nil)
+	out, err := util.Decrypt(payload, wrappingKey) // payload is nonce || ciphertext+tag
 	if err != nil {
 		return nil, false, err
 	}
@@ -708,7 +689,9 @@ func (km *SSES3KeyManager) GetOrCreateKey(keyID string) (*SSES3Key, error) {
 	return GenerateSSES3Key()
 }
 
-// encryptKeyWithSuperKey encrypts a DEK using the super key (KEK) with AES-GCM
+// encryptKeyWithSuperKey encrypts a DEK using the super key (KEK) with AES-GCM.
+// It returns ciphertext+tag and the 12-byte nonce separately, as they are
+// stored in the object metadata.
 func (km *SSES3KeyManager) encryptKeyWithSuperKey(dek []byte) ([]byte, []byte, error) {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
@@ -717,26 +700,11 @@ func (km *SSES3KeyManager) encryptKeyWithSuperKey(dek []byte) ([]byte, []byte, e
 		return nil, nil, fmt.Errorf("SSE-S3 encryption is not configured — set %s or %s in security.toml", sseS3KEKConfigKey, sseS3KeyConfigKey)
 	}
 
-	block, err := aes.NewCipher(km.superKey)
+	sealed, err := util.Encrypt(dek, km.superKey) // nonce || ciphertext+tag
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create cipher: %w", err)
+		return nil, nil, fmt.Errorf("AES-GCM with the super key: %w", err)
 	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	// Generate random nonce
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, nil, fmt.Errorf("failed to generate nonce: %w", err)
-	}
-
-	// Encrypt the DEK
-	encryptedDEK := gcm.Seal(nil, nonce, dek, nil)
-
-	return encryptedDEK, nonce, nil
+	return sealed[gcmNonceSize:], sealed[:gcmNonceSize:gcmNonceSize], nil
 }
 
 // decryptKeyWithSuperKey decrypts a DEK using the super key (KEK) with AES-GCM
@@ -748,22 +716,11 @@ func (km *SSES3KeyManager) decryptKeyWithSuperKey(encryptedDEK, nonce []byte) ([
 		return nil, fmt.Errorf("SSE-S3 decryption is not configured — set %s or %s in security.toml", sseS3KEKConfigKey, sseS3KeyConfigKey)
 	}
 
-	block, err := aes.NewCipher(km.superKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create cipher: %w", err)
+	if len(nonce) != gcmNonceSize {
+		return nil, fmt.Errorf("invalid nonce size: expected %d, got %d", gcmNonceSize, len(nonce))
 	}
 
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GCM: %w", err)
-	}
-
-	if len(nonce) != gcm.NonceSize() {
-		return nil, fmt.Errorf("invalid nonce size: expected %d, got %d", gcm.NonceSize(), len(nonce))
-	}
-
-	// Decrypt the DEK
-	dek, err := gcm.Open(nil, nonce, encryptedDEK, nil)
+	dek, err := util.Decrypt(slices.Concat(nonce, encryptedDEK), km.superKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
