@@ -579,6 +579,29 @@ async fn a_write_that_raced_the_column_add_fills_the_column() {
     assert_eq!(fixture.flat(latest, filter, 400, &v).await.len(), 4);
 }
 
+/// A write names no version: one at a version from before a key's column
+/// add would commit rows without the column.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_write_at_an_older_version_is_refused() {
+    let fixture = Fixture::new().await;
+    fixture
+        .put((0..10).map(|i| row(i, author(i))).collect())
+        .await;
+    let before = fixture.dataset(0).await.version().version;
+    fixture.index_author().await;
+    let mut table = fixture.table.clone();
+    table.version = before;
+    let refused = fixture
+        .server
+        .put_vectors(Request::new(pb::PutVectorsRequest {
+            table: Some(table),
+            vectors: (10..20).map(|i| row(i, author(i))).collect(),
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), tonic::Code::InvalidArgument);
+}
+
 /// Two writes updating the same keys raced the column add, and the first
 /// one's fill commits last: each write's rows get the values of its own
 /// metadata, not the ones derived before it or from the other write.
