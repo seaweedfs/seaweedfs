@@ -61,6 +61,7 @@ type S3TablesTablesData struct {
 	Namespace    string                  `json:"namespace"`
 	Tables       []s3tables.TableSummary `json:"tables"`
 	TotalTables  int                     `json:"total_tables"`
+	Truncated    bool                    `json:"truncated,omitempty"`
 	// ObservedRows holds what a worker last counted, by table name, for formats
 	// this server cannot read itself. A table nothing has looked at is absent
 	// rather than zero: those are different facts.
@@ -273,6 +274,7 @@ func (s *AdminServer) GetS3TablesTablesData(ctx context.Context, bucketArn, name
 		Namespace:    namespace,
 		Tables:       resp.Tables,
 		TotalTables:  len(resp.Tables),
+		Truncated:    resp.ContinuationToken != "",
 		LastUpdated:  time.Now(),
 	}
 	data.ObservedRows = s.observedRowCounts(bucketArn, ns, resp.Tables)
@@ -914,12 +916,63 @@ func (s *AdminServer) DeleteS3TablesNamespace(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	req := &s3tables.DeleteNamespaceRequest{TableBucketARN: bucketArn, Namespace: namespaceParts}
-	if err := s.executeS3TablesOperation(r.Context(), "DeleteNamespace", req, nil); err != nil {
-		writeS3TablesError(w, err)
+	force := r.URL.Query().Get("force") == "true"
+	var deletedTables int
+	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		var err error
+		deletedTables, err = deleteS3TablesNamespace(r.Context(), s.s3TablesManager, s3tables.NewManagerClient(client), bucketArn, namespaceParts, force)
+		return err
+	})
+	if err != nil {
+		message := parseS3TablesErrorMessage(err)
+		if deletedTables > 0 {
+			message = fmt.Sprintf("deleted %d tables, then: %s", deletedTables, message)
+		}
+		writeJSONError(w, s3TablesErrorStatus(err), message)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Namespace deleted"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Namespace deleted", "deleted_tables": deletedTables})
+}
+
+// deleteS3TablesNamespace deletes the namespace; with force it first deletes
+// every table in it, returning how many tables it deleted.
+func deleteS3TablesNamespace(ctx context.Context, manager *s3tables.Manager, client s3tables.FilerClient, bucketArn string, namespace []string, force bool) (int, error) {
+	deleted := 0
+	if force {
+		var names []string
+		token := ""
+		for {
+			var resp s3tables.ListTablesResponse
+			req := &s3tables.ListTablesRequest{TableBucketARN: bucketArn, Namespace: namespace, ContinuationToken: token}
+			if err := manager.Execute(ctx, client, "ListTables", req, &resp, s3_constants.AccountAdminId); err != nil {
+				return deleted, err
+			}
+			for _, table := range resp.Tables {
+				names = append(names, table.Name)
+			}
+			if resp.ContinuationToken == "" || resp.ContinuationToken == token {
+				break
+			}
+			token = resp.ContinuationToken
+		}
+		for _, name := range names {
+			req := &s3tables.DeleteTableRequest{TableBucketARN: bucketArn, Namespace: namespace, Name: name}
+			err := manager.Execute(ctx, client, "DeleteTable", req, nil, s3_constants.AccountAdminId)
+			var s3Err *s3tables.S3TablesError
+			if errors.As(err, &s3Err) && s3Err.Type == s3tables.ErrCodeNoSuchTable {
+				continue
+			}
+			if err != nil {
+				return deleted, err
+			}
+			deleted++
+		}
+	}
+	req := &s3tables.DeleteNamespaceRequest{TableBucketARN: bucketArn, Namespace: namespace}
+	if err := manager.Execute(ctx, client, "DeleteNamespace", req, nil, s3_constants.AccountAdminId); err != nil {
+		return deleted, err
+	}
+	return deleted, nil
 }
 
 func (s *AdminServer) ListS3TablesTablesAPI(w http.ResponseWriter, r *http.Request) {

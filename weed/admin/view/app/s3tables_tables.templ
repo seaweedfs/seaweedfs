@@ -86,13 +86,22 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 					<div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
 						<h6 class="m-0 font-weight-bold text-primary">
 							<i class="bi bi-table me-2"></i>Tables
+							if data.Truncated {
+								<span class="text-muted small ms-2">{ fmt.Sprintf("showing the first %d; select all covers only these", data.TotalTables) }</span>
+							}
 						</h6>
+						<button type="button" class="btn btn-sm btn-outline-danger" id="s3tablesDeleteSelectedBtn" disabled title="Delete the selected tables">
+							<i class="bi bi-trash me-1"></i>Delete Selected (<span id="s3tablesSelectedCount">0</span>)
+						</button>
 					</div>
 					<div class="card-body">
 						<div class="table-responsive">
 							<table class="table table-hover" width="100%" cellspacing="0" id="s3tablesTablesTable">
 								<thead>
 									<tr>
+										<th>
+											<input class="form-check-input" type="checkbox" id="s3tablesSelectAllTables" title="Select all displayed tables" aria-label="Select all displayed tables"/>
+										</th>
 										<th>Name</th>
 										<th>Format</th>
 										<th>Rows</th>
@@ -108,6 +117,9 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 									for _, table := range data.Tables {
 										<tr>
 											{{ tableName := table.Name }}
+											<td>
+												<input class="form-check-input s3tables-select-table" type="checkbox" value={ tableName } aria-label={ "Select table " + tableName }/>
+											</td>
 											<td>{ tableName }</td>
 											<td>
 												<span class={ formatBadgeClass(table.Format) } title={ formatBadgeTitle(table.Format) }>{ formatLabel(table.Format) }</span>
@@ -162,7 +174,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 									}
 									if len(data.Tables) == 0 {
 										<tr>
-											<td colspan="9" class="text-center text-muted py-4">
+											<td colspan="10" class="text-center text-muted py-4">
 												<i class="bi bi-table icon-3x mb-3 text-muted"></i>
 												<div>
 													<h5>No tables found</h5>
@@ -248,6 +260,28 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 				<div class="modal-footer">
 					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
 					<button type="button" class="btn btn-danger" onclick="deleteS3TablesTable()">
+						<i class="bi bi-trash me-1"></i>Delete
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+	<div class="modal fade" id="deleteS3TablesSelectedModal" tabindex="-1" aria-labelledby="deleteS3TablesSelectedModalLabel" aria-hidden="true">
+		<div class="modal-dialog">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="deleteS3TablesSelectedModalLabel">
+						<i class="bi bi-exclamation-triangle me-2 text-warning"></i>Delete Tables
+					</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<p>Are you sure you want to delete these <strong id="deleteS3TablesSelectedCount"></strong> tables?</p>
+					<ul class="small mb-0" id="deleteS3TablesSelectedNames"></ul>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+					<button type="button" class="btn btn-danger" id="deleteS3TablesSelectedConfirm" onclick="deleteSelectedS3TablesTables()">
 						<i class="bi bi-trash me-1"></i>Delete
 					</button>
 				</div>

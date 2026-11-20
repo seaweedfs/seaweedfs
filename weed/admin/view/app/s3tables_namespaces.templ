@@ -184,6 +184,10 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 				</div>
 				<div class="modal-body">
 					<p>Are you sure you want to delete the namespace <strong id="deleteS3TablesNamespaceName"></strong>?</p>
+					<div class="form-check">
+						<input class="form-check-input" type="checkbox" id="deleteS3TablesNamespaceForce"/>
+						<label class="form-check-label" for="deleteS3TablesNamespaceForce">Also delete all tables in this namespace</label>
+					</div>
 				</div>
 				<div class="modal-footer">
 					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
@@ -291,6 +295,7 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 				button.addEventListener('click', function() {
 					document.getElementById('deleteS3TablesNamespaceName').textContent = this.dataset.namespaceName || '';
 					document.getElementById('deleteS3TablesNamespaceModal').dataset.namespaceName = this.dataset.namespaceName || '';
+					document.getElementById('deleteS3TablesNamespaceForce').checked = false;
 					s3tablesNamespaceDeleteModalInstance.show();
 				});
 			});
@@ -339,7 +344,11 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 				if (csrfToken) {
 					requestOptions.headers = { 'X-CSRF-Token': csrfToken };
 				}
-				const response = await fetch((window.__BASE_PATH__ || '') + `/api/s3tables/namespaces?bucket=${encodeURIComponent(dataBucketArn)}&name=${encodeURIComponent(namespace)}`, requestOptions);
+				const query = new URLSearchParams({ bucket: dataBucketArn, name: namespace });
+				if (document.getElementById('deleteS3TablesNamespaceForce').checked) {
+					query.set('force', 'true');
+				}
+				const response = await fetch((window.__BASE_PATH__ || '') + `/api/s3tables/namespaces?${query.toString()}`, requestOptions);
 				if (!response.ok) {
 					const errorMessage = await readErrorMessage(response, 'Failed to delete namespace');
 					alert(errorMessage);

@@ -11,6 +11,8 @@ function s3tBasePath(path) {
 let s3tablesBucketDeleteModal = null;
 let s3tablesBucketPolicyModal = null;
 let s3tablesTableDeleteModal = null;
+let s3tablesSelectedDeleteModal = null;
+let s3tablesBulkDelete = null;
 let s3tablesTablePolicyModal = null;
 let s3tablesTagsModal = null;
 let icebergTableDeleteModal = null;
@@ -277,6 +279,8 @@ function initS3TablesTables() {
             s3tablesTableDeleteModal.show();
         });
     });
+
+    initS3TablesTableSelection();
 
     document.querySelectorAll('.s3tables-table-policy-btn').forEach(button => {
         button.addEventListener('click', function () {
@@ -818,6 +822,101 @@ async function deleteS3TablesTable() {
         location.reload();
     } catch (error) {
         alert('Failed to delete table: ' + error.message);
+    }
+}
+
+function selectedS3TablesTableNames() {
+    return Array.from(document.querySelectorAll('.s3tables-select-table:checked')).map(box => box.value);
+}
+
+function initS3TablesTableSelection() {
+    const selectAll = document.getElementById('s3tablesSelectAllTables');
+    const deleteSelected = document.getElementById('s3tablesDeleteSelectedBtn');
+    if (!selectAll || !deleteSelected) return;
+    const boxes = Array.from(document.querySelectorAll('.s3tables-select-table'));
+    const refresh = () => {
+        const selected = boxes.filter(box => box.checked).length;
+        document.getElementById('s3tablesSelectedCount').textContent = selected;
+        deleteSelected.disabled = selected === 0;
+        selectAll.checked = boxes.length > 0 && selected === boxes.length;
+        selectAll.indeterminate = selected > 0 && selected < boxes.length;
+    };
+    // Browsers restore checkbox state on reload, which would keep a
+    // selection pointing at whatever rows now sit in the deleted ones' places.
+    boxes.forEach(box => { box.checked = false; });
+    selectAll.checked = false;
+    selectAll.disabled = boxes.length === 0;
+    selectAll.addEventListener('change', () => {
+        boxes.forEach(box => { box.checked = selectAll.checked; });
+        refresh();
+    });
+    boxes.forEach(box => box.addEventListener('change', refresh));
+    document.getElementById('deleteS3TablesSelectedConfirm').disabled = false;
+    const selectedModalEl = document.getElementById('deleteS3TablesSelectedModal');
+    s3tablesSelectedDeleteModal = new bootstrap.Modal(selectedModalEl);
+    selectedModalEl.addEventListener('hide.bs.modal', () => {
+        if (s3tablesBulkDelete) s3tablesBulkDelete.cancelled = true;
+    });
+    deleteSelected.addEventListener('click', () => {
+        const names = selectedS3TablesTableNames();
+        if (names.length === 0) return;
+        document.getElementById('deleteS3TablesSelectedCount').textContent = names.length;
+        const list = document.getElementById('deleteS3TablesSelectedNames');
+        list.replaceChildren(...names.map(name => {
+            const item = document.createElement('li');
+            item.textContent = name;
+            return item;
+        }));
+        s3tablesSelectedDeleteModal.show();
+    });
+    refresh();
+}
+
+async function deleteSelectedS3TablesTables() {
+    const dataContainer = document.getElementById('s3tables-tables-content');
+    const names = selectedS3TablesTableNames();
+    if (names.length === 0) return;
+    const confirmBtn = document.getElementById('deleteS3TablesSelectedConfirm');
+    confirmBtn.disabled = true;
+    const failures = [];
+    const run = { cancelled: false };
+    s3tablesBulkDelete = run;
+    let attempted = 0;
+    for (const name of names) {
+        if (run.cancelled) break;
+        attempted++;
+        const query = new URLSearchParams({
+            bucket: dataContainer.dataset.bucketArn || '',
+            namespace: dataContainer.dataset.namespace || '',
+            name: name
+        });
+        try {
+            const response = await fetch(s3tBasePath(`/api/s3tables/tables?${query.toString()}`), { method: 'DELETE', headers: s3tWriteHeaders() });
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                failures.push(`${name}: ${data.error || response.status}`);
+            }
+        } catch (error) {
+            failures.push(`${name}: ${error.message}`);
+        }
+    }
+    s3tablesBulkDelete = null;
+    s3tablesSelectedDeleteModal.hide();
+    const deleted = attempted - failures.length;
+    let message = `Deleted ${deleted} of ${names.length} tables`;
+    if (attempted < names.length) {
+        message += ', stopped by Cancel';
+    }
+    if (failures.length > 0) {
+        message += `. Failed: ${failures.join('; ')}`;
+    }
+    alert(message);
+    // alert() is a non-blocking modal here; reload once it is closed.
+    const alertModal = document.getElementById('globalAlertModal');
+    if (alertModal) {
+        alertModal.addEventListener('hidden.bs.modal', () => location.reload(), { once: true });
+    } else {
+        location.reload();
     }
 }
 
