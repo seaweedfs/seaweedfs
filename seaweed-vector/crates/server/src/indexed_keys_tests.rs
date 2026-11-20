@@ -610,4 +610,18 @@ async fn a_write_that_raced_the_column_add_derives_its_updated_rows() {
             "{name}"
         );
     }
+    let mut got = fixture
+        .server
+        .get_vectors(Request::new(pb::GetVectorsRequest {
+            table: Some(fixture.table.clone()),
+            keys: keys.clone(),
+            return_data: true,
+            return_metadata: true,
+        }))
+        .await
+        .unwrap()
+        .into_inner()
+        .vectors;
+    got.sort_by_key(|v| v.key[1..].parse::<usize>().unwrap());
+    assert_eq!(got, rows("bob"));
 }
