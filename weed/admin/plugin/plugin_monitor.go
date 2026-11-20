@@ -251,14 +251,22 @@ func (r *Plugin) expireStaleJobs(now time.Time) int {
 // Failing the record alone leaves the worker running the job and its slot
 // taken, which is what kept a stuck job's slot out of reach for days.
 func (r *Plugin) expireActiveJob(snap activeJobSnapshot, reason string, now time.Time) {
-	r.handleJobCompleted(&plugin_pb.JobCompleted{
+	r.expireActiveJobIf(snap, reason, now, nil)
+}
+
+// expireActiveJobIf is expireActiveJob for the record accept takes; see
+// handleJobCompletedIf. Nothing is failed or canceled otherwise.
+func (r *Plugin) expireActiveJobIf(snap activeJobSnapshot, reason string, now time.Time, accept func(*TrackedJob) bool) {
+	if !r.handleJobCompletedIf(&plugin_pb.JobCompleted{
 		JobId:        snap.jobID,
 		JobType:      snap.jobType,
 		RequestId:    snap.requestID,
 		Success:      false,
 		ErrorMessage: reason,
 		CompletedAt:  timestamppb.New(now),
-	})
+	}, accept) && accept != nil {
+		return
+	}
 	// A retry reuses the job id, so the request id is what names this attempt.
 	target := snap.requestID
 	if target == "" {
@@ -1089,8 +1097,13 @@ func (r *Plugin) markJobCanceled(job *plugin_pb.JobSpec, reason string) {
 }
 
 func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *TrackedJob {
+	tracked, _ := r.trackExecutionCompletionIf(completed, nil)
+	return tracked
+}
+
+func (r *Plugin) trackExecutionCompletionIf(completed *plugin_pb.JobCompleted, accept func(*TrackedJob) bool) (*TrackedJob, bool) {
 	if completed == nil || strings.TrimSpace(completed.JobId) == "" {
-		return nil
+		return nil, accept == nil
 	}
 
 	now := time.Now().UTC()
@@ -1100,6 +1113,10 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *Tr
 
 	r.jobsMu.Lock()
 	tracked := r.jobs[completed.JobId]
+	if accept != nil && !accept(tracked) {
+		r.jobsMu.Unlock()
+		return nil, false
+	}
 	if tracked == nil {
 		tracked = &TrackedJob{
 			JobID:     completed.JobId,
@@ -1182,7 +1199,7 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *Tr
 		OccurredAt: timeToPtr(now),
 	})
 
-	return &clone
+	return &clone, true
 }
 
 func (r *Plugin) trackWorkerActivities(jobType, jobID, requestID, workerID string, events []*plugin_pb.ActivityEvent) {

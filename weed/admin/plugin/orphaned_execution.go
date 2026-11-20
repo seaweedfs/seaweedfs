@@ -89,7 +89,7 @@ func (r *Plugin) failExecutionsMissingFromHeartbeat(session *streamSession, hear
 	}
 }
 
-// restoredExecutionState is a job a previous admin process had running on a
+// restoredExecutionState is a job a previous admin process had sent to a
 // worker. This process never dispatched it, so no pendingExecution entry
 // covers it and only the stale sweep would otherwise end it.
 type restoredExecutionState struct {
@@ -98,14 +98,16 @@ type restoredExecutionState struct {
 	misses    int
 }
 
-// trackRestoredExecution remembers an active job loaded at startup that
-// names its worker, so the worker's heartbeats can confirm or disown it.
+// trackRestoredExecution remembers an active job loaded at startup that was
+// already sent to its worker, so the worker's heartbeats can confirm or
+// disown it. A job still queued has a worker bound but no request yet, and
+// no worker would list it.
 func (r *Plugin) trackRestoredExecution(job *TrackedJob) {
-	if job == nil || !isActiveTrackedJobState(job.State) {
+	if job == nil || !isActiveTrackedJobState(job.State) || isQueuedTrackedJobState(job.State) {
 		return
 	}
 	workerID := strings.TrimSpace(job.WorkerID)
-	if workerID == "" {
+	if workerID == "" || strings.TrimSpace(job.RequestID) == "" {
 		return
 	}
 	r.restoredExecutionsMu.Lock()
@@ -113,13 +115,22 @@ func (r *Plugin) trackRestoredExecution(job *TrackedJob) {
 	r.restoredExecutionsMu.Unlock()
 }
 
+func isQueuedTrackedJobState(state string) bool {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "pending", "job_state_pending":
+		return true
+	}
+	return false
+}
+
 // failRestoredJobsMissingFromHeartbeat fails the restored jobs of the
-// heartbeat's worker that it does not list. A worker drops the jobs of an
-// admin stream that closed, so after an admin restart such a job is dead,
-// yet its record would block dedupe and scheduling of its job type until the
-// stale timeout. A restored job the worker lists is left to adoption and its
-// progress reports; one that was dispatched again or ended meanwhile is
-// left alone.
+// heartbeat's worker that it leaves out of two itemized heartbeats in a row.
+// A worker drops the jobs of an admin stream that closed, and a job it kept
+// can no longer report its completion, so after an admin restart such a
+// record would block dedupe and scheduling of its job type until the stale
+// timeout. A listed job only resets its count: it can still be dropped
+// later. The tracker goes once the job is failed here or found no longer to
+// be the restored attempt.
 func (r *Plugin) failRestoredJobsMissingFromHeartbeat(workerID string, heartbeat *plugin_pb.WorkerHeartbeat) {
 	if heartbeat == nil {
 		return
@@ -144,8 +155,8 @@ func (r *Plugin) failRestoredJobsMissingFromHeartbeat(workerID string, heartbeat
 		if restored.workerID != workerID {
 			continue
 		}
-		if _, ok := listed[jobID]; ok {
-			delete(r.restoredExecutions, jobID)
+		if _, ok := listed[strings.TrimSpace(jobID)]; ok {
+			restored.misses = 0
 			continue
 		}
 		if !itemizesAll {
@@ -162,12 +173,15 @@ func (r *Plugin) failRestoredJobsMissingFromHeartbeat(workerID string, heartbeat
 
 	now := time.Now().UTC()
 	for _, c := range missing {
+		isRestoredAttempt := func(job *TrackedJob) bool {
+			return job != nil && isActiveTrackedJobState(job.State) &&
+				job.RequestID == c.requestID && strings.TrimSpace(job.WorkerID) == workerID
+		}
 		r.jobsMu.RLock()
 		job := r.jobs[c.jobID]
 		var snap activeJobSnapshot
-		stillRestored := job != nil && isActiveTrackedJobState(job.State) &&
-			job.RequestID == c.requestID && strings.TrimSpace(job.WorkerID) == workerID
-		if stillRestored {
+		current := isRestoredAttempt(job)
+		if current {
 			snap = activeJobSnapshot{
 				jobID:      job.JobID,
 				jobType:    job.JobType,
@@ -177,11 +191,13 @@ func (r *Plugin) failRestoredJobsMissingFromHeartbeat(workerID string, heartbeat
 			}
 		}
 		r.jobsMu.RUnlock()
-		if !stillRestored {
+		if !current {
 			continue
 		}
 		reason := fmt.Sprintf("worker %s no longer runs job %s after the admin restarted", workerID, c.jobID)
 		glog.Warningf("Plugin failing restored %s job: %s", snap.jobType, reason)
-		go r.expireActiveJob(snap, reason, now)
+		// the record may change before the expiry takes the lock, so the
+		// expiry judges it again there
+		go r.expireActiveJobIf(snap, reason, now, isRestoredAttempt)
 	}
 }

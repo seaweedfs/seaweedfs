@@ -1478,21 +1478,31 @@ func (r *Plugin) safeSendDetectionComplete(requestID string, message *plugin_pb.
 }
 
 func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted) {
+	r.handleJobCompletedIf(completed, nil)
+}
+
+// handleJobCompletedIf records the completion only when accept, judged under
+// the jobs lock that applies it, takes the tracked record (nil when the job
+// is untracked). A nil accept takes every completion.
+func (r *Plugin) handleJobCompletedIf(completed *plugin_pb.JobCompleted, accept func(*TrackedJob) bool) bool {
 	if completed == nil || completed.JobType == "" {
-		return
+		return false
 	}
 
-	if completed.RequestId != "" {
+	if completed.RequestId != "" && accept == nil {
 		r.safeSendJobCompleted(completed.RequestId, completed)
 	}
 	r.jobsMu.RLock()
 	ended := attemptEnded(r.jobs[completed.JobId], completed.RequestId)
 	r.jobsMu.RUnlock()
 	if ended {
-		return
+		return false
 	}
 
-	tracked := r.trackExecutionCompletion(completed)
+	tracked, accepted := r.trackExecutionCompletionIf(completed, accept)
+	if !accepted {
+		return false
+	}
 	workerID := ""
 	if tracked != nil && tracked.WorkerID != "" {
 		workerID = tracked.WorkerID
@@ -1534,6 +1544,7 @@ func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted) {
 	if err := r.store.AppendRunRecord(completed.JobType, record); err != nil {
 		glog.Warningf("Plugin failed to append run record for %s: %v", completed.JobType, err)
 	}
+	return true
 }
 
 func (r *Plugin) safeSendJobCompleted(requestID string, completed *plugin_pb.JobCompleted) {
