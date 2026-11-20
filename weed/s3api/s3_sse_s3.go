@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	mathrand "math/rand"
 	"net/http"
 	"os"
 	"slices"
@@ -90,7 +89,7 @@ func GenerateSSES3Key() (*SSES3Key, error) {
 	}
 
 	// Generate a key ID for tracking
-	keyID := fmt.Sprintf("sse-s3-key-%d", mathrand.Int63())
+	keyID := fmt.Sprintf("sse-s3-key-%d", util.RandomUint64())
 
 	return &SSES3Key{
 		Key:       key,
