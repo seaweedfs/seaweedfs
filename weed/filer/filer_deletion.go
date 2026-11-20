@@ -70,6 +70,8 @@ type DeletionRetryItem struct {
 	ledgerEpoch uint64 // pendingDeletions epoch when the item was queued; expiry forgets only a matching epoch
 	heapIndex   int    // index in the heap (for heap.Interface)
 	inFlight    bool   // true when item is being processed, prevents duplicate additions
+	manifest    *filer_pb.FileChunk
+	fsync       bool
 }
 
 // retryHeap implements heap.Interface for DeletionRetryItem
@@ -166,6 +168,10 @@ func calculateBackoff(retryCount int) time.Duration {
 // AddOrUpdate adds a new failed deletion or updates an existing one
 // Time complexity: O(log N) for insertion/update
 func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string, ledgerEpoch uint64) {
+	q.addOrUpdate(fileId, errorMsg, ledgerEpoch, nil, false)
+}
+
+func (q *DeletionRetryQueue) addOrUpdate(fileId string, errorMsg string, ledgerEpoch uint64, manifest *filer_pb.FileChunk, fsync bool) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
@@ -199,6 +205,8 @@ func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string, ledgerE
 		LastError:   errorMsg,
 		ledgerEpoch: ledgerEpoch,
 		inFlight:    false,
+		manifest:    manifest,
+		fsync:       fsync,
 	}
 	heap.Push(&q.heap, item)
 	q.itemIndex[fileId] = item
@@ -587,6 +595,7 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 			if totalProcessed > 0 {
 				glog.V(1).Infof("retried deletion of %d files", totalProcessed)
 			}
+			f.processManifestRetries(context.Background())
 		}
 	}
 }
@@ -669,14 +678,52 @@ func (f *Filer) doDeleteChunks(ctx context.Context, chunks []*filer_pb.FileChunk
 			f.queueDeletions(fsync, chunk.GetFileIdString())
 			continue
 		}
-		dataChunks, manifestResolveErr := ResolveOneChunkManifest(ctx, f.MasterClient.GetLookupFileIdFunction(), chunk, f.MasterClient)
-		if manifestResolveErr != nil {
-			glog.V(0).InfofCtx(ctx, "failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
+		// The manifest needle is the only record of its sub-chunks, so it
+		// stays until they are queued.
+		if err := f.deleteManifestChunks(ctx, chunk, fsync); err != nil {
+			glog.WarningfCtx(ctx, "failed to resolve manifest %s, will retry: %v", chunk.GetFileIdString(), err)
+			f.manifestRetries().addOrUpdate(chunk.GetFileIdString(), err.Error(), 0, chunk, fsync)
 		}
-		for _, dChunk := range dataChunks {
-			f.queueDeletions(fsync, dChunk.GetFileIdString())
+	}
+}
+
+func (f *Filer) deleteManifestChunks(ctx context.Context, manifest *filer_pb.FileChunk, fsync bool) error {
+	dataChunks, err := ResolveOneChunkManifest(ctx, f.MasterClient.GetLookupFileIdFunction(), manifest, f.MasterClient)
+	if err != nil {
+		return err
+	}
+	f.doDeleteChunks(ctx, dataChunks, fsync)
+	f.queueDeletions(fsync, manifest.GetFileIdString())
+	return nil
+}
+
+func (f *Filer) manifestRetries() *DeletionRetryQueue {
+	f.manifestRetryOnce.Do(func() {
+		f.manifestRetryQueue = NewDeletionRetryQueue()
+	})
+	return f.manifestRetryQueue
+}
+
+// processManifestRetries resolves manifests that failed to resolve on delete.
+// One that never resolves within MaxRetryAttempts is deleted alone, leaving
+// its sub-chunks to volume.fsck.
+func (f *Filer) processManifestRetries(ctx context.Context) {
+	q := f.manifestRetries()
+	for {
+		ready, expired := q.GetReadyItems(DeletionRetryBatchSize)
+		for _, item := range expired {
+			f.queueDeletions(item.fsync, item.FileId)
 		}
-		f.queueDeletions(fsync, chunk.GetFileIdString())
+		if len(ready) == 0 {
+			return
+		}
+		for _, item := range ready {
+			if err := f.deleteManifestChunks(ctx, item.manifest, item.fsync); err != nil {
+				q.RequeueForRetry(item, err.Error())
+			} else {
+				q.Remove(item)
+			}
+		}
 	}
 }
 
