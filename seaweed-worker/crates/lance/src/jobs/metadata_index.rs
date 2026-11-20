@@ -81,7 +81,10 @@ pub async fn pending(
                 // Rows a write left NULL (one that raced the key's add and
                 // stopped before fixing them) wait for no threshold: queries
                 // through the key miss them until they are derived again.
+                // Nor does the first segment of a key that went ready on an
+                // empty table.
                 if unindexed < min_unindexed_rows
+                    && !segments.is_empty()
                     && !has_nulls(dataset, &key.column, &pending).await?
                 {
                     continue;
