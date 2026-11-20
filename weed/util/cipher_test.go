@@ -150,13 +150,32 @@ func TestGCMFallsBackForOtherAESBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	native, err := cipher.NewGCMWithRandomNonce(block)
-	if err != nil {
-		t.Fatal(err)
+	if fallback.NonceSize() != 0 || fallback.Overhead() != 12+16 {
+		t.Fatalf("fallback NonceSize/Overhead %d/%d, want 0/28", fallback.NonceSize(), fallback.Overhead())
 	}
-	if fallback.NonceSize() != native.NonceSize() || fallback.Overhead() != native.Overhead() {
-		t.Fatalf("fallback NonceSize/Overhead %d/%d, native %d/%d",
-			fallback.NonceSize(), fallback.Overhead(), native.NonceSize(), native.Overhead())
+
+	// A GOEXPERIMENT=boringcrypto build refuses aes.NewCipher's block too; compare
+	// there with cipher.NewGCM and the nonce in front, as Encrypt wrote it before.
+	var refSeal func(plaintext, ad []byte) []byte
+	var refOpen func(sealed, ad []byte) ([]byte, error)
+	if native, err := cipher.NewGCMWithRandomNonce(block); err == nil {
+		refSeal = func(plaintext, ad []byte) []byte { return native.Seal(nil, nil, plaintext, ad) }
+		refOpen = func(sealed, ad []byte) ([]byte, error) { return native.Open(nil, nil, sealed, ad) }
+	} else {
+		gcm, err := cipher.NewGCM(block)
+		if err != nil {
+			t.Fatal(err)
+		}
+		refSeal = func(plaintext, ad []byte) []byte {
+			nonce := make([]byte, gcm.NonceSize())
+			if _, err := rand.Read(nonce); err != nil {
+				t.Fatal(err)
+			}
+			return gcm.Seal(nonce, nonce, plaintext, ad)
+		}
+		refOpen = func(sealed, ad []byte) ([]byte, error) {
+			return gcm.Open(nil, sealed[:gcm.NonceSize()], sealed[gcm.NonceSize():], ad)
+		}
 	}
 
 	plaintext := []byte("SeaweedFS chunk")
@@ -166,11 +185,11 @@ func TestGCMFallsBackForOtherAESBlocks(t *testing.T) {
 		if !bytes.HasPrefix(sealed, prefix) {
 			t.Fatalf("fallback Seal did not append to dst")
 		}
-		if got, err := native.Open(nil, nil, sealed[len(prefix):], ad); err != nil || !bytes.Equal(got, plaintext) {
-			t.Fatalf("native Open of fallback output: %q, %v", got, err)
+		if got, err := refOpen(sealed[len(prefix):], ad); err != nil || !bytes.Equal(got, plaintext) {
+			t.Fatalf("reference Open of fallback output: %q, %v", got, err)
 		}
-		if got, err := fallback.Open(nil, nil, native.Seal(nil, nil, plaintext, ad), ad); err != nil || !bytes.Equal(got, plaintext) {
-			t.Fatalf("fallback Open of native output: %q, %v", got, err)
+		if got, err := fallback.Open(nil, nil, refSeal(plaintext, ad), ad); err != nil || !bytes.Equal(got, plaintext) {
+			t.Fatalf("fallback Open of reference output: %q, %v", got, err)
 		}
 	}
 	if _, err := fallback.Open(nil, nil, make([]byte, 5), nil); err == nil {
