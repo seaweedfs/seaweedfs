@@ -189,7 +189,7 @@ func Topics(data dash.TopicsData) templ.Component {
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\"><i class=\"bi bi-eye\"></i></button></td></tr><tr class=\"topic-details-row\" id=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, "\" title=\"View Details\"><i class=\"bi bi-eye\"></i></button></td></tr><tr class=\"topic-details-row\" id=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
