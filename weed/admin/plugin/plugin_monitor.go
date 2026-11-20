@@ -373,9 +373,6 @@ func (r *Plugin) snapshotActiveJobs() []activeJobSnapshot {
 	return out
 }
 
-// attemptEnded reports whether the job's record already closed the attempt
-// requestID names, as an expiry does while the worker is still running it.
-// That attempt's late reports must not reopen the record or log a second run.
 // reportFromOtherAttempt reports whether a progress report or completion for
 // requestID belongs to another attempt than the one the admin dispatched
 // last, such as a late report of an attempt that timed out before a retry.
@@ -384,6 +381,9 @@ func reportFromOtherAttempt(job *TrackedJob, requestID string) bool {
 	return job != nil && job.Attempt > 0 && job.RequestID != "" && requestID != "" && job.RequestID != requestID
 }
 
+// attemptEnded reports whether the job's record already closed the attempt
+// requestID names, as an expiry does while the worker is still running it.
+// That attempt's late reports must not reopen the record or log a second run.
 func attemptEnded(job *TrackedJob, requestID string) bool {
 	return job != nil && requestID != "" && job.RequestID == requestID && !isActiveTrackedJobState(job.State)
 }
