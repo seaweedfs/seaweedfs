@@ -572,6 +572,9 @@ func initMiniS3Flags() {
 	miniS3Options.allowUntrustedRemoteEndpoints = cmdMini.Flag.Bool("s3.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 	miniS3Options.allowBackslashInKey = cmdMini.Flag.Bool("s3.allowBackslashInKey", false, allowBackslashInKeyUsage)
 	miniS3Options.iamSelfServiceRequiresGrant = cmdMini.Flag.Bool("s3.iam.selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
+	miniS3Options.routedLookupTimeout = cmdMini.Flag.Duration("s3.routedLookupTimeout", defaultS3RoutedLookupTimeout, s3RoutedLookupTimeoutUsage)
+	miniS3Options.unreachableOwnerTTL = cmdMini.Flag.Duration("s3.unreachableOwnerTTL", defaultS3UnreachableOwnerTTL, s3UnreachableOwnerTTLUsage)
+	miniS3Options.volumeLookupTimeout = cmdMini.Flag.Duration("s3.volumeLookupTimeout", defaultS3VolumeLookupTimeout, s3VolumeLookupTimeoutUsage)
 	miniS3Options.preStopSeconds = cmdMini.Flag.Int("s3.preStopSeconds", 0, s3PreStopSecondsUsage)
 	// In mini mode, S3 uses the shared debug server started at line 681, not its own separate debug server
 	miniS3Options.debug = new(bool) // explicitly false

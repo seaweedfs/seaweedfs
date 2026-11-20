@@ -61,6 +61,21 @@ const s3PreStopSecondsUsage = "seconds to keep serving after SIGTERM, with /stat
 // key still collapses: a filer entry name cannot contain an empty segment.
 const allowBackslashInKeyUsage = "treat backslash as a regular object-key character instead of converting it to '/' (aws-compatible; '//' still collapses)"
 
+// The S3 gateway's filer timeouts, shared by every command that runs it. They
+// decide how long a read waits on a filer it cannot reach, e.g. one across a
+// network partition that drops packets instead of refusing connections.
+const (
+	s3RoutedLookupTimeoutUsage = "deadline for an object's metadata lookup at the key's owner filer when that owner is not the gateway's current filer; past it the read asks the next filer. 0 means no deadline"
+	s3UnreachableOwnerTTLUsage = "how long an owner filer whose read just failed is skipped by owner-first reads. Raise it (e.g. 30s) where a partition can drop packets to filers, so each owner is retried less often"
+	s3VolumeLookupTimeoutUsage = "deadline for each filer's answer to a volume location lookup before the next filer is asked"
+)
+
+const (
+	defaultS3RoutedLookupTimeout = time.Second
+	defaultS3UnreachableOwnerTTL = 2 * time.Second
+	defaultS3VolumeLookupTimeout = 5 * time.Second
+)
+
 type FilerOptions struct {
 	masters                   *pb.ServerDiscovery
 	mastersString             *string
@@ -200,6 +215,9 @@ func init() {
 	filerS3Options.allowUntrustedRemoteEndpoints = cmdFiler.Flag.Bool("s3.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 	filerS3Options.allowBackslashInKey = cmdFiler.Flag.Bool("s3.allowBackslashInKey", false, allowBackslashInKeyUsage)
 	filerS3Options.iamSelfServiceRequiresGrant = cmdFiler.Flag.Bool("s3.iam.selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
+	filerS3Options.routedLookupTimeout = cmdFiler.Flag.Duration("s3.routedLookupTimeout", defaultS3RoutedLookupTimeout, s3RoutedLookupTimeoutUsage)
+	filerS3Options.unreachableOwnerTTL = cmdFiler.Flag.Duration("s3.unreachableOwnerTTL", defaultS3UnreachableOwnerTTL, s3UnreachableOwnerTTLUsage)
+	filerS3Options.volumeLookupTimeout = cmdFiler.Flag.Duration("s3.volumeLookupTimeout", defaultS3VolumeLookupTimeout, s3VolumeLookupTimeoutUsage)
 	filerS3Options.preStopSeconds = cmdFiler.Flag.Int("s3.preStopSeconds", 0, s3PreStopSecondsUsage)
 
 	// start webdav on filer

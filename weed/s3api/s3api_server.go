@@ -88,6 +88,16 @@ type S3ApiServerOption struct {
 	// GetUser) need an explicit iam: grant instead of being allowed to every
 	// authenticated identity.
 	IamSelfServiceRequiresGrant bool
+	// RoutedLookupTimeout bounds a route-by-key entry lookup at a key owner
+	// that is not the current filer; past it the read fails over to the next
+	// filer. 0 leaves the lookup unbounded.
+	RoutedLookupTimeout time.Duration
+	// UnreachableOwnerTTL is how long a key owner whose read just failed is
+	// skipped by route-by-key reads. 0 uses defaultUnreachableOwnerTTL.
+	UnreachableOwnerTTL time.Duration
+	// VolumeLookupTimeout bounds each filer's answer to a volume location
+	// lookup before the next filer is asked. 0 uses the FilerClient default.
+	VolumeLookupTimeout time.Duration
 }
 
 // s3ChunkCacheChunkSizeMB is the assumed chunk size (in MiB) used to convert
@@ -250,6 +260,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			FilerGroup:        option.FilerGroup,
 			DiscoveryInterval: 5 * time.Minute,
 			HomeFiler:         option.HomeFiler,
+			GrpcTimeout:       option.VolumeLookupTimeout,
 		})
 		masterClient.SetOnPeerUpdateFn(filerClient.OnPeerUpdate)
 		masterClient.SetOnVolumeLocationChangeFn(filerClient.OnVolumeLocationChange)
@@ -262,7 +273,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			len(option.Filers), option.FilerGroup, option.Masters)
 	} else {
 		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter, &wdclient.FilerClientOption{
-			HomeFiler: option.HomeFiler,
+			HomeFiler:   option.HomeFiler,
+			GrpcTimeout: option.VolumeLookupTimeout,
 		})
 		glog.V(1).Infof("S3 API initialized FilerClient with %d filer(s) (no discovery)", len(option.Filers))
 	}
