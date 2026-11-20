@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,7 +29,8 @@ import (
 // available is set, as a master does while a volume server is away.
 type flakyLookupMaster struct {
 	lookupOnlyMaster
-	available atomic.Bool
+	available    atomic.Bool
+	onVolumeRead atomic.Pointer[func()]
 }
 
 func (m *flakyLookupMaster) LookupVolume(ctx context.Context, req *master_pb.LookupVolumeRequest) (*master_pb.LookupVolumeResponse, error) {
@@ -51,12 +53,15 @@ func newManifestDeletionFiler(t *testing.T, subChunks []*filer_pb.FileChunk) (*F
 	if err != nil {
 		t.Fatalf("marshal manifest: %v", err)
 	}
+	master := &flakyLookupMaster{}
 	volume := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hook := master.onVolumeRead.Load(); hook != nil {
+			(*hook)()
+		}
 		_, _ = w.Write(manifestBytes)
 	}))
 	t.Cleanup(volume.Close)
-
-	master := &flakyLookupMaster{lookupOnlyMaster: lookupOnlyMaster{volumeUrl: strings.TrimPrefix(volume.URL, "http://")}}
+	master.volumeUrl = strings.TrimPrefix(volume.URL, "http://")
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -157,5 +162,58 @@ func TestDeleteChunksDropsManifestAfterMaxRetries(t *testing.T) {
 	}
 	if f.manifestRetries().Size() != 0 {
 		t.Fatalf("manifest retry queue size %d after giving up, want 0", f.manifestRetries().Size())
+	}
+}
+
+func fsyncMarked(f *Filer, ids ...string) bool {
+	f.deletionLedgerLock.Lock()
+	defer f.deletionLedgerLock.Unlock()
+	for _, id := range ids {
+		if _, ok := f.fsyncDeletions[id]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func TestManifestRetryKeepsFsyncUpgrade(t *testing.T) {
+	f, master := newManifestDeletionFiler(t, []*filer_pb.FileChunk{{FileId: "4,02637037d6", Size: 8}})
+	manifest := &filer_pb.FileChunk{FileId: "3,01637037d6", Size: 8, IsChunkManifest: true}
+
+	f.doDeleteChunks(context.Background(), []*filer_pb.FileChunk{manifest}, false)
+	f.doDeleteChunks(context.Background(), []*filer_pb.FileChunk{manifest}, true)
+
+	master.available.Store(true)
+	makeManifestRetryDue(f, 1)
+	f.processManifestRetries(context.Background())
+	if !fsyncMarked(f, "3,01637037d6", "4,02637037d6") {
+		t.Fatal("a durable delete queued behind a non-durable one lost its fsync mark")
+	}
+}
+
+func TestManifestRetryKeepsFsyncUpgradeInFlight(t *testing.T) {
+	f, master := newManifestDeletionFiler(t, []*filer_pb.FileChunk{{FileId: "4,02637037d6", Size: 8}})
+	manifest := &filer_pb.FileChunk{FileId: "3,01637037d6", Size: 8, IsChunkManifest: true}
+
+	f.doDeleteChunks(context.Background(), []*filer_pb.FileChunk{manifest}, false)
+	makeManifestRetryDue(f, 1)
+	q := f.manifestRetries()
+	ready, _ := q.GetReadyItems(DeletionRetryBatchSize)
+	if len(ready) != 1 {
+		t.Fatalf("got %d ready manifest retries, want 1", len(ready))
+	}
+
+	master.available.Store(true)
+	var once sync.Once
+	upgrade := func() {
+		once.Do(func() { q.addOrUpdate(manifest.FileId, "durable delete", 0, manifest, true) })
+	}
+	master.onVolumeRead.Store(&upgrade)
+	f.retryManifest(context.Background(), q, ready[0])
+	if !fsyncMarked(f, "3,01637037d6", "4,02637037d6") {
+		t.Fatal("a durable delete that arrived in flight lost its fsync mark")
+	}
+	if q.Size() != 0 || len(q.itemIndex) != 0 {
+		t.Fatalf("manifest retry queue still holds %d items", len(q.itemIndex))
 	}
 }

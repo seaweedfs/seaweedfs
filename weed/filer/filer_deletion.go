@@ -181,6 +181,7 @@ func (q *DeletionRetryQueue) addOrUpdate(fileId string, errorMsg string, ledgerE
 		// The existing retry schedule should proceed.
 		// RetryCount is only incremented in RequeueForRetry when an actual retry is performed.
 		item.LastError = errorMsg
+		item.fsync = item.fsync || fsync
 		// Keep the recorded epoch while the item is in flight: an expiry or
 		// permanent outcome from that attempt must forget only the record it
 		// started with, not a newer enqueue for the same id. This also keeps
@@ -279,6 +280,22 @@ func (q *DeletionRetryQueue) Remove(item *DeletionRetryItem) {
 
 	// Item was already removed from heap by GetReadyItems, just remove from index
 	delete(q.itemIndex, item.FileId)
+}
+
+func (q *DeletionRetryQueue) fsyncOf(item *DeletionRetryItem) bool {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	return item.fsync
+}
+
+func (q *DeletionRetryQueue) removeUnlessFsyncChanged(item *DeletionRetryItem, fsync bool) bool {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	if item.fsync != fsync {
+		return false
+	}
+	delete(q.itemIndex, item.FileId)
+	return true
 }
 
 // Size returns the current size of the retry queue
@@ -718,11 +735,22 @@ func (f *Filer) processManifestRetries(ctx context.Context) {
 			return
 		}
 		for _, item := range ready {
-			if err := f.deleteManifestChunks(ctx, item.manifest, item.fsync); err != nil {
-				q.RequeueForRetry(item, err.Error())
-			} else {
-				q.Remove(item)
-			}
+			f.retryManifest(ctx, q, item)
+		}
+	}
+}
+
+// retryManifest resolves again when a durable delete of the same manifest
+// arrived while the attempt was in flight.
+func (f *Filer) retryManifest(ctx context.Context, q *DeletionRetryQueue, item *DeletionRetryItem) {
+	for {
+		fsync := q.fsyncOf(item)
+		if err := f.deleteManifestChunks(ctx, item.manifest, fsync); err != nil {
+			q.RequeueForRetry(item, err.Error())
+			return
+		}
+		if q.removeUnlessFsyncChanged(item, fsync) {
+			return
 		}
 	}
 }
