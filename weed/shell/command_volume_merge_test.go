@@ -609,15 +609,18 @@ func TestWriteMergedNeedleSizeZeroRecords(t *testing.T) {
 		record(3, "rewritten", 4*second),
 		record(3, "again", 5*second),
 		record(4, "kept", 7*second),
+		record(5, "", 21*second),
+		record(5, "", 22*second),
 	}
-	// The same writes reach replica B a moment later, two of them more than
-	// a dedup window later, and B has a delete that A missed.
+	// The same writes reach replica B a moment later, three of them more than
+	// a dedup window later, and A and B each have a delete the other missed.
 	streamB := []*needle.Needle{
 		record(1, "live", 1*second+1),
 		record(1, "", 9*second),
 		record(2, "", 10*second),
 		record(4, "kept", 7*second+1),
 		record(4, "", 20*second),
+		record(5, "", 30*second),
 	}
 
 	keys := make(mergedKeys)
@@ -641,11 +644,13 @@ func TestWriteMergedNeedleSizeZeroRecords(t *testing.T) {
 		"write 4 size 9",
 		"write 2 size 0",
 		"delete 5,0400000000 skipCookie=true",
+		"write 5 size 0",
+		"delete 5,0500000000 skipCookie=true",
 	}
 	if !reflect.DeepEqual(client.ops, want) {
 		t.Errorf("target ops:\n got %q\nwant %q", client.ops, want)
 	}
-	if got := keys.deletedCount(); got != 2 {
-		t.Errorf("deleted keys: got %d, want 2", got)
+	if got := keys.deletedCount(); got != 3 {
+		t.Errorf("deleted keys: got %d, want 3", got)
 	}
 }

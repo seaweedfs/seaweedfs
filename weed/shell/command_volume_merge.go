@@ -221,12 +221,13 @@ func (s *keyHistoryStream) Next() (*needle.Needle, bool) {
 
 // writeMergedNeedle copies one merged record to the target. A delete and an
 // empty write both arrive as a size-0 record; it is a delete when its source
-// already had a record for the key, and an empty write otherwise.
+// already had a record for the key, and an empty write otherwise. A size-0
+// record never revives a key the merged copy already deleted.
 func (keys mergedKeys) writeMergedNeedle(client volume_server_pb.VolumeServerClient, volumeId needle.VolumeId, version needle.Version, n *needle.Needle, sourceHadKey bool) error {
+	if n.Size == 0 && keys[n.Id]&mergedKeyDeleted != 0 {
+		return nil
+	}
 	if n.Size == 0 && sourceHadKey {
-		if keys[n.Id]&mergedKeyDeleted != 0 {
-			return nil
-		}
 		fid := needle.NewFileId(volumeId, uint64(n.Id), 0).String()
 		resp, err := client.BatchDelete(context.Background(), &volume_server_pb.BatchDeleteRequest{
 			FileIds:         []string{fid},
