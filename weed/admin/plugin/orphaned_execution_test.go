@@ -655,3 +655,33 @@ func TestRestoreKeepsNewerRetryOverOlderDetail(t *testing.T) {
 		})
 	}
 }
+
+// A job the list saved while still queued takes its request id from the
+// finished detail, so the ended attempt stays recognizable.
+func TestRestoreFillsRequestIDOfQueuedJobFromDetail(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	store, err := NewConfigStore(dataDir)
+	if err != nil {
+		t.Fatalf("NewConfigStore: %v", err)
+	}
+	now := time.Now().UTC()
+	const jobID = "job-queued-then-done"
+	if err := store.SaveTrackedJobs([]TrackedJob{{JobID: jobID, JobType: orphanTestJobType, State: "job_state_pending",
+		CreatedAt: timeToPtr(now.Add(-time.Hour)), UpdatedAt: timeToPtr(now.Add(-time.Minute))}}); err != nil {
+		t.Fatalf("SaveTrackedJobs: %v", err)
+	}
+	if err := store.SaveJobDetail(TrackedJob{JobID: jobID, JobType: orphanTestJobType, RequestID: "exec-a", State: StateSucceeded,
+		UpdatedAt: timeToPtr(now), CompletedAt: timeToPtr(now)}); err != nil {
+		t.Fatalf("SaveJobDetail: %v", err)
+	}
+	p, err := New(Options{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Shutdown()
+	tracked, _ := p.GetTrackedJob(jobID)
+	if tracked == nil || tracked.State != StateSucceeded || tracked.RequestID != "exec-a" {
+		t.Fatalf("want exec-a succeeded, got %+v", tracked)
+	}
+}

@@ -472,6 +472,8 @@ func mergeTerminalDetailIntoTracked(tracked *TrackedJob, detail *TrackedJob) {
 		if !detailIsNewerAttempt(tracked, detail) {
 			return
 		}
+	}
+	if detail.RequestID != "" {
 		tracked.RequestID = detail.RequestID
 	}
 	if detail.State != "" {
