@@ -266,6 +266,25 @@ def test_filter_arrays(vectors, index):
     assert matches({"$nin": [1, "2.5"]}) == ["flag", "scalar", "space"]
 
 
+def test_filter_control_characters(vectors, index):
+    chars = [chr(c) for c in [*range(0x20), *range(0x7F, 0xA0)]] + ['"', "\\"]
+    rows = {f"c{ord(ch):02x}": f"a{ch}b" for ch in chars}
+    vectors.put_vectors(**index, vectors=[{"key": key, "data": {"float32": [1, 0, 0, 0]}, "metadata": {"s": value}}
+                                         for key, value in rows.items()])
+
+    def matches(condition):
+        hits = vectors.query_vectors(**index, queryVector={"float32": [1, 0, 0, 0]}, topK=100,
+                                     filter={"s": condition})["vectors"]
+        return sorted(hit["key"] for hit in hits)
+
+    for key, value in rows.items():
+        others = sorted(k for k in rows if k != key)
+        assert matches({"$eq": value}) == [key], repr(value)
+        assert matches({"$in": [value, "other"]}) == [key], repr(value)
+        assert matches({"$ne": value}) == others, repr(value)
+        assert matches({"$nin": [value, "other"]}) == others, repr(value)
+
+
 def test_euclidean_distance(vectors, index):
     vectors.put_vectors(**index, vectors=[{"key": "p", "data": {"float32": [3, 4, 0, 0]}}])
     result = vectors.query_vectors(**index, queryVector={"float32": [0, 0, 0, 0]}, topK=1, returnDistance=True)
