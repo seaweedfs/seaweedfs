@@ -295,6 +295,7 @@ func GrpcDial(ctx context.Context, address string, waitForReady bool, opts ...gr
 	}
 
 	options = append(options,
+		grpc.WithChainUnaryInterceptor(interceptClientUnary),
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallSendMsgSize(Max_Message_Size),
 			grpc.MaxCallRecvMsgSize(Max_Message_Size),
