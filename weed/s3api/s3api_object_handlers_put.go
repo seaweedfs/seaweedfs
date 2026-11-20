@@ -1170,9 +1170,16 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		}
 	}
 	if !routed {
+		// The lock is a lease, so the filer re-checks the condition under its
+		// path lock. A suspended write's condition names the latest version,
+		// which the create's own path cannot express.
+		var lockCond *filer_pb.WriteCondition
+		if object != "" && condAltKey == "" {
+			lockCond, _ = routeWriteCondition(r, uniqueWritePath)
+		}
 		createFn := func() s3err.ErrorCode {
 			remintVersion()
-			return createUnderLock(nil)
+			return createUnderLock(lockCond)
 		}
 		if routedAmbiguous {
 			createFn = func() s3err.ErrorCode {
