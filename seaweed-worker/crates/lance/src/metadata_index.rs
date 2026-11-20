@@ -203,8 +203,6 @@ pub const DEFAULT_SEGMENT_ROWS: u64 = 1_000_000;
 /// Rows written since the last fold that are left to a direct read of the
 /// column before the next fold.
 pub const DEFAULT_MIN_UNINDEXED_ROWS: u64 = 50_000;
-/// Rows whose column one commit of [`fill_nulls`] fills at most.
-pub const FILL_ROWS_PER_COMMIT: usize = 100_000;
 
 const KEY_COLUMN: &str = "key";
 const METADATA_COLUMN: &str = "metadata";
@@ -327,88 +325,118 @@ pub async fn set_state(dataset: &mut Dataset, column: &str, state: State) -> Res
     Ok(())
 }
 
-/// Fills the indexed-key columns of rows where one is NULL, from the rows'
-/// stored metadata: rows written before the column was added, and rows a
-/// write that raced the add left empty. Only `keys` when given. A row whose
-/// column was set meanwhile is left as it is. Returns the rows filled.
-pub async fn fill_nulls(
+/// Attempts [`rederive`] makes against writes committing meanwhile.
+const REDERIVE_ATTEMPTS: usize = 10;
+
+/// Derives `columns` again for the rows of `fragments` (every fragment when
+/// None) from their stored metadata, and rewrites those whose stored value
+/// differs: NULL in the rows a write that raced the column add inserted,
+/// and the value of the old metadata in the rows it updated. Returns the
+/// rows rewritten.
+///
+/// A rewrite moves its rows to a new fragment. A write committing while
+/// the rewrite does makes it start over from that version, so it never
+/// puts values derived before the write onto the write's rows.
+pub async fn rederive(
     dataset: &mut Dataset,
     columns: &[IndexedKey],
-    keys: Option<&[String]>,
-    rows_per_commit: usize,
+    fragments: Option<&[u64]>,
 ) -> Result<u64> {
-    if columns.is_empty() || keys.is_some_and(|k| k.is_empty()) {
+    if columns.is_empty() || fragments.is_some_and(|f| f.is_empty()) {
         return Ok(0);
     }
-    let schema = Schema::from(dataset.schema());
-    let null = |prefix: &str| {
-        columns
-            .iter()
-            .map(|k| format!("{prefix}`{}` IS NULL", k.column.replace('`', "``")))
-            .collect::<Vec<_>>()
-            .join(" OR ")
-    };
-    let mut filter = format!("({})", null(""));
-    if let Some(keys) = keys {
-        let list = keys
-            .iter()
-            .map(|k| format!("'{}'", k.replace('\'', "''")))
-            .collect::<Vec<_>>()
-            .join(", ");
-        filter = format!("`{KEY_COLUMN}` in ({list}) AND {filter}");
-    }
-    let mut fields = vec![schema.field_with_name(KEY_COLUMN)?.clone()];
-    for k in columns {
-        fields.push(schema.field_with_name(&k.column)?.clone());
-    }
-    let patch_schema = Arc::new(Schema::new(fields));
-    let mut scanner = dataset.scan();
-    scanner
-        .filter(&filter)?
-        .project(&[KEY_COLUMN, METADATA_COLUMN])?;
-    let mut stream = scanner.try_into_stream().await?;
-    let mut filled = 0u64;
-    let mut pending: Vec<RecordBatch> = Vec::new();
-    let mut pending_rows = 0;
-    loop {
-        let next = stream.try_next().await?;
-        if let Some(batch) = &next {
-            if batch.num_rows() > 0 {
-                let (Some(key), Some(metadata)) = (
-                    batch.column_by_name(KEY_COLUMN),
-                    batch.column_by_name(METADATA_COLUMN),
-                ) else {
-                    bail!("the scan did not return keys and metadata");
-                };
-                let mut out = vec![key.clone()];
-                for k in columns {
-                    out.push(column_from_metadata(metadata.as_ref(), &k.key)?);
+    for _ in 0..REDERIVE_ATTEMPTS {
+        let schema = Schema::from(dataset.schema());
+        let mut fields = vec![schema.field_with_name(KEY_COLUMN)?.clone()];
+        let mut projection = vec![KEY_COLUMN.to_string(), METADATA_COLUMN.to_string()];
+        for k in columns {
+            fields.push(schema.field_with_name(&k.column)?.clone());
+            projection.push(k.column.clone());
+        }
+        let patch_schema = Arc::new(Schema::new(fields));
+        let mut scanner = dataset.scan();
+        scanner.project(&projection)?;
+        if let Some(ids) = fragments {
+            scanner.with_fragments(
+                dataset
+                    .fragments()
+                    .iter()
+                    .filter(|f| ids.contains(&f.id))
+                    .cloned()
+                    .collect(),
+            );
+        }
+        let mut stream = scanner.try_into_stream().await?;
+        let mut patches = Vec::new();
+        let mut rows = 0u64;
+        while let Some(batch) = stream.try_next().await? {
+            let (Some(key), Some(metadata)) = (
+                batch.column_by_name(KEY_COLUMN),
+                batch.column_by_name(METADATA_COLUMN),
+            ) else {
+                bail!("the scan did not return keys and metadata");
+            };
+            let mut derived = Vec::with_capacity(columns.len());
+            let mut stale = vec![false; batch.num_rows()];
+            for k in columns {
+                let want = column_from_metadata(metadata.as_ref(), &k.key)?;
+                let have = batch
+                    .column_by_name(&k.column)
+                    .ok_or_else(|| anyhow::anyhow!("the scan did not return {}", k.column))?;
+                for (row, flag) in stale.iter_mut().enumerate() {
+                    *flag |= have.is_null(row) || lists(&want, row) != lists(have, row);
                 }
-                pending_rows += batch.num_rows();
-                pending.push(RecordBatch::try_new(patch_schema.clone(), out)?);
+                derived.push(want);
             }
+            let take: Vec<u32> = (0..batch.num_rows() as u32)
+                .filter(|row| stale[*row as usize])
+                .collect();
+            if take.is_empty() {
+                continue;
+            }
+            let take = arrow_array::UInt32Array::from(take);
+            let mut out = vec![arrow_select::take::take(key.as_ref(), &take, None)?];
+            for column in &derived {
+                out.push(arrow_select::take::take(column.as_ref(), &take, None)?);
+            }
+            rows += take.len() as u64;
+            patches.push(RecordBatch::try_new(patch_schema.clone(), out)?);
         }
-        if pending_rows >= rows_per_commit || (next.is_none() && pending_rows > 0) {
-            patch(dataset, std::mem::take(&mut pending), &null("target.")).await?;
-            filled += pending_rows as u64;
-            pending_rows = 0;
+        if patches.is_empty() {
+            return Ok(0);
         }
-        if next.is_none() {
-            break;
+        let mut builder =
+            MergeInsertBuilder::try_new(Arc::new(dataset.clone()), vec![KEY_COLUMN.to_string()])?;
+        builder
+            .when_matched(WhenMatched::UpdateAll)
+            .when_not_matched(WhenNotMatched::DoNothing)
+            .conflict_retries(0);
+        match builder.try_build()?.execute_batches(patches).await {
+            Ok((patched, _)) => {
+                *dataset = Arc::unwrap_or_clone(patched);
+                return Ok(rows);
+            }
+            Err(lance::Error::TooMuchWriteContention { .. }) => dataset.checkout_latest().await?,
+            Err(e) => return Err(e.into()),
         }
     }
-    Ok(filled)
+    bail!("writes kept replacing the rows while their indexed key columns were derived")
 }
 
-/// Patches the given columns of rows matching by key where `condition` holds.
-async fn patch(dataset: &mut Dataset, batches: Vec<RecordBatch>, condition: &str) -> Result<()> {
-    let mut builder =
-        MergeInsertBuilder::try_new(Arc::new(dataset.clone()), vec![KEY_COLUMN.to_string()])?;
-    builder.when_matched(WhenMatched::update_if(dataset, condition)?);
-    builder.when_not_matched(WhenNotMatched::DoNothing);
-    let (patched, _) = builder.try_build()?.execute_batches(batches).await?;
-    *dataset = Arc::unwrap_or_clone(patched);
-    Ok(())
+/// The strings of row `row` of a `List<Utf8>` column.
+fn lists(column: &ArrayRef, row: usize) -> Option<Vec<String>> {
+    let list = column.as_any().downcast_ref::<arrow_array::ListArray>()?;
+    if list.is_null(row) {
+        return None;
+    }
+    let values = list.value(row);
+    let values = values.as_any().downcast_ref::<StringArray>()?;
+    Some(
+        values
+            .iter()
+            .map(|v| v.unwrap_or_default().to_string())
+            .collect(),
+    )
 }
 
 /// One physical segment of a key's index.
@@ -548,15 +576,22 @@ pub async fn index_fragments(
     })
 }
 
-/// Completes adding `column`: fills its rows, builds its first segments and
-/// marks it ready. Rows that are still NULL just before it is marked ready,
-/// from a write that raced the add and did not fill them itself, are filled
-/// then.
+/// Completes adding `key`: derives its column again where a write that
+/// raced the add left it NULL or stale and did not fix it itself, builds
+/// the first segments, checks the fragments written meanwhile, and marks
+/// the key ready.
 pub async fn finish(dataset: &mut Dataset, key: &IndexedKey, segment_rows: u64) -> Result<u64> {
     let columns = std::slice::from_ref(key);
-    let mut filled = fill_nulls(dataset, columns, None, FILL_ROWS_PER_COMMIT).await?;
+    let checked = dataset.fragments().iter().map(|f| f.id).max();
+    let mut fixed = rederive(dataset, columns, None).await?;
     index_fragments(dataset, &key.column, segment_rows, 0).await?;
-    filled += fill_nulls(dataset, columns, None, FILL_ROWS_PER_COMMIT).await?;
+    let since: Vec<u64> = dataset
+        .fragments()
+        .iter()
+        .map(|f| f.id)
+        .filter(|id| checked.is_none_or(|c| *id > c))
+        .collect();
+    fixed += rederive(dataset, columns, Some(&since)).await?;
     set_state(dataset, &key.column, State::Ready).await?;
     let entry = format!("{REQUEST_SCHEMA_META_PREFIX}{}", key.key);
     if dataset.schema().metadata.contains_key(&entry) {
@@ -564,26 +599,30 @@ pub async fn finish(dataset: &mut Dataset, key: &IndexedKey, segment_rows: u64) 
             .update_schema_metadata([(entry.as_str(), None::<&str>)])
             .await?;
     }
-    Ok(filled)
+    Ok(fixed)
 }
 
-/// One maintenance pass over a ready `key`: fill rows a write left NULL,
-/// then fold unindexed fragments as [`index_fragments`] does.
+/// One maintenance pass over a ready `key`: derive the column again in the
+/// fragments the index does not cover yet, then fold them as
+/// [`index_fragments`] does.
 pub async fn maintain(
     dataset: &mut Dataset,
     key: &IndexedKey,
     segment_rows: u64,
     min_unindexed_rows: u64,
 ) -> Result<(u64, Folded)> {
-    let filled = fill_nulls(
-        dataset,
-        std::slice::from_ref(key),
-        None,
-        FILL_ROWS_PER_COMMIT,
-    )
-    .await?;
+    let segments = segments(dataset, &key.column).await?;
+    let pending: Vec<u64> = unindexed(dataset, &segments)
+        .iter()
+        .map(|(id, _)| *id as u64)
+        .collect();
+    let rows = if pending.is_empty() {
+        0
+    } else {
+        rederive(dataset, std::slice::from_ref(key), Some(&pending)).await?
+    };
     let folded = index_fragments(dataset, &key.column, segment_rows, min_unindexed_rows).await?;
-    Ok((filled, folded))
+    Ok((rows, folded))
 }
 
 /// Removes `column`: off first, so queries stop using it at once, then its
@@ -728,7 +767,15 @@ pub(crate) mod tests {
         /// Rows `range` in `dataset`'s current schema, the way PutVectors
         /// writes them.
         pub(crate) fn rows(schema: &Schema, range: std::ops::Range<usize>) -> RecordBatch {
-            let metas: Vec<serde_json::Value> = range.clone().map(author).collect();
+            rows_with(schema, range, &author)
+        }
+
+        fn rows_with(
+            schema: &Schema,
+            range: std::ops::Range<usize>,
+            meta: &dyn Fn(usize) -> serde_json::Value,
+        ) -> RecordBatch {
+            let metas: Vec<serde_json::Value> = range.clone().map(meta).collect();
             let columns: Vec<ArrayRef> = schema
                 .fields()
                 .iter()
@@ -777,6 +824,14 @@ pub(crate) mod tests {
 
         /// Upserts rows `range` in the schema of the version `dataset` is at.
         pub(crate) async fn upsert(dataset: Dataset, range: std::ops::Range<usize>) -> Dataset {
+            upsert_with(dataset, range, &author).await
+        }
+
+        async fn upsert_with(
+            dataset: Dataset,
+            range: std::ops::Range<usize>,
+            meta: &dyn Fn(usize) -> serde_json::Value,
+        ) -> Dataset {
             let mut schema = base_schema();
             let fields: Vec<Field> = indexed_keys(&Schema::from(dataset.schema()))
                 .iter()
@@ -793,7 +848,7 @@ pub(crate) mod tests {
             let (dataset, _) = builder
                 .try_build()
                 .unwrap()
-                .execute_batches(vec![rows(&schema, range)])
+                .execute_batches(vec![rows_with(&schema, range, meta)])
                 .await
                 .unwrap();
             Arc::unwrap_or_clone(dataset)
@@ -865,13 +920,32 @@ pub(crate) mod tests {
             assert_eq!(nulls(&dataset, "_mk_0").await, 0);
             // Opened before the add, committed after it, never filled: a
             // writer that died between its commit and its own fill.
-            let raced = upsert(stale, 9_500..10_500).await;
+            // It moves 500 rows to a new author and inserts 500.
+            let moved = |i: usize| {
+                if i < 10_000 {
+                    serde_json::json!({"author": "moved"})
+                } else {
+                    author(i)
+                }
+            };
+            let raced = upsert_with(stale, 9_500..10_500, &moved).await;
             let raced_nulls = nulls(&raced, "_mk_0").await;
             assert!(raced_nulls >= 500, "{raced_nulls}");
+            let stale_moved = raced
+                .count_rows(Some("array_has(_mk_0, 'moved')".to_string()))
+                .await
+                .unwrap();
             dataset.checkout_latest().await.unwrap();
 
-            let filled = finish(&mut dataset, &key, 4_000).await.unwrap();
-            assert_eq!(filled as usize, raced_nulls);
+            let fixed = finish(&mut dataset, &key, 4_000).await.unwrap();
+            assert!(fixed as usize >= raced_nulls + 500 - stale_moved, "{fixed}");
+            assert_eq!(
+                dataset
+                    .count_rows(Some("array_has(_mk_0, 'moved')".to_string()))
+                    .await
+                    .unwrap(),
+                500
+            );
             assert!(
                 !dataset
                     .schema()
@@ -889,7 +963,7 @@ pub(crate) mod tests {
                     .all(|s| s.rows <= 4_000 || s.fragments.len() == 1)
             );
             assert!(unindexed(&dataset, &built).is_empty());
-            assert_eq!(agrees(&dataset, "_mk_0").await, 2_100);
+            assert_eq!(agrees(&dataset, "_mk_0").await, 2_000);
 
             // New rows wait for the threshold, then fold into the head until
             // it is full, then start a new head.
@@ -899,7 +973,7 @@ pub(crate) mod tests {
                 maintain(&mut dataset, &ready, 4_000, 5_000).await.unwrap(),
                 (0, Folded::Deferred)
             );
-            assert_eq!(agrees(&dataset, "_mk_0").await, 2_300);
+            assert_eq!(agrees(&dataset, "_mk_0").await, 2_200);
             let head = segments(&dataset, "_mk_0")
                 .await
                 .unwrap()
@@ -920,7 +994,7 @@ pub(crate) mod tests {
             let (_, folded) = maintain(&mut dataset, &ready, 4_000, 0).await.unwrap();
             assert_ne!(folded, Folded::Deferred);
             let after = segments(&dataset, "_mk_0").await.unwrap();
-            assert_eq!(agrees(&dataset, "_mk_0").await, 3_300);
+            assert_eq!(agrees(&dataset, "_mk_0").await, 3_200);
 
             // Compaction keeps each segment's fragments apart and remaps them.
             dataset
@@ -947,7 +1021,7 @@ pub(crate) mod tests {
                     .count();
                 assert!(owners <= 1, "fragment {} in {owners} segments", f.id);
             }
-            assert_eq!(agrees(&dataset, "_mk_0").await, 3_297);
+            assert_eq!(agrees(&dataset, "_mk_0").await, 3_197);
 
             request_removal(&mut dataset, "author").await.unwrap();
             assert_eq!(keys_of(&dataset)[0].state, Some(State::Off));

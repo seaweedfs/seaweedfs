@@ -109,14 +109,14 @@ pub async fn run(
             let added = metadata_index::add_column(dataset, key).await?;
             let filled = metadata_index::finish(dataset, &added, segment_rows).await?;
             Ok(format!(
-                "{key} indexed in {} ({filled} raced rows filled)",
+                "{key} indexed in {} ({filled} rows a racing write left derived again)",
                 added.column
             ))
         }
         (Action::Add, Some(column)) if column.state == Some(State::Building) => {
             let filled = metadata_index::finish(dataset, &column, segment_rows).await?;
             Ok(format!(
-                "{key} indexed in {} ({filled} raced rows filled)",
+                "{key} indexed in {} ({filled} rows a racing write left derived again)",
                 column.column
             ))
         }
@@ -128,7 +128,7 @@ pub async fn run(
             let (filled, folded) =
                 metadata_index::maintain(dataset, &column, segment_rows, min_unindexed_rows)
                     .await?;
-            Ok(format!("{key}: {folded:?}, {filled} NULL rows filled"))
+            Ok(format!("{key}: {folded:?}, {filled} rows derived again"))
         }
         (action, column) => Ok(format!(
             "{key} needs no {}: {}",

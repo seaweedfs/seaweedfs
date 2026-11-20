@@ -7157,6 +7157,7 @@ dependencies = [
  "arrow-array",
  "arrow-cast",
  "arrow-schema",
+ "arrow-select",
  "async-trait",
  "base64 0.22.1",
  "bytes",
