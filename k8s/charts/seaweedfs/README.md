@@ -30,10 +30,12 @@ so your deployment will be spread/HA.
 
 The chart's templates render with Helm 3.16.3 and newer versions tested in CI.
 Earlier Helm versions are not covered by this chart's compatibility checks.
-When JWT signing is enabled, a live upgrade reuses keys from the existing
-security ConfigMap (including the legacy ConfigMap name); a key absent from
-that ConfigMap is generated. Plain `helm template` does not read cluster state;
-use an install and upgrade against a cluster to check key persistence.
+When JWT signing is enabled, `security.toml` is kept in the
+`<fullname>-security-config` Secret. A live upgrade reuses keys from that
+Secret, or from the security ConfigMap of earlier chart versions (including
+the legacy ConfigMap name); a key absent from them is generated. Plain
+`helm template` does not read cluster state; use an install and upgrade
+against a cluster to check key persistence.
 
 The key reader supports single-line quoted TOML strings in JWT sections,
 including indented assignments, quoted key names, and bare or simply quoted
