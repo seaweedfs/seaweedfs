@@ -389,12 +389,27 @@ impl Fixture {
 
 fn assert_same(got: &[(String, f32)], want: &[(String, f32)], what: &str) {
     assert_eq!(got.len(), want.len(), "{what}: {got:?} vs {want:?}");
+    // Ties may come back in either order: the same keys, and the same
+    // distance at each rank.
+    fn keys(hits: &[(String, f32)]) -> Vec<&str> {
+        let mut keys: Vec<&str> = hits.iter().map(|(k, _)| k.as_str()).collect();
+        keys.sort();
+        keys
+    }
+    assert_eq!(keys(got), keys(want), "{what}: {got:?} vs {want:?}");
     for (g, w) in got.iter().zip(want) {
-        let same = g.0 == w.0 || (g.1 - w.1).abs() < 1e-4;
-        assert!(
-            same && ((g.1 - w.1).abs() < 1e-4 || (g.1.is_infinite() && w.1.is_infinite())),
-            "{what}: {got:?} vs {want:?}"
-        );
+        let same = (g.1 - w.1).abs() < 1e-4 || (g.1.is_infinite() && w.1.is_infinite());
+        assert!(same, "{what}: {got:?} vs {want:?}");
+        if g.0 != w.0 {
+            let tie = want
+                .iter()
+                .any(|(k, d)| k == &g.0 && (d - w.1).abs() < 1e-4);
+            assert!(
+                tie,
+                "{what}: {} at {} is no tie: {got:?} vs {want:?}",
+                g.0, g.1
+            );
+        }
     }
 }
 
