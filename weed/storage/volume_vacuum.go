@@ -712,6 +712,7 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	var (
 		srcDatBackend, dstDatBackend backend.BackendStorageFile
 		dataFile                     *os.File
+		skippedNeedles               int
 	)
 	if dstDatBackend, err = backend.CreateVolumeFile(opts.destDatPath, opts.PreallocateBytes, 0); err != nil {
 		return err
@@ -723,6 +724,9 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 		// of leaving a half-written .cpd that CommitCompact would rename live.
 		if closeErr := dstDatBackend.Close(); closeErr != nil && err == nil {
 			err = fmt.Errorf("close compacted dat %s: %v", opts.destDatPath, closeErr)
+		}
+		if err == nil && skippedNeedles > 0 {
+			stats.VolumeServerVacuumingDroppedNeedlesCounter.WithLabelValues(v.Collection).Add(float64(skippedNeedles))
 		}
 	}()
 
@@ -749,7 +753,6 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 
 	writeThrottler := util.NewWriteThrottler(opts.MaxBytesPerSecond)
 	var (
-		skippedNeedles    int
 		skippedDataBytes  uint64
 		expectedLiveBytes uint64
 	)
@@ -829,9 +832,6 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	err = newNm.SaveToIdx(opts.destIdxPath)
 	if err != nil {
 		return err
-	}
-	if skippedNeedles > 0 {
-		stats.VolumeServerVacuumingDroppedNeedlesCounter.WithLabelValues(v.Collection).Add(float64(skippedNeedles))
 	}
 	return v.loadTmpNeedleMap(opts.destIdxPath)
 }
