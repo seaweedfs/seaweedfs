@@ -424,6 +424,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			// New request chunks start at offset zero; append them after the
 			// existing chunk-backed file.
 			if isAppend {
+				entry.FileSize = entry.Size()
 				for _, chunk := range fileChunks {
 					chunk.Offset += int64(entry.FileSize)
 				}
