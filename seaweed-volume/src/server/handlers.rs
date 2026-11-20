@@ -861,7 +861,12 @@ async fn do_replicated_request(
 
         futures.push(async move {
             match req_builder.send().await {
-                Ok(r) if r.status().is_success() => Ok(()),
+                Ok(r)
+                    if r.status().is_success()
+                        || (allow_delete && r.status() == StatusCode::NOT_FOUND) =>
+                {
+                    Ok(())
+                }
                 Ok(r) => {
                     crate::metrics::UPLOAD_ERROR_COUNTER
                         .with_label_values(&[&r.status().as_u16().to_string()])
@@ -3702,12 +3707,15 @@ pub async fn delete_handler(
             let store = state.store.read().unwrap();
             store.find_volume(vid).map(|(_, vol)| vol)
         };
+        let replicated = vol
+            .as_ref()
+            .is_some_and(|v| v.super_block().replica_placement.get_copy_count() > 1);
         let mut found = vol
             .as_ref()
             .ok_or(crate::storage::volume::VolumeError::NotFound)
             .and_then(|vol| vol.read_needle_with_option(&mut n, &mut delete_read_option()));
         if found.is_err()
-            && is_replicate
+            && (is_replicate || replicated)
             && let Some(vol) = &vol
         {
             // the write this delete undoes can still be queued here
@@ -3716,7 +3724,42 @@ pub async fn delete_handler(
         }
         match found {
             Ok(_) => {}
-            Err(_) => {
+            Err(e) => {
+                // 404 tells the forwarding replica the needle is gone here, so a
+                // read that failed for any other reason must not answer it
+                if !matches!(
+                    e,
+                    crate::storage::volume::VolumeError::NotFound
+                        | crate::storage::volume::VolumeError::Deleted
+                ) {
+                    return json_error_with_query(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Deletion Failed: {}", e),
+                        Some(&del_query),
+                    );
+                }
+                // a retry of a delete whose replica fan-out failed finds nothing
+                // here, but the other replicas may still hold the needle
+                if !is_replicate
+                    && replicated
+                    && let Err(e) = do_replicated_request(
+                        &state,
+                        vid.0,
+                        Method::DELETE,
+                        &path,
+                        &del_query,
+                        &headers,
+                        None,
+                    )
+                    .await
+                {
+                    tracing::error!("replicated delete failed: {}", e);
+                    return json_error_with_query(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("replication failed: {}", e),
+                        Some(&del_query),
+                    );
+                }
                 let result = DeleteResult { size: 0 };
                 return json_response_with_params(
                     StatusCode::NOT_FOUND,
@@ -5109,6 +5152,34 @@ mod tests {
             }
         });
         (addr, receipts)
+    }
+
+    /// A replica that no longer holds the needle answers a forwarded delete
+    /// with 404, which means it is gone there too.
+    #[tokio::test]
+    async fn test_replicated_delete_takes_a_replica_404_as_done() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let app = axum::Router::new().fallback(|| async { StatusCode::NOT_FOUND });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let state = remote_manifest_state(&tmp, spawn_lookup(peer).await);
+        for (method, done) in [
+            (axum::http::Method::DELETE, true),
+            (axum::http::Method::POST, false),
+        ] {
+            let sent = do_replicated_request(
+                &state,
+                1,
+                method.clone(),
+                "/1,01ab",
+                "",
+                &axum::http::HeaderMap::new(),
+                None,
+            )
+            .await;
+            assert_eq!(sent.is_ok(), done, "{method}: {sent:?}");
+        }
     }
 
     /// The whole replicated write path, not only the request builder: the
@@ -8994,6 +9065,119 @@ mod tests {
         }
     }
 
+    /// A delete whose fan-out failed was already applied here, so the
+    /// client's retry finds nothing locally; it must still reach the replica
+    /// that kept the needle, or the replicas stay different.
+    #[tokio::test]
+    async fn test_delete_retry_reaches_the_replica_after_a_failed_fan_out() {
+        use crate::storage::super_block::ReplicaPlacement;
+        use axum::response::IntoResponse;
+        use axum::{Json, Router, middleware, routing::get};
+
+        let replicated = |state: &Arc<VolumeServerState>| {
+            let vol = state
+                .store
+                .read()
+                .unwrap()
+                .find_volume(VolumeId(1))
+                .unwrap()
+                .1;
+            vol.set_replica_placement(ReplicaPlacement::from_string("001").unwrap())
+                .unwrap();
+            vol
+        };
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        Arc::get_mut(&mut state).unwrap().self_url = "127.0.0.1:8080".to_string();
+        let volume = replicated(&state);
+        let peer_tmp = tempfile::TempDir::new().unwrap();
+        let peer = volume_test_state(&peer_tmp);
+        let peer_volume = replicated(&peer);
+
+        let id = 0x6e7a_0c06u64;
+        let path = put_test_needle(&state, id, b"replicated delete");
+        put_test_needle(&peer, id, b"replicated delete");
+        let live = |vol: &Arc<crate::storage::volume::Volume>| {
+            vol.read_needle(&mut Needle {
+                id: NeedleId(id),
+                ..Needle::default()
+            })
+            .is_ok()
+        };
+
+        let fail_next = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let app = super::super::volume_server::build_admin_router(peer).layer(middleware::from_fn(
+            move |request: Request<Body>, next: middleware::Next| {
+                let fail = fail_next.swap(false, Ordering::SeqCst);
+                async move {
+                    if fail {
+                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
+                    next.run(request).await
+                }
+            },
+        ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = listener.local_addr().unwrap();
+        let peer_server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let master = Router::new().route(
+            "/dir/lookup",
+            get(move || async move {
+                Json(serde_json::json!({"locations": [
+                    {"url": "127.0.0.1:8080"},
+                    {"url": peer_addr.to_string()}
+                ]}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        *state.current_master_url.write().await = listener.local_addr().unwrap().to_string();
+        let master_server =
+            tokio::spawn(async move { axum::serve(listener, master).await.unwrap() });
+
+        assert_eq!(
+            send_delete(&state, &path).await,
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        assert!(!live(&volume));
+        assert!(live(&peer_volume));
+
+        assert_eq!(send_delete(&state, &path).await, StatusCode::NOT_FOUND);
+        assert!(!live(&peer_volume));
+        master_server.abort();
+        peer_server.abort();
+    }
+
+    /// A forwarding replica takes a 404 as the needle being gone here, so a
+    /// delete whose read fails for another reason answers 500.
+    #[tokio::test]
+    async fn test_delete_whose_read_fails_is_not_a_404() {
+        use std::io::{Seek, SeekFrom, Write};
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let id = 0x6e7a_0c07u64;
+        let path = put_test_needle(&state, id, b"unreadable");
+        let dat = state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1
+            .dat_path();
+        let mut file = std::fs::OpenOptions::new().write(true).open(dat).unwrap();
+        // the needle's size field, right after the superblock, cookie and id
+        file.seek(SeekFrom::Start(8 + 4 + 8)).unwrap();
+        file.write_all(&u32::MAX.to_be_bytes()).unwrap();
+        file.sync_all().unwrap();
+        for query in ["", "?type=replicate"] {
+            assert_eq!(
+                send_delete(&state, &format!("{path}{query}")).await,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "{query}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn http_replication_preserves_query_authentication() {
         use crate::security::{SigningKey, gen_jwt};
@@ -9467,8 +9651,8 @@ mod tests {
     /// replicate delete of it finds nothing. The delete cancels the write, so
     /// it is taken back when it lands instead of reviving the needle on this
     /// copy alone, even when its handler was dropped while it waited in the
-    /// durable queue. A plain delete that finds nothing is not sent on to the
-    /// replicas, so it leaves the write alone.
+    /// durable queue. A plain delete on an unreplicated volume that finds
+    /// nothing leaves the write alone.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[allow(clippy::await_holding_lock)]
     async fn test_replicate_delete_cancels_a_queued_write() {

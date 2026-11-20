@@ -157,15 +157,30 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isReplicate := r.FormValue("type") == "replicate"
+	v := vs.store.GetVolume(volumeId)
+	replicated := v != nil && v.ReplicaPlacement.GetCopyCount() > 1
 	_, ok := vs.store.ReadVolumeNeedle(volumeId, n, deleteReadOption(), nil)
-	if ok != nil && r.FormValue("type") == "replicate" {
+	if ok != nil && v != nil && (isReplicate || replicated) {
 		// the write this delete undoes can still be queued here
-		if v := vs.store.GetVolume(volumeId); v != nil {
-			v.CancelPendingWrites(n.Id, cookie)
-			_, ok = vs.store.ReadVolumeNeedle(volumeId, n, deleteReadOption(), nil)
-		}
+		v.CancelPendingWrites(n.Id, cookie)
+		_, ok = vs.store.ReadVolumeNeedle(volumeId, n, deleteReadOption(), nil)
 	}
 	if ok != nil {
+		// 404 tells the forwarding replica the needle is gone here, so a read
+		// that failed for any other reason must not answer it
+		if v != nil && !errors.Is(ok, storage.ErrorNotFound) && !errors.Is(ok, storage.ErrorDeleted) {
+			writeDeleteResult(ok, 0, w, r)
+			return
+		}
+		// a retry of a delete whose replica fan-out failed finds nothing here,
+		// but the other replicas may still hold the needle
+		if !isReplicate && replicated {
+			if _, err := topology.ReplicatedDelete(vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, n, r, true); err != nil {
+				writeDeleteResult(err, 0, w, r)
+				return
+			}
+		}
 		m := make(map[string]uint32)
 		m["size"] = 0
 		writeJsonQuiet(w, r, http.StatusNotFound, m)
@@ -204,7 +219,7 @@ func (vs *VolumeServer) DeleteHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, err := topology.ReplicatedDelete(vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, n, r)
+	_, err := topology.ReplicatedDelete(vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, n, r, false)
 
 	writeDeleteResult(err, count, w, r)
 

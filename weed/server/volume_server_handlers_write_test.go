@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/base64"
+	"errors"
 	"image"
 	"image/jpeg"
 	"mime/multipart"
@@ -14,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -87,7 +89,7 @@ func requireTakenBack(t *testing.T, store *storage.Store, written <-chan error, 
 
 // A replica delete that arrives while the write it undoes is in its fsync
 // finds nothing, yet the write must not land live afterwards. A plain delete
-// that finds nothing is not sent on to the replicas, so it leaves the write.
+// on an unreplicated volume that finds nothing leaves the write.
 func TestDeleteHandlerCancelsAWriteInItsFsyncWindow(t *testing.T) {
 	for _, tc := range []struct {
 		query string
@@ -104,6 +106,85 @@ func TestDeleteHandlerCancelsAWriteInItsFsyncWindow(t *testing.T) {
 			require.Equal(t, http.StatusNotFound, resp.Code)
 			release()
 			requireTakenBack(t, store, written, !tc.live)
+		})
+	}
+}
+
+// failingReadBackend fails every read while fail is set.
+type failingReadBackend struct {
+	backend.BackendStorageFile
+	fail atomic.Bool
+}
+
+func (b *failingReadBackend) ReadAt(p []byte, off int64) (int, error) {
+	if b.fail.Load() {
+		return 0, errors.New("injected read error")
+	}
+	return b.BackendStorageFile.ReadAt(p, off)
+}
+
+// A delete whose fan-out failed was already applied here, so the client's
+// retry finds nothing locally; it must still reach the replica that kept the
+// needle, or the replicas stay different. The replica either refuses the
+// first forward outright or cannot read the needle, which is not "gone".
+func TestDeleteHandlerRetryReachesTheReplicaAfterAFailedFanOut(t *testing.T) {
+	for i, replicaFails := range []string{"refuses", "cannot read"} {
+		t.Run(replicaFails, func(t *testing.T) {
+			vid := needle.VolumeId(849300202 + i)
+			allocate := func(vs *VolumeServer) {
+				vs.store = newTraversalTestStore(t.TempDir())
+				t.Cleanup(vs.store.Close)
+				_, err := vs.AllocateVolume(context.Background(), &volume_server_pb.AllocateVolumeRequest{VolumeId: uint32(vid), Replication: "001", Version: uint32(needle.GetCurrentVersion())})
+				require.NoError(t, err)
+				vs.guard = security.NewGuard(nil, "", 0, "", 0)
+			}
+			replicaVs := &VolumeServer{}
+			allocate(replicaVs)
+			var refuseNext atomic.Bool
+			replica := newProxyTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if refuseNext.CompareAndSwap(true, false) {
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				replicaVs.DeleteHandler(w, r)
+			}))
+
+			primary := &master_pb.Location{}
+			vs := newProxyTestVolumeServer(t, vid.String(), []*master_pb.Location{primary, {Url: strings.TrimPrefix(replica.URL, "http://")}}, nil)
+			allocate(vs)
+			primary.Url = util.JoinHostPort(vs.store.Ip, vs.store.Port)
+
+			fid := needle.NewFileId(vid, 1, 0x1234)
+			for _, s := range []*storage.Store{vs.store, replicaVs.store} {
+				n := &needle.Needle{Id: fid.Key, Cookie: fid.Cookie, Data: []byte("replicated delete")}
+				n.Checksum = needle.NewCRC(n.Data)
+				_, err := s.WriteVolumeNeedle(vid, n, true, false)
+				require.NoError(t, err)
+			}
+			replicaVolume := replicaVs.store.GetVolume(vid)
+			reads := &failingReadBackend{BackendStorageFile: replicaVolume.DataBackend}
+			replicaVolume.DataBackend = reads
+			live := func(s *storage.Store) bool {
+				_, err := s.ReadVolumeNeedle(vid, &needle.Needle{Id: fid.Key, Cookie: fid.Cookie}, nil, nil)
+				return err == nil
+			}
+
+			if replicaFails == "refuses" {
+				refuseNext.Store(true)
+			} else {
+				reads.fail.Store(true)
+			}
+			resp := httptest.NewRecorder()
+			vs.DeleteHandler(resp, httptest.NewRequest(http.MethodDelete, "/"+fid.String(), nil))
+			require.Equal(t, http.StatusInternalServerError, resp.Code, resp.Body.String())
+			reads.fail.Store(false)
+			require.False(t, live(vs.store))
+			require.True(t, live(replicaVs.store))
+
+			resp = httptest.NewRecorder()
+			vs.DeleteHandler(resp, httptest.NewRequest(http.MethodDelete, "/"+fid.String(), nil))
+			require.Equal(t, http.StatusNotFound, resp.Code, resp.Body.String())
+			require.False(t, live(replicaVs.store))
 		})
 	}
 }
