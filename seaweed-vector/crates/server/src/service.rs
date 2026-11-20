@@ -930,7 +930,8 @@ impl VectorService for VectorServer {
         .await;
         let dataset = match dataset {
             Ok(dataset) => {
-                self.filter_stats.forget(&table.id.join("/"));
+                self.filter_stats
+                    .forget(&table.id.join("/"), table_id(&dataset));
                 dataset
             }
             Err(error) => match self.open(&table).await {
@@ -983,7 +984,7 @@ impl VectorService for VectorServer {
                 store.remove_dir_all(path).await.map_err(internal)?;
             }
         }
-        self.filter_stats.forget(&table.id.join("/"));
+        self.filter_stats.forget(&table.id.join("/"), "");
         Ok(Response::new(pb::DropIndexResponse {}))
     }
 
@@ -995,6 +996,9 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
+        if table.version != 0 {
+            return Err(Status::invalid_argument("a write takes no table version"));
+        }
         // A write commits within its deadline of opening the table or not
         // at all: a key's column add waits longer than that before the key
         // is ready, so a write that opened before the add has committed,
