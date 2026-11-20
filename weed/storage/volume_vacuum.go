@@ -712,6 +712,7 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	var (
 		srcDatBackend, dstDatBackend backend.BackendStorageFile
 		dataFile                     *os.File
+		skippedNeedles               int
 	)
 	if dstDatBackend, err = backend.CreateVolumeFile(opts.destDatPath, opts.PreallocateBytes, 0); err != nil {
 		return err
@@ -723,6 +724,9 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 		// of leaving a half-written .cpd that CommitCompact would rename live.
 		if closeErr := dstDatBackend.Close(); closeErr != nil && err == nil {
 			err = fmt.Errorf("close compacted dat %s: %v", opts.destDatPath, closeErr)
+		}
+		if err == nil && skippedNeedles > 0 {
+			stats.VolumeServerVacuumingDroppedNeedlesCounter.WithLabelValues(v.Collection).Add(float64(skippedNeedles))
 		}
 	}()
 
@@ -749,7 +753,6 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 
 	writeThrottler := util.NewWriteThrottler(opts.MaxBytesPerSecond)
 	var (
-		skippedNeedles    int
 		skippedDataBytes  uint64
 		expectedLiveBytes uint64
 	)
@@ -782,7 +785,7 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 			if size.IsValid() {
 				skippedDataBytes += uint64(size)
 			}
-			glog.Warningf("vacuum volume %d: dropping unreadable needle key=%d offset=%d size=%d: %v",
+			glog.Errorf("vacuum volume %d: dropping unreadable needle key=%d offset=%d size=%d: %v",
 				v.Id, value.Key, offset.ToActualOffset(), size, err)
 			return nil
 		}

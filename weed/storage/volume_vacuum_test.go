@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -553,6 +554,73 @@ func TestCompactByIndex_DropsDanglingNeedle(t *testing.T) {
 	}
 
 	v.Close()
+}
+
+// A needle whose body fails its CRC is dropped from the compacted index, and
+// the drop is counted per collection.
+func TestCompactByIndex_CountsDroppedCrcDamagedNeedle(t *testing.T) {
+	dir := t.TempDir()
+	const collection = "vacuum_crc_drop"
+
+	v, err := NewVolume(dir, dir, collection, 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+
+	for i := uint64(1); i <= 3; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(i), true, false, false); err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+	}
+	damagedKey := types.Uint64ToNeedleId(2)
+	nv, ok := v.nm.Get(damagedKey)
+	if !ok {
+		t.Fatalf("needle %d not in index", damagedKey)
+	}
+	// The first body byte follows the header and the 4-byte DataSize field.
+	at := nv.Offset.ToActualOffset() + types.NeedleHeaderSize + 4
+	b := make([]byte, 1)
+	if _, err := v.DataBackend.ReadAt(b, at); err != nil {
+		t.Fatalf("read body byte: %v", err)
+	}
+	b[0] ^= 0xff
+	if _, err := v.DataBackend.WriteAt(b, at); err != nil {
+		t.Fatalf("damage body byte: %v", err)
+	}
+	if err := v.DataBackend.Sync(); err != nil {
+		t.Fatalf("sync .dat: %v", err)
+	}
+	if err := v.nm.Sync(); err != nil {
+		t.Fatalf("sync .idx: %v", err)
+	}
+
+	dropped := stats.VolumeServerVacuumingDroppedNeedlesCounter.WithLabelValues(collection)
+	before := testutil.ToFloat64(dropped)
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("CompactByIndex: %v", err)
+	}
+	if got := testutil.ToFloat64(dropped) - before; got != 1 {
+		t.Fatalf("dropped needle counter moved by %v, want 1", got)
+	}
+
+	cpx, err := os.Open(filepath.Join(dir, collection+"_1.cpx"))
+	if err != nil {
+		t.Fatalf("open .cpx: %v", err)
+	}
+	defer cpx.Close()
+	kept := map[types.NeedleId]bool{}
+	if err := idx.WalkIndexFile(cpx, 0, func(key types.NeedleId, _ types.Offset, size types.Size) error {
+		if !size.IsDeleted() {
+			kept[key] = true
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk .cpx: %v", err)
+	}
+	if kept[damagedKey] || !kept[types.Uint64ToNeedleId(1)] || !kept[types.Uint64ToNeedleId(3)] {
+		t.Fatalf("compacted keys = %v, want 1 and 3 only", kept)
+	}
 }
 
 // TestCompactByIndex_ConcurrentWriteDoesNotFailIntegrityCheck reproduces the

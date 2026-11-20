@@ -994,6 +994,7 @@ impl Drop for CompactionClaim {
 /// append-only below `idx_size`, and `makeup_diff` replays what lands after.
 pub(crate) struct CompactionJob {
     id: VolumeId,
+    collection: String,
     src_dat: NeedleStreamSource,
     src_idx: File,
     idx_size: u64,
@@ -1084,7 +1085,7 @@ impl CompactionJob {
                 if size.is_valid() {
                     skipped_data_bytes += size.0 as u64;
                 }
-                warn!(
+                error!(
                     volume_id = self.id.0,
                     key = id.0,
                     offset = offset.to_actual_offset(),
@@ -1148,6 +1149,11 @@ impl CompactionJob {
 
         // Save new index
         new_nm.save_to_idx(cpx_path)?;
+        if skipped_needles > 0 {
+            crate::metrics::VACUUMING_DROPPED_NEEDLES_COUNTER
+                .with_label_values(&[&self.collection])
+                .inc_by(skipped_needles);
+        }
 
         Ok(())
     }
@@ -6019,6 +6025,7 @@ impl Volume {
 
         Ok(Some(CompactionJob {
             id: self.id,
+            collection: self.collection.clone(),
             src_dat,
             src_idx,
             idx_size,
@@ -11188,6 +11195,75 @@ mod tests {
                 kept
             );
         }
+    }
+
+    /// A needle whose body fails its CRC is dropped from the compacted index,
+    /// and the drop is counted per collection.
+    #[test]
+    fn test_compact_by_index_counts_dropped_crc_damaged_needle() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let collection = "vacuum_crc_drop";
+        let v = Volume::new(
+            dir,
+            dir,
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            &VolumeSpec {
+                collection,
+                ..VolumeSpec::default()
+            },
+        )
+        .unwrap();
+        for i in 1..=3u64 {
+            let data = format!("payload-{}", i).into_bytes();
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data_size: data.len() as u32,
+                data,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+
+        let nv = {
+            let io = v.io.read().unwrap();
+            io.nm.as_ref().unwrap().get(NeedleId(2)).unwrap().unwrap()
+        };
+        // The first body byte follows the header and the 4-byte DataSize field.
+        let at = nv.offset.to_actual_offset() as u64 + NEEDLE_HEADER_SIZE as u64 + 4;
+        let mut dat = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(v.file_name(".dat"))
+            .unwrap();
+        let mut b = [0u8; 1];
+        dat.seek(SeekFrom::Start(at)).unwrap();
+        dat.read_exact(&mut b).unwrap();
+        b[0] ^= 0xff;
+        dat.seek(SeekFrom::Start(at)).unwrap();
+        dat.write_all(&b).unwrap();
+        dat.sync_all().unwrap();
+
+        let dropped =
+            crate::metrics::VACUUMING_DROPPED_NEEDLES_COUNTER.with_label_values(&[collection]);
+        let before = dropped.get();
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        assert_eq!(dropped.get() - before, 1);
+
+        let mut cpx = File::open(v.file_name(".cpx")).unwrap();
+        let mut kept: Vec<u64> = Vec::new();
+        idx::walk_index_file(&mut cpx, 0, |key, _, size| {
+            if !size.is_deleted() {
+                kept.push(key.0);
+            }
+            Ok(())
+        })
+        .unwrap();
+        kept.sort_unstable();
+        assert_eq!(kept, vec![1, 3]);
     }
 
     /// The needle map's max_needle_end accumulator must let volume.load
