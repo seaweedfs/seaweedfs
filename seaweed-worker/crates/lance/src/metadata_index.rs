@@ -276,6 +276,11 @@ pub async fn request(dataset: &mut Dataset, key: &str) -> Result<()> {
 /// so queries stop using it, and the worker removes it. A key not indexed
 /// needs nothing, so asking again is done.
 pub async fn request_removal(dataset: &mut Dataset, key: &str) -> Result<()> {
+    // An add that stopped before setting again what it overwrote may hide
+    // this key's request, which its recovery would bring back later.
+    for added in keys_of(dataset) {
+        recover_add(dataset, &added).await?;
+    }
     if let Some(column) = keys_of(dataset).into_iter().find(|k| k.key == key) {
         if column.state != Some(State::Off) {
             set_state(dataset, &column.column, State::Off).await?;
