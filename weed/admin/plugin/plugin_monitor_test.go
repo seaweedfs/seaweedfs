@@ -232,6 +232,62 @@ func TestHandleJobProgressUpdateCarriesWorkerIDInActivities(t *testing.T) {
 	}
 }
 
+// A worker that leaves the state out of its progress (as seaweed-worker did)
+// must still have its completion applied.
+func TestProgressWithoutStateKeepsJobRunningUntilCompleted(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	job := &plugin_pb.JobSpec{JobId: "job-no-state", JobType: "lance_vector_index"}
+	pluginSvc.trackExecutionStart("req-no-state", "worker-a", job, 1)
+
+	pluginSvc.handleJobProgressUpdate("worker-a", &plugin_pb.JobProgressUpdate{
+		RequestId:       "req-no-state",
+		JobId:           "job-no-state",
+		JobType:         "lance_vector_index",
+		ProgressPercent: 10,
+		Stage:           "indexing",
+	})
+	tracked, ok := pluginSvc.GetTrackedJob("job-no-state")
+	if !ok || tracked.State != "job_state_running" {
+		t.Fatalf("state after progress = %+v, want job_state_running", tracked)
+	}
+
+	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
+		RequestId: "req-no-state",
+		JobId:     "job-no-state",
+		JobType:   "lance_vector_index",
+		Success:   true,
+		Result:    &plugin_pb.JobResult{Summary: "indexed"},
+	}, nil)
+
+	tracked, ok = pluginSvc.GetTrackedJob("job-no-state")
+	if !ok || tracked.State != "job_state_succeeded" || tracked.Progress != 100 {
+		t.Fatalf("state after completion = %+v, want job_state_succeeded at 100", tracked)
+	}
+	foundCompletion := false
+	for _, activity := range pluginSvc.ListActivities("lance_vector_index", 0) {
+		if activity.JobID == "job-no-state" && activity.Source == "worker_completion" {
+			foundCompletion = true
+		}
+	}
+	if !foundCompletion {
+		t.Fatalf("expected a worker_completion activity")
+	}
+	history, err := pluginSvc.store.LoadRunHistory("lance_vector_index")
+	if err != nil {
+		t.Fatalf("LoadRunHistory: %v", err)
+	}
+	if history == nil || len(history.SuccessfulRuns) != 1 {
+		t.Fatalf("run history = %+v, want one successful run", history)
+	}
+}
+
 func TestHandleJobProgressUpdateWithoutJobIDTracksDetectionActivities(t *testing.T) {
 	t.Parallel()
 
