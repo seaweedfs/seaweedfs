@@ -2,6 +2,8 @@ package redis2
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"testing"
@@ -364,6 +366,20 @@ func TestDeleteExpiredEntryKeepsRecreatedValue(t *testing.T) {
 	}
 }
 
+// TestScriptDigests checks that each pinned digest runScript sends with EVALSHA
+// is the SHA-1 of the script it falls back to with EVAL.
+func TestScriptDigests(t *testing.T) {
+	for _, s := range []struct{ name, src, sha1Hex string }{
+		{"existsScript", existsScript, existsScriptSHA1},
+		{"deleteIfUnchangedScript", deleteIfUnchangedScript, deleteIfUnchangedScriptSHA1},
+	} {
+		sum := sha1.Sum([]byte(s.src))
+		if got := hex.EncodeToString(sum[:]); got != s.sha1Hex {
+			t.Errorf("%s digest is %s, want %s", s.name, s.sha1Hex, got)
+		}
+	}
+}
+
 func TestDeleteIfUnchangedScriptOnlyDeletesSameBytes(t *testing.T) {
 	store, dir := newTestStore(t, "")
 
@@ -372,11 +388,11 @@ func TestDeleteIfUnchangedScriptOnlyDeletesSameBytes(t *testing.T) {
 		t.Fatalf("set: %v", err)
 	}
 
-	if deleted, err := deleteIfUnchangedScript.Run(context.Background(), store.Client, []string{key}, []byte("v2")).Int(); err != nil || deleted != 0 {
+	if deleted, err := runScript(context.Background(), store.Client, deleteIfUnchangedScript, deleteIfUnchangedScriptSHA1, []string{key}, []byte("v2")).Int(); err != nil || deleted != 0 {
 		t.Fatalf("deleted=%d err=%v, want no delete on changed bytes", deleted, err)
 	}
 
-	if deleted, err := deleteIfUnchangedScript.Run(context.Background(), store.Client, []string{key}, []byte("v1")).Int(); err != nil || deleted != 1 {
+	if deleted, err := runScript(context.Background(), store.Client, deleteIfUnchangedScript, deleteIfUnchangedScriptSHA1, []string{key}, []byte("v1")).Int(); err != nil || deleted != 1 {
 		t.Fatalf("deleted=%d err=%v, want delete on matching bytes", deleted, err)
 	}
 
@@ -384,7 +400,7 @@ func TestDeleteIfUnchangedScriptOnlyDeletesSameBytes(t *testing.T) {
 		t.Fatalf("exists=%d err=%v, want key gone", exists, err)
 	}
 
-	if deleted, err := deleteIfUnchangedScript.Run(context.Background(), store.Client, []string{key}, []byte("v1")).Int(); err != nil || deleted != -1 {
+	if deleted, err := runScript(context.Background(), store.Client, deleteIfUnchangedScript, deleteIfUnchangedScriptSHA1, []string{key}, []byte("v1")).Int(); err != nil || deleted != -1 {
 		t.Fatalf("deleted=%d err=%v, want -1 on a missing key", deleted, err)
 	}
 }
