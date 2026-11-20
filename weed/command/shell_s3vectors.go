@@ -74,16 +74,8 @@ func (c *commandS3Vectors) Do(args []string, env *shell.CommandEnv, writer io.Wr
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	backend := s3vectors.NewVectorDiscovery(env.MasterClient.ListCachedMasters, env.GrpcDialOption(), env.MasterClient.FilerGroup)
-	defer backend.Close()
-	server := s3vectors.NewServer(env, nil, backend)
-	server.SetRegion(s3tables.DefaultRegion)
-	server.SetAccountID(s3tables.DefaultAccountID)
-	catalog := lance.NewServer(env, nil)
-	server.SetDescribe(func(ctx context.Context, id []string) (string, map[string]string, error) {
-		r := (&http.Request{Method: http.MethodPost, Header: make(http.Header)}).WithContext(ctx)
-		return catalog.DescribeTableInternal(r, id)
-	})
+	server, closeServer := shellVectorsServer(env)
+	defer closeServer()
 	var response json.RawMessage
 	if err := server.Execute(ctx, *operation, json.RawMessage(body), &response, s3_constants.AccountAdminId); err != nil {
 		return err
@@ -98,4 +90,19 @@ func (c *commandS3Vectors) Do(args []string, env *shell.CommandEnv, writer io.Wr
 		return encoder.Encode(value)
 	}
 	return nil
+}
+
+// shellVectorsServer is the S3 Vectors server the shell runs in process, on
+// trusted cluster credentials, and how to close its engine connection.
+func shellVectorsServer(env *shell.CommandEnv) (*s3vectors.Server, func()) {
+	backend := s3vectors.NewVectorDiscovery(env.MasterClient.ListCachedMasters, env.GrpcDialOption(), env.MasterClient.FilerGroup)
+	server := s3vectors.NewServer(env, nil, backend)
+	server.SetRegion(s3tables.DefaultRegion)
+	server.SetAccountID(s3tables.DefaultAccountID)
+	catalog := lance.NewServer(env, nil)
+	server.SetDescribe(func(ctx context.Context, id []string) (string, map[string]string, error) {
+		r := (&http.Request{Method: http.MethodPost, Header: make(http.Header)}).WithContext(ctx)
+		return catalog.DescribeTableInternal(r, id)
+	})
+	return server, func() { backend.Close() }
 }

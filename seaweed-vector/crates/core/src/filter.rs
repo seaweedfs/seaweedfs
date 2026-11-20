@@ -21,16 +21,16 @@ use lance::deps::datafusion::logical_expr::{
 };
 
 /// Set `filter` on the scanner with the JSONPath functions swapped and the
-/// conjuncts on `ready` indexed keys answered by their columns. Returns the
-/// conjunction of those.
+/// conjuncts on `ready` indexed keys answered by their columns, which it
+/// returns.
 pub(crate) fn apply(
     scanner: &mut Scanner,
     filter: &str,
     ready: &HashMap<String, String>,
-) -> anyhow::Result<Option<Expr>> {
+) -> anyhow::Result<Vec<crate::indexed_filter::Indexed>> {
     scanner.filter(filter)?;
     let Some(expr) = scanner.get_expr_filter()? else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let (expr, indexed) = crate::indexed_filter::rewrite(expr, ready);
     scanner.filter_expr(swap(expr)?);

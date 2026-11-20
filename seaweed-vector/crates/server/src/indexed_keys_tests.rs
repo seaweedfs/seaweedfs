@@ -389,12 +389,27 @@ impl Fixture {
 
 fn assert_same(got: &[(String, f32)], want: &[(String, f32)], what: &str) {
     assert_eq!(got.len(), want.len(), "{what}: {got:?} vs {want:?}");
+    // Ties may come back in either order: the same keys, and the same
+    // distance at each rank.
+    fn keys(hits: &[(String, f32)]) -> Vec<&str> {
+        let mut keys: Vec<&str> = hits.iter().map(|(k, _)| k.as_str()).collect();
+        keys.sort();
+        keys
+    }
+    assert_eq!(keys(got), keys(want), "{what}: {got:?} vs {want:?}");
     for (g, w) in got.iter().zip(want) {
-        let same = g.0 == w.0 || (g.1 - w.1).abs() < 1e-4;
-        assert!(
-            same && ((g.1 - w.1).abs() < 1e-4 || (g.1.is_infinite() && w.1.is_infinite())),
-            "{what}: {got:?} vs {want:?}"
-        );
+        let same = (g.1 - w.1).abs() < 1e-4 || (g.1.is_infinite() && w.1.is_infinite());
+        assert!(same, "{what}: {got:?} vs {want:?}");
+        if g.0 != w.0 {
+            let tie = want
+                .iter()
+                .any(|(k, d)| k == &g.0 && (d - w.1).abs() < 1e-4);
+            assert!(
+                tie,
+                "{what}: {} at {} is no tie: {got:?} vs {want:?}",
+                g.0, g.1
+            );
+        }
     }
 }
 
@@ -564,6 +579,29 @@ async fn a_write_that_raced_the_column_add_fills_the_column() {
     assert_eq!(fixture.flat(latest, filter, 400, &v).await.len(), 4);
 }
 
+/// A write names no version: one at a version from before a key's column
+/// add would commit rows without the column.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_write_at_an_older_version_is_refused() {
+    let fixture = Fixture::new().await;
+    fixture
+        .put((0..10).map(|i| row(i, author(i))).collect())
+        .await;
+    let before = fixture.dataset(0).await.version().version;
+    fixture.index_author().await;
+    let mut table = fixture.table.clone();
+    table.version = before;
+    let refused = fixture
+        .server
+        .put_vectors(Request::new(pb::PutVectorsRequest {
+            table: Some(table),
+            vectors: (10..20).map(|i| row(i, author(i))).collect(),
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), tonic::Code::InvalidArgument);
+}
+
 /// Two writes updating the same keys raced the column add, and the first
 /// one's fill commits last: each write's rows get the values of its own
 /// metadata, not the ones derived before it or from the other write.
@@ -624,4 +662,156 @@ async fn a_write_that_raced_the_column_add_derives_its_updated_rows() {
         .vectors;
     got.sort_by_key(|v| v.key[1..].parse::<usize>().unwrap());
     assert_eq!(got, rows("bob"));
+}
+
+/// Operators ask through the engine; the table records the request and,
+/// once the worker has done its part, the key's state, coverage and size.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn keys_are_requested_and_listed_through_the_engine() {
+    let fixture = Fixture::new().await;
+    fixture
+        .put((0..600).map(|i| row(i, author(i))).collect())
+        .await;
+    let update = |key: &str, remove: bool| {
+        fixture
+            .server
+            .update_metadata_key(Request::new(pb::UpdateMetadataKeyRequest {
+                table: Some(fixture.table.clone()),
+                key: key.to_string(),
+                remove,
+            }))
+    };
+    let listed = update("author", false).await.unwrap().into_inner();
+    assert_eq!(listed.keys.len(), 1);
+    assert_eq!(listed.keys[0].state, "requested");
+    assert_eq!(listed.keys[0].rows, 600);
+    // A retry of a committed request answers as the first one did.
+    let again = update("author", false).await.unwrap().into_inner();
+    assert_eq!(again.keys.len(), 1);
+    assert_eq!(again.keys[0].state, "requested");
+
+    let mut dataset = fixture.dataset(0).await;
+    let key = metadata_index::add_column(&mut dataset, "author")
+        .await
+        .unwrap();
+    metadata_index::finish_after(&mut dataset, &key, 1_000_000, std::time::Duration::ZERO)
+        .await
+        .unwrap();
+    let listed = fixture
+        .server
+        .metadata_keys(Request::new(pb::MetadataKeysRequest {
+            table: Some(fixture.table.clone()),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!((listed.rows, listed.vector_index.as_str()), (600, ""));
+    let author = &listed.keys[0];
+    assert_eq!(
+        (
+            author.key.as_str(),
+            author.state.as_str(),
+            author.column.as_str()
+        ),
+        ("author", "ready", "_mk_0")
+    );
+    assert_eq!(
+        (author.indexed_rows, author.rows, author.segments),
+        (600, 600, 1)
+    );
+    assert!(author.index_bytes > 0);
+
+    // Off at once: the next query reads the JSON again.
+    let listed = update("author", true).await.unwrap().into_inner();
+    assert_eq!(listed.keys[0].state, "off");
+    let dataset = fixture.dataset(0).await;
+    assert_eq!(metadata_index::keys_of(&dataset)[0].state, Some(State::Off));
+    // Removing a key that is not indexed needs nothing.
+    let nobody = update("nobody", true).await.unwrap().into_inner();
+    assert_eq!(nobody.keys.len(), 1);
+    assert_eq!(
+        update("author", false).await.unwrap_err().code(),
+        tonic::Code::FailedPrecondition,
+        "being removed"
+    );
+}
+
+/// DeleteIndex purges the table's directory and an index created again
+/// under the same name reuses it: the same running engine serves nothing of
+/// the old table, neither rows, nor its indexed key, nor its filter stats.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_dropped_and_recreated_index_serves_nothing_old() {
+    let fixture = Fixture::new().await;
+    fixture
+        .put((0..600).map(|i| row(i, author(i))).collect())
+        .await;
+    let mut dataset = fixture.dataset(0).await;
+    weed_lance_worker::vector_index::build(&mut dataset, "vector", "vector_idx", 4, false)
+        .await
+        .unwrap();
+    fixture.index_author().await;
+    let bob = FILTERS[1].1;
+    let old = fixture
+        .query(&fixture.server, 0, bob, 50, &vector_of(10))
+        .await;
+    assert_eq!(old.len(), 6);
+    let server = &fixture.server;
+    let stats = || {
+        server.filter_stats(Request::new(pb::FilterStatsRequest {
+            table: Some(fixture.table.clone()),
+        }))
+    };
+    assert_eq!(stats().await.unwrap().into_inner().keys[0].queries, 1);
+
+    // What the catalog's DeleteTable does, then CreateIndex again.
+    let (store, path) = lance::io::ObjectStore::from_uri(&fixture.table.location)
+        .await
+        .unwrap();
+    store.remove_dir_all(path).await.unwrap();
+    fixture
+        .server
+        .create_index(Request::new(pb::CreateIndexRequest {
+            table: Some(fixture.table.clone()),
+            dimension: DIM as u32,
+            distance_metric: pb::DistanceMetric::L2 as i32,
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+    let keys = fixture
+        .server
+        .metadata_keys(Request::new(pb::MetadataKeysRequest {
+            table: Some(fixture.table.clone()),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(keys.keys.is_empty());
+    assert!(
+        stats().await.unwrap().into_inner().keys.is_empty(),
+        "the old table's filter stats"
+    );
+
+    fixture
+        .put((1000..1100).map(|i| row(i, author(i))).collect())
+        .await;
+    let new = |hits: &[(String, f32)]| {
+        hits.iter().all(|(k, _)| {
+            k[1..]
+                .parse::<usize>()
+                .is_ok_and(|i| (1000..1100).contains(&i))
+        })
+    };
+    let unfiltered = fixture
+        .query(&fixture.server, 0, "", 200, &vector_of(10))
+        .await;
+    assert_eq!(unfiltered.len(), 100);
+    assert!(new(&unfiltered), "{unfiltered:?}");
+    let bob_now = fixture
+        .query(&fixture.server, 0, bob, 50, &vector_of(10))
+        .await;
+    assert_eq!(bob_now.len(), 1);
+    assert!(new(&bob_now), "{bob_now:?}");
+    let author = stats().await.unwrap().into_inner().keys;
+    assert_eq!((author.len(), author[0].queries), (1, 1));
 }

@@ -18,7 +18,8 @@ use lance::io::{
 use lance::session::Session;
 
 use crate::catalog::{NamespaceClient, TableDescription};
-use crate::direct_read::DirectReads;
+use crate::direct_read::{DirectReads, Wrappers};
+use crate::drop_guard::DropGuard;
 
 /// A table the worker is about to work on.
 pub struct OpenTable {
@@ -75,12 +76,27 @@ pub fn unsigned_options() -> HashMap<String, String> {
 pub async fn open(client: &NamespaceClient, id: &[String], storage: &Storage) -> Result<OpenTable> {
     let description = client.describe_table(id).await?;
     let wrapper = storage.wrapper(&description.location).await?;
-    let dataset = open_at(&description, wrapper, None).await?;
+    let dataset = open_guarded(&description, wrapper).await?;
     Ok(OpenTable {
         id: id.to_vec(),
         location: description.location,
         dataset,
     })
+}
+
+/// [`open_at`] for a job that writes the table: its writes fail once the
+/// table is dropped under it (see [`DropGuard`]).
+pub async fn open_guarded(
+    description: &TableDescription,
+    wrapper: Option<Arc<dyn WrappingObjectStore>>,
+) -> Result<Dataset> {
+    let guard = DropGuard::new();
+    let mut wrappers: Vec<Arc<dyn WrappingObjectStore>> = wrapper.into_iter().collect();
+    wrappers.push(guard.clone());
+    let dataset = open_at(description, Some(Arc::new(Wrappers(wrappers))), None).await?;
+    let opened = dataset.manifest_location();
+    guard.arm(opened.path.clone(), opened.e_tag.clone());
+    Ok(dataset)
 }
 
 /// Open a table the caller has already resolved, with the store wrapped, in

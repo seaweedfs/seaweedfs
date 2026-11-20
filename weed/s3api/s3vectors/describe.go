@@ -122,3 +122,17 @@ func (c *describedClient) QueryVectors(ctx context.Context, in *vector_pb.QueryV
 	}
 	return c.VectorServiceClient.QueryVectors(ctx, in, opts...)
 }
+
+func (c *describedClient) MetadataKeys(ctx context.Context, in *vector_pb.MetadataKeysRequest, opts ...grpc.CallOption) (*vector_pb.MetadataKeysResponse, error) {
+	if err := c.resolve(ctx, in.Table); err != nil {
+		return nil, err
+	}
+	return c.VectorServiceClient.MetadataKeys(ctx, in, opts...)
+}
+
+func (c *describedClient) UpdateMetadataKey(ctx context.Context, in *vector_pb.UpdateMetadataKeyRequest, opts ...grpc.CallOption) (*vector_pb.MetadataKeysResponse, error) {
+	if err := c.resolve(ctx, in.Table); err != nil {
+		return nil, err
+	}
+	return c.VectorServiceClient.UpdateMetadataKey(ctx, in, opts...)
+}

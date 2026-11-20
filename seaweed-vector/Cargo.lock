@@ -7146,6 +7146,7 @@ dependencies = [
  "arrow-array",
  "arrow-cast",
  "arrow-schema",
+ "arrow-select",
  "async-trait",
  "base64 0.22.1",
  "bytes",
@@ -7192,6 +7193,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "x509-parser",
  "zstd",
 ]
@@ -7210,6 +7212,7 @@ dependencies = [
  "lance",
  "lance-index",
  "lance-linalg",
+ "lance-select",
  "lance-table",
  "object_store",
  "roaring",

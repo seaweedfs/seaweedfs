@@ -328,6 +328,50 @@ pub(crate) async fn heal_columns(
     bail!("writes kept replacing the rows while their indexed key columns were derived")
 }
 
+/// The indexed metadata keys `dataset` records, requested ones first.
+async fn metadata_keys(dataset: &Dataset) -> Result<pb::MetadataKeysResponse> {
+    let rows: u64 = dataset
+        .fragments()
+        .iter()
+        .map(|f| f.num_rows().unwrap_or(0) as u64)
+        .sum();
+    let mut keys: Vec<pb::MetadataKey> = metadata_index::requests(dataset)
+        .into_iter()
+        .map(|key| pb::MetadataKey {
+            key,
+            state: "requested".to_string(),
+            rows,
+            ..Default::default()
+        })
+        .collect();
+    for key in metadata_index::keys_of(dataset) {
+        let segments = metadata_index::segments(dataset, &key.column).await?;
+        keys.push(pb::MetadataKey {
+            state: key.state.map_or("unknown", |s| s.as_str()).to_string(),
+            indexed_rows: segments.iter().map(|s| s.rows).sum(),
+            index_bytes: segments.iter().map(|s| s.bytes).sum(),
+            segments: segments.len() as u32,
+            rows,
+            key: key.key,
+            column: key.column,
+        });
+    }
+    let vector_index = match index::index_names(dataset, VECTOR_COLUMN).await?.first() {
+        Some(name) => {
+            weed_lance_worker::vector_index::index_settings(dataset, name)
+                .await?
+                .index_type
+        }
+        None => String::new(),
+    };
+    Ok(pb::MetadataKeysResponse {
+        keys,
+        version: dataset.version().version,
+        rows,
+        vector_index,
+    })
+}
+
 fn struct_to_json(s: &Struct) -> serde_json::Value {
     serde_json::Value::Object(
         s.fields
@@ -885,7 +929,11 @@ impl VectorService for VectorServer {
         )
         .await;
         let dataset = match dataset {
-            Ok(dataset) => dataset,
+            Ok(dataset) => {
+                self.filter_stats
+                    .forget(&table.id.join("/"), table_id(&dataset));
+                dataset
+            }
             Err(error) => match self.open(&table).await {
                 Ok(existing)
                     if matches_index_schema(
@@ -936,6 +984,7 @@ impl VectorService for VectorServer {
                 store.remove_dir_all(path).await.map_err(internal)?;
             }
         }
+        self.filter_stats.forget(&table.id.join("/"), "");
         Ok(Response::new(pb::DropIndexResponse {}))
     }
 
@@ -947,13 +996,37 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await?;
-        if req.vectors.is_empty() {
-            return Ok(Response::new(pb::PutVectorsResponse {
-                version: dataset.version().version,
-            }));
+        if table.version != 0 {
+            return Err(Status::invalid_argument("a write takes no table version"));
         }
-        let dataset = write_vectors(dataset, &req.vectors).await?;
+        // A write commits within its deadline of opening the table or not
+        // at all: a key's column add waits longer than that before the key
+        // is ready, so a write that opened before the add has committed,
+        // and been derived again, before any query uses the key.
+        let merged = tokio::time::timeout(metadata_index::WRITE_DEADLINE, async {
+            let dataset = self.open(&table).await?;
+            if req.vectors.is_empty() {
+                return Ok::<_, Status>((dataset, None));
+            }
+            let written = Arc::new(Into::<arrow_schema::Schema>::into(dataset.schema()));
+            Ok((merge_vectors(dataset, &req.vectors).await?, Some(written)))
+        })
+        .await
+        .map_err(|_| {
+            Status::deadline_exceeded(format!(
+                "PutVectors took longer than {:?} to commit",
+                metadata_index::WRITE_DEADLINE
+            ))
+        })??;
+        let dataset = match merged {
+            (dataset, Some(written)) => {
+                let keys: Vec<String> = req.vectors.iter().map(|v| v.key.clone()).collect();
+                heal_columns(dataset, &written, &keys)
+                    .await
+                    .map_err(internal)?
+            }
+            (dataset, None) => dataset,
+        };
         Ok(Response::new(pb::PutVectorsResponse {
             version: dataset.version().version,
         }))
@@ -1186,9 +1259,45 @@ impl VectorService for VectorServer {
                 data: data_map.remove(&hit.key).unwrap_or_default(),
             });
         }
+        let index = table.id.join("/");
         self.filter_stats
-            .record(&table.id.join("/"), &filter_keys, started.elapsed());
+            .record(&index, table_id(&dataset), &filter_keys, started.elapsed());
         Ok(Response::new(pb::QueryVectorsResponse { vectors }))
+    }
+
+    async fn metadata_keys(
+        &self,
+        request: Request<pb::MetadataKeysRequest>,
+    ) -> Result<Response<pb::MetadataKeysResponse>, Status> {
+        let table = request
+            .into_inner()
+            .table
+            .ok_or_else(|| Status::invalid_argument("missing table"))?;
+        let dataset = self.open_to_read(&table).await?;
+        let _lease = self.leases.try_pin(&dataset).await.map_err(internal)?;
+        Ok(Response::new(
+            metadata_keys(&dataset).await.map_err(internal)?,
+        ))
+    }
+
+    async fn update_metadata_key(
+        &self,
+        request: Request<pb::UpdateMetadataKeyRequest>,
+    ) -> Result<Response<pb::MetadataKeysResponse>, Status> {
+        let req = request.into_inner();
+        let table = req
+            .table
+            .ok_or_else(|| Status::invalid_argument("missing table"))?;
+        let mut dataset = self.open(&table).await?;
+        let updated = if req.remove {
+            metadata_index::request_removal(&mut dataset, &req.key).await
+        } else {
+            metadata_index::request(&mut dataset, &req.key).await
+        };
+        updated.map_err(|e| Status::failed_precondition(format!("{e:#}")))?;
+        Ok(Response::new(
+            metadata_keys(&dataset).await.map_err(internal)?,
+        ))
     }
 
     async fn filter_stats(

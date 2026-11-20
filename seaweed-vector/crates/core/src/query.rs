@@ -139,24 +139,22 @@ pub(crate) async fn few_indexed_matches(
     {
         return Ok(false);
     }
-    let Some(indexed) = crate::filter::apply(&mut dataset.scan(), filter, &ready)? else {
+    let indexed = crate::filter::apply(&mut dataset.scan(), filter, &ready)?;
+    if indexed.is_empty() {
         return Ok(false);
-    };
-    let mut counter = dataset.scan();
-    counter.filter_expr(indexed);
-    if let Some(ids) = scope(dataset, table, query).await? {
-        counter.with_fragments(
-            dataset
-                .fragments()
-                .iter()
-                .filter(|f| ids.contains(&f.id))
-                .cloned()
-                .collect(),
-        );
     }
-    let matches = counter.count_rows().await?;
-    tracing::debug!(matches, limit, "indexed metadata filter");
-    Ok(matches <= limit as u64)
+    let scope = scope(dataset, table, query).await?;
+    // An AND matches at most what its most selective indexed conjunct does.
+    for conjunct in &indexed {
+        let count =
+            crate::indexed_filter::count_indexed(dataset, conjunct, scope.as_deref(), limit as u64)
+                .await?;
+        tracing::debug!(column = %conjunct.column, ?count, limit, "indexed metadata filter");
+        if count.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Fetch rows by key, projected to `columns` (all of them when None).

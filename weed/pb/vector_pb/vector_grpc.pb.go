@@ -19,14 +19,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	VectorService_CreateIndex_FullMethodName   = "/vector_pb.VectorService/CreateIndex"
-	VectorService_DropIndex_FullMethodName     = "/vector_pb.VectorService/DropIndex"
-	VectorService_PutVectors_FullMethodName    = "/vector_pb.VectorService/PutVectors"
-	VectorService_GetVectors_FullMethodName    = "/vector_pb.VectorService/GetVectors"
-	VectorService_DeleteVectors_FullMethodName = "/vector_pb.VectorService/DeleteVectors"
-	VectorService_ListVectors_FullMethodName   = "/vector_pb.VectorService/ListVectors"
-	VectorService_QueryVectors_FullMethodName  = "/vector_pb.VectorService/QueryVectors"
-	VectorService_FilterStats_FullMethodName   = "/vector_pb.VectorService/FilterStats"
+	VectorService_CreateIndex_FullMethodName       = "/vector_pb.VectorService/CreateIndex"
+	VectorService_DropIndex_FullMethodName         = "/vector_pb.VectorService/DropIndex"
+	VectorService_PutVectors_FullMethodName        = "/vector_pb.VectorService/PutVectors"
+	VectorService_GetVectors_FullMethodName        = "/vector_pb.VectorService/GetVectors"
+	VectorService_DeleteVectors_FullMethodName     = "/vector_pb.VectorService/DeleteVectors"
+	VectorService_ListVectors_FullMethodName       = "/vector_pb.VectorService/ListVectors"
+	VectorService_QueryVectors_FullMethodName      = "/vector_pb.VectorService/QueryVectors"
+	VectorService_FilterStats_FullMethodName       = "/vector_pb.VectorService/FilterStats"
+	VectorService_MetadataKeys_FullMethodName      = "/vector_pb.VectorService/MetadataKeys"
+	VectorService_UpdateMetadataKey_FullMethodName = "/vector_pb.VectorService/UpdateMetadataKey"
 )
 
 // VectorServiceClient is the client API for VectorService service.
@@ -47,6 +49,11 @@ type VectorServiceClient interface {
 	// How this engine's queries of an index filtered on each metadata key
 	// over the last hour.
 	FilterStats(ctx context.Context, in *FilterStatsRequest, opts ...grpc.CallOption) (*FilterStatsResponse, error)
+	// The index's indexed metadata keys, as its Lance table records them.
+	MetadataKeys(ctx context.Context, in *MetadataKeysRequest, opts ...grpc.CallOption) (*MetadataKeysResponse, error)
+	// Ask for a metadata key to be indexed, or no longer: the table records
+	// the request and the maintenance worker carries it out.
+	UpdateMetadataKey(ctx context.Context, in *UpdateMetadataKeyRequest, opts ...grpc.CallOption) (*MetadataKeysResponse, error)
 }
 
 type vectorServiceClient struct {
@@ -137,6 +144,26 @@ func (c *vectorServiceClient) FilterStats(ctx context.Context, in *FilterStatsRe
 	return out, nil
 }
 
+func (c *vectorServiceClient) MetadataKeys(ctx context.Context, in *MetadataKeysRequest, opts ...grpc.CallOption) (*MetadataKeysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MetadataKeysResponse)
+	err := c.cc.Invoke(ctx, VectorService_MetadataKeys_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vectorServiceClient) UpdateMetadataKey(ctx context.Context, in *UpdateMetadataKeyRequest, opts ...grpc.CallOption) (*MetadataKeysResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MetadataKeysResponse)
+	err := c.cc.Invoke(ctx, VectorService_UpdateMetadataKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VectorServiceServer is the server API for VectorService service.
 // All implementations must embed UnimplementedVectorServiceServer
 // for forward compatibility.
@@ -155,6 +182,11 @@ type VectorServiceServer interface {
 	// How this engine's queries of an index filtered on each metadata key
 	// over the last hour.
 	FilterStats(context.Context, *FilterStatsRequest) (*FilterStatsResponse, error)
+	// The index's indexed metadata keys, as its Lance table records them.
+	MetadataKeys(context.Context, *MetadataKeysRequest) (*MetadataKeysResponse, error)
+	// Ask for a metadata key to be indexed, or no longer: the table records
+	// the request and the maintenance worker carries it out.
+	UpdateMetadataKey(context.Context, *UpdateMetadataKeyRequest) (*MetadataKeysResponse, error)
 	mustEmbedUnimplementedVectorServiceServer()
 }
 
@@ -188,6 +220,12 @@ func (UnimplementedVectorServiceServer) QueryVectors(context.Context, *QueryVect
 }
 func (UnimplementedVectorServiceServer) FilterStats(context.Context, *FilterStatsRequest) (*FilterStatsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FilterStats not implemented")
+}
+func (UnimplementedVectorServiceServer) MetadataKeys(context.Context, *MetadataKeysRequest) (*MetadataKeysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MetadataKeys not implemented")
+}
+func (UnimplementedVectorServiceServer) UpdateMetadataKey(context.Context, *UpdateMetadataKeyRequest) (*MetadataKeysResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateMetadataKey not implemented")
 }
 func (UnimplementedVectorServiceServer) mustEmbedUnimplementedVectorServiceServer() {}
 func (UnimplementedVectorServiceServer) testEmbeddedByValue()                       {}
@@ -354,6 +392,42 @@ func _VectorService_FilterStats_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VectorService_MetadataKeys_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MetadataKeysRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VectorServiceServer).MetadataKeys(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VectorService_MetadataKeys_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VectorServiceServer).MetadataKeys(ctx, req.(*MetadataKeysRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _VectorService_UpdateMetadataKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateMetadataKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VectorServiceServer).UpdateMetadataKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VectorService_UpdateMetadataKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VectorServiceServer).UpdateMetadataKey(ctx, req.(*UpdateMetadataKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // VectorService_ServiceDesc is the grpc.ServiceDesc for VectorService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -392,6 +466,14 @@ var VectorService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FilterStats",
 			Handler:    _VectorService_FilterStats_Handler,
+		},
+		{
+			MethodName: "MetadataKeys",
+			Handler:    _VectorService_MetadataKeys_Handler,
+		},
+		{
+			MethodName: "UpdateMetadataKey",
+			Handler:    _VectorService_UpdateMetadataKey_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
