@@ -665,6 +665,7 @@ async fn keys_are_requested_and_listed_through_the_engine() {
         .await
         .unwrap()
         .into_inner();
+    assert_eq!((listed.rows, listed.vector_index.as_str()), (600, ""));
     let author = &listed.keys[0];
     assert_eq!(
         (
