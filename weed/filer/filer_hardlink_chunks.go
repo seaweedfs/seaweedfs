@@ -8,6 +8,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 // hardLinkStillHeld reports whether replaced, the entry a write has just
@@ -53,12 +54,22 @@ func (f *Filer) KeepHardLinkedChunks(ctx context.Context, replaced, replacement 
 		err = shared.DecodeAttributesAndChunks(value)
 	}
 	if err == nil {
-		var data, manifests []*filer_pb.FileChunk
-		data, manifests, err = ResolveChunkManifest(ctx, f.MasterClient.GetLookupFileIdFunction(), append(shared.GetChunks(), replaced.GetChunks()...), 0, math.MaxInt64, f.MasterClient)
+		var kept []*filer_pb.FileChunk
+		kept, err = withoutChunksOf(ctx, f.MasterClient.GetLookupFileIdFunction(), f.MasterClient, append(shared.GetChunks(), replaced.GetChunks()...), garbage)
 		if err == nil {
-			return DoMinusChunks(garbage, append(data, manifests...))
+			return kept
 		}
 	}
 	glog.ErrorfCtx(ctx, "keep %d chunk(s) of %s, which another hard link may still read: %v", len(garbage), replaced.FullPath, err)
 	return nil
+}
+
+// withoutChunksOf returns garbage without chunks, without the manifests among
+// them, and without every chunk those manifests list, nested ones included.
+func withoutChunksOf(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, invalidator CacheInvalidator, chunks, garbage []*filer_pb.FileChunk) ([]*filer_pb.FileChunk, error) {
+	data, manifests, err := ResolveChunkManifest(ctx, lookupFileIdFn, chunks, 0, math.MaxInt64, invalidator)
+	if err != nil {
+		return nil, err
+	}
+	return DoMinusChunks(garbage, append(data, manifests...)), nil
 }
