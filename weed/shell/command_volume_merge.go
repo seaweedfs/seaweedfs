@@ -93,6 +93,9 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 	if len(replicas) < 2 {
 		return fmt.Errorf("volume %d has %d replica(s); merge requires at least two", volumeId, len(replicas))
 	}
+	if len(replicas) > mergeMaxReplicas {
+		return fmt.Errorf("volume %d has %d replicas; merge supports at most %d", volumeId, len(replicas), mergeMaxReplicas)
+	}
 
 	volumeInfo := replicas[0].info
 	replicaPlacement, err := super_block.NewReplicaPlacementFromByte(byte(volumeInfo.ReplicaPlacement))
@@ -199,7 +202,9 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 // record for it, and mergedKeyDeleted once the merged copy holds it deleted.
 type mergedKeys map[types.NeedleId]uint64
 
-const mergedKeyDeleted = uint64(1) << 63
+const mergeMaxReplicas = 63
+
+const mergedKeyDeleted = uint64(1) << mergeMaxReplicas
 
 // keyHistoryStream records the keys its source returns. hadKey reports whether
 // the key of the record returned last appeared earlier in the same source.
