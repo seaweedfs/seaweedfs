@@ -218,6 +218,7 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 		// or reset that lands after it either shows up in that check or stops
 		// the provider's answer from being cached.
 		fillEpoch := vc.mapEpoch()
+		asked := vc.vidMap.learnedSoFar()
 
 		// Double-check cache for volumes that might have been populated while waiting
 		stillNeedLookup := make([]string, 0, len(needsLookup))
@@ -274,7 +275,7 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 			// The provider answered, so its answer replaces what was set
 			// aside, including when it has no locations for the volume, and
 			// including what a lookup that failed meanwhile brought back.
-			vc.vidMap.dropSetAside(vidStringToUint[vidString])
+			vc.vidMap.dropSetAside(vidStringToUint[vidString], asked)
 		}
 
 		for vidString, locations := range providerResults {

@@ -42,6 +42,9 @@ type locationsEntry struct {
 	locations  []Location
 	generation uint64
 	state      entryState
+	// learnedAt orders when the locations were learned, across volumes.
+	// Setting an entry aside or reviving it keeps it.
+	learnedAt uint64
 }
 
 // entryState tells what the cache learned from what a failed read set aside.
@@ -80,6 +83,8 @@ type vidMap struct {
 	// retainGenerations is how many resets an entry survives without being
 	// refreshed before reset drops it.
 	retainGenerations uint64
+	// learned counts entries learned, for locationsEntry.learnedAt.
+	learned uint64
 }
 
 func newVidMap(dataCenter string, retainGenerations int) *vidMap {
@@ -264,7 +269,7 @@ func (vc *vidMap) currentLocations(vid uint32) ([]Location, bool) {
 func (vc *vidMap) setLocations(vid uint32, locations []Location) {
 	vc.Lock()
 	defer vc.Unlock()
-	vc.dropSetAsideEntry(vc.ecVid2Locations, vid)
+	vc.dropSetAsideEntry(vc.ecVid2Locations, vid, vc.learned)
 	if entry, found := vc.vid2Locations[vid]; found {
 		vc.releaseEntry(entry)
 	}
@@ -274,7 +279,8 @@ func (vc *vidMap) setLocations(vid uint32, locations []Location) {
 	}
 	stored := make([]Location, len(locations))
 	copy(stored, locations)
-	vc.vid2Locations[vid] = &locationsEntry{locations: stored, generation: vc.generation}
+	vc.learned++
+	vc.vid2Locations[vid] = &locationsEntry{locations: stored, generation: vc.generation, learnedAt: vc.learned}
 	for _, loc := range stored {
 		vc.incrementServerRef(locationServerKey(loc))
 	}
@@ -322,7 +328,7 @@ func (vc *vidMap) addLocation(vid uint32, location Location) {
 
 	glog.V(4).Infof("+ volume id %d: %+v", vid, location)
 
-	vc.dropSetAsideEntry(vc.ecVid2Locations, vid)
+	vc.dropSetAsideEntry(vc.ecVid2Locations, vid, vc.learned)
 	vc.addLocationToMap(vc.vid2Locations, vid, location)
 }
 
@@ -332,7 +338,7 @@ func (vc *vidMap) addEcLocation(vid uint32, location Location) {
 
 	glog.V(4).Infof("+ ec volume id %d: %+v", vid, location)
 
-	vc.dropSetAsideEntry(vc.vid2Locations, vid)
+	vc.dropSetAsideEntry(vc.vid2Locations, vid, vc.learned)
 	vc.addLocationToMap(vc.ecVid2Locations, vid, location)
 }
 
@@ -356,9 +362,11 @@ func (vc *vidMap) addLocationToMap(vid2Locations map[uint32]*locationsEntry, vid
 		if found {
 			vc.releaseEntry(entry)
 		}
+		vc.learned++
 		vid2Locations[vid] = &locationsEntry{
 			locations:  []Location{location},
 			generation: vc.generation,
+			learnedAt:  vc.learned,
 		}
 		vc.incrementServerRef(locationServerKey(location))
 		return
@@ -383,7 +391,8 @@ func (vc *vidMap) addLocationToMap(vid2Locations map[uint32]*locationsEntry, vid
 	locations := make([]Location, 0, len(entry.locations)+1)
 	locations = append(locations, entry.locations...)
 	locations = append(locations, location)
-	vid2Locations[vid] = &locationsEntry{locations: locations, generation: entry.generation}
+	vc.learned++
+	vid2Locations[vid] = &locationsEntry{locations: locations, generation: entry.generation, learnedAt: vc.learned}
 	vc.incrementServerRef(locationServerKey(location))
 }
 
@@ -431,7 +440,7 @@ func (vc *vidMap) deleteLocationFromMap(vid2Locations map[uint32]*locationsEntry
 		remaining := make([]Location, 0, len(entry.locations)-1)
 		remaining = append(remaining, entry.locations[:i]...)
 		remaining = append(remaining, entry.locations[i+1:]...)
-		vid2Locations[vid] = &locationsEntry{locations: remaining, generation: entry.generation, state: entry.state}
+		vid2Locations[vid] = &locationsEntry{locations: remaining, generation: entry.generation, state: entry.state, learnedAt: entry.learnedAt}
 		return
 	}
 }
@@ -464,7 +473,7 @@ func (vc *vidMap) markStale(vid uint32) {
 			continue
 		}
 		vc.releaseEntry(entry)
-		vid2Locations[vid] = &locationsEntry{locations: entry.locations, generation: entry.generation, state: entryStale}
+		vid2Locations[vid] = &locationsEntry{locations: entry.locations, generation: entry.generation, state: entryStale, learnedAt: entry.learnedAt}
 	}
 }
 
@@ -479,7 +488,7 @@ func (vc *vidMap) reviveStale(vid uint32) (revived bool) {
 		if !found || entry.state != entryStale {
 			continue
 		}
-		vid2Locations[vid] = &locationsEntry{locations: entry.locations, generation: entry.generation, state: entryRevived}
+		vid2Locations[vid] = &locationsEntry{locations: entry.locations, generation: entry.generation, state: entryRevived, learnedAt: entry.learnedAt}
 		for _, loc := range entry.locations {
 			vc.incrementServerRef(locationServerKey(loc))
 		}
@@ -488,20 +497,28 @@ func (vc *vidMap) reviveStale(vid uint32) (revived bool) {
 	return revived
 }
 
+// learnedSoFar marks the entries learned until now, for dropSetAside.
+func (vc *vidMap) learnedSoFar() uint64 {
+	vc.RLock()
+	defer vc.RUnlock()
+	return vc.learned
+}
+
 // dropSetAside deletes vid's stale and revived entries, for an answer about
-// vid that is newer than they are. An entry learned since is left alone.
-func (vc *vidMap) dropSetAside(vid uint32) {
+// vid that is newer than they are: one asked for after the entries were
+// learned, as marked by learnedSoFar. An entry learned since is left alone.
+func (vc *vidMap) dropSetAside(vid uint32, asked uint64) {
 	vc.Lock()
 	defer vc.Unlock()
 
-	vc.dropSetAsideEntry(vc.vid2Locations, vid)
-	vc.dropSetAsideEntry(vc.ecVid2Locations, vid)
+	vc.dropSetAsideEntry(vc.vid2Locations, vid, asked)
+	vc.dropSetAsideEntry(vc.ecVid2Locations, vid, asked)
 }
 
-// dropSetAsideEntry deletes vid's entry unless it was learned. Callers must
-// hold the write lock.
-func (vc *vidMap) dropSetAsideEntry(vid2Locations map[uint32]*locationsEntry, vid uint32) {
-	if entry, found := vid2Locations[vid]; found && entry.state != entryLearned {
+// dropSetAsideEntry deletes vid's entry unless it was learned, or set aside
+// from locations learned after asked. Callers must hold the write lock.
+func (vc *vidMap) dropSetAsideEntry(vid2Locations map[uint32]*locationsEntry, vid uint32, asked uint64) {
+	if entry, found := vid2Locations[vid]; found && entry.state != entryLearned && entry.learnedAt <= asked {
 		vc.releaseEntry(entry)
 		delete(vid2Locations, vid)
 	}

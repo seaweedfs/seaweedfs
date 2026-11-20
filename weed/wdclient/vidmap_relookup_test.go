@@ -399,8 +399,9 @@ func TestStaleEntryLifecycle(t *testing.T) {
 		vm.addLocation(6, b)
 		vm.markStale(5)
 		vm.reviveStale(5)
-		vm.dropSetAside(5)
-		vm.dropSetAside(6)
+		asked := vm.learnedSoFar()
+		vm.dropSetAside(5, asked)
+		vm.dropSetAside(6, asked)
 		if _, found := vm.GetLocations(5); found || vm.hasVolumeServer("a:8080") {
 			t.Fatal("a revived entry or its server reference outlived a newer answer")
 		}
@@ -458,4 +459,30 @@ func TestRelookupAnswerWithVolumeErrorsIsBelieved(t *testing.T) {
 	}
 	requireLocations(t, vc, 5)
 	requireLocations(t, vc, 6, "new:8080")
+}
+
+// An answer to a lookup asked before the volume was learned again is older
+// than what that learning set aside. When a failed lookup revives those newer
+// locations, the older answer must not delete them.
+func TestOlderAnswerKeepsLocationsLearnedMeanwhile(t *testing.T) {
+	provider := &stubProvider{}
+	vc := newVidMapClient(provider, "", DefaultVidMapCacheSize)
+	provider.answer = func(call int) (map[string][]Location, error) {
+		if call > 1 {
+			return nil, errNoAnswer
+		}
+		// While this lookup is in flight, the master confirms new locations,
+		// a read invalidates them, and the refresh that follows gets no
+		// answer and revives them.
+		vc.confirmLocations(5, []Location{{Url: "new:8080"}})
+		vc.InvalidateCache("5,0102")
+		if _, err := vc.LookupVolumeIdsWithFallback(context.Background(), []string{"5"}); err != nil {
+			t.Errorf("overlapping lookup: %v", err)
+		}
+		return map[string][]Location{"5": {{Url: "old:8080"}}, "6": {{Url: "six:8080"}}}, nil
+	}
+
+	vc.LookupVolumeIdsWithFallback(context.Background(), []string{"5", "6"})
+
+	requireLocations(t, vc, 5, "new:8080")
 }
