@@ -333,7 +333,9 @@ def filtered_recall(unit, eligible, query, k, hits):
     scores = unit[eligible] @ q
     best = -np.sort(-scores)[:k]
     cutoff = best[-1]
-    found = unit[[int(h["key"][1:]) for h in hits]] @ q if hits else np.empty(0)
+    keys = [int(h["key"][1:]) for h in hits]
+    assert len(set(keys)) == len(keys), hits
+    found = unit[keys] @ q if hits else np.empty(0)
     above = int(np.sum(found > cutoff + 1e-6))
     tied = int(np.sum(np.abs(found - cutoff) <= 1e-6))
     slots = len(best) - int(np.sum(best > cutoff + 1e-6))
@@ -342,33 +344,36 @@ def filtered_recall(unit, eligible, query, k, hits):
 
 def test_query_filter_workload(perf):
     s3v, data, queries, cluster = perf["client"], perf["data"], perf["queries"], perf["cluster"]
+    if cluster["mode"] != "single":
+        pytest.skip("restart_engine restarts one engine")
+    assert set(FILTER_MODES) <= {"warm", "cold"}, FILTER_MODES
     unit = np.array([v for v, _ in data], dtype=np.float64)
     unit /= np.linalg.norm(unit, axis=1, keepdims=True)
     indexes, eligible, setup = {}, {}, {}
-    for locality in FILTER_LOCALITY:
-        authors, planted = plant_authors(locality)
-        index = f"filter-{locality}"
-        s3v.create_index(vectorBucketName=perf["bucket"], indexName=index, dataType="float32",
-                         dimension=DIM, distanceMetric="cosine")
-        args = {"vectorBucketName": perf["bucket"], "indexName": index}
-        indexes[locality] = args
-        start = time.perf_counter()
-        for offset in range(0, VECTORS, BATCH):
-            s3v.put_vectors(**args, vectors=[
-                {"key": f"v{i}", "data": {"float32": data[i][0]},
-                 "metadata": {"category": f"c{i % CATEGORIES}", "n": i, "author": authors[i]}}
-                for i in range(offset, min(offset + BATCH, VECTORS))])
-        setup[locality] = {"ingest_seconds": time.perf_counter() - start,
-                           "index": build_index(perf, index) if INDEXED else None}
-        for name in planted:
-            eligible[locality, name] = np.array([i for i, a in enumerate(authors) if a == name], dtype=np.int64)
-        assert {name: len(eligible[locality, name]) for name in planted} == planted
-    eligible.update({(locality, None): np.arange(VECTORS) for locality in FILTER_LOCALITY})
-    perf["report"]["filter_workload"] = report = {
-        "seed": FILTER_SEED, "authors": FILTER_AUTHORS, "eligible": planted, "modes": FILTER_MODES,
-        "rounds": FILTER_ROUNDS, "setup": setup, "partitions_probed": "not exposed by the engine", "runs": []}
     empty = []
     try:
+        for locality in FILTER_LOCALITY:
+            authors, planted = plant_authors(locality)
+            index = f"filter-{locality}"
+            s3v.create_index(vectorBucketName=perf["bucket"], indexName=index, dataType="float32",
+                             dimension=DIM, distanceMetric="cosine")
+            args = {"vectorBucketName": perf["bucket"], "indexName": index}
+            indexes[locality] = args
+            start = time.perf_counter()
+            for offset in range(0, VECTORS, BATCH):
+                s3v.put_vectors(**args, vectors=[
+                    {"key": f"v{i}", "data": {"float32": data[i][0]},
+                     "metadata": {"category": f"c{i % CATEGORIES}", "n": i, "author": authors[i]}}
+                    for i in range(offset, min(offset + BATCH, VECTORS))])
+            setup[locality] = {"ingest_seconds": time.perf_counter() - start,
+                               "index": build_index(perf, index) if INDEXED else None}
+            for name in planted:
+                eligible[locality, name] = np.array([i for i, a in enumerate(authors) if a == name], dtype=np.int64)
+            assert {name: len(eligible[locality, name]) for name in planted} == planted
+        eligible.update({(locality, None): np.arange(VECTORS) for locality in FILTER_LOCALITY})
+        perf["report"]["filter_workload"] = report = {
+            "seed": FILTER_SEED, "authors": FILTER_AUTHORS, "eligible": planted, "modes": FILTER_MODES,
+            "rounds": FILTER_ROUNDS, "setup": setup, "partitions_probed": "not exposed by the engine", "runs": []}
         for mode in FILTER_MODES:
             cluster["restart_engine"](COLD if mode == "cold" else {})
             for round_ in range(FILTER_ROUNDS):
