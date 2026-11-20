@@ -211,8 +211,9 @@ templ S3VectorsBucketDetails(data dash.S3VectorsBucketData) {
 			});
 			document.getElementById('indexS3VectorsMetadataKeyBtn').addEventListener('click', async function () {
 				const index = keyModalEl.dataset.indexName;
-				const key = keyInput.value.trim();
-				if (!key) {
+				// Metadata key names are exact strings: only an empty name is refused.
+				const key = keyInput.value;
+				if (!key.trim()) {
 					keyError.textContent = 'Enter a metadata key.';
 					return;
 				}

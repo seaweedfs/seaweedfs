@@ -363,7 +363,7 @@ func S3VectorsBucketDetails(data dash.S3VectorsBucketData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "\"></div><script>\n\t\tdocument.addEventListener('DOMContentLoaded', function () {\n\t\t\tconst bucket = document.getElementById('s3vectorsBucketDetails').dataset.bucketName;\n\t\t\tconst modalEl = document.getElementById('deleteS3VectorsIndexModal');\n\t\t\tconst modal = new bootstrap.Modal(modalEl);\n\t\t\tdocument.querySelectorAll('.s3vectors-delete-index-btn').forEach(button => {\n\t\t\t\tbutton.addEventListener('click', function () {\n\t\t\t\t\tmodalEl.dataset.indexName = this.dataset.indexName || '';\n\t\t\t\t\tdocument.getElementById('deleteS3VectorsIndexName').textContent = this.dataset.indexName || '';\n\t\t\t\t\tmodal.show();\n\t\t\t\t});\n\t\t\t});\n\t\t\tasync function updateMetadataKey(index, key, remove) {\n\t\t\t\tconst url = remove\n\t\t\t\t\t? '/api/s3vectors/metadata-keys?bucket=' + encodeURIComponent(bucket) + '&index=' + encodeURIComponent(index) + '&key=' + encodeURIComponent(key)\n\t\t\t\t\t: '/api/s3vectors/metadata-keys';\n\t\t\t\tconst options = { method: remove ? 'DELETE' : 'POST', headers: s3tWriteHeaders() };\n\t\t\t\tif (!remove) {\n\t\t\t\t\toptions.headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers);\n\t\t\t\t\toptions.body = JSON.stringify({ bucket: bucket, index: index, key: key });\n\t\t\t\t}\n\t\t\t\tconst response = await fetch(s3tBasePath(url), options);\n\t\t\t\tconst data = await response.json();\n\t\t\t\tif (!response.ok) {\n\t\t\t\t\tthrow new Error(data.error || 'request failed');\n\t\t\t\t}\n\t\t\t\treturn data;\n\t\t\t}\n\t\t\tconst keyModalEl = document.getElementById('indexS3VectorsMetadataKeyModal');\n\t\t\tconst keyModal = new bootstrap.Modal(keyModalEl);\n\t\t\tconst keyInput = document.getElementById('indexS3VectorsMetadataKeyName');\n\t\t\tconst keyError = document.getElementById('indexS3VectorsMetadataKeyError');\n\t\t\tdocument.querySelectorAll('.s3vectors-index-key-btn').forEach(button => {\n\t\t\t\tbutton.addEventListener('click', function () {\n\t\t\t\t\tkeyModalEl.dataset.indexName = this.dataset.indexName || '';\n\t\t\t\t\tkeyModalEl.dataset.nonFilterable = this.dataset.nonFilterable || '[]';\n\t\t\t\t\tdocument.getElementById('indexS3VectorsMetadataKeyIndex').textContent = this.dataset.indexName || '';\n\t\t\t\t\tkeyInput.value = this.dataset.key || '';\n\t\t\t\t\tkeyError.textContent = '';\n\t\t\t\t\tkeyModal.show();\n\t\t\t\t});\n\t\t\t});\n\t\t\tdocument.getElementById('indexS3VectorsMetadataKeyBtn').addEventListener('click', async function () {\n\t\t\t\tconst index = keyModalEl.dataset.indexName;\n\t\t\t\tconst key = keyInput.value.trim();\n\t\t\t\tif (!key) {\n\t\t\t\t\tkeyError.textContent = 'Enter a metadata key.';\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\tif (JSON.parse(keyModalEl.dataset.nonFilterable || '[]').includes(key)) {\n\t\t\t\t\tkeyError.textContent = key + ' is a non-filterable key of this index and cannot be indexed.';\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\ttry {\n\t\t\t\t\tawait updateMetadataKey(index, key, false);\n\t\t\t\t\tlocation.reload();\n\t\t\t\t} catch (error) {\n\t\t\t\t\tkeyError.textContent = error.message;\n\t\t\t\t}\n\t\t\t});\n\t\t\tdocument.querySelectorAll('.s3vectors-remove-key-btn').forEach(button => {\n\t\t\t\tbutton.addEventListener('click', async function () {\n\t\t\t\t\tif (!confirm((this.dataset.action || 'Remove') + ' the index of metadata key ' + this.dataset.key + '?')) return;\n\t\t\t\t\ttry {\n\t\t\t\t\t\tawait updateMetadataKey(this.dataset.indexName, this.dataset.key, true);\n\t\t\t\t\t\tlocation.reload();\n\t\t\t\t\t} catch (error) {\n\t\t\t\t\t\talert(error.message);\n\t\t\t\t\t}\n\t\t\t\t});\n\t\t\t});\n\t\t\tdocument.getElementById('deleteS3VectorsIndexBtn').addEventListener('click', async function () {\n\t\t\t\tconst index = modalEl.dataset.indexName;\n\t\t\t\tif (!bucket || !index) return;\n\t\t\t\ttry {\n\t\t\t\t\tconst response = await fetch(s3tBasePath('/api/s3vectors/indexes?bucket=' + encodeURIComponent(bucket) + '&index=' + encodeURIComponent(index)), { method: 'DELETE', headers: s3tWriteHeaders() });\n\t\t\t\t\tconst data = await response.json();\n\t\t\t\t\tif (!response.ok) {\n\t\t\t\t\t\talert(data.error || 'Failed to delete index');\n\t\t\t\t\t\treturn;\n\t\t\t\t\t}\n\t\t\t\t\tlocation.reload();\n\t\t\t\t} catch (error) {\n\t\t\t\t\talert('Failed to delete index: ' + error.message);\n\t\t\t\t}\n\t\t\t});\n\t\t});\n\t</script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "\"></div><script>\n\t\tdocument.addEventListener('DOMContentLoaded', function () {\n\t\t\tconst bucket = document.getElementById('s3vectorsBucketDetails').dataset.bucketName;\n\t\t\tconst modalEl = document.getElementById('deleteS3VectorsIndexModal');\n\t\t\tconst modal = new bootstrap.Modal(modalEl);\n\t\t\tdocument.querySelectorAll('.s3vectors-delete-index-btn').forEach(button => {\n\t\t\t\tbutton.addEventListener('click', function () {\n\t\t\t\t\tmodalEl.dataset.indexName = this.dataset.indexName || '';\n\t\t\t\t\tdocument.getElementById('deleteS3VectorsIndexName').textContent = this.dataset.indexName || '';\n\t\t\t\t\tmodal.show();\n\t\t\t\t});\n\t\t\t});\n\t\t\tasync function updateMetadataKey(index, key, remove) {\n\t\t\t\tconst url = remove\n\t\t\t\t\t? '/api/s3vectors/metadata-keys?bucket=' + encodeURIComponent(bucket) + '&index=' + encodeURIComponent(index) + '&key=' + encodeURIComponent(key)\n\t\t\t\t\t: '/api/s3vectors/metadata-keys';\n\t\t\t\tconst options = { method: remove ? 'DELETE' : 'POST', headers: s3tWriteHeaders() };\n\t\t\t\tif (!remove) {\n\t\t\t\t\toptions.headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers);\n\t\t\t\t\toptions.body = JSON.stringify({ bucket: bucket, index: index, key: key });\n\t\t\t\t}\n\t\t\t\tconst response = await fetch(s3tBasePath(url), options);\n\t\t\t\tconst data = await response.json();\n\t\t\t\tif (!response.ok) {\n\t\t\t\t\tthrow new Error(data.error || 'request failed');\n\t\t\t\t}\n\t\t\t\treturn data;\n\t\t\t}\n\t\t\tconst keyModalEl = document.getElementById('indexS3VectorsMetadataKeyModal');\n\t\t\tconst keyModal = new bootstrap.Modal(keyModalEl);\n\t\t\tconst keyInput = document.getElementById('indexS3VectorsMetadataKeyName');\n\t\t\tconst keyError = document.getElementById('indexS3VectorsMetadataKeyError');\n\t\t\tdocument.querySelectorAll('.s3vectors-index-key-btn').forEach(button => {\n\t\t\t\tbutton.addEventListener('click', function () {\n\t\t\t\t\tkeyModalEl.dataset.indexName = this.dataset.indexName || '';\n\t\t\t\t\tkeyModalEl.dataset.nonFilterable = this.dataset.nonFilterable || '[]';\n\t\t\t\t\tdocument.getElementById('indexS3VectorsMetadataKeyIndex').textContent = this.dataset.indexName || '';\n\t\t\t\t\tkeyInput.value = this.dataset.key || '';\n\t\t\t\t\tkeyError.textContent = '';\n\t\t\t\t\tkeyModal.show();\n\t\t\t\t});\n\t\t\t});\n\t\t\tdocument.getElementById('indexS3VectorsMetadataKeyBtn').addEventListener('click', async function () {\n\t\t\t\tconst index = keyModalEl.dataset.indexName;\n\t\t\t\t// Metadata key names are exact strings: only an empty name is refused.\n\t\t\t\tconst key = keyInput.value;\n\t\t\t\tif (!key.trim()) {\n\t\t\t\t\tkeyError.textContent = 'Enter a metadata key.';\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\tif (JSON.parse(keyModalEl.dataset.nonFilterable || '[]').includes(key)) {\n\t\t\t\t\tkeyError.textContent = key + ' is a non-filterable key of this index and cannot be indexed.';\n\t\t\t\t\treturn;\n\t\t\t\t}\n\t\t\t\ttry {\n\t\t\t\t\tawait updateMetadataKey(index, key, false);\n\t\t\t\t\tlocation.reload();\n\t\t\t\t} catch (error) {\n\t\t\t\t\tkeyError.textContent = error.message;\n\t\t\t\t}\n\t\t\t});\n\t\t\tdocument.querySelectorAll('.s3vectors-remove-key-btn').forEach(button => {\n\t\t\t\tbutton.addEventListener('click', async function () {\n\t\t\t\t\tif (!confirm((this.dataset.action || 'Remove') + ' the index of metadata key ' + this.dataset.key + '?')) return;\n\t\t\t\t\ttry {\n\t\t\t\t\t\tawait updateMetadataKey(this.dataset.indexName, this.dataset.key, true);\n\t\t\t\t\t\tlocation.reload();\n\t\t\t\t\t} catch (error) {\n\t\t\t\t\t\talert(error.message);\n\t\t\t\t\t}\n\t\t\t\t});\n\t\t\t});\n\t\t\tdocument.getElementById('deleteS3VectorsIndexBtn').addEventListener('click', async function () {\n\t\t\t\tconst index = modalEl.dataset.indexName;\n\t\t\t\tif (!bucket || !index) return;\n\t\t\t\ttry {\n\t\t\t\t\tconst response = await fetch(s3tBasePath('/api/s3vectors/indexes?bucket=' + encodeURIComponent(bucket) + '&index=' + encodeURIComponent(index)), { method: 'DELETE', headers: s3tWriteHeaders() });\n\t\t\t\t\tconst data = await response.json();\n\t\t\t\t\tif (!response.ok) {\n\t\t\t\t\t\talert(data.error || 'Failed to delete index');\n\t\t\t\t\t\treturn;\n\t\t\t\t\t}\n\t\t\t\t\tlocation.reload();\n\t\t\t\t} catch (error) {\n\t\t\t\t\talert('Failed to delete index: ' + error.message);\n\t\t\t\t}\n\t\t\t});\n\t\t});\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -395,7 +395,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 		var templ_7745c5c3_Var21 string
 		templ_7745c5c3_Var21, templ_7745c5c3_Err = templruntime.NewAttributeExpression(panel.Index.IndexName).Resolve(ctx)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 261, Col: 92}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 262, Col: 92}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var21)
 		if templ_7745c5c3_Err != nil {
@@ -408,7 +408,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 		var templ_7745c5c3_Var22 string
 		templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(panel.Index.IndexName)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 264, Col: 70}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 265, Col: 70}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 		if templ_7745c5c3_Err != nil {
@@ -421,7 +421,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 		var templ_7745c5c3_Var23 string
 		templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("Dimension %d", panel.Index.Dimension))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 267, Col: 56}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 268, Col: 56}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
 		if templ_7745c5c3_Err != nil {
@@ -434,7 +434,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 		var templ_7745c5c3_Var24 string
 		templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(panel.Index.DistanceMetric)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 267, Col: 90}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 268, Col: 90}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
 		if templ_7745c5c3_Err != nil {
@@ -447,7 +447,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 		var templ_7745c5c3_Var25 string
 		templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(groupDigits(float64(panel.Vectors)))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 267, Col: 133}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 268, Col: 133}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 		if templ_7745c5c3_Err != nil {
@@ -461,7 +461,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 			var templ_7745c5c3_Var26 string
 			templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(panel.VectorIndex)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 269, Col: 24}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 270, Col: 24}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
 			if templ_7745c5c3_Err != nil {
@@ -485,7 +485,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 			var templ_7745c5c3_Var27 string
 			templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(panel.Error)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 277, Col: 61}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 278, Col: 61}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
 			if templ_7745c5c3_Err != nil {
@@ -503,7 +503,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 		var templ_7745c5c3_Var28 string
 		templ_7745c5c3_Var28, templ_7745c5c3_Err = templruntime.NewAttributeExpression(panel.Index.IndexName).Resolve(ctx)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 281, Col: 128}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 282, Col: 128}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var28)
 		if templ_7745c5c3_Err != nil {
@@ -516,7 +516,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 		var templ_7745c5c3_Var29 string
 		templ_7745c5c3_Var29, templ_7745c5c3_Err = templruntime.NewAttributeExpression(nonFilterableJSON(panel.Index)).Resolve(ctx)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 281, Col: 183}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 282, Col: 183}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var29)
 		if templ_7745c5c3_Err != nil {
@@ -534,7 +534,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 			var templ_7745c5c3_Var30 string
 			templ_7745c5c3_Var30, templ_7745c5c3_Err = templ.JoinStringErrs(key.Key)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 300, Col: 27}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 301, Col: 27}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var30))
 			if templ_7745c5c3_Err != nil {
@@ -547,7 +547,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 			var templ_7745c5c3_Var31 string
 			templ_7745c5c3_Var31, templ_7745c5c3_Err = templ.JoinStringErrs(keyState(key.State))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 301, Col: 33}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 302, Col: 33}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var31))
 			if templ_7745c5c3_Err != nil {
@@ -566,7 +566,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 				var templ_7745c5c3_Var32 string
 				templ_7745c5c3_Var32, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.0f%%", key.Coverage))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 306, Col: 47}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 307, Col: 47}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var32))
 				if templ_7745c5c3_Err != nil {
@@ -580,7 +580,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 			var templ_7745c5c3_Var33 string
 			templ_7745c5c3_Var33, templ_7745c5c3_Err = templ.JoinStringErrs(groupDigits(key.QueriesPerHour))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 309, Col: 45}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 310, Col: 45}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var33))
 			if templ_7745c5c3_Err != nil {
@@ -594,7 +594,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 				var templ_7745c5c3_Var34 string
 				templ_7745c5c3_Var34, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%.1f MiB", float64(key.IndexBytes)/(1<<20)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 312, Col: 68}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 313, Col: 68}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var34))
 				if templ_7745c5c3_Err != nil {
@@ -618,7 +618,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 				var templ_7745c5c3_Var35 string
 				templ_7745c5c3_Var35, templ_7745c5c3_Err = templruntime.NewAttributeExpression(panel.Index.IndexName).Resolve(ctx)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 319, Col: 140}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 320, Col: 140}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var35)
 				if templ_7745c5c3_Err != nil {
@@ -631,7 +631,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 				var templ_7745c5c3_Var36 string
 				templ_7745c5c3_Var36, templ_7745c5c3_Err = templruntime.NewAttributeExpression(key.Key).Resolve(ctx)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 319, Col: 161}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 320, Col: 161}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var36)
 				if templ_7745c5c3_Err != nil {
@@ -649,7 +649,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 				var templ_7745c5c3_Var37 string
 				templ_7745c5c3_Var37, templ_7745c5c3_Err = templruntime.NewAttributeExpression(panel.Index.IndexName).Resolve(ctx)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 321, Col: 128}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 322, Col: 128}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var37)
 				if templ_7745c5c3_Err != nil {
@@ -662,7 +662,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 				var templ_7745c5c3_Var38 string
 				templ_7745c5c3_Var38, templ_7745c5c3_Err = templruntime.NewAttributeExpression(key.Key).Resolve(ctx)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 321, Col: 149}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 322, Col: 149}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var38)
 				if templ_7745c5c3_Err != nil {
@@ -696,7 +696,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 			var templ_7745c5c3_Var39 string
 			templ_7745c5c3_Var39, templ_7745c5c3_Err = templ.JoinStringErrs(panel.StatsError)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 336, Col: 52}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 337, Col: 52}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var39))
 			if templ_7745c5c3_Err != nil {
@@ -725,7 +725,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 			var templ_7745c5c3_Var40 string
 			templ_7745c5c3_Var40, templ_7745c5c3_Err = templ.JoinStringErrs(key.Key)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 344, Col: 34}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 345, Col: 34}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var40))
 			if templ_7745c5c3_Err != nil {
@@ -738,7 +738,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 			var templ_7745c5c3_Var41 string
 			templ_7745c5c3_Var41, templ_7745c5c3_Err = templ.JoinStringErrs(groupDigits(key.QueriesPerHour))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 345, Col: 58}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 346, Col: 58}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var41))
 			if templ_7745c5c3_Err != nil {
@@ -751,7 +751,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 			var templ_7745c5c3_Var42 string
 			templ_7745c5c3_Var42, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("avg %.0f ms", key.AvgMs))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 346, Col: 75}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 347, Col: 75}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var42))
 			if templ_7745c5c3_Err != nil {
@@ -774,7 +774,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 				var templ_7745c5c3_Var43 string
 				templ_7745c5c3_Var43, templ_7745c5c3_Err = templruntime.NewAttributeExpression(panel.Index.IndexName).Resolve(ctx)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 350, Col: 139}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 351, Col: 139}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var43)
 				if templ_7745c5c3_Err != nil {
@@ -787,7 +787,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 				var templ_7745c5c3_Var44 string
 				templ_7745c5c3_Var44, templ_7745c5c3_Err = templruntime.NewAttributeExpression(key.Key).Resolve(ctx)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 350, Col: 160}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 351, Col: 160}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var44)
 				if templ_7745c5c3_Err != nil {
@@ -800,7 +800,7 @@ func S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) templ.Component {
 				var templ_7745c5c3_Var45 string
 				templ_7745c5c3_Var45, templ_7745c5c3_Err = templruntime.NewAttributeExpression(nonFilterableJSON(panel.Index)).Resolve(ctx)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 350, Col: 215}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/s3vectors_bucket_details.templ`, Line: 351, Col: 215}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var45)
 				if templ_7745c5c3_Err != nil {
