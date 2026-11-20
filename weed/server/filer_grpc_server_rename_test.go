@@ -33,6 +33,9 @@ type renameTestStore struct {
 	findDelay time.Duration // optional: widen check-then-act windows in tests
 	findErr   error         // simulates a failing entry lookup
 	strictTx  bool          // like a SQL store: calls through a committed transaction fail
+
+	kv        map[string][]byte // optional KV (hard links); nil: every key is absent
+	kvGetErrs int               // fail this many KvGet calls before answering
 }
 
 type renameTestTxKey struct{}
@@ -76,13 +79,32 @@ func (s *renameTestStore) RollbackTransaction(ctx context.Context) error {
 	}
 	return nil
 }
-func (s *renameTestStore) KvPut(context.Context, []byte, []byte) error {
+func (s *renameTestStore) KvPut(_ context.Context, key []byte, value []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.kv != nil {
+		s.kv[string(key)] = append([]byte(nil), value...)
+	}
 	return nil
 }
-func (s *renameTestStore) KvGet(context.Context, []byte) ([]byte, error) {
+func (s *renameTestStore) KvGet(_ context.Context, key []byte) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.kvGetErrs > 0 {
+		s.kvGetErrs--
+		return nil, errors.New("kv get: transient failure")
+	}
+	if value, found := s.kv[string(key)]; found {
+		return value, nil
+	}
 	return nil, filer.ErrKvNotFound
 }
-func (s *renameTestStore) KvDelete(context.Context, []byte) error { return nil }
+func (s *renameTestStore) KvDelete(_ context.Context, key []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.kv, string(key))
+	return nil
+}
 
 func (s *renameTestStore) InsertEntry(ctx context.Context, entry *filer.Entry) error {
 	if err := s.txDone(ctx); err != nil {

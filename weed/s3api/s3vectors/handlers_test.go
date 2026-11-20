@@ -399,6 +399,9 @@ func TestTranslateFilter(t *testing.T) {
 			"(COALESCE(json_extract(`metadata`, '$[\"a''b\"]') = '\"v''1\"', false) OR COALESCE(json_array_contains(`metadata`, '$[\"a''b\"]', '\"v''1\"'), false))"},
 		{"array value escapes", map[string]interface{}{"k": `<a&"b">`},
 			"(COALESCE(" + str + ` = '"<a&\"b\">"', false) OR ` + elem(`"<a&\"b\">"`) + ")"},
+		{"control characters", map[string]interface{}{"k": map[string]interface{}{"$ne": "\x00\x01\b\f\x1f\x7f\u0085\u009f"}},
+			"NOT (COALESCE(" + str + " = '\"\\u0000\\u0001\\b\\f\\u001f\x7f\u0085\u009f\"', false) OR " +
+				elem(`"\u0000\u0001\b\f\u001f`+"\x7f\u0085\u009f\"") + ")"},
 	}
 	for _, tc := range cases {
 		got, err := translateFilter(tc.filter)
@@ -431,6 +434,24 @@ func TestTranslateFilter(t *testing.T) {
 	}
 	if got, err := translateFilter(nil); err != nil || got != "" {
 		t.Fatalf("empty filter: %q %v", got, err)
+	}
+}
+
+// json_extract serializes a stored string with serde_json, which escapes the
+// same characters as encoding/json below U+00A0.
+func TestJsonbStringControlCharacters(t *testing.T) {
+	for r := rune(0); r < 0xa0; r++ {
+		s := "a" + string(r) + "b"
+		var b strings.Builder
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(s); err != nil {
+			t.Fatal(err)
+		}
+		want := strings.TrimSuffix(b.String(), "\n")
+		if got := jsonbString(s); got != want {
+			t.Errorf("U+%04X: got %q, want %q", r, got, want)
+		}
 	}
 }
 

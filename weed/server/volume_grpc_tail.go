@@ -111,10 +111,29 @@ func (vs *VolumeServer) VolumeTailReceiver(ctx context.Context, req *volume_serv
 	defer glog.V(1).Infof("receive tailing volume %d finished", v.Id)
 
 	return resp, operation.TailVolumeFromSource(pb.ServerAddress(req.SourceVolumeServer), v.Id, req.SinceNs, int(req.IdleTimeoutSeconds), func(n *needle.Needle) error {
-		_, err := vs.store.WriteVolumeNeedle(v.Id, n, false, false)
-		return err
+		return writeTailedNeedle(vs.store, v.Id, n)
 	}, vs.grpcDialOption, vs.guardedGrpcDialOption(req.SourceVolumeServer))
 
+}
+
+// writeTailedNeedle applies one tailed .dat record. A delete and an empty
+// write both arrive as a size-0 record; it is a delete when the key already
+// has a record here, and an empty write otherwise.
+func writeTailedNeedle(store *storage.Store, vid needle.VolumeId, n *needle.Needle) error {
+	if v := store.GetVolume(vid); v != nil && n.Size == 0 {
+		size, found, err := v.LookupNeedle(n.Id)
+		if err != nil {
+			return err
+		}
+		if found {
+			if !size.IsDeleted() {
+				_, err = store.DeleteVolumeNeedle(vid, n, false)
+			}
+			return err
+		}
+	}
+	_, err := store.WriteVolumeNeedle(vid, n, false, false)
+	return err
 }
 
 // generate the volume idx

@@ -2111,7 +2111,7 @@ func elementMatch(field string, operand interface{}) (string, error) {
 }
 
 // jsonbString renders s as the JSON text json_extract returns for a stored
-// string: quoted, with the same escapes the jsonb serializer emits.
+// string: quoted, with the escapes serde_json emits.
 func jsonbString(s string) string {
 	var b strings.Builder
 	b.WriteByte('"')
@@ -2127,11 +2127,13 @@ func jsonbString(s string) string {
 			b.WriteString(`\r`)
 		case '\t':
 			b.WriteString(`\t`)
-		case 0:
-			b.WriteString(`\0`)
+		case '\b':
+			b.WriteString(`\b`)
+		case '\f':
+			b.WriteString(`\f`)
 		default:
-			if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
-				fmt.Fprintf(&b, `\u{%x}`, r)
+			if r < 0x20 {
+				fmt.Fprintf(&b, `\u%04x`, r)
 			} else {
 				b.WriteRune(r)
 			}

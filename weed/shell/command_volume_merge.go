@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"sync"
 	"time"
 
@@ -92,6 +93,9 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 	if len(replicas) < 2 {
 		return fmt.Errorf("volume %d has %d replica(s); merge requires at least two", volumeId, len(replicas))
 	}
+	if len(replicas) > mergeMaxReplicas {
+		return fmt.Errorf("volume %d has %d replicas; merge supports at most %d", volumeId, len(replicas), mergeMaxReplicas)
+	}
 
 	volumeInfo := replicas[0].info
 	replicaPlacement, err := super_block.NewReplicaPlacementFromByte(byte(volumeInfo.ReplicaPlacement))
@@ -145,10 +149,14 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 	done := make(chan struct{})
 	defer close(done)
 
+	keys := make(mergedKeys)
+	histories := make([]*keyHistoryStream, 0, len(replicas))
 	sources := make([]needleStream, 0, len(replicas))
-	for _, replica := range replicas {
+	for i, replica := range replicas {
 		server := pb.NewServerAddressFromDataNode(replica.location.dataNode)
-		sources = append(sources, startTailNeedleStream(commandEnv.option.GrpcDialOption, volumeId, server, done))
+		history := &keyHistoryStream{needleStream: startTailNeedleStream(commandEnv.option.GrpcDialOption, volumeId, server, done), bit: 1 << i, keys: keys}
+		histories = append(histories, history)
+		sources = append(sources, history)
 	}
 
 	mergeErr := operation.WithVolumeServerClient(false, targetServer, commandEnv.option.GrpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
@@ -157,17 +165,7 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 			version = needle.GetCurrentVersion()
 		}
 		return mergeNeedleStreams(sources, func(streamIndex int, n *needle.Needle) error {
-			blob, size, err := needleBlobFromNeedle(n, version)
-			if err != nil {
-				return err
-			}
-			_, err = client.WriteNeedleBlob(context.Background(), &volume_server_pb.WriteNeedleBlobRequest{
-				VolumeId:   uint32(volumeId),
-				NeedleId:   uint64(n.Id),
-				Size:       int32(size),
-				NeedleBlob: blob,
-			})
-			return err
+			return keys.writeMergedNeedle(client, volumeId, version, n, histories[streamIndex].hadKey)
 		})
 	})
 	if mergeErr != nil {
@@ -177,7 +175,7 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 	// Verify the merged copy before overwriting any replica. A short or empty
 	// merge stamped over every replica at once is unrecoverable; on failure the
 	// originals are left intact and the bad merged copy is cleaned up.
-	if err = verifyMergedVolume(commandEnv.option.GrpcDialOption, volumeId, targetServer, replicas); err != nil {
+	if err = verifyMergedVolume(commandEnv.option.GrpcDialOption, volumeId, targetServer, replicas, keys.deletedCount()); err != nil {
 		return err
 	}
 
@@ -198,6 +196,82 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 
 	fmt.Fprintf(writer, "merged volume %d from %d replicas via %s\n", volumeId, len(replicas), targetServer)
 	return nil
+}
+
+// mergedKeys holds, per key, a bit for each source stream that has returned a
+// record for it, and mergedKeyDeleted once the merged copy holds it deleted.
+type mergedKeys map[types.NeedleId]uint64
+
+const mergeMaxReplicas = 63
+
+const mergedKeyDeleted = uint64(1) << mergeMaxReplicas
+
+// keyHistoryStream records the keys its source returns. hadKey reports whether
+// the key of the record returned last appeared earlier in the same source.
+type keyHistoryStream struct {
+	needleStream
+	bit    uint64
+	keys   mergedKeys
+	hadKey bool
+}
+
+func (s *keyHistoryStream) Next() (*needle.Needle, bool) {
+	n, ok := s.needleStream.Next()
+	if ok {
+		s.hadKey = s.keys[n.Id]&s.bit != 0
+		s.keys[n.Id] |= s.bit
+	}
+	return n, ok
+}
+
+// writeMergedNeedle copies one merged record to the target. A delete and an
+// empty write both arrive as a size-0 record; it is a delete when its source
+// already had a record for the key, and an empty write otherwise. A size-0
+// record never revives a key the merged copy already deleted.
+func (keys mergedKeys) writeMergedNeedle(client volume_server_pb.VolumeServerClient, volumeId needle.VolumeId, version needle.Version, n *needle.Needle, sourceHadKey bool) error {
+	if n.Size == 0 && keys[n.Id]&mergedKeyDeleted != 0 {
+		return nil
+	}
+	if n.Size == 0 && sourceHadKey {
+		fid := needle.NewFileId(volumeId, uint64(n.Id), 0).String()
+		resp, err := client.BatchDelete(context.Background(), &volume_server_pb.BatchDeleteRequest{
+			FileIds:         []string{fid},
+			SkipCookieCheck: true,
+		})
+		if err != nil {
+			return fmt.Errorf("delete merged needle %s: %w", fid, err)
+		}
+		for _, result := range resp.Results {
+			if result.Status != http.StatusAccepted && result.Status != http.StatusNotModified {
+				return fmt.Errorf("delete merged needle %s: status %d: %s", fid, result.Status, result.Error)
+			}
+		}
+		keys[n.Id] |= mergedKeyDeleted
+		return nil
+	}
+	blob, size, err := needleBlobFromNeedle(n, version)
+	if err != nil {
+		return err
+	}
+	if _, err = client.WriteNeedleBlob(context.Background(), &volume_server_pb.WriteNeedleBlobRequest{
+		VolumeId:   uint32(volumeId),
+		NeedleId:   uint64(n.Id),
+		Size:       int32(size),
+		NeedleBlob: blob,
+	}); err != nil {
+		return err
+	}
+	keys[n.Id] &^= mergedKeyDeleted
+	return nil
+}
+
+func (keys mergedKeys) deletedCount() (count uint64) {
+	for _, state := range keys {
+		if state&mergedKeyDeleted != 0 {
+			count++
+		}
+	}
+	return count
 }
 
 type needleStream interface {
@@ -500,7 +574,7 @@ func ensureVolumeReadonly(commandEnv *CommandEnv, replicas []*VolumeReplica) ([]
 
 // verifyMergedVolume checks the freshly merged copy is at least as complete as the
 // most complete source replica before the originals are overwritten.
-func verifyMergedVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, targetServer pb.ServerAddress, replicas []*VolumeReplica) error {
+func verifyMergedVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, targetServer pb.ServerAddress, replicas []*VolumeReplica, mergedDeleted uint64) error {
 	merged, err := readVolumeStatus(grpcDialOption, targetServer, volumeId)
 	if err != nil {
 		return fmt.Errorf("read merged volume %d on %s: %w", volumeId, targetServer, err)
@@ -514,14 +588,15 @@ func verifyMergedVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId
 		}
 		replicaLive[server] = liveNeedleCount(status)
 	}
-	return evaluateMergedVolume(volumeId, liveNeedleCount(merged), replicaLive)
+	return evaluateMergedVolume(volumeId, liveNeedleCount(merged), mergedDeleted, replicaLive)
 }
 
 // evaluateMergedVolume reports why a merged copy with mergedLive live needles is
 // unsafe to overwrite replicas whose live counts are replicaLive. The merge is the
-// union of every replica's needles, so the merged copy must be non-empty and hold
-// at least as many live needles as the most complete replica.
-func evaluateMergedVolume(volumeId needle.VolumeId, mergedLive uint64, replicaLive map[pb.ServerAddress]uint64) error {
+// union of every replica's needles, so the merged copy must be non-empty, and every
+// key live on the most complete replica must be live or deleted in it: mergedLive
+// plus the mergedDeleted keys the merge deleted is at least that replica's count.
+func evaluateMergedVolume(volumeId needle.VolumeId, mergedLive, mergedDeleted uint64, replicaLive map[pb.ServerAddress]uint64) error {
 	if mergedLive == 0 {
 		return fmt.Errorf("merged volume %d is empty; keeping original replicas", volumeId)
 	}
@@ -532,8 +607,8 @@ func evaluateMergedVolume(volumeId needle.VolumeId, mergedLive uint64, replicaLi
 			maxLive, maxFrom = live, server
 		}
 	}
-	if mergedLive < maxLive {
-		return fmt.Errorf("merged volume %d has %d live needles, fewer than replica %s with %d; refusing to overwrite replicas", volumeId, mergedLive, maxFrom, maxLive)
+	if mergedLive+mergedDeleted < maxLive {
+		return fmt.Errorf("merged volume %d has %d live and %d deleted needles, fewer than replica %s with %d live; refusing to overwrite replicas", volumeId, mergedLive, mergedDeleted, maxFrom, maxLive)
 	}
 	return nil
 }

@@ -2,13 +2,18 @@ package shell
 
 import (
 	"bytes"
+	"context"
+	"fmt"
+	"net/http"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"google.golang.org/grpc"
 )
 
 type sliceNeedleStream struct {
@@ -33,16 +38,25 @@ func TestEvaluateMergedVolume(t *testing.T) {
 	const vid = needle.VolumeId(7)
 	a, b := pb.ServerAddress("a:8080"), pb.ServerAddress("b:8080")
 
-	if err := evaluateMergedVolume(vid, 0, map[pb.ServerAddress]uint64{a: 5}); err == nil {
+	if err := evaluateMergedVolume(vid, 0, 0, map[pb.ServerAddress]uint64{a: 5}); err == nil {
 		t.Fatal("expected empty merged volume to be rejected")
 	}
-	if err := evaluateMergedVolume(vid, 4, map[pb.ServerAddress]uint64{a: 5, b: 3}); err == nil {
+	if err := evaluateMergedVolume(vid, 0, 5, map[pb.ServerAddress]uint64{a: 5}); err == nil {
+		t.Fatal("expected fully deleted merged volume to be rejected")
+	}
+	if err := evaluateMergedVolume(vid, 4, 0, map[pb.ServerAddress]uint64{a: 5, b: 3}); err == nil {
 		t.Fatal("expected short merged volume to be rejected")
 	}
-	if err := evaluateMergedVolume(vid, 5, map[pb.ServerAddress]uint64{a: 5, b: 3}); err != nil {
+	if err := evaluateMergedVolume(vid, 3, 1, map[pb.ServerAddress]uint64{a: 5, b: 3}); err == nil {
+		t.Fatal("expected short merged volume with a delete to be rejected")
+	}
+	if err := evaluateMergedVolume(vid, 4, 1, map[pb.ServerAddress]uint64{a: 5, b: 4}); err != nil {
+		t.Fatalf("expected merged volume that deleted a key a stale replica keeps to pass: %v", err)
+	}
+	if err := evaluateMergedVolume(vid, 5, 0, map[pb.ServerAddress]uint64{a: 5, b: 3}); err != nil {
 		t.Fatalf("expected merged volume matching largest replica to pass: %v", err)
 	}
-	if err := evaluateMergedVolume(vid, 9, map[pb.ServerAddress]uint64{a: 5, b: 3}); err != nil {
+	if err := evaluateMergedVolume(vid, 9, 0, map[pb.ServerAddress]uint64{a: 5, b: 3}); err != nil {
 		t.Fatalf("expected larger merged volume to pass: %v", err)
 	}
 }
@@ -561,5 +575,82 @@ func TestMergeEdgeCaseHandling(t *testing.T) {
 		t.Logf("All %d edge cases are handled", len(edgeCases))
 	} else {
 		t.Fatalf("Only %d/%d edge cases handled", passedCount, len(edgeCases))
+	}
+}
+
+type mergeTargetClient struct {
+	volume_server_pb.VolumeServerClient
+	ops []string
+}
+
+func (c *mergeTargetClient) WriteNeedleBlob(_ context.Context, req *volume_server_pb.WriteNeedleBlobRequest, _ ...grpc.CallOption) (*volume_server_pb.WriteNeedleBlobResponse, error) {
+	c.ops = append(c.ops, fmt.Sprintf("write %d size %d", req.NeedleId, req.Size))
+	return &volume_server_pb.WriteNeedleBlobResponse{}, nil
+}
+
+func (c *mergeTargetClient) BatchDelete(_ context.Context, req *volume_server_pb.BatchDeleteRequest, _ ...grpc.CallOption) (*volume_server_pb.BatchDeleteResponse, error) {
+	resp := &volume_server_pb.BatchDeleteResponse{}
+	for _, fid := range req.FileIds {
+		c.ops = append(c.ops, fmt.Sprintf("delete %s skipCookie=%v", fid, req.SkipCookieCheck))
+		resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{FileId: fid, Status: http.StatusAccepted})
+	}
+	return resp, nil
+}
+
+func TestWriteMergedNeedleSizeZeroRecords(t *testing.T) {
+	second := int64(time.Second)
+	record := func(id uint64, data string, at int64) *needle.Needle {
+		return &needle.Needle{Id: types.Uint64ToNeedleId(id), Cookie: 7, Data: []byte(data), Size: types.Size(len(data)), AppendAtNs: uint64(at)}
+	}
+	streamA := []*needle.Needle{
+		record(1, "live", 1*second),
+		record(1, "", 2*second),
+		record(2, "", 3*second),
+		record(3, "rewritten", 4*second),
+		record(3, "again", 5*second),
+		record(4, "kept", 7*second),
+		record(5, "", 21*second),
+		record(5, "", 22*second),
+	}
+	// The same writes reach replica B a moment later, three of them more than
+	// a dedup window later, and A and B each have a delete the other missed.
+	streamB := []*needle.Needle{
+		record(1, "live", 1*second+1),
+		record(1, "", 9*second),
+		record(2, "", 10*second),
+		record(4, "kept", 7*second+1),
+		record(4, "", 20*second),
+		record(5, "", 30*second),
+	}
+
+	keys := make(mergedKeys)
+	histories := []*keyHistoryStream{
+		{needleStream: &sliceNeedleStream{needles: streamA}, bit: 1 << 0, keys: keys},
+		{needleStream: &sliceNeedleStream{needles: streamB}, bit: 1 << 1, keys: keys},
+	}
+	client := &mergeTargetClient{}
+	err := mergeNeedleStreams([]needleStream{histories[0], histories[1]}, func(streamIndex int, n *needle.Needle) error {
+		return keys.writeMergedNeedle(client, 5, needle.GetCurrentVersion(), n, histories[streamIndex].hadKey)
+	})
+	if err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	want := []string{
+		"write 1 size 9",
+		"delete 5,0100000000 skipCookie=true",
+		"write 2 size 0",
+		"write 3 size 14",
+		"write 3 size 10",
+		"write 4 size 9",
+		"write 2 size 0",
+		"delete 5,0400000000 skipCookie=true",
+		"write 5 size 0",
+		"delete 5,0500000000 skipCookie=true",
+	}
+	if !reflect.DeepEqual(client.ops, want) {
+		t.Errorf("target ops:\n got %q\nwant %q", client.ops, want)
+	}
+	if got := keys.deletedCount(); got != 3 {
+		t.Errorf("deleted keys: got %d, want 3", got)
 	}
 }

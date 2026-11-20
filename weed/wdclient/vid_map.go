@@ -41,7 +41,29 @@ func (l Location) ServerAddress() pb.ServerAddress {
 type locationsEntry struct {
 	locations  []Location
 	generation uint64
+	state      entryState
+	// learnedAt orders when the locations were learned, across volumes.
+	// Setting an entry aside or reviving it keeps it.
+	learnedAt uint64
 }
+
+// entryState tells what the cache learned from what a failed read set aside.
+// An entry that is not entryLearned holds only what was known before the
+// read failed, less what pushed removals took out since, so the next thing
+// learned about the volume replaces it instead of merging with it.
+type entryState uint8
+
+const (
+	// entryLearned: reported by the master or a lookup.
+	entryLearned entryState = iota
+	// entryStale: set aside by InvalidateCache. Readers do not see it and it
+	// holds no server references. It stays in the map so that a pushed
+	// removal still edits it.
+	entryStale
+	// entryRevived: a stale entry served again because the lookup that
+	// followed its invalidation got no answer.
+	entryRevived
+)
 
 type vidMap struct {
 	sync.RWMutex
@@ -61,6 +83,8 @@ type vidMap struct {
 	// retainGenerations is how many resets an entry survives without being
 	// refreshed before reset drops it.
 	retainGenerations uint64
+	// learned counts entries learned, for locationsEntry.learnedAt.
+	learned uint64
 }
 
 func newVidMap(dataCenter string, retainGenerations int) *vidMap {
@@ -213,7 +237,7 @@ func (vc *vidMap) hasLocation(vid uint32, url string) bool {
 	defer vc.RUnlock()
 	for _, vid2Locations := range []map[uint32]*locationsEntry{vc.vid2Locations, vc.ecVid2Locations} {
 		entry, found := vid2Locations[vid]
-		if !found || entry.generation != vc.generation {
+		if !found || entry.state == entryStale || entry.generation != vc.generation {
 			continue
 		}
 		for _, loc := range entry.locations {
@@ -245,6 +269,7 @@ func (vc *vidMap) currentLocations(vid uint32) ([]Location, bool) {
 func (vc *vidMap) setLocations(vid uint32, locations []Location) {
 	vc.Lock()
 	defer vc.Unlock()
+	vc.dropSetAsideEntry(vc.ecVid2Locations, vid, vc.learned)
 	if entry, found := vc.vid2Locations[vid]; found {
 		vc.releaseEntry(entry)
 	}
@@ -254,17 +279,18 @@ func (vc *vidMap) setLocations(vid uint32, locations []Location) {
 	}
 	stored := make([]Location, len(locations))
 	copy(stored, locations)
-	vc.vid2Locations[vid] = &locationsEntry{locations: stored, generation: vc.generation}
+	vc.learned++
+	vc.vid2Locations[vid] = &locationsEntry{locations: stored, generation: vc.generation, learnedAt: vc.learned}
 	for _, loc := range stored {
 		vc.incrementServerRef(locationServerKey(loc))
 	}
 }
 
-// lookupEntry returns vid's entry when it still holds locations. Callers must
-// hold the lock.
+// lookupEntry returns vid's entry when it still holds locations and is not
+// stale. Callers must hold the lock.
 func lookupEntry(vid2Locations map[uint32]*locationsEntry, vid uint32) (*locationsEntry, bool) {
 	entry, found := vid2Locations[vid]
-	if !found || len(entry.locations) == 0 {
+	if !found || entry.state == entryStale || len(entry.locations) == 0 {
 		return nil, false
 	}
 	return entry, true
@@ -302,6 +328,7 @@ func (vc *vidMap) addLocation(vid uint32, location Location) {
 
 	glog.V(4).Infof("+ volume id %d: %+v", vid, location)
 
+	vc.dropSetAsideEntry(vc.ecVid2Locations, vid, vc.learned)
 	vc.addLocationToMap(vc.vid2Locations, vid, location)
 }
 
@@ -311,13 +338,16 @@ func (vc *vidMap) addEcLocation(vid uint32, location Location) {
 
 	glog.V(4).Infof("+ ec volume id %d: %+v", vid, location)
 
+	vc.dropSetAsideEntry(vc.vid2Locations, vid, vc.learned)
 	vc.addLocationToMap(vc.ecVid2Locations, vid, location)
 }
 
 // addLocationToMap records location for vid. The first write of a generation
 // replaces what an earlier one held instead of merging with it: after a reset
 // the new master is the authority, so a volume that moved must not keep
-// answering with the server it moved off. Callers must hold the write lock.
+// answering with the server it moved off. A stale or revived entry is replaced
+// the same way: the volume is being learned again, and what a failed read set
+// aside is older. Callers must hold the write lock.
 //
 // If the URL is already present and the remote/local classification matches,
 // the entry is left untouched (same replica, same view). When the
@@ -328,13 +358,15 @@ func (vc *vidMap) addEcLocation(vid uint32, location Location) {
 // the refcount does not need to move.
 func (vc *vidMap) addLocationToMap(vid2Locations map[uint32]*locationsEntry, vid uint32, location Location) {
 	entry, found := vid2Locations[vid]
-	if !found || entry.generation != vc.generation {
+	if !found || entry.state != entryLearned || entry.generation != vc.generation {
 		if found {
 			vc.releaseEntry(entry)
 		}
+		vc.learned++
 		vid2Locations[vid] = &locationsEntry{
 			locations:  []Location{location},
 			generation: vc.generation,
+			learnedAt:  vc.learned,
 		}
 		vc.incrementServerRef(locationServerKey(location))
 		return
@@ -359,7 +391,8 @@ func (vc *vidMap) addLocationToMap(vid2Locations map[uint32]*locationsEntry, vid
 	locations := make([]Location, 0, len(entry.locations)+1)
 	locations = append(locations, entry.locations...)
 	locations = append(locations, location)
-	vid2Locations[vid] = &locationsEntry{locations: locations, generation: entry.generation}
+	vc.learned++
+	vid2Locations[vid] = &locationsEntry{locations: locations, generation: entry.generation, learnedAt: vc.learned}
 	vc.incrementServerRef(locationServerKey(location))
 }
 
@@ -384,7 +417,9 @@ func (vc *vidMap) deleteEcLocation(vid uint32, location Location) {
 // deleteLocationFromMap drops one location from vid's entry, and the entry
 // itself once its last location is gone. The generation is untouched: a delete
 // only speaks about the location it names, it does not make the rest of the
-// entry any fresher. Callers must hold the write lock.
+// entry any fresher, and it keeps the entry's state. A stale entry is edited
+// like any other, so a location removed while it was set aside does not come
+// back with it. Callers must hold the write lock.
 func (vc *vidMap) deleteLocationFromMap(vid2Locations map[uint32]*locationsEntry, vid uint32, location Location) {
 	entry, found := vid2Locations[vid]
 	if !found {
@@ -395,7 +430,9 @@ func (vc *vidMap) deleteLocationFromMap(vid2Locations map[uint32]*locationsEntry
 		if loc.Url != location.Url {
 			continue
 		}
-		vc.decrementServerRef(locationServerKey(loc))
+		if entry.state != entryStale {
+			vc.decrementServerRef(locationServerKey(loc))
+		}
 		if len(entry.locations) == 1 {
 			delete(vid2Locations, vid)
 			return
@@ -403,7 +440,7 @@ func (vc *vidMap) deleteLocationFromMap(vid2Locations map[uint32]*locationsEntry
 		remaining := make([]Location, 0, len(entry.locations)-1)
 		remaining = append(remaining, entry.locations[:i]...)
 		remaining = append(remaining, entry.locations[i+1:]...)
-		vid2Locations[vid] = &locationsEntry{locations: remaining, generation: entry.generation}
+		vid2Locations[vid] = &locationsEntry{locations: remaining, generation: entry.generation, state: entry.state, learnedAt: entry.learnedAt}
 		return
 	}
 }
@@ -420,6 +457,93 @@ func (vc *vidMap) deleteVid(vid uint32) {
 		vc.releaseEntry(entry)
 		delete(vc.ecVid2Locations, vid)
 	}
+}
+
+// markStale sets vid's entries aside: lookups miss until the volume is learned
+// again, as if the entries were deleted, and their server references are
+// released. The entries stay in the map so that reviveStale can bring back
+// whatever pushed removals left of them.
+func (vc *vidMap) markStale(vid uint32) {
+	vc.Lock()
+	defer vc.Unlock()
+
+	for _, vid2Locations := range []map[uint32]*locationsEntry{vc.vid2Locations, vc.ecVid2Locations} {
+		entry, found := vid2Locations[vid]
+		if !found || entry.state == entryStale {
+			continue
+		}
+		vc.releaseEntry(entry)
+		vid2Locations[vid] = &locationsEntry{locations: entry.locations, generation: entry.generation, state: entryStale, learnedAt: entry.learnedAt}
+	}
+}
+
+// reviveStale makes vid's stale entries readable again, with the generation
+// they were learned in, and reports whether there were any.
+func (vc *vidMap) reviveStale(vid uint32) (revived bool) {
+	vc.Lock()
+	defer vc.Unlock()
+
+	for _, vid2Locations := range []map[uint32]*locationsEntry{vc.vid2Locations, vc.ecVid2Locations} {
+		entry, found := vid2Locations[vid]
+		if !found || entry.state != entryStale {
+			continue
+		}
+		vid2Locations[vid] = &locationsEntry{locations: entry.locations, generation: entry.generation, state: entryRevived, learnedAt: entry.learnedAt}
+		for _, loc := range entry.locations {
+			vc.incrementServerRef(locationServerKey(loc))
+		}
+		revived = true
+	}
+	return revived
+}
+
+// learnedSoFar marks the entries learned until now, for dropSetAside.
+func (vc *vidMap) learnedSoFar() uint64 {
+	vc.RLock()
+	defer vc.RUnlock()
+	return vc.learned
+}
+
+// dropSetAside deletes vid's stale and revived entries, for an answer about
+// vid that is newer than they are: one asked for after the entries were
+// learned, as marked by learnedSoFar. An entry learned since is left alone.
+func (vc *vidMap) dropSetAside(vid uint32, asked uint64) {
+	vc.Lock()
+	defer vc.Unlock()
+
+	vc.dropSetAsideEntry(vc.vid2Locations, vid, asked)
+	vc.dropSetAsideEntry(vc.ecVid2Locations, vid, asked)
+}
+
+// dropSetAsideEntry deletes vid's entry unless it was learned, or set aside
+// from locations learned after asked. Callers must hold the write lock.
+func (vc *vidMap) dropSetAsideEntry(vid2Locations map[uint32]*locationsEntry, vid uint32, asked uint64) {
+	if entry, found := vid2Locations[vid]; found && entry.state != entryLearned && entry.learnedAt <= asked {
+		vc.releaseEntry(entry)
+		delete(vid2Locations, vid)
+	}
+}
+
+// addAnswer caches the locations a lookup answer reported for vid, as
+// addLocation does, unless a failed read has set aside locations of vid that
+// were learned after the lookup was asked, as marked by learnedSoFar. Those
+// are newer than the answer, and adding it would replace them. It reports
+// whether it cached the answer.
+func (vc *vidMap) addAnswer(vid uint32, locations []Location, asked uint64) bool {
+	vc.Lock()
+	defer vc.Unlock()
+
+	for _, vid2Locations := range []map[uint32]*locationsEntry{vc.vid2Locations, vc.ecVid2Locations} {
+		if entry, found := vid2Locations[vid]; found && entry.state != entryLearned && entry.learnedAt > asked {
+			return false
+		}
+	}
+	for _, location := range locations {
+		glog.V(4).Infof("+ volume id %d: %+v", vid, location)
+		vc.dropSetAsideEntry(vc.ecVid2Locations, vid, vc.learned)
+		vc.addLocationToMap(vc.vid2Locations, vid, location)
+	}
+	return true
 }
 
 // clear drops every location, keeping no history to fall back to.
@@ -460,9 +584,12 @@ func (vc *vidMap) expire(vid2Locations map[uint32]*locationsEntry, oldest uint64
 	}
 }
 
-// releaseEntry drops the server references an entry holds. Callers must hold
-// the write lock.
+// releaseEntry drops the server references an entry holds; a stale entry
+// holds none. Callers must hold the write lock.
 func (vc *vidMap) releaseEntry(entry *locationsEntry) {
+	if entry.state == entryStale {
+		return
+	}
 	for _, loc := range entry.locations {
 		vc.decrementServerRef(locationServerKey(loc))
 	}

@@ -85,6 +85,19 @@ pub static VACUUMING_COMMIT_COUNTER: LazyLock<IntCounterVec> = LazyLock::new(|| 
     .expect("metric can be created")
 });
 
+/// Live needles vacuum dropped because their data could not be read back
+/// intact, with label `collection`.
+pub static VACUUMING_DROPPED_NEEDLES_COUNTER: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    IntCounterVec::new(
+        Opts::new(
+            "SeaweedFS_volumeServer_vacuuming_dropped_needles",
+            "Counter of live needles dropped by vacuum because their data could not be read back intact.",
+        ),
+        &["collection"],
+    )
+    .expect("metric can be created")
+});
+
 /// Vacuuming duration histogram with label `type` (compact/commit).
 pub static VACUUMING_HISTOGRAM: LazyLock<HistogramVec> = LazyLock::new(|| {
     HistogramVec::new(
@@ -402,6 +415,7 @@ pub fn register_metrics() {
             Box::new(VACUUMING_COMPACT_COUNTER.clone()),
             Box::new(VACUUMING_COMMIT_COUNTER.clone()),
             Box::new(VACUUMING_HISTOGRAM.clone()),
+            Box::new(VACUUMING_DROPPED_NEEDLES_COUNTER.clone()),
             Box::new(VOLUME_GAUGE.clone()),
             Box::new(READ_ONLY_VOLUME_GAUGE.clone()),
             Box::new(MAX_VOLUMES.clone()),

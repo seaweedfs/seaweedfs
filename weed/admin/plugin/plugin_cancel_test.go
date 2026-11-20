@@ -172,7 +172,7 @@ func TestAdminScriptExecutionBlocksOtherDetection(t *testing.T) {
 		JobType:     "admin_script",
 		Success:     true,
 		CompletedAt: timestamppb.Now(),
-	})
+	}, nil)
 	if runErr := <-adminErrCh; runErr != nil {
 		t.Fatalf("admin_script ExecuteJob error: %v", runErr)
 	}
@@ -254,7 +254,7 @@ func TestAdminScriptExecutionBlocksOtherExecution(t *testing.T) {
 		JobType:     "admin_script",
 		Success:     true,
 		CompletedAt: timestamppb.Now(),
-	})
+	}, nil)
 	if runErr := <-adminErrCh; runErr != nil {
 		t.Fatalf("admin_script ExecuteJob error: %v", runErr)
 	}
@@ -269,7 +269,7 @@ func TestAdminScriptExecutionBlocksOtherExecution(t *testing.T) {
 		JobType:     "vacuum",
 		Success:     true,
 		CompletedAt: timestamppb.Now(),
-	})
+	}, nil)
 	if runErr := <-otherErrCh; runErr != nil {
 		t.Fatalf("vacuum ExecuteJob error: %v", runErr)
 	}

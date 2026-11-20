@@ -498,6 +498,14 @@ var (
 			Help:      "Counter of volume vacuuming commit counter",
 		}, []string{"success"})
 
+	VolumeServerVacuumingDroppedNeedlesCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemVolumeServer,
+			Name:      "vacuuming_dropped_needles",
+			Help:      "Counter of live needles dropped by vacuum because their data could not be read back intact.",
+		}, []string{"collection"})
+
 	VolumeServerVacuumingHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: Namespace,
@@ -1152,6 +1160,7 @@ func init() {
 	Gather.MustRegister(VolumeServerVacuumingCompactCounter)
 	Gather.MustRegister(VolumeServerVacuumingCommitCounter)
 	Gather.MustRegister(VolumeServerVacuumingHistogram)
+	Gather.MustRegister(VolumeServerVacuumingDroppedNeedlesCounter)
 	Gather.MustRegister(VolumeServerVolumeGauge)
 	Gather.MustRegister(VolumeServerMaxVolumeCounter)
 	Gather.MustRegister(VolumeServerReadOnlyVolumeGauge)

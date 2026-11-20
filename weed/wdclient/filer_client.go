@@ -913,6 +913,39 @@ func (fc *FilerClient) shouldSkipUnhealthyFilerWithHealth(health *filerHealth) b
 	return true // Skip this unhealthy filer
 }
 
+// allFilersUnhealthy reports whether the circuit breaker would skip every
+// known filer.
+func (fc *FilerClient) allFilersUnhealthy() bool {
+	fc.filerAddressesMu.RLock()
+	defer fc.filerAddressesMu.RUnlock()
+	if len(fc.filerHealth) == 0 {
+		return false
+	}
+	for _, health := range fc.filerHealth {
+		if !fc.shouldSkipUnhealthyFilerWithHealth(health) {
+			return false
+		}
+	}
+	return true
+}
+
+// filerUnreachable reports whether a failed lookup means the filer could not
+// be reached or could not serve the call, which is what the circuit breaker
+// counts. An error the filer sent back as its answer, such as a volume the
+// master does not know, says nothing about the filer's health.
+func filerUnreachable(err error) bool {
+	st, ok := util.ServerStatus(err)
+	if !ok {
+		// No status from a server: the call never got an answer.
+		return true
+	}
+	switch st.Code() {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Aborted:
+		return true
+	}
+	return false
+}
+
 // recordFilerSuccessWithHealth resets failure tracking for a successful filer
 func (fc *FilerClient) recordFilerSuccessWithHealth(health *filerHealth) {
 	atomic.StoreInt32(&health.failureCount, 0)
@@ -953,6 +986,11 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 		n := int32(len(fc.filerAddresses))
 		fc.filerAddressesMu.RUnlock()
 
+		// The breaker steers lookups away from a failing filer towards the
+		// others. With every filer in its cool-down there is nowhere to steer,
+		// and skipping them all would fail the lookup without asking anyone.
+		skipUnhealthy := !fc.allFilersUnhealthy()
+
 		for x := int32(0); x < n; x++ {
 			// Get current filer address and health with read lock
 			fc.filerAddressesMu.RLock()
@@ -972,7 +1010,7 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 			fc.filerAddressesMu.RUnlock()
 
 			// Circuit breaker: skip unhealthy filers (no lock needed - uses atomics)
-			if fc.shouldSkipUnhealthyFilerWithHealth(health) {
+			if skipUnhealthy && fc.shouldSkipUnhealthyFilerWithHealth(health) {
 				glog.V(2).Infof("FilerClient: skipping unhealthy filer %s (consecutive failures: %d)",
 					filerAddress, atomic.LoadInt32(&health.failureCount))
 				i++
@@ -1049,7 +1087,14 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 					return nil, ctxErr
 				}
 				glog.V(1).Infof("FilerClient: filer %s lookup failed (attempt %d/%d, retry %d/%d): %v", filerAddress, x+1, n, retry+1, maxRetries, err)
-				fc.recordFilerFailureWithHealth(health)
+				if filerUnreachable(err) {
+					fc.recordFilerFailureWithHealth(health)
+				} else {
+					// The filer answered, for example that a volume has no
+					// location. Counting that against it would open the
+					// breaker on a healthy filer and fail every other lookup.
+					fc.recordFilerSuccessWithHealth(health)
+				}
 				lastErr = err
 				i++
 				if i >= n {
@@ -1068,6 +1113,12 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 			fc.recordFilerSuccessWithHealth(health)
 			glog.V(3).Infof("FilerClient: looked up %d volumes on %s, found %d", len(volumeIds), filerAddress, len(result))
 			return result, nil
+		}
+
+		if lastErr == nil {
+			// Every filer was skipped: one tripped after the pass chose to skip
+			// unhealthy filers. The next pass asks them anyway.
+			lastErr = status.Error(codes.Unavailable, "no filer was asked")
 		}
 
 		// All filers failed on this attempt
