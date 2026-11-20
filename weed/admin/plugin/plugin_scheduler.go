@@ -143,6 +143,9 @@ func (r *Plugin) runLaneSchedulerIteration(ls *schedulerLaneState) bool {
 		return false
 	}
 
+	if hadJobs, handled := r.schedulerExt().runLane(ls, jobTypes); handled {
+		return hadJobs
+	}
 	if LaneRequiresLock(ls.lane) {
 		return r.runLaneSchedulerIterationSequential(ls, jobTypes)
 	}
@@ -871,6 +874,9 @@ func (r *Plugin) dispatchScheduledProposals(
 		default:
 		}
 		job := buildScheduledJobSpec(jobType, proposal, index)
+		if !r.schedulerExt().admitJob(job) {
+			continue
+		}
 		r.trackExecutionQueued(job)
 		jobs = append(jobs, job)
 	}
@@ -947,8 +953,16 @@ func (r *Plugin) dispatchScheduledProposals(
 				}
 				blockedSince = time.Time{}
 
+				release, started := r.startScheduledJob(queues, item, executor, release)
+				if !started {
+					if !waitForShutdownOrTimerWithContext(r.shutdownCh, ctx, policy.ExecutorReserveBackoff) {
+						return
+					}
+					continue
+				}
+
 				var releaseJobLock func()
-				if jobsRequireLock {
+				if jobsRequireLock && r.schedulerExt().jobHoldsLock(item.job, executor) {
 					var lockErr error
 					releaseJobLock, lockErr = r.acquireAdminLock(fmt.Sprintf("plugin scheduler %s job %s", jobType, item.job.JobId))
 					if lockErr != nil {
