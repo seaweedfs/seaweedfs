@@ -179,13 +179,13 @@ impl MultipartUpload for GuardedUpload {
     }
 
     async fn complete(&mut self) -> Result<PutResult> {
-        if let Found::Dropped(error) | Found::Replaced(error) =
-            self.guard.find(&self.location).await?
-        {
-            let _ = self.inner.abort().await;
-            return Err(error);
-        }
-        self.inner.complete().await
+        // A failed probe aborts too: the parts would outlive the upload.
+        let error = match self.guard.find(&self.location).await {
+            Ok(Found::Table) => return self.inner.complete().await,
+            Ok(Found::Dropped(error) | Found::Replaced(error)) | Err(error) => error,
+        };
+        let _ = self.inner.abort().await;
+        Err(error)
     }
 
     async fn abort(&mut self) -> Result<()> {
@@ -211,11 +211,20 @@ impl ObjectStore for Guarded {
         let put = self.inner.put_opts(location, payload, opts).await?;
         // A drop can land between the check and the write. A manifest is
         // what makes the table readable again, so look once more and take
-        // it back if the table is gone; a failed probe leaves it.
+        // it back if the table is gone; a failed probe leaves it. A table
+        // created again since may have written its own manifest there:
+        // only this write's is taken back.
         if is_manifest(location)
             && let Ok(Found::Dropped(error) | Found::Replaced(error)) = self.find(location).await
         {
-            let _ = self.inner.delete(location).await;
+            let ours = match (&put.e_tag, self.inner.head(location).await) {
+                (Some(wrote), Ok(meta)) => meta.e_tag.as_ref() == Some(wrote),
+                (_, Err(object_store::Error::NotFound { .. })) => false,
+                _ => true,
+            };
+            if ours {
+                let _ = self.inner.delete(location).await;
+            }
             return Err(error);
         }
         self.committed(location, put.e_tag.clone());
