@@ -1190,6 +1190,27 @@ pub(crate) mod tests {
             indexed
         }
 
+        /// A request an operator commits while a column is dropped survives
+        /// the drop.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_drop_keeps_what_was_committed_while_it_ran() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let mut dataset = table(&dir, 1).await;
+            request(&mut dataset, "author").await.unwrap();
+            let author = add_column(&mut dataset, "author").await.unwrap();
+            finish_after(&mut dataset, &author, 1_000, std::time::Duration::ZERO)
+                .await
+                .unwrap();
+            request_removal(&mut dataset, "author").await.unwrap();
+            dataset.drop_index(&index_name("_mk_0")).await.unwrap();
+            let mut worker = dataset.clone();
+            request(&mut dataset, "lang").await.unwrap();
+            remove_column(&mut worker, "_mk_0").await.unwrap();
+            worker.checkout_latest().await.unwrap();
+            assert!(keys_of(&worker).is_empty());
+            assert_eq!(requests(&worker), ["lang"]);
+        }
+
         /// A repair that loses to a compaction of its fragments repairs the
         /// rows where the compaction moved them.
         #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
