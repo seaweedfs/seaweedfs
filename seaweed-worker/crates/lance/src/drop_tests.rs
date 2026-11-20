@@ -127,7 +127,7 @@ async fn open_then_drop(dir: &tempfile::TempDir, during: bool) -> Dataset {
             fired: Arc::new(AtomicBool::new(false)),
         }) as Arc<dyn WrappingObjectStore>
     });
-    let dataset = crate::dataset::open_at(&description, dropping, None)
+    let dataset = crate::dataset::open_guarded(&description, dropping)
         .await
         .unwrap();
     if !during {
@@ -181,7 +181,7 @@ async fn dropped_during<F, Fut>(
         }
     );
     assert!(
-        !left.iter().any(|f| f.contains("_versions")),
+        !left.iter().any(|f| f.ends_with(".manifest")),
         "{label}: a manifest was written into the dropped table: {left:?}"
     );
     if !during {

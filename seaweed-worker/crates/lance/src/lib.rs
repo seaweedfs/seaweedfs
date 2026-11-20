@@ -13,6 +13,7 @@ pub mod catalog;
 pub mod cluster;
 pub mod dataset;
 pub mod direct_read;
+pub mod drop_guard;
 pub mod grpc_tls;
 pub mod jobs;
 pub mod metadata_index;
