@@ -21,6 +21,38 @@ a larger profile:
                       locality for an IVF index to use, so recall through one
                       only tracks the fraction of partitions probed.
 
+The filter workload (test_query_filter_workload) writes the same vectors to
+one more index per locality, each row with an `author` key, and queries
+`{"author": name}` for each planted author plus an unfiltered control:
+
+    PERF_FILTER_AUTHORS   planted authors, name=share of the rows or name=#rows
+                          ("alice=0.1,bob=0.01,carol=0.0001,dave=#5,nobody=#0":
+                          10%, 1%, 0.01% (at least one row), fewer than topK,
+                          no match); every other row gets one of u0..u999
+    PERF_FILTER_LOCALITY  "scattered": each author's rows are drawn at random
+                          (seed 5) over the whole index; "clustered": they are
+                          consecutive keys, written together, so they land in
+                          few fragments ("scattered"; both: "scattered,clustered")
+    PERF_FILTER_MODES     "warm": engine restarted with default caches;
+                          "cold": engine restarted with its read, index and
+                          metadata caches at 0 MB, so every query reads again
+                          ("warm")
+    PERF_FILTER_ROUNDS    rounds; each round runs every author and locality in
+                          turn (1)
+
+Each scenario times PERF_QUERIES queries after one untimed call and reports
+the eligible rows, p50/p95, recall@k of every query against an exact cosine
+search over the eligible rows (numpy, the same tie rule as `recall`), the
+results per query (including fewer than topK), hits without a finite
+distance, responses without a `vectors` field (counted, and the test fails
+after every scenario ran; results and recall then come from the same query
+repeated, untimed, without returnDistance), and the reads per query: the engine's cache_requests_total misses,
+storage_read_seconds count and storage_read_bytes_total (immutable files
+only, and none when cold: they come from the read cache, which a 0 MB
+setting removes) and the volume server's request_total (every request,
+manifests included). The engine does not expose the partitions a query
+probed.
+
 Each timed scenario starts with one untimed call. Timings only report; the
 assertions check correctness (recall against an exact client-side search,
 complete listings), never speed. Recall through an index is approximate, so
@@ -38,10 +70,12 @@ import re
 import statistics
 import subprocess
 import time
+import urllib.request
 import uuid
 
 import boto3
 from botocore.config import Config
+import numpy as np
 import pytest
 
 HERE = Path(__file__).resolve().parent
@@ -57,6 +91,12 @@ INDEXED = bool(os.environ.get("PERF_INDEX"))
 CLUSTERS = int(os.environ.get("PERF_CLUSTERS", "0"))
 NOISE = float(os.environ.get("PERF_NOISE", "0.3"))
 INDEX = "perf"
+FILTER_AUTHORS = os.environ.get("PERF_FILTER_AUTHORS", "alice=0.1,bob=0.01,carol=0.0001,dave=#5,nobody=#0")
+FILTER_LOCALITY = os.environ.get("PERF_FILTER_LOCALITY", "scattered").split(",")
+FILTER_MODES = os.environ.get("PERF_FILTER_MODES", "warm").split(",")
+FILTER_ROUNDS = int(os.environ.get("PERF_FILTER_ROUNDS", "1"))
+FILTER_SEED = 5
+COLD = {"WEED_VECTOR_READ_CACHE_MB": "0", "WEED_VECTOR_INDEX_CACHE_MB": "0", "WEED_VECTOR_METADATA_CACHE_MB": "0"}
 
 REPORT = {}
 
@@ -242,6 +282,148 @@ def test_query_filtered(perf):
     run_queries(perf, "query_filtered_10pct", filter={"category": {"$eq": "c3"}})
 
 
+def plant_authors(locality):
+    """Each row's author: the planted authors take their share of the rows,
+    at random positions or as consecutive keys, and every other row one of
+    u0..u999."""
+    rng = random.Random(FILTER_SEED)
+    authors = [f"u{rng.randrange(1000)}" for _ in range(VECTORS)]
+    order = list(range(VECTORS))
+    if locality == "scattered":
+        rng.shuffle(order)
+    else:
+        assert locality == "clustered", locality
+    planted, cut = {}, 0
+    for spec in FILTER_AUTHORS.split(","):
+        name, size = spec.split("=")
+        count = int(size[1:]) if size.startswith("#") else max(1, round(VECTORS * float(size)))
+        assert not name.startswith("u") and cut + count <= VECTORS, spec
+        for i in order[cut:cut + count]:
+            authors[i] = name
+        planted[name] = count
+        cut += count
+    return authors, planted
+
+
+def engine_reads(cluster):
+    """Counters of the reads a query makes: the engine's read cache misses,
+    storage fetches and bytes, and the volume server's requests."""
+    names = {'SeaweedFS_vector_cache_requests_total{result="miss"}': "cache_misses",
+             "SeaweedFS_vector_storage_read_seconds_count": "storage_reads",
+             "SeaweedFS_vector_storage_read_bytes_total": "storage_bytes"}
+    values = dict.fromkeys([*names.values(), "volume_requests"], 0.0)
+    with urllib.request.urlopen(cluster["vector_metrics"] + "/metrics", timeout=5) as response:
+        for line in response.read().decode().splitlines():
+            name, _, value = line.rpartition(" ")
+            if name in names:
+                values[names[name]] = float(value)
+    with urllib.request.urlopen(cluster["volume_metrics"] + "/metrics", timeout=5) as response:
+        for line in response.read().decode().splitlines():
+            if line.startswith("SeaweedFS_volumeServer_request_total{"):
+                values["volume_requests"] += float(line.rpartition(" ")[2])
+    return values
+
+
+def filtered_recall(unit, eligible, query, k, hits):
+    """`recall` over the eligible rows with numpy; None when no row is eligible."""
+    if not len(eligible):
+        return None
+    q = np.asarray(query, dtype=np.float64)
+    q /= np.linalg.norm(q)
+    scores = unit[eligible] @ q
+    best = -np.sort(-scores)[:k]
+    cutoff = best[-1]
+    found = unit[[int(h["key"][1:]) for h in hits]] @ q if hits else np.empty(0)
+    above = int(np.sum(found > cutoff + 1e-6))
+    tied = int(np.sum(np.abs(found - cutoff) <= 1e-6))
+    slots = len(best) - int(np.sum(best > cutoff + 1e-6))
+    return (above + min(tied, slots)) / len(best)
+
+
+def test_query_filter_workload(perf):
+    s3v, data, queries, cluster = perf["client"], perf["data"], perf["queries"], perf["cluster"]
+    unit = np.array([v for v, _ in data], dtype=np.float64)
+    unit /= np.linalg.norm(unit, axis=1, keepdims=True)
+    indexes, eligible, setup = {}, {}, {}
+    for locality in FILTER_LOCALITY:
+        authors, planted = plant_authors(locality)
+        index = f"filter-{locality}"
+        s3v.create_index(vectorBucketName=perf["bucket"], indexName=index, dataType="float32",
+                         dimension=DIM, distanceMetric="cosine")
+        args = {"vectorBucketName": perf["bucket"], "indexName": index}
+        indexes[locality] = args
+        start = time.perf_counter()
+        for offset in range(0, VECTORS, BATCH):
+            s3v.put_vectors(**args, vectors=[
+                {"key": f"v{i}", "data": {"float32": data[i][0]},
+                 "metadata": {"category": f"c{i % CATEGORIES}", "n": i, "author": authors[i]}}
+                for i in range(offset, min(offset + BATCH, VECTORS))])
+        setup[locality] = {"ingest_seconds": time.perf_counter() - start,
+                           "index": build_index(perf, index) if INDEXED else None}
+        for name in planted:
+            eligible[locality, name] = np.array([i for i, a in enumerate(authors) if a == name], dtype=np.int64)
+        assert {name: len(eligible[locality, name]) for name in planted} == planted
+    eligible.update({(locality, None): np.arange(VECTORS) for locality in FILTER_LOCALITY})
+    perf["report"]["filter_workload"] = report = {
+        "seed": FILTER_SEED, "authors": FILTER_AUTHORS, "eligible": planted, "modes": FILTER_MODES,
+        "rounds": FILTER_ROUNDS, "setup": setup, "partitions_probed": "not exposed by the engine", "runs": []}
+    empty = []
+    try:
+        for mode in FILTER_MODES:
+            cluster["restart_engine"](COLD if mode == "cold" else {})
+            for round_ in range(FILTER_ROUNDS):
+                for author in [None, *planted]:
+                    for locality in FILTER_LOCALITY:
+                        args = indexes[locality]
+                        rows = eligible[locality, author]
+                        keep = set(rows.tolist())
+                        extra = {"filter": {"author": author}} if author else {}
+                        s3v.query_vectors(**args, queryVector={"float32": queries[0]}, topK=TOPK, **extra)
+                        latencies, recalls, results, nonfinite, without_vectors = [], [], [], 0, 0
+                        reads = dict.fromkeys(engine_reads(cluster), 0.0)
+                        for query in queries:
+                            before = engine_reads(cluster)
+                            seconds, response = timed(lambda: s3v.query_vectors(
+                                **args, queryVector={"float32": query}, topK=TOPK, returnDistance=True, **extra))
+                            after = engine_reads(cluster)
+                            for name in reads:
+                                reads[name] += after[name] - before[name]
+                            latencies.append(seconds)
+                            if "vectors" in response:
+                                nonfinite += sum(1 for h in response["vectors"]
+                                                 if not math.isfinite(h.get("distance", math.nan)))
+                            else:
+                                without_vectors += 1
+                                response = s3v.query_vectors(**args, queryVector={"float32": query}, topK=TOPK, **extra)
+                            hits = response["vectors"]
+                            assert all(int(h["key"][1:]) in keep for h in hits), hits
+                            assert len(hits) <= min(TOPK, len(rows)), hits
+                            results.append(len(hits))
+                            recalls.append(filtered_recall(unit, rows, query, TOPK, hits))
+                        recalls = [r for r in recalls if r is not None]
+                        row = {"mode": mode, "round": round_, "locality": locality, "author": author,
+                               "eligible": len(rows), **summarize(latencies),
+                               "recall_at_k": statistics.fmean(recalls) if recalls else None,
+                               "min_recall_at_k": min(recalls) if recalls else None,
+                               "results_mean": statistics.fmean(results), "results_min": min(results),
+                               "nonfinite_distances": nonfinite, "responses_without_vectors": without_vectors,
+                               **{f"{name}_per_query": value / len(queries) for name, value in reads.items()},
+                               # Without a read cache the engine has no storage counters.
+                               **({f"{name}_per_query": None for name in ("cache_misses", "storage_reads", "storage_bytes")}
+                                  if mode == "cold" else {}),
+                               "load_1m": os.getloadavg()[0]}
+                        report["runs"].append(row)
+                        print(json.dumps(row))
+                        assert INDEXED or not recalls or statistics.fmean(recalls) >= 0.9
+                        if without_vectors:
+                            empty.append(f"{mode} {locality} {author}: {without_vectors}")
+    finally:
+        cluster["restart_engine"]()
+        for args in indexes.values():
+            s3v.delete_index(**args)
+    assert not empty, f"responses without a vectors field: {empty}"
+
+
 def test_query_throughput(perf):
     args, queries = perf["args"], perf["queries"]
     results = {}
@@ -332,6 +514,13 @@ def print_report(combo, report, path):
     for threads, r in report.get("query_throughput", {}).items():
         lines.append(f"query x{threads:<3} threads    {r['qps']:7.1f} qps   p50 {r['p50_ms']:7.1f} ms  "
                      f"p95 {r['p95_ms']:7.1f} ms")
+    for r in report.get("filter_workload", {}).get("runs", []):
+        recall_text = "n/a" if r["recall_at_k"] is None else f"{r['recall_at_k']:.3f}"
+        lines.append(f"filter {r['mode']} r{r['round']} {r['locality']:<9} {str(r['author']):<8} "
+                     f"{r['eligible']:>7} rows  p50 {r['p50_ms']:7.1f} ms  p95 {r['p95_ms']:7.1f} ms  "
+                     f"recall@k {recall_text}  results {r['results_mean']:.1f} (min {r['results_min']})  "
+                     f"empty {r['responses_without_vectors']}  "
+                     f"volume requests {r['volume_requests_per_query']:.0f}")
     for segments, r in report.get("list_vectors_segments", {}).items():
         lines.append(f"list {segments:>2} segments     {r['vectors_per_s']:9.0f} vectors/s  "
                      f"({r['seconds']:.2f} s)")
