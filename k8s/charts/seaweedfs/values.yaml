@@ -52,9 +52,9 @@ global:
     # chart (weed mount, the CSI driver) need their own [https.client].
     # The volume servers do not ask for client certificates, because kubelet
     # probes cannot present one; JWT signing keeps authorizing volume access.
-    # [https.client] makes every HTTP request between components use HTTPS
-    # while master and filer HTTP stay plain, so for example a follower
-    # master can no longer forward HTTP API calls to the leader.
+    # [https.client] also sends the admin UI's HTTP lookups on masters and
+    # S3 over HTTPS, which their plain listeners refuse, so the UI can miss
+    # volume public URLs and refuse SSE-S3 vector buckets.
     volumeHttps:
       enabled: false
     # we will use this serviceAccountName for all ClusterRoles/ClusterRoleBindings

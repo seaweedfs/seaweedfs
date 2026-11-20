@@ -621,7 +621,7 @@ With `global.seaweedfs.enableSecurity`, gRPC between components uses mutual TLS,
 - The volume probes use HTTPS.
 - Every pod that reads `security.toml` gets a `checksum/volume-https` annotation, so switching the option on or off restarts them together.
 
-The volume servers do not require client certificates, because kubelet probes cannot present one; enable JWT signing (`securityConfig.jwtSigning`) to authorize volume reads and writes. `[https.client]` switches every HTTP request between components to HTTPS while master and filer HTTP stay plain, so a follower master can no longer forward HTTP API calls to the leader. A volume Ingress or HTTPRoute needs its controller's HTTPS-backend setting. `weed mount`, the CSI driver and other clients outside the chart need their own `[https.client]` with the chart CA. The option is not supported with `allInOne`, whose volume server registers by pod IP.
+The volume servers do not require client certificates, because kubelet probes cannot present one; enable JWT signing (`securityConfig.jwtSigning`) to authorize volume reads and writes. `[https.client]` also sends the admin UI's HTTP lookups on masters and S3 over HTTPS, which their plain listeners refuse, so the UI can miss volume public URLs and refuse SSE-S3 vector buckets. A volume Ingress or HTTPRoute needs its controller's HTTPS-backend setting. `weed mount`, the CSI driver and other clients outside the chart need their own `[https.client]` with the chart CA. The option is not supported with `allInOne`, whose volume server registers by pod IP.
 
 ## Common labels
 
