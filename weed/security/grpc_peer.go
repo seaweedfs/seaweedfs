@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
@@ -27,6 +28,19 @@ func CheckGrpcAdminPeer(ctx context.Context, signingKey SigningKey, previousKeys
 		return CheckLocalGrpcPeer(ctx)
 	}
 	return CheckGrpcAdminToken(ctx, signingKey, previousKeys...)
+}
+
+// FilerAdminKeys returns jwt.filer_signing.key and previous_key as
+// security.toml sets them now, else as merged, for admin-plane handlers in
+// processes that do not reload: they follow a rotation, and a previous_key
+// removed from the file stops verifying.
+func FilerAdminKeys() (signingKey, previousKey SigningKey) {
+	v := util.GetViper()
+	signingKey, previousKey = SigningKey(v.GetString("jwt.filer_signing.key")), SigningKey(v.GetString("jwt.filer_signing.previous_key"))
+	if fresh, used := util.ReadConfiguration("security", ""); used != "" {
+		signingKey, previousKey = SigningKey(freshKey(fresh, "jwt.filer_signing.key")), SigningKey(fresh.GetString("jwt.filer_signing.previous_key"))
+	}
+	return signingKey, previousKey
 }
 
 // maxGrpcAdminAuthValues bounds the JWT parses one request can trigger; a

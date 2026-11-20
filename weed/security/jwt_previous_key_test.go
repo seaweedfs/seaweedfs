@@ -149,3 +149,20 @@ func TestReloadSigningKeysTakesSwappedPairFromOneRead(t *testing.T) {
 	require.Equal(t, "new", string(key), "a key the file no longer sets keeps its merged value")
 	require.Empty(t, previous)
 }
+
+func TestFilerAdminKeysFollowSecurityFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("HOME", dir)
+	file := filepath.Join(dir, "security.toml")
+
+	require.NoError(t, os.WriteFile(file, []byte("[jwt.filer_signing]\nkey = \"new\"\nprevious_key = \"old\"\n"), 0o600))
+	key, previous := FilerAdminKeys()
+	require.Equal(t, "new", string(key))
+	require.Equal(t, "old", string(previous))
+
+	require.NoError(t, os.WriteFile(file, []byte("[jwt.filer_signing]\nkey = \"new\"\n"), 0o600))
+	key, previous = FilerAdminKeys()
+	require.Equal(t, "new", string(key))
+	require.Empty(t, previous, "a previous_key removed from the file must stop verifying")
+}
