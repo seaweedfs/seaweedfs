@@ -1398,7 +1398,9 @@ type CreateEntryRequest struct {
 	Condition *WriteCondition `protobuf:"bytes,7,opt,name=condition,proto3" json:"condition,omitempty"`
 	// Set on a create a filer forwarded to the entry's ring owner, so the owner
 	// applies it locally instead of forwarding again. Clients leave it unset.
-	IsMoved       bool `protobuf:"varint,8,opt,name=is_moved,json=isMoved,proto3" json:"is_moved,omitempty"`
+	IsMoved bool `protobuf:"varint,8,opt,name=is_moved,json=isMoved,proto3" json:"is_moved,omitempty"`
+	// The store write must be durable before the reply, as for ?fsync=true.
+	Fsync         bool `protobuf:"varint,9,opt,name=fsync,proto3" json:"fsync,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1485,6 +1487,13 @@ func (x *CreateEntryRequest) GetCondition() *WriteCondition {
 func (x *CreateEntryRequest) GetIsMoved() bool {
 	if x != nil {
 		return x.IsMoved
+	}
+	return false
+}
+
+func (x *CreateEntryRequest) GetFsync() bool {
+	if x != nil {
+		return x.Fsync
 	}
 	return false
 }
@@ -7492,7 +7501,7 @@ const file_filer_proto_rawDesc = "" +
 	"\bctime_ns\x18\x14 \x01(\x05R\actimeNs\x12\x1b\n" +
 	"\tcrtime_ns\x18\x15 \x01(\x05R\bcrtimeNs\x12\x14\n" +
 	"\x05atime\x18\x16 \x01(\x03R\x05atime\x12\x19\n" +
-	"\batime_ns\x18\x17 \x01(\x05R\aatimeNs\"\xd5\x02\n" +
+	"\batime_ns\x18\x17 \x01(\x05R\aatimeNs\"\xeb\x02\n" +
 	"\x12CreateEntryRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12%\n" +
 	"\x05entry\x18\x02 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x12\x15\n" +
@@ -7503,7 +7512,8 @@ const file_filer_proto_rawDesc = "" +
 	"signatures\x12=\n" +
 	"\x1bskip_check_parent_directory\x18\x06 \x01(\bR\x18skipCheckParentDirectory\x126\n" +
 	"\tcondition\x18\a \x01(\v2\x18.filer_pb.WriteConditionR\tcondition\x12\x19\n" +
-	"\bis_moved\x18\b \x01(\bR\aisMoved\"\x9e\x05\n" +
+	"\bis_moved\x18\b \x01(\bR\aisMoved\x12\x14\n" +
+	"\x05fsync\x18\t \x01(\bR\x05fsync\"\x9e\x05\n" +
 	"\x0eWriteCondition\x129\n" +
 	"\aclauses\x18\x01 \x03(\v2\x1f.filer_pb.WriteCondition.ClauseR\aclauses\x1a\xc9\x02\n" +
 	"\x06Clause\x121\n" +

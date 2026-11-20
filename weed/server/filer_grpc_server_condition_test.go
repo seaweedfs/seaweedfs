@@ -230,6 +230,28 @@ func TestIfEntryEqualNormalizesExpected(t *testing.T) {
 	}
 }
 
+// A store that keeps the entry as given (JSON-backed stores) returns FileSize
+// zero beside chunks; an expected entry read from it must still match it.
+func TestIfEntryEqualUnnormalizedStored(t *testing.T) {
+	stored := &filer.Entry{
+		FullPath: "/d/f",
+		Attr:     filer.Attr{Mtime: time.Unix(42, 0)},
+		Chunks: []*filer_pb.FileChunk{
+			{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 1, Cookie: 2}, Size: 4},
+		},
+	}
+	cond := one(&filer_pb.WriteCondition_Clause{
+		Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+		ExpectedEntry: stored.ToProtoEntry(),
+	})
+	if !writeConditionSatisfied(cond, stored) {
+		t.Error("an entry read from the store must equal the stored entry")
+	}
+	if stored.FileSize != 0 {
+		t.Fatalf("the check changed the stored entry's FileSize to %d", stored.FileSize)
+	}
+}
+
 // A stamp built from the metadata-log event carries chunks in serialized
 // form (file_id moved into fid), while the stored entry came through
 // FindEntry which restores file_id. The comparison must still match.

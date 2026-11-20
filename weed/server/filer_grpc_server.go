@@ -289,6 +289,9 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		existing = current
 	}
 
+	if req.Fsync {
+		ctx = filer.WithSyncWrite(ctx)
+	}
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	createErr := fs.filer.CreateEntry(ctx, newEntry, existing, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory, so.MaxFileNameLength)
 

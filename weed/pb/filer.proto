@@ -262,6 +262,8 @@ message CreateEntryRequest {
     // Set on a create a filer forwarded to the entry's ring owner, so the owner
     // applies it locally instead of forwarding again. Clients leave it unset.
     bool is_moved = 8;
+    // The store write must be durable before the reply, as for ?fsync=true.
+    bool fsync = 9;
 }
 
 // WriteCondition is the precondition the filer evaluates against the existing

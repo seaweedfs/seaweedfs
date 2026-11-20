@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -423,6 +424,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			// New request chunks start at offset zero; append them after the
 			// existing chunk-backed file.
 			if isAppend {
+				entry.FileSize = entry.Size()
 				for _, chunk := range fileChunks {
 					chunk.Offset += int64(entry.FileSize)
 				}
@@ -532,12 +534,41 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		defer fs.entryLockTable.ReleaseLock(util.FullPath(path), pathLock)
 	}
 
-	dbErr := fs.filer.CreateEntry(context.WithoutCancel(ctx), entry, nil, false, false, nil, skipCheckParentDirEntry(r), so.MaxFileNameLength)
+	var dbErr error
+	routed := false
+	if isAppend || isOffsetWrite {
+		routed, dbErr = fs.forwardToWriteOwner(ctx, entryRouteKey(util.FullPath(path)), func(owner pb.ServerAddress) error {
+			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+				dir, _ := entry.FullPath.DirAndName()
+				return filer_pb.CreateEntry(context.WithoutCancel(ctx), client, &filer_pb.CreateEntryRequest{
+					Directory:                dir,
+					Entry:                    entry.ToProtoEntry(),
+					IsMoved:                  true,
+					SkipCheckParentDirectory: skipCheckParentDirEntry(r),
+					Fsync:                    filer.SyncWrite(ctx),
+					Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+						Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+						ExpectedEntry: existingSnapshot,
+					}}},
+				})
+			})
+		})
+	}
+	if !routed {
+		dbErr = fs.filer.CreateEntry(context.WithoutCancel(ctx), entry, nil, false, false, nil, skipCheckParentDirEntry(r), so.MaxFileNameLength)
+	}
 	if dbErr != nil {
 		replyerr = dbErr
 		filerResult.Error = dbErr.Error()
 		glog.V(0).InfofCtx(ctx, "failing to write %s to filer server : %v", path, dbErr)
-		if inlineAppendConverted {
+		switch {
+		case routed && errors.Is(dbErr, filer_pb.ErrPreconditionFailed):
+			replyerr = fmt.Errorf("entry %s changed during append; retry the request", path)
+		case routed:
+			// The owner may have committed before the reply was lost, and a
+			// separate local store may not hold that commit yet.
+			uncommittedChunks = nil
+		case inlineAppendConverted:
 			uncommittedChunks = fs.inlineAppendChunksNotReferenced(ctx, util.FullPath(path), mergedChunks)
 		}
 	} else {
