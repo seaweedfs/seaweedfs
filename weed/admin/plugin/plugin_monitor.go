@@ -867,7 +867,13 @@ func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobP
 		} else if resolvedWorkerID != "" {
 			job.WorkerID = resolvedWorkerID
 		}
-		job.State = strings.ToLower(update.State.String())
+		state := update.State
+		if state == plugin_pb.JobState_JOB_STATE_UNSPECIFIED {
+			// a report without a state still means the job is running; an
+			// inactive state would make attemptEnded drop its completion
+			state = plugin_pb.JobState_JOB_STATE_RUNNING
+		}
+		job.State = strings.ToLower(state.String())
 		job.Progress = update.ProgressPercent
 		job.Stage = update.Stage
 		job.Message = update.Message
