@@ -283,7 +283,15 @@ pub async fn request_removal(dataset: &mut Dataset, key: &str) -> Result<()> {
         // A build that stopped before finishing leaves its request.
         return clear_request(dataset, key).await;
     }
-    clear_request(dataset, key).await
+    clear_request(dataset, key).await?;
+    // The withdrawal commits over an add that read the request before it.
+    dataset.checkout_latest().await?;
+    if let Some(column) = keys_of(dataset).into_iter().find(|k| k.key == key)
+        && column.state != Some(State::Off)
+    {
+        set_state(dataset, &column.column, State::Off).await?;
+    }
+    Ok(())
 }
 
 /// Withdraws the request to index `key`, if the table holds one.
