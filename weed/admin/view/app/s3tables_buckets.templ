@@ -187,7 +187,7 @@ templ S3TablesBuckets(data dash.S3TablesBucketsData) {
 												<div class="btn-group btn-group-sm" role="group">
 													{{ bucketName, parseErr := s3tables.ParseBucketNameFromARN(bucket.ARN) }}
 													if parseErr == nil {
-														<a class="btn btn-outline-primary btn-sm" href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", url.PathEscape(bucketName))) }>
+														<a class="btn btn-outline-primary btn-sm" href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", url.PathEscape(bucketName))) } title="Namespaces">
 															<i class="bi bi-folder2-open"></i>
 														</a>
 													} else {
