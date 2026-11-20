@@ -339,12 +339,14 @@ templ Topics(data dash.TopicsData) {
                     if (detailsRow.style.display === 'none') {
                         detailsRow.style.display = 'table-row';
                         this.innerHTML = '<i class="bi bi-eye-slash"></i>';
+                        this.title = 'Hide Details';
                         
                         // Load topic details
                         loadTopicDetails(topicName);
                     } else {
                         detailsRow.style.display = 'none';
                         this.innerHTML = '<i class="bi bi-eye"></i>';
+                        this.title = 'View Details';
                     }
                 });
             });
