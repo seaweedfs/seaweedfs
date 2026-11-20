@@ -28,9 +28,10 @@ key = ""
 expires_after_seconds = 10           # seconds
 # Optional. A key that is still accepted when verifying, but never used to
 # sign, so keys can rotate without rejected requests: set the new key as
-# previous_key everywhere, then swap key and previous_key everywhere, then
-# clear previous_key. [jwt.signing.read], [jwt.filer_signing] and
-# [jwt.filer_signing.read] take previous_key the same way.
+# previous_key everywhere, then swap key and previous_key everywhere, then,
+# once tokens signed with the old key have expired, clear previous_key.
+# Reload (SIGHUP) or restart after each step. [jwt.signing.read],
+# [jwt.filer_signing] and [jwt.filer_signing.read] take previous_key the same way.
 # Env: WEED_JWT_SIGNING_PREVIOUS_KEY, WEED_JWT_SIGNING_READ_PREVIOUS_KEY,
 # WEED_JWT_FILER_SIGNING_PREVIOUS_KEY, WEED_JWT_FILER_SIGNING_READ_PREVIOUS_KEY
 previous_key = ""
