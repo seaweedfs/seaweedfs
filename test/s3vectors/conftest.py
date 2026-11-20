@@ -279,9 +279,10 @@ def run_cluster(param, tmp_path_factory, identities):
                 env.pop(key)
             return env
 
-        def start(name, args, unset=()):
-            log = stack.enter_context((directory / f"{name}.log").open("w"))
-            process = subprocess.Popen(args, cwd=directory, stdout=log, stderr=log, env=process_env(unset))
+        def start(name, args, unset=(), env=None):
+            log = stack.enter_context((directory / f"{name}.log").open("a"))
+            process = subprocess.Popen(args, cwd=directory, stdout=log, stderr=log,
+                                       env={**process_env(unset), **(env or {})})
             processes[name] = process
             stack.callback(stop, process)
             return process
@@ -331,6 +332,14 @@ def run_cluster(param, tmp_path_factory, identities):
             with urllib.request.urlopen(f"http://127.0.0.1:{vector_metrics}/ready", timeout=1) as response:
                 return response.status == 200
         wait_for(vector_ready, processes, "vector engine did not register with master")
+
+        def restart_engine(env=None):
+            """Restart the single engine with `env` added to its environment."""
+            old = processes["vector"]
+            stop(old)
+            start("vector", old.args, env=env)
+            wait_for(vector_ready, processes, "vector engine did not come back")
+
         if os.environ.get("VECTOR_TLS"):
             wait_for(lambda: listening(s3_grpc), processes, "s3 gRPC not ready")
             for name, port in (("master", master_grpc), ("volume", vol_grpc), ("filer", filer_grpc),
@@ -378,7 +387,7 @@ def run_cluster(param, tmp_path_factory, identities):
 
         yield {"endpoint": endpoint, "mode": mode, "processes": processes, "directory": directory, "filer": filer,
                "masters": master_addr, "filer_signing_key": filer_signing_key,
-               "vector_metrics": f"http://127.0.0.1:{vector_metrics}",
+               "vector_metrics": f"http://127.0.0.1:{vector_metrics}", "restart_engine": restart_engine,
                "catalog": f"http://127.0.0.1:{lance}", "admin": admin_url, "env": process_env()}
 
 
