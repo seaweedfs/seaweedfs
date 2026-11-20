@@ -299,6 +299,8 @@ pub async fn add_column(dataset: &mut Dataset, key: &str) -> Result<IndexedKey> 
     let output = Arc::new(Schema::new(vec![field(&column, key, State::Building)]));
     let schema = output.clone();
     let owned = key.to_string();
+    let read = Schema::from(dataset.schema());
+    let read_version = dataset.version().version;
     dataset
         .add_columns(
             NewColumnTransform::BatchUDF(BatchUDF {
@@ -317,11 +319,62 @@ pub async fn add_column(dataset: &mut Dataset, key: &str) -> Result<IndexedKey> 
             None,
         )
         .await?;
+    let state = reapply_metadata(dataset, &read, read_version, &column, key).await?;
     Ok(IndexedKey {
         column,
         key: key.to_string(),
-        state: Some(State::Building),
+        state: Some(state),
     })
+}
+
+/// A column add commits the schema it read, so the requests and key states
+/// committed while it ran are gone from the version it made: set them again.
+/// When `key`'s own request was withdrawn meanwhile, its new column goes off.
+async fn reapply_metadata(
+    dataset: &mut Dataset,
+    read: &Schema,
+    read_version: u64,
+    column: &str,
+    key: &str,
+) -> Result<State> {
+    let added = dataset.version().version;
+    if added <= read_version + 1 {
+        return Ok(State::Building);
+    }
+    let prior = Schema::from(dataset.checkout_version(added - 1).await?.schema());
+    let mut updates: Vec<(String, Option<String>)> = prior
+        .metadata
+        .iter()
+        .filter(|(k, v)| read.metadata.get(*k) != Some(*v))
+        .map(|(k, v)| (k.clone(), Some(v.clone())))
+        .collect();
+    updates.extend(
+        read.metadata
+            .keys()
+            .filter(|k| !prior.metadata.contains_key(*k))
+            .map(|k| (k.clone(), None)),
+    );
+    let withdrawn = updates
+        .iter()
+        .any(|(k, v)| v.is_none() && *k == format!("{REQUEST_SCHEMA_META_PREFIX}{key}"));
+    if !updates.is_empty() {
+        dataset.update_schema_metadata(updates).await?;
+    }
+    let was = indexed_keys(read);
+    for now in indexed_keys(&prior) {
+        if let Some(state) = now.state
+            && was
+                .iter()
+                .any(|k| k.column == now.column && k.state != now.state)
+        {
+            set_state(dataset, &now.column, state).await?;
+        }
+    }
+    if withdrawn {
+        set_state(dataset, column, State::Off).await?;
+        return Ok(State::Off);
+    }
+    Ok(State::Building)
 }
 
 /// Records `state` on `column`'s field.
@@ -951,6 +1004,35 @@ pub(crate) mod tests {
                 .unwrap();
             assert_eq!(indexed, json);
             indexed
+        }
+
+        /// Requests and removals an operator commits while a column add runs
+        /// survive the add.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn an_add_keeps_what_was_committed_while_it_ran() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let mut dataset = table(&dir, 2).await;
+            request(&mut dataset, "author").await.unwrap();
+            let author = add_column(&mut dataset, "author").await.unwrap();
+            finish(&mut dataset, &author, 1_000).await.unwrap();
+            request(&mut dataset, "n").await.unwrap();
+            request(&mut dataset, "genre").await.unwrap();
+            let mut adding = dataset.clone();
+            request_removal(&mut dataset, "author").await.unwrap();
+            request(&mut dataset, "lang").await.unwrap();
+            request_removal(&mut dataset, "genre").await.unwrap();
+
+            let genre = add_column(&mut adding, "genre").await.unwrap();
+            assert_eq!(genre.state, Some(State::Off));
+            let state = |key: &str| {
+                keys_of(&adding)
+                    .into_iter()
+                    .find(|k| k.key == key)
+                    .and_then(|k| k.state)
+            };
+            assert_eq!(state("author"), Some(State::Off));
+            assert_eq!(state("genre"), Some(State::Off));
+            assert_eq!(requests(&adding), ["lang", "n"]);
         }
 
         /// Add, finish, maintain and remove, with a write that raced the add

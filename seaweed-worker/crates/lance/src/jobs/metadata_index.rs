@@ -134,6 +134,12 @@ pub async fn run(
                 return Ok(format!("{key} is no longer requested"));
             }
             let added = metadata_index::add_column(dataset, key).await?;
+            if added.state != Some(State::Building) {
+                return Ok(format!(
+                    "{key} was withdrawn while {} was added",
+                    added.column
+                ));
+            }
             let filled = metadata_index::finish(dataset, &added, segment_rows).await?;
             Ok(format!(
                 "{key} indexed in {} ({filled} rows a racing write left derived again)",
