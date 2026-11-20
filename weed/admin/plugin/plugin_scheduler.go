@@ -45,6 +45,9 @@ const (
 	maxEstimatedRuntimeCap           = 8 * time.Hour
 	// How long started jobs may drain past the run window close.
 	scheduledExecutionDrainGrace = 30 * time.Minute
+	// A run whose jobs were given up for want of an executor detects again
+	// this soon, instead of a whole detection interval later.
+	capacityGiveUpRedetectDelay = 10 * time.Minute
 )
 
 type schedulerPolicy struct {
@@ -1033,8 +1036,9 @@ func (r *Plugin) dispatchScheduledProposals(
 // clears on a schedule the lane has no view of, and a lane that serialises
 // its job types would idle every other type in it for the whole runtime
 // budget; those jobs are given up now, with the reason, and re-proposed by
-// the next detection. A missing worker, or a free one that the queue's pin
-// keeps off a busy home, is waited for only as long as the orphan grace.
+// a detection brought forward to capacityGiveUpRedetectDelay. A missing
+// worker, or a free one that the queue's pin keeps off a busy home, is
+// waited for only as long as the orphan grace.
 func (r *Plugin) executorCapacityOutlook(jobType string, policy schedulerPolicy, blockedFor time.Duration) (bool, string) {
 	executors, err := r.registry.ListExecutors(jobType)
 	if err != nil || len(executors) == 0 {
@@ -1093,7 +1097,20 @@ func (r *Plugin) giveUpQueuedJobs(queues *workerJobQueues, jobType, reason strin
 	for _, item := range items {
 		r.cancelQueuedJob(item.job, cause)
 	}
+	r.bringDetectionForward(jobType, capacityGiveUpRedetectDelay)
 	return len(items)
+}
+
+// bringDetectionForward schedules jobType's next detection within delay,
+// leaving an earlier one alone. A daily job given up because its worker
+// was briefly full would otherwise wait a day for its next chance.
+func (r *Plugin) bringDetectionForward(jobType string, delay time.Duration) {
+	at := time.Now().UTC().Add(delay)
+	r.schedulerMu.Lock()
+	if next, ok := r.nextDetectionAt[jobType]; !ok || next.After(at) {
+		r.nextDetectionAt[jobType] = at
+	}
+	r.schedulerMu.Unlock()
 }
 
 func (r *Plugin) reserveScheduledExecutor(
