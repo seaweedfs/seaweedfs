@@ -21,14 +21,14 @@ import (
 // remote callers cannot be told apart, so only local clients (unix socket,
 // loopback, or the server's own addresses) are allowed.
 func (s3a *S3ApiServer) checkAdminAuth(ctx context.Context) error {
-	var signingKey security.SigningKey
+	var signingKey, previousSigningKey security.SigningKey
 	if s3a.filerGuard != nil {
-		signingKey = s3a.filerGuard.SigningKey()
+		signingKey, previousSigningKey = s3a.filerGuard.VerificationKeys(true)
 	}
 	if len(signingKey) == 0 {
 		return checkLocalPeer(ctx)
 	}
-	return security.CheckGrpcAdminToken(ctx, signingKey)
+	return security.CheckGrpcAdminToken(ctx, signingKey, previousSigningKey)
 }
 
 func checkLocalPeer(ctx context.Context) error {

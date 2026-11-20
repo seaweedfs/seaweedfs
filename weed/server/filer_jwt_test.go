@@ -11,7 +11,7 @@ import (
 
 func TestFilerServer_maybeCheckJwtAuthorization_Scoped(t *testing.T) {
 	signingKey := "secret"
-	filerGuard := security.NewGuard(nil, signingKey, 0, signingKey, 0)
+	filerGuard := security.NewGuard(nil, signingKey, 0, signingKey, 0, "", "")
 	fs := &FilerServer{
 		filerGuard: filerGuard,
 	}

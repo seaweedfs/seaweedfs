@@ -147,18 +147,35 @@ func GetJwt(r *http.Request) EncodedJwt {
 	return EncodedJwt(tokenStr)
 }
 
-func DecodeJwt(signingKey SigningKey, tokenString EncodedJwt, claims jwt.Claims) (token *jwt.Token, err error) {
-	return decodeJwt(signingKey, tokenString, claims)
+// DecodeJwt verifies tokenString against signingKey, then against each
+// non-empty previousKeys entry, so tokens signed before a key rotation still
+// verify while the previous key is configured.
+func DecodeJwt(signingKey SigningKey, tokenString EncodedJwt, claims jwt.Claims, previousKeys ...SigningKey) (token *jwt.Token, err error) {
+	return decodeJwt(signingKey, previousKeys, tokenString, claims)
 }
 
-func decodeJwt(signingKey SigningKey, tokenString EncodedJwt, claims jwt.Claims, options ...jwt.ParserOption) (token *jwt.Token, err error) {
+func decodeJwt(signingKey SigningKey, previousKeys []SigningKey, tokenString EncodedJwt, claims jwt.Claims, options ...jwt.ParserOption) (token *jwt.Token, err error) {
+	var key interface{} = []byte(signingKey)
+	if keySet := verificationKeySet(signingKey, previousKeys); len(keySet.Keys) > 1 {
+		key = keySet
+	}
 	// check exp, nbf
 	return jwt.ParseWithClaims(string(tokenString), claims, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unknown token method")
 		}
-		return []byte(signingKey), nil
+		return key, nil
 	}, options...)
+}
+
+func verificationKeySet(signingKey SigningKey, previousKeys []SigningKey) jwt.VerificationKeySet {
+	keySet := jwt.VerificationKeySet{Keys: []jwt.VerificationKey{[]byte(signingKey)}}
+	for _, previous := range previousKeys {
+		if len(previous) > 0 && string(previous) != string(signingKey) {
+			keySet.Keys = append(keySet.Keys, []byte(previous))
+		}
+	}
+	return keySet
 }
 
 // FilerJwtProvider signs the credential a filer's HTTP API expects. A nil

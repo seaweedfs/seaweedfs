@@ -330,20 +330,15 @@ func (vs *VolumeServer) publicReadOnlyHandler(w http.ResponseWriter, r *http.Req
 }
 
 func (vs *VolumeServer) maybeCheckJwtAuthorization(r *http.Request, vid, fid string, isWrite bool) bool {
-	var signingKey security.SigningKey
-	if isWrite {
-		signingKey = vs.guard.SigningKey()
-	} else {
-		signingKey = vs.guard.ReadSigningKey()
-	}
-	return vs.checkJwtAuthorizationWithKey(r, vid, fid, signingKey)
+	signingKey, previousSigningKey := vs.guard.VerificationKeys(isWrite)
+	return vs.checkJwtAuthorizationWithKey(r, vid, fid, signingKey, previousSigningKey)
 }
 
-// checkJwtAuthorizationWithKey authorizes against a caller-snapshotted signing
-// key, so a write handler can classify an expired-JWT refusal against the exact
-// key it authorized under rather than re-reading one that may have rotated
+// checkJwtAuthorizationWithKey authorizes against caller-snapshotted signing
+// keys, so a write handler can classify an expired-JWT refusal against the exact
+// keys it authorized under rather than re-reading ones that may have rotated
 // between the two reads.
-func (vs *VolumeServer) checkJwtAuthorizationWithKey(r *http.Request, vid, fid string, signingKey security.SigningKey) bool {
+func (vs *VolumeServer) checkJwtAuthorizationWithKey(r *http.Request, vid, fid string, signingKey, previousSigningKey security.SigningKey) bool {
 
 	if len(signingKey) == 0 {
 		return true
@@ -355,7 +350,7 @@ func (vs *VolumeServer) checkJwtAuthorizationWithKey(r *http.Request, vid, fid s
 		return false
 	}
 
-	token, err := security.DecodeJwt(signingKey, tokenStr, &security.SeaweedFileIdClaims{})
+	token, err := security.DecodeJwt(signingKey, tokenStr, &security.SeaweedFileIdClaims{}, previousSigningKey)
 	if err != nil {
 		glog.V(1).Infof("jwt verification error from %s: %v", r.RemoteAddr, err)
 		return false

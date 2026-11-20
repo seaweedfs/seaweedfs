@@ -536,8 +536,7 @@ func (fo *FilerOptions) startFiler() {
 	// is set. The key does not protect the rest of this port; that needs
 	// [grpc.filer] mTLS.
 	if credentialManager != nil {
-		adminSigningKey := security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key"))
-		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager, adminSigningKey)
+		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager, fs.FilerGuard())
 		// The OIDC provider and role RPCs write where S3 servers configured with
 		// filer-typed "oidcProviderStore" and "roleStore" read: this filer, at
 		// the stores' default base paths.
@@ -548,7 +547,7 @@ func (fo *FilerOptions) startFiler() {
 			iamGrpcServer.SetSTSStores(integration.NewFilerOIDCProviderStore(nil, selfAddress), roleStore)
 		}
 		iam_pb.RegisterSeaweedIdentityAccessManagementServer(grpcS, iamGrpcServer)
-		if len(adminSigningKey) == 0 {
+		if len(fs.FilerGuard().SigningKey()) == 0 {
 			glog.Warning("IAM gRPC service on filer is UNAUTHENTICATED: anyone who can reach this port can create users and policies, and its OIDC provider and role RPCs are refused; set jwt.filer_signing.key in security.toml to require an admin Bearer token")
 		} else {
 			glog.V(0).Info("Registered IAM gRPC service on filer (admin Bearer token required)")

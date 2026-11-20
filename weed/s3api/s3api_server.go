@@ -364,7 +364,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		option:                option,
 		iam:                   iam,
 		randomClientId:        util.RandomInt32(),
-		filerGuard:            security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec),
+		filerGuard:            security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec, v.GetString("jwt.filer_signing.previous_key"), v.GetString("jwt.filer_signing.read.previous_key")),
 		filerClient:           filerClient,
 		masterClient:          masterClient,
 		cb:                    NewCircuitBreaker(option),
@@ -507,12 +507,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	grace.OnReload(func() {
 		util.LoadConfiguration("security", false)
 		v := util.GetViper()
-		s3ApiServer.filerGuard.UpdateSigningKeys(
-			v.GetString("jwt.filer_signing.key"),
-			v.GetInt("jwt.filer_signing.expires_after_seconds"),
-			v.GetString("jwt.filer_signing.read.key"),
-			v.GetInt("jwt.filer_signing.read.expires_after_seconds"),
-		)
+		s3ApiServer.filerGuard.ReloadSigningKeys("jwt.filer_signing")
 		s3ApiServer.applyTrustedProxies(v)
 		util_http.ReloadJwtSigningReadConfig()
 	})

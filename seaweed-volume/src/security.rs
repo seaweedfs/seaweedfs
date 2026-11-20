@@ -83,7 +83,13 @@ pub fn gen_jwt(
 }
 
 /// Decode and validate a JWT token.
-pub fn decode_jwt(signing_key: &SigningKey, token: &str) -> Result<FileIdClaims, JwtError> {
+/// A token whose signature does not match `signing_key` is checked against
+/// each non-empty `previous_keys` entry, like Go's `security.DecodeJwt`.
+pub fn decode_jwt(
+    signing_key: &SigningKey,
+    token: &str,
+    previous_keys: &[&SigningKey],
+) -> Result<FileIdClaims, JwtError> {
     if signing_key.is_empty() {
         return Err(JwtError::NoSigningKey);
     }
@@ -97,19 +103,35 @@ pub fn decode_jwt(signing_key: &SigningKey, token: &str) -> Result<FileIdClaims,
     validation.validate_nbf = true;
     validation.leeway = 0;
 
-    let data = decode::<FileIdClaims>(
+    let mut result = decode::<FileIdClaims>(
         token,
         &DecodingKey::from_secret(&signing_key.0),
         &validation,
-    )?;
+    );
+    for previous in previous_keys {
+        let bad_signature = matches!(&result, Err(e)
+            if matches!(e.kind(), jsonwebtoken::errors::ErrorKind::InvalidSignature));
+        if !bad_signature {
+            break;
+        }
+        if previous.is_empty() || previous.0 == signing_key.0 {
+            continue;
+        }
+        result = decode::<FileIdClaims>(token, &DecodingKey::from_secret(&previous.0), &validation);
+    }
 
-    Ok(data.claims)
+    Ok(result?.claims)
 }
 
 /// Reports a signed, fid-bound write token whose only failure is expiry. It
 /// never authorizes a request. Mirrors Go's `security.IsExpiredVolumeJwt`.
-pub fn is_expired_volume_jwt(signing_key: &SigningKey, token: &str, expected_fid: &str) -> bool {
-    match decode_jwt(signing_key, token) {
+pub fn is_expired_volume_jwt(
+    signing_key: &SigningKey,
+    token: &str,
+    expected_fid: &str,
+    previous_keys: &[&SigningKey],
+) -> bool {
+    match decode_jwt(signing_key, token, previous_keys) {
         Err(JwtError::Jwt(e))
             if matches!(e.kind(), jsonwebtoken::errors::ErrorKind::ExpiredSignature) => {}
         _ => return false,
@@ -125,11 +147,13 @@ pub fn is_expired_volume_jwt(signing_key: &SigningKey, token: &str, expected_fid
     validation.validate_exp = false;
     validation.validate_nbf = true;
     validation.leeway = 0;
-    let Ok(data) = decode::<ExpiredClaims>(
-        token,
-        &DecodingKey::from_secret(&signing_key.0),
-        &validation,
-    ) else {
+    let Some(data) = std::iter::once(signing_key)
+        .chain(previous_keys.iter().copied())
+        .filter(|key| !key.is_empty())
+        .find_map(|key| {
+            decode::<ExpiredClaims>(token, &DecodingKey::from_secret(&key.0), &validation).ok()
+        })
+    else {
         return false;
     };
     let now = SystemTime::now()
@@ -151,6 +175,9 @@ pub struct Guard {
     pub expires_after_sec: i64,
     pub read_signing_key: SigningKey,
     pub read_expires_after_sec: i64,
+    /// Accepted when verifying, never used to sign.
+    pub previous_signing_key: SigningKey,
+    pub previous_read_signing_key: SigningKey,
     /// Combined flag: true when whitelist is non-empty OR signing key is present.
     /// Matches Go's `isWriteActive = !isEmptyWhiteList || len(SigningKey) != 0`.
     is_write_active: bool,
@@ -171,6 +198,8 @@ impl Guard {
             expires_after_sec,
             read_signing_key,
             read_expires_after_sec,
+            previous_signing_key: SigningKey(vec![]),
+            previous_read_signing_key: SigningKey(vec![]),
             is_write_active: false,
         };
         guard.update_whitelist(whitelist);
@@ -215,11 +244,15 @@ impl Guard {
         expires_after_sec: i64,
         read_signing_key: SigningKey,
         read_expires_after_sec: i64,
+        previous_signing_key: SigningKey,
+        previous_read_signing_key: SigningKey,
     ) {
         self.signing_key = signing_key;
         self.expires_after_sec = expires_after_sec;
         self.read_signing_key = read_signing_key;
         self.read_expires_after_sec = read_expires_after_sec;
+        self.previous_signing_key = previous_signing_key;
+        self.previous_read_signing_key = previous_read_signing_key;
 
         let is_empty_whitelist = self.whitelist_ips.is_empty() && self.whitelist_cidrs.is_empty();
         self.is_write_active = !is_empty_whitelist || !self.signing_key.is_empty();
@@ -262,6 +295,16 @@ impl Guard {
         false
     }
 
+    /// The write (or read) signing key and the previous key still accepted for
+    /// it. Mirrors Go's `Guard.VerificationKeys`.
+    pub fn verification_keys(&self, is_write: bool) -> (&SigningKey, &SigningKey) {
+        if is_write {
+            (&self.signing_key, &self.previous_signing_key)
+        } else {
+            (&self.read_signing_key, &self.previous_read_signing_key)
+        }
+    }
+
     /// Check if a read signing key is configured.
     pub fn has_read_signing_key(&self) -> bool {
         !self.read_signing_key.is_empty()
@@ -271,18 +314,14 @@ impl Guard {
     /// `is_write` determines which signing key to use.
     /// Returns Ok(()) if valid, or if security is disabled.
     pub fn check_jwt(&self, token: Option<&str>, is_write: bool) -> Result<(), JwtError> {
-        let key = if is_write {
-            &self.signing_key
-        } else {
-            &self.read_signing_key
-        };
+        let (key, previous) = self.verification_keys(is_write);
 
         if key.is_empty() {
             return Ok(()); // Security disabled for this operation type
         }
 
         let token = token.ok_or(JwtError::MissingToken)?;
-        decode_jwt(key, token)?;
+        decode_jwt(key, token, &[previous])?;
         Ok(())
     }
 
@@ -293,18 +332,14 @@ impl Guard {
         expected_fid: &str,
         is_write: bool,
     ) -> Result<(), JwtError> {
-        let key = if is_write {
-            &self.signing_key
-        } else {
-            &self.read_signing_key
-        };
+        let (key, previous) = self.verification_keys(is_write);
 
         if key.is_empty() {
             return Ok(());
         }
 
         let token = token.ok_or(JwtError::MissingToken)?;
-        let claims = decode_jwt(key, token)?;
+        let claims = decode_jwt(key, token, &[previous])?;
 
         match claims.fid {
             None => {
@@ -418,7 +453,7 @@ mod tests {
     fn test_jwt_round_trip() {
         let key = SigningKey::from_string("test-secret-key");
         let token = gen_jwt(&key, 3600, "3,01637037d6").unwrap();
-        let claims = decode_jwt(&key, &token).unwrap();
+        let claims = decode_jwt(&key, &token, &[]).unwrap();
         assert_eq!(claims.fid, Some("3,01637037d6".to_string()));
     }
 
@@ -431,7 +466,7 @@ mod tests {
     #[test]
     fn test_jwt_invalid_token() {
         let key = SigningKey::from_string("secret");
-        let result = decode_jwt(&key, "invalid.token.here");
+        let result = decode_jwt(&key, "invalid.token.here", &[]);
         assert!(result.is_err());
     }
 
@@ -440,7 +475,7 @@ mod tests {
         let key1 = SigningKey::from_string("secret1");
         let key2 = SigningKey::from_string("secret2");
         let token = gen_jwt(&key1, 3600, "1,abc").unwrap();
-        assert!(decode_jwt(&key2, &token).is_err());
+        assert!(decode_jwt(&key2, &token, &[]).is_err());
     }
 
     #[test]
@@ -460,26 +495,32 @@ mod tests {
             .unwrap()
         };
         let expired = sign(serde_json::json!({"fid": fid, "exp": now - 10}), &key);
-        assert!(is_expired_volume_jwt(&key, &expired, fid));
-        assert!(!is_expired_volume_jwt(&key, &expired, "3,01637037d7"));
+        assert!(is_expired_volume_jwt(&key, &expired, fid, &[]));
+        assert!(!is_expired_volume_jwt(&key, &expired, "3,01637037d7", &[]));
         assert!(!is_expired_volume_jwt(
             &SigningKey::from_string("other-key"),
             &expired,
-            fid
+            fid,
+            &[]
         ));
-        assert!(!is_expired_volume_jwt(&SigningKey(vec![]), &expired, fid));
+        assert!(!is_expired_volume_jwt(
+            &SigningKey(vec![]),
+            &expired,
+            fid,
+            &[]
+        ));
         let immature = sign(
             serde_json::json!({"fid": fid, "exp": now - 10, "nbf": now + 60}),
             &key,
         );
-        assert!(!is_expired_volume_jwt(&key, &immature, fid));
+        assert!(!is_expired_volume_jwt(&key, &immature, fid, &[]));
         let future_issued = sign(
             serde_json::json!({"fid": fid, "exp": now - 10, "iat": now + 60}),
             &key,
         );
-        assert!(!is_expired_volume_jwt(&key, &future_issued, fid));
+        assert!(!is_expired_volume_jwt(&key, &future_issued, fid, &[]));
         let live = sign(serde_json::json!({"fid": fid, "exp": now + 60}), &key);
-        assert!(!is_expired_volume_jwt(&key, &live, fid));
+        assert!(!is_expired_volume_jwt(&key, &live, fid, &[]));
         let unsigned = format!(
             "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.{}.",
             base64::Engine::encode(
@@ -487,7 +528,7 @@ mod tests {
                 serde_json::json!({"fid": fid, "exp": now - 10}).to_string()
             )
         );
-        assert!(!is_expired_volume_jwt(&key, &unsigned, fid));
+        assert!(!is_expired_volume_jwt(&key, &unsigned, fid, &[]));
     }
 
     #[test]
@@ -587,14 +628,63 @@ mod tests {
             11,
             SigningKey::from_string("new-read"),
             61,
+            SigningKey(vec![]),
+            SigningKey(vec![]),
         );
 
         let token = gen_jwt(&guard.signing_key, 60, "3,01637037d6").unwrap();
         // Validates with the rotated key, not the old one.
-        assert!(decode_jwt(&guard.signing_key, &token).is_ok());
-        assert!(decode_jwt(&SigningKey::from_string("old-write"), &token).is_err());
+        assert!(decode_jwt(&guard.signing_key, &token, &[]).is_ok());
+        assert!(decode_jwt(&SigningKey::from_string("old-write"), &token, &[]).is_err());
         assert_eq!(guard.expires_after_sec, 11);
         assert_eq!(guard.read_expires_after_sec, 61);
+    }
+
+    #[test]
+    fn test_previous_signing_key_is_accepted() {
+        let fid = "3,01637037d6";
+        let accepts = |guard: &Guard, key: &str, is_write: bool| {
+            let token = gen_jwt(&SigningKey::from_string(key), 60, fid).unwrap();
+            guard
+                .check_jwt_for_file(Some(&token), fid, is_write)
+                .is_ok()
+        };
+        let mut guard = Guard::new(
+            &[],
+            SigningKey::from_string("write-new"),
+            10,
+            SigningKey::from_string("read-new"),
+            60,
+        );
+        guard.previous_signing_key = SigningKey::from_string("write-old");
+        guard.previous_read_signing_key = SigningKey::from_string("read-old");
+
+        assert!(accepts(&guard, "write-new", true));
+        assert!(accepts(&guard, "write-old", true));
+        assert!(accepts(&guard, "read-old", false));
+        assert!(!accepts(&guard, "other", true));
+        assert!(!accepts(&guard, "read-old", true));
+
+        let expired = encode(
+            &Header::new(Algorithm::HS256),
+            &serde_json::json!({"fid": fid, "exp": 1}),
+            &EncodingKey::from_secret(b"write-old"),
+        )
+        .unwrap();
+        let (key, previous) = guard.verification_keys(true);
+        assert!(is_expired_volume_jwt(key, &expired, fid, &[previous]));
+        assert!(!is_expired_volume_jwt(key, &expired, fid, &[]));
+
+        guard.update_signing_keys(
+            SigningKey::from_string("write-new"),
+            10,
+            SigningKey::from_string("read-new"),
+            60,
+            SigningKey(vec![]),
+            SigningKey(vec![]),
+        );
+        assert!(!accepts(&guard, "write-old", true));
+        assert!(!accepts(&guard, "read-old", false));
     }
 
     #[test]
@@ -602,10 +692,24 @@ mod tests {
         let mut guard = Guard::new(&[], SigningKey(vec![]), 0, SigningKey(vec![]), 0);
         assert!(guard.check_jwt(None, true).is_ok());
 
-        guard.update_signing_keys(SigningKey::from_string("write"), 10, SigningKey(vec![]), 0);
+        guard.update_signing_keys(
+            SigningKey::from_string("write"),
+            10,
+            SigningKey(vec![]),
+            0,
+            SigningKey(vec![]),
+            SigningKey(vec![]),
+        );
         assert!(guard.is_write_active);
 
-        guard.update_signing_keys(SigningKey(vec![]), 0, SigningKey(vec![]), 0);
+        guard.update_signing_keys(
+            SigningKey(vec![]),
+            0,
+            SigningKey(vec![]),
+            0,
+            SigningKey(vec![]),
+            SigningKey(vec![]),
+        );
         assert!(!guard.is_write_active);
     }
 

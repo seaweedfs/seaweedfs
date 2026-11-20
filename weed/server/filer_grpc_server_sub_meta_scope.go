@@ -14,11 +14,15 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func metadataSubscriptionScope(ctx context.Context, method string) (*security.MetadataSubscriptionScope, error) {
-	v := util.GetViper()
+func (fs *FilerServer) metadataSubscriptionScope(ctx context.Context, method string) (*security.MetadataSubscriptionScope, error) {
+	var adminKey, previousAdminKey security.SigningKey
+	if fs.filerGuard != nil {
+		adminKey, previousAdminKey = fs.filerGuard.VerificationKeys(true)
+	}
 	return security.CheckGrpcMetadataSubscription(ctx,
-		security.SigningKey(v.GetString("jwt.filer_signing.subscribe.key")),
-		security.SigningKey(v.GetString("jwt.filer_signing.key")),
+		security.SigningKey(util.GetViper().GetString("jwt.filer_signing.subscribe.key")),
+		adminKey,
+		previousAdminKey,
 		method)
 }
 

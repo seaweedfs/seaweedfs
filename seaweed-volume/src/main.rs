@@ -340,7 +340,7 @@ async fn run(
     store.set_volume_load_guard(volume_copies_in_flight.clone());
 
     // Build shared state
-    let guard = Guard::new(
+    let mut guard = Guard::new(
         &config.white_list,
         SigningKey(config.jwt_signing_key.clone()),
         config.jwt_signing_expires_seconds,
@@ -358,6 +358,8 @@ async fn run(
 
     let security_file = config.security_file.clone();
     let cli_white_list = config.white_list.clone();
+    guard.previous_signing_key = SigningKey(config.jwt_previous_signing_key.clone());
+    guard.previous_read_signing_key = SigningKey(config.jwt_previous_read_signing_key.clone());
 
     let state = Arc::new(VolumeServerState {
         store: RwLock::new(store),
@@ -619,9 +621,13 @@ async fn run(
                 }
 
                 // 2. Reload security config (Go's Reload)
-                {
+                'security: {
                     info!("Reloading security config...");
                     let sec = config::parse_security_config(&state_reload.security_file);
+                    if !sec.file_read {
+                        warn!("SIGHUP: security config cannot be read, keeping the keys in effect");
+                        break 'security;
+                    }
                     let mut whitelist = state_reload.cli_white_list.clone();
                     whitelist.extend(sec.guard_white_list.iter().cloned());
                     let mut guard = state_reload.guard.write().unwrap();
@@ -631,6 +637,8 @@ async fn run(
                         sec.jwt_signing_expires,
                         SigningKey(sec.jwt_read_signing_key),
                         sec.jwt_read_signing_expires,
+                        SigningKey(sec.jwt_previous_signing_key),
+                        SigningKey(sec.jwt_previous_read_signing_key),
                     );
                 }
 

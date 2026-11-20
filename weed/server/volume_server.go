@@ -166,7 +166,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	vs.store.SetVolumeLoadGuard(vs.volumeLoadGuard)
 	vs.store.MasterFn = vs.getCurrentMaster
 	vs.store.SetSyncBatchOption(syncBatch)
-	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
+	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec, v.GetString("jwt.signing.previous_key"), v.GetString("jwt.signing.read.previous_key"))
 
 	handleStaticResources(adminMux)
 	adminMux.HandleFunc("/status", requestIDMiddleware(vs.statusHandler))
@@ -220,12 +220,7 @@ func (vs *VolumeServer) Reload() {
 	util.LoadConfiguration("security", false)
 	v := util.GetViper()
 	vs.guard.UpdateWhiteList(append(vs.whiteList, util.StringSplit(v.GetString("guard.white_list"), ",")...))
-	vs.guard.UpdateSigningKeys(
-		v.GetString("jwt.signing.key"),
-		v.GetInt("jwt.signing.expires_after_seconds"),
-		v.GetString("jwt.signing.read.key"),
-		v.GetInt("jwt.signing.read.expires_after_seconds"),
-	)
+	vs.guard.ReloadSigningKeys("jwt.signing")
 }
 
 // Returns whether a volume server is in maintenance (i.e. read-only) mode.

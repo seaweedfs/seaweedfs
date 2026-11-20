@@ -313,10 +313,25 @@ func TestIamGrpc_PutOIDCProviderRequiresHTTPSExceptOnLoopback(t *testing.T) {
 // Without an admin signing key the IAM service accepts any caller. Users and
 // policies keep that opt-in behaviour, but the OIDC provider and role RPCs
 // grant STS access outright, so they refuse to run unauthenticated.
+// The store gates check the token against the same key snapshot as the
+// empty-key refusal, so a reload that sets the key cannot pass a call that
+// carries no token.
+func TestIamGrpc_STSStoreGatesCheckTheToken(t *testing.T) {
+	s, ctx, _, _ := newSTSTestServer(t)
+	_, err := s.requireOIDCProviderStore(context.Background())
+	requireCode(t, err, codes.Unauthenticated)
+	_, err = s.requireRoleStore(context.Background())
+	requireCode(t, err, codes.Unauthenticated)
+	_, err = s.requireOIDCProviderStore(ctx)
+	require.NoError(t, err)
+	_, err = s.requireRoleStore(ctx)
+	require.NoError(t, err)
+}
+
 func TestIamGrpc_STSRPCsRefuseAnUnauthenticatedService(t *testing.T) {
 	cm, err := credential.NewCredentialManager(credential.StoreTypeMemory, nil, "")
 	require.NoError(t, err)
-	s := NewIamGrpcServer(cm, nil)
+	s := NewIamGrpcServer(cm, security.NewGuard(nil, "", 0, "", 0, "", ""))
 	s.SetSTSStores(integration.NewMemoryOIDCProviderStore(), integration.NewMemoryRoleStore())
 	ctx := context.Background()
 	calls := map[string]func() error{

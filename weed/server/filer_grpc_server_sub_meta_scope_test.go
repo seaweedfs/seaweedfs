@@ -377,7 +377,7 @@ func TestMetadataSubscriptionTokenRefusedOverHTTP(t *testing.T) {
 		{"same", "read-key", "same"},
 		{"same", "same", "same"},
 	} {
-		fs := &FilerServer{filerGuard: security.NewGuard(nil, keys.write, 0, keys.read, 0)}
+		fs := &FilerServer{filerGuard: security.NewGuard(nil, keys.write, 0, keys.read, 0, "", "")}
 		token := string(security.GenJwtForMetadataSubscription(security.SigningKey(keys.subscribe), 60, []string{"/buckets/uploads"}))
 		for _, c := range []struct {
 			method  string

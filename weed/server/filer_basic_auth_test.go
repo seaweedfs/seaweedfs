@@ -64,7 +64,7 @@ func TestFilerBasicAuth(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fs := &FilerServer{filerGuard: security.NewGuard(nil, tt.jwtKey, 0, tt.jwtKey, 0)}
+			fs := &FilerServer{filerGuard: security.NewGuard(nil, tt.jwtKey, 0, tt.jwtKey, 0, "", "")}
 			fs.basicAuth.Store(security.NewBasicAuth("admin", tt.password))
 			if got := fs.maybeCheckJwtAuthorization(request(http.MethodGet, tt.creds), false); got != tt.wantRead {
 				t.Errorf("read: got %v, want %v", got, tt.wantRead)
@@ -78,7 +78,7 @@ func TestFilerBasicAuth(t *testing.T) {
 
 func TestFilerBasicAuthOrigin(t *testing.T) {
 	fs := &FilerServer{
-		filerGuard: security.NewGuard(nil, "", 0, "", 0),
+		filerGuard: security.NewGuard(nil, "", 0, "", 0, "", ""),
 		option:     &FilerOption{AllowedOrigins: []string{"https://ui.example.com"}},
 	}
 	fs.basicAuth.Store(security.NewBasicAuth("admin", "pw"))
@@ -115,7 +115,7 @@ func TestFilerBasicAuthOrigin(t *testing.T) {
 }
 
 func TestFilerBasicAuthChallenge(t *testing.T) {
-	fs := &FilerServer{filerGuard: security.NewGuard(nil, "", 0, "", 0)}
+	fs := &FilerServer{filerGuard: security.NewGuard(nil, "", 0, "", 0, "", "")}
 	fs.basicAuth.Store(security.NewBasicAuth("admin", "pw"))
 	w := httptest.NewRecorder()
 	fs.readonlyFilerHandler(w, httptest.NewRequest(http.MethodGet, "/dir/", nil))
@@ -146,8 +146,8 @@ func TestFilerBasicAuthReloadDropsRemovedPassword(t *testing.T) {
 	}
 
 	fs := &FilerServer{
-		filerGuard:  security.NewGuard(nil, "", 0, "", 0),
-		volumeGuard: security.NewGuard(nil, "", 0, "", 0),
+		filerGuard:  security.NewGuard(nil, "", 0, "", 0, "", ""),
+		volumeGuard: security.NewGuard(nil, "", 0, "", 0, "", ""),
 	}
 	write("[filer.basic_auth]\nuser = \"admin\"\npassword = \"pw\"\n")
 	fs.Reload()
@@ -206,8 +206,8 @@ func TestFilerBasicAuthReloadStaysOnItsFile(t *testing.T) {
 	}
 
 	fs := &FilerServer{
-		filerGuard:  security.NewGuard(nil, "", 0, "", 0),
-		volumeGuard: security.NewGuard(nil, "", 0, "", 0),
+		filerGuard:  security.NewGuard(nil, "", 0, "", 0, "", ""),
+		volumeGuard: security.NewGuard(nil, "", 0, "", 0, "", ""),
 	}
 	fs.Reload()
 	if fs.basicAuth.Load() == nil {

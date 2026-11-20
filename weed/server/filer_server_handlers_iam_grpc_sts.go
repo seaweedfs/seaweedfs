@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -37,9 +38,19 @@ func (s *IamGrpcServer) SetSTSStores(oidcProviders integration.OIDCProviderStore
 var errSTSRequiresAuth = status.Error(codes.FailedPrecondition,
 	"OIDC provider and role management requires admin authentication: set jwt.filer_signing.key in security.toml")
 
-func (s *IamGrpcServer) requireOIDCProviderStore() (integration.OIDCProviderStore, error) {
-	if len(s.adminSigningKey) == 0 {
-		return nil, errSTSRequiresAuth
+// checkSTSAdminAuth requires an admin token, checked against one snapshot of
+// the reloadable keys so a reload cannot pass an unauthenticated call.
+func (s *IamGrpcServer) checkSTSAdminAuth(ctx context.Context) error {
+	signingKey, previousSigningKey := s.adminGuard.VerificationKeys(true)
+	if len(signingKey) == 0 {
+		return errSTSRequiresAuth
+	}
+	return security.CheckGrpcAdminToken(ctx, signingKey, previousSigningKey)
+}
+
+func (s *IamGrpcServer) requireOIDCProviderStore(ctx context.Context) (integration.OIDCProviderStore, error) {
+	if err := s.checkSTSAdminAuth(ctx); err != nil {
+		return nil, err
 	}
 	if s.oidcProviderStore == nil {
 		return nil, status.Error(codes.FailedPrecondition, "OIDC provider store not configured on this filer")
@@ -47,9 +58,9 @@ func (s *IamGrpcServer) requireOIDCProviderStore() (integration.OIDCProviderStor
 	return s.oidcProviderStore, nil
 }
 
-func (s *IamGrpcServer) requireRoleStore() (integration.RoleStore, error) {
-	if len(s.adminSigningKey) == 0 {
-		return nil, errSTSRequiresAuth
+func (s *IamGrpcServer) requireRoleStore(ctx context.Context) (integration.RoleStore, error) {
+	if err := s.checkSTSAdminAuth(ctx); err != nil {
+		return nil, err
 	}
 	if s.roleStore == nil {
 		return nil, status.Error(codes.FailedPrecondition, "role store not configured on this filer")
@@ -81,10 +92,7 @@ func lookupOIDCProvider(ctx context.Context, store integration.OIDCProviderStore
 }
 
 func (s *IamGrpcServer) PutOIDCProvider(ctx context.Context, req *iam_pb.PutOIDCProviderRequest) (*iam_pb.PutOIDCProviderResponse, error) {
-	if err := s.checkAdminAuth(ctx); err != nil {
-		return nil, err
-	}
-	store, err := s.requireOIDCProviderStore()
+	store, err := s.requireOIDCProviderStore(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -152,10 +160,7 @@ func requireSecureIssuer(issuerURL string) error {
 }
 
 func (s *IamGrpcServer) GetOIDCProvider(ctx context.Context, req *iam_pb.GetOIDCProviderRequest) (*iam_pb.GetOIDCProviderResponse, error) {
-	if err := s.checkAdminAuth(ctx); err != nil {
-		return nil, err
-	}
-	store, err := s.requireOIDCProviderStore()
+	store, err := s.requireOIDCProviderStore(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -176,10 +181,7 @@ func (s *IamGrpcServer) GetOIDCProvider(ctx context.Context, req *iam_pb.GetOIDC
 // DeleteOIDCProvider returns NotFound for a provider that does not exist, as
 // DeleteUser does for a user; callers treat that as already deleted.
 func (s *IamGrpcServer) DeleteOIDCProvider(ctx context.Context, req *iam_pb.DeleteOIDCProviderRequest) (*iam_pb.DeleteOIDCProviderResponse, error) {
-	if err := s.checkAdminAuth(ctx); err != nil {
-		return nil, err
-	}
-	store, err := s.requireOIDCProviderStore()
+	store, err := s.requireOIDCProviderStore(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -220,10 +222,7 @@ func (s *IamGrpcServer) DeleteOIDCProvider(ctx context.Context, req *iam_pb.Dele
 }
 
 func (s *IamGrpcServer) ListOIDCProviders(ctx context.Context, req *iam_pb.ListOIDCProvidersRequest) (*iam_pb.ListOIDCProvidersResponse, error) {
-	if err := s.checkAdminAuth(ctx); err != nil {
-		return nil, err
-	}
-	store, err := s.requireOIDCProviderStore()
+	store, err := s.requireOIDCProviderStore(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -273,10 +272,7 @@ func lookupRole(ctx context.Context, store integration.RoleStore, name string) (
 // takes precedence over a same-named role in an S3 server's IAM config file;
 // deleting the stored one restores the config-file role.
 func (s *IamGrpcServer) PutRole(ctx context.Context, req *iam_pb.PutRoleRequest) (*iam_pb.PutRoleResponse, error) {
-	if err := s.checkAdminAuth(ctx); err != nil {
-		return nil, err
-	}
-	store, err := s.requireRoleStore()
+	store, err := s.requireRoleStore(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -349,10 +345,7 @@ func (s *IamGrpcServer) PutRole(ctx context.Context, req *iam_pb.PutRoleRequest)
 }
 
 func (s *IamGrpcServer) GetRole(ctx context.Context, req *iam_pb.GetRoleRequest) (*iam_pb.GetRoleResponse, error) {
-	if err := s.checkAdminAuth(ctx); err != nil {
-		return nil, err
-	}
-	store, err := s.requireRoleStore()
+	store, err := s.requireRoleStore(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -384,10 +377,7 @@ var errRoleReplacedDuringDelete = errors.New("role replaced during delete")
 var errProviderReplacedDuringDelete = errors.New("OIDC provider replaced during delete")
 
 func (s *IamGrpcServer) DeleteRole(ctx context.Context, req *iam_pb.DeleteRoleRequest) (*iam_pb.DeleteRoleResponse, error) {
-	if err := s.checkAdminAuth(ctx); err != nil {
-		return nil, err
-	}
-	store, err := s.requireRoleStore()
+	store, err := s.requireRoleStore(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -427,10 +417,7 @@ func (s *IamGrpcServer) DeleteRole(ctx context.Context, req *iam_pb.DeleteRoleRe
 }
 
 func (s *IamGrpcServer) ListRoles(ctx context.Context, req *iam_pb.ListRolesRequest) (*iam_pb.ListRolesResponse, error) {
-	if err := s.checkAdminAuth(ctx); err != nil {
-		return nil, err
-	}
-	store, err := s.requireRoleStore()
+	store, err := s.requireRoleStore(ctx)
 	if err != nil {
 		return nil, err
 	}

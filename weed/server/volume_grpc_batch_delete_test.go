@@ -28,7 +28,7 @@ import (
 // behaviour of the other destructive volume-server RPCs.
 func TestBatchDelete_DeniesNonWhitelistedPeer(t *testing.T) {
 	vs := &VolumeServer{
-		guard: security.NewGuard([]string{"10.0.0.1"}, "", 0, "", 0),
+		guard: security.NewGuard([]string{"10.0.0.1"}, "", 0, "", 0, "", ""),
 	}
 
 	ctx := peer.NewContext(context.Background(), &peer.Peer{

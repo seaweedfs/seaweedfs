@@ -23,7 +23,7 @@ func newTestIamGrpcServer(t *testing.T) *IamGrpcServer {
 	if err != nil {
 		t.Fatalf("NewCredentialManager: %v", err)
 	}
-	return NewIamGrpcServer(cm, security.SigningKey(testIamSigningKey))
+	return NewIamGrpcServer(cm, security.NewGuard(nil, testIamSigningKey, 0, "", 0, "", ""))
 }
 
 func ctxWithBearer(token string) context.Context {
@@ -150,7 +150,7 @@ func TestIamGrpc_NoSigningKey_Unauthenticated_Allowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCredentialManager: %v", err)
 	}
-	s := NewIamGrpcServer(cm, nil)
+	s := NewIamGrpcServer(cm, security.NewGuard(nil, "", 0, "", 0, "", ""))
 	resp, err := s.ListUsers(context.Background(), &iam_pb.ListUsersRequest{})
 	if err != nil {
 		t.Fatalf("ListUsers without key: unexpected error %v", err)

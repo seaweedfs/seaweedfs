@@ -101,7 +101,7 @@ func TestDeleteHandlerCancelsAWriteInItsFsyncWindow(t *testing.T) {
 		t.Run(tc.query, func(t *testing.T) {
 			store, fid, release, written := startHeldWrite(t)
 			resp := httptest.NewRecorder()
-			vs := &VolumeServer{store: store, guard: security.NewGuard(nil, "", 0, "", 0)}
+			vs := &VolumeServer{store: store, guard: security.NewGuard(nil, "", 0, "", 0, "", "")}
 			vs.DeleteHandler(resp, httptest.NewRequest(http.MethodDelete, "/"+fid+tc.query, nil))
 			require.Equal(t, http.StatusNotFound, resp.Code)
 			release()
@@ -136,7 +136,7 @@ func TestDeleteHandlerRetryReachesTheReplicaAfterAFailedFanOut(t *testing.T) {
 				t.Cleanup(vs.store.Close)
 				_, err := vs.AllocateVolume(context.Background(), &volume_server_pb.AllocateVolumeRequest{VolumeId: uint32(vid), Replication: "001", Version: uint32(needle.GetCurrentVersion())})
 				require.NoError(t, err)
-				vs.guard = security.NewGuard(nil, "", 0, "", 0)
+				vs.guard = security.NewGuard(nil, "", 0, "", 0, "", "")
 			}
 			replicaVs := &VolumeServer{}
 			allocate(replicaVs)
@@ -247,7 +247,7 @@ func TestPostHandlerForwardsAContentMd5TheReplicaAccepts(t *testing.T) {
 	}
 	replicaVs := &VolumeServer{fileSizeLimitBytes: 1 << 20}
 	allocate(replicaVs)
-	replicaVs.guard = security.NewGuard(nil, "", 0, "", 0)
+	replicaVs.guard = security.NewGuard(nil, "", 0, "", 0, "", "")
 	replicaResp := make(chan *httptest.ResponseRecorder, 1)
 	replica := newProxyTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := httptest.NewRecorder()
@@ -261,7 +261,7 @@ func TestPostHandlerForwardsAContentMd5TheReplicaAccepts(t *testing.T) {
 	vs := newProxyTestVolumeServer(t, vid.String(), []*master_pb.Location{primary, {Url: strings.TrimPrefix(replica.URL, "http://")}}, nil)
 	allocate(vs)
 	primary.Url = util.JoinHostPort(vs.store.Ip, vs.store.Port)
-	vs.guard = security.NewGuard(nil, "", 0, "", 0)
+	vs.guard = security.NewGuard(nil, "", 0, "", 0, "", "")
 	vs.fileSizeLimitBytes = 1 << 20
 
 	for i, tc := range []struct {

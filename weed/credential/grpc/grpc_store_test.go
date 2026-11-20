@@ -38,7 +38,7 @@ func TestIamGrpcStore_AdminBearerToken(t *testing.T) {
 	}
 	defer cm.Shutdown()
 
-	iamSrv := weed_server.NewIamGrpcServer(cm, security.SigningKey(goodKey))
+	iamSrv := weed_server.NewIamGrpcServer(cm, security.NewGuard(nil, goodKey, 0, "", 0, "", ""))
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -121,7 +121,7 @@ func TestIamGrpcStore_DeleteAccessKeyNotFound(t *testing.T) {
 	}
 	defer cm.Shutdown()
 
-	iamSrv := weed_server.NewIamGrpcServer(cm, security.SigningKey(goodKey))
+	iamSrv := weed_server.NewIamGrpcServer(cm, security.NewGuard(nil, goodKey, 0, "", 0, "", ""))
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

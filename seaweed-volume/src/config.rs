@@ -306,6 +306,8 @@ pub struct VolumeServerConfig {
     pub ui_enabled: bool,
     pub jwt_signing_key: Vec<u8>,
     pub jwt_signing_expires_seconds: i64,
+    pub jwt_previous_signing_key: Vec<u8>,
+    pub jwt_previous_read_signing_key: Vec<u8>,
     pub jwt_read_signing_key: Vec<u8>,
     pub jwt_read_signing_expires_seconds: i64,
     pub https_cert_file: String,
@@ -999,6 +1001,8 @@ fn resolve_config_with_env(cli: Cli, env: EnvLookup<'_>) -> VolumeServerConfig {
         ui_enabled: sec.jwt_signing_key.is_empty() || sec.access_ui,
         jwt_signing_key: sec.jwt_signing_key,
         jwt_signing_expires_seconds: sec.jwt_signing_expires,
+        jwt_previous_signing_key: sec.jwt_previous_signing_key,
+        jwt_previous_read_signing_key: sec.jwt_previous_read_signing_key,
         jwt_read_signing_key: sec.jwt_read_signing_key,
         jwt_read_signing_expires_seconds: sec.jwt_read_signing_expires,
         https_cert_file: sec.https_cert_file,
@@ -1030,6 +1034,8 @@ fn default_volume_dir() -> String {
 pub struct SecurityConfig {
     pub jwt_signing_key: Vec<u8>,
     pub jwt_signing_expires: i64,
+    pub jwt_previous_signing_key: Vec<u8>,
+    pub jwt_previous_read_signing_key: Vec<u8>,
     pub jwt_read_signing_key: Vec<u8>,
     pub jwt_read_signing_expires: i64,
     pub https_cert_file: String,
@@ -1048,6 +1054,8 @@ pub struct SecurityConfig {
     pub grpc_volume_allowed_common_names: Vec<String>,
     pub tls_policy: TlsPolicy,
     pub access_ui: bool,
+    /// The file was read; otherwise only defaults and WEED_ overrides are set.
+    pub file_read: bool,
     /// IPs from [guard] white_list in security.toml
     pub guard_white_list: Vec<String>,
 }
@@ -1180,6 +1188,7 @@ fn parse_security_config_with_env(path: &str, env: EnvLookup<'_>) -> SecurityCon
             match section {
                 Section::JwtSigningRead => match key {
                     "key" => cfg.jwt_read_signing_key = value.as_bytes().to_vec(),
+                    "previous_key" => cfg.jwt_previous_read_signing_key = value.as_bytes().to_vec(),
                     "expires_after_seconds" => {
                         cfg.jwt_read_signing_expires = value.parse().unwrap_or(60)
                     }
@@ -1187,6 +1196,7 @@ fn parse_security_config_with_env(path: &str, env: EnvLookup<'_>) -> SecurityCon
                 },
                 Section::JwtSigning => match key {
                     "key" => cfg.jwt_signing_key = value.as_bytes().to_vec(),
+                    "previous_key" => cfg.jwt_previous_signing_key = value.as_bytes().to_vec(),
                     "expires_after_seconds" => {
                         cfg.jwt_signing_expires = value.parse().unwrap_or(10)
                     }
@@ -1262,6 +1272,7 @@ fn parse_security_config_with_env(path: &str, env: EnvLookup<'_>) -> SecurityCon
     // prefix WEED_, uppercase, replace . with _).
     // e.g. WEED_JWT_SIGNING_KEY overrides [jwt.signing] key
     apply_env_overrides(&mut cfg, env);
+    cfg.file_read = true;
 
     cfg
 }
@@ -1299,6 +1310,12 @@ fn apply_env_overrides(cfg: &mut SecurityConfig, env: EnvLookup<'_>) {
     }
     if let Some(v) = env_string(env, "WEED_JWT_SIGNING_EXPIRES_AFTER_SECONDS") {
         cfg.jwt_signing_expires = v.parse().unwrap_or(cfg.jwt_signing_expires);
+    }
+    if let Some(v) = env_string(env, "WEED_JWT_SIGNING_PREVIOUS_KEY") {
+        cfg.jwt_previous_signing_key = v.into_bytes();
+    }
+    if let Some(v) = env_string(env, "WEED_JWT_SIGNING_READ_PREVIOUS_KEY") {
+        cfg.jwt_previous_read_signing_key = v.into_bytes();
     }
     if let Some(v) = env_string(env, "WEED_JWT_SIGNING_READ_KEY") {
         cfg.jwt_read_signing_key = v.into_bytes();
@@ -2174,6 +2191,50 @@ cipher_suites = "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
         let _guard = process_state_lock();
         let env = fake_env(&[("WEED_JWT_SIGNING_KEY", "env-secret")]);
         let cfg = parse_security_config_with_env("", &env);
+        assert_eq!(cfg.jwt_signing_key, b"env-secret");
+    }
+
+    #[test]
+    fn test_previous_signing_keys_from_file_and_env() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[jwt.signing]
+key = "write-new"
+previous_key = "write-old"
+[jwt.signing.read]
+key = "read-new"
+previous_key = "read-old"
+"#,
+        )
+        .unwrap();
+        let path = tmp.path().to_str().unwrap();
+
+        let cfg = parse_security_config_with_env(path, &fake_env(&[]));
+        assert_eq!(cfg.jwt_previous_signing_key, b"write-old");
+        assert_eq!(cfg.jwt_previous_read_signing_key, b"read-old");
+
+        let env = fake_env(&[
+            ("WEED_JWT_SIGNING_PREVIOUS_KEY", "env-write-old"),
+            ("WEED_JWT_SIGNING_READ_PREVIOUS_KEY", "env-read-old"),
+        ]);
+        let cfg = parse_security_config_with_env(path, &env);
+        assert_eq!(cfg.jwt_previous_signing_key, b"env-write-old");
+        assert_eq!(cfg.jwt_previous_read_signing_key, b"env-read-old");
+    }
+
+    #[test]
+    fn test_security_config_file_read() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "[jwt.signing]\nkey = \"secret\"\n").unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        assert!(parse_security_config_with_env(&path, &fake_env(&[])).file_read);
+
+        drop(tmp);
+        let env = fake_env(&[("WEED_JWT_SIGNING_KEY", "env-secret")]);
+        let cfg = parse_security_config_with_env(&path, &env);
+        assert!(!cfg.file_read);
         assert_eq!(cfg.jwt_signing_key, b"env-secret");
     }
 

@@ -9,9 +9,9 @@ import (
 // rotation the guard validates tokens minted with the new key and rejects the
 // old one, so a SIGHUP recovers from a key mismatch without a process restart.
 func TestUpdateSigningKeysRotates(t *testing.T) {
-	g := NewGuard(nil, "old-write", 10, "old-read", 60)
+	g := NewGuard(nil, "old-write", 10, "old-read", 60, "", "")
 
-	g.UpdateSigningKeys("new-write", 11, "new-read", 61)
+	g.UpdateSigningKeys("new-write", 11, "new-read", 61, "", "")
 
 	if string(g.SigningKey()) != "new-write" || g.ExpiresAfterSec() != 11 {
 		t.Fatalf("write key not refreshed: key=%q exp=%d", g.SigningKey(), g.ExpiresAfterSec())
@@ -34,7 +34,7 @@ func TestUpdateSigningKeysRotates(t *testing.T) {
 // flag any torn read of the signing-key slice header or the whitelist maps.
 // Each key rotation uses matching keys so every reader's token validates.
 func TestUpdateSigningKeysConcurrent(t *testing.T) {
-	g := NewGuard([]string{"10.0.0.1"}, "k0", 60, "k0", 60)
+	g := NewGuard([]string{"10.0.0.1"}, "k0", 60, "k0", 60, "", "")
 
 	var wg sync.WaitGroup
 	for w := 0; w < 8; w++ {
@@ -53,8 +53,8 @@ func TestUpdateSigningKeysConcurrent(t *testing.T) {
 		}()
 	}
 	for i := 0; i < 1000; i++ {
-		g.UpdateSigningKeys("kw", 60, "kr", 60)
-		g.UpdateSigningKeys("kw2", 60, "kr2", 60)
+		g.UpdateSigningKeys("kw", 60, "kr", 60, "", "")
+		g.UpdateSigningKeys("kw2", 60, "kr2", 60, "", "")
 		g.UpdateWhiteList([]string{"10.0.0.1", "192.168.0.0/16"})
 	}
 	wg.Wait()
@@ -64,17 +64,17 @@ func TestUpdateSigningKeysConcurrent(t *testing.T) {
 // adding a signing key to an otherwise-open guard must activate auth, and
 // clearing it again must deactivate.
 func TestUpdateSigningKeysTogglesWriteActive(t *testing.T) {
-	g := NewGuard(nil, "", 0, "", 0)
+	g := NewGuard(nil, "", 0, "", 0, "", "")
 	if g.state.Load().isWriteActive {
 		t.Fatalf("no whitelist and no key should be inactive")
 	}
 
-	g.UpdateSigningKeys("write", 10, "", 0)
+	g.UpdateSigningKeys("write", 10, "", 0, "", "")
 	if !g.state.Load().isWriteActive {
 		t.Fatalf("setting a signing key should activate auth")
 	}
 
-	g.UpdateSigningKeys("", 0, "", 0)
+	g.UpdateSigningKeys("", 0, "", 0, "", "")
 	if g.state.Load().isWriteActive {
 		t.Fatalf("clearing the signing key should deactivate auth")
 	}

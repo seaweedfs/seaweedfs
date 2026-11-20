@@ -36,6 +36,15 @@ values = "*"
 [jwt.signing]
 key = ""
 expires_after_seconds = 10           # seconds
+# Optional. A key that is still accepted when verifying, but never used to
+# sign, so keys can rotate without rejected requests: set the new key as
+# previous_key everywhere, then swap key and previous_key everywhere, then,
+# once tokens signed with the old key have expired, clear previous_key.
+# Reload (SIGHUP) or restart after each step. [jwt.signing.read],
+# [jwt.filer_signing] and [jwt.filer_signing.read] take previous_key the same way.
+# Env: WEED_JWT_SIGNING_PREVIOUS_KEY, WEED_JWT_SIGNING_READ_PREVIOUS_KEY,
+# WEED_JWT_FILER_SIGNING_PREVIOUS_KEY, WEED_JWT_FILER_SIGNING_READ_PREVIOUS_KEY
+previous_key = ""
 
 # by default, if the signing key above is set, the Volume UI over HTTP is disabled.
 # by setting ui.access to true, you can re-enable the Volume UI. Despite
@@ -74,6 +83,7 @@ password = ""
 [jwt.signing.read]
 key = ""
 expires_after_seconds = 10           # seconds
+previous_key = ""
 
 
 # If this JWT key is configured, Filer only accepts writes over HTTP if they are signed with this JWT:
@@ -93,6 +103,7 @@ expires_after_seconds = 10           # seconds
 [jwt.filer_signing]
 key = ""
 expires_after_seconds = 10           # seconds
+previous_key = ""
 
 # If this JWT key is configured, Filer only accepts reads over HTTP if they are signed with this JWT:
 # - f.e. the S3 API Shim generates the JWT
@@ -101,6 +112,7 @@ expires_after_seconds = 10           # seconds
 [jwt.filer_signing.read]
 key = ""
 expires_after_seconds = 10           # seconds
+previous_key = ""
 
 # Optional. If this key is set, the filer's SubscribeMetadata and
 # SubscribeLocalMetadata gRPC calls require an mTLS-verified peer, an admin

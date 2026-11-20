@@ -327,11 +327,11 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	if v.GetString("guard.white_list") != "" {
 		glog.Warningf("filer: guard.white_list is configured but the IP whitelist feature is currently disabled. See https://github.com/seaweedfs/seaweedfs/issues/7094")
 	}
-	fs.filerGuard = security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
+	fs.filerGuard = security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec, v.GetString("jwt.filer_signing.previous_key"), v.GetString("jwt.filer_signing.read.previous_key"))
 	basicAuth, basicAuthFile := loadBasicAuth(nil, "")
 	fs.basicAuth.Store(basicAuth)
 	fs.basicAuthFile = basicAuthFile
-	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec)
+	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec, "", "")
 
 	fs.checkWithMaster()
 
@@ -778,6 +778,11 @@ func loadBasicAuth(current *security.BasicAuth, file string) (*security.BasicAut
 	return security.NewBasicAuth(v.GetString("filer.basic_auth.user"), v.GetString("filer.basic_auth.password")), used
 }
 
+// FilerGuard holds the filer's reloadable jwt.filer_signing keys.
+func (fs *FilerServer) FilerGuard() *security.Guard {
+	return fs.filerGuard
+}
+
 func (fs *FilerServer) Reload() {
 	glog.V(0).Infoln("Reload filer server...")
 
@@ -790,18 +795,15 @@ func (fs *FilerServer) Reload() {
 	if basicAuth != nil {
 		fs.basicAuth.Store(basicAuth)
 	}
-	fs.filerGuard.UpdateSigningKeys(
-		v.GetString("jwt.filer_signing.key"),
-		v.GetInt("jwt.filer_signing.expires_after_seconds"),
-		v.GetString("jwt.filer_signing.read.key"),
-		v.GetInt("jwt.filer_signing.read.expires_after_seconds"),
-	)
+	fs.filerGuard.ReloadSigningKeys("jwt.filer_signing")
 	fs.basicAuth.Store(basicAuth)
 	fs.volumeGuard.UpdateSigningKeys(
 		v.GetString("jwt.signing.key"),
 		v.GetInt("jwt.signing.expires_after_seconds"),
 		v.GetString("jwt.signing.read.key"),
 		v.GetInt("jwt.signing.read.expires_after_seconds"),
+		"",
+		"",
 	)
 	util_http.ReloadJwtSigningReadConfig()
 }

@@ -76,7 +76,7 @@ type MetadataSubscriptionScope struct {
 }
 
 func metadataSubscriptionScope(signingKey SigningKey, token EncodedJwt, method string) (*MetadataSubscriptionScope, bool) {
-	parsed, err := decodeJwt(signingKey, token, &SeaweedFilerClaims{}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
+	parsed, err := decodeJwt(signingKey, nil, token, &SeaweedFilerClaims{}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
 	if err != nil || parsed == nil || !parsed.Valid {
 		return nil, false
 	}
@@ -103,9 +103,10 @@ func metadataSubscriptionScope(signingKey SigningKey, token EncodedJwt, method s
 
 // CheckGrpcMetadataSubscription authorizes a metadata subscription call.
 // Without subscribeKey every caller is unrestricted (nil scope). With it, an
-// mTLS-verified peer or an admin token signed by adminKey is unrestricted,
-// and a token signed by subscribeKey is limited to the returned scope.
-func CheckGrpcMetadataSubscription(ctx context.Context, subscribeKey, adminKey SigningKey, method string) (scope *MetadataSubscriptionScope, err error) {
+// mTLS-verified peer or an admin token signed by adminKey or previousAdminKey
+// is unrestricted, and a token signed by subscribeKey is limited to the
+// returned scope.
+func CheckGrpcMetadataSubscription(ctx context.Context, subscribeKey, adminKey, previousAdminKey SigningKey, method string) (scope *MetadataSubscriptionScope, err error) {
 	if len(subscribeKey) == 0 || isMtlsVerifiedPeer(ctx) {
 		return nil, nil
 	}
@@ -120,7 +121,7 @@ func CheckGrpcMetadataSubscription(ctx context.Context, subscribeKey, adminKey S
 			continue
 		}
 		token := EncodedJwt(parts[1])
-		if IsFilerAdminToken(adminKey, token) {
+		if IsFilerAdminToken(adminKey, token, previousAdminKey) {
 			return nil, nil
 		}
 		if scope, ok := metadataSubscriptionScope(subscribeKey, token, method); ok {

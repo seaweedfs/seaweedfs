@@ -675,7 +675,7 @@ func (p *gapPass) park(ctx context.Context, cursor *log_buffer.MessagePosition, 
 }
 
 func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) (err error) {
-	scope, err := metadataSubscriptionScope(stream.Context(), security.MethodSubscribeMetadata)
+	scope, err := fs.metadataSubscriptionScope(stream.Context(), security.MethodSubscribeMetadata)
 	if err != nil {
 		return err
 	}
@@ -1200,7 +1200,7 @@ func (fs *FilerServer) endOfSubscription(stream context.Context, err error) erro
 }
 
 func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeLocalMetadataServer) (err error) {
-	scope, err := metadataSubscriptionScope(stream.Context(), security.MethodSubscribeLocalMetadata)
+	scope, err := fs.metadataSubscriptionScope(stream.Context(), security.MethodSubscribeLocalMetadata)
 	if err != nil {
 		return err
 	}

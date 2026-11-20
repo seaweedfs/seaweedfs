@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var (
@@ -51,6 +52,9 @@ type guardState struct {
 	expiresAfterSec     int
 	readSigningKey      SigningKey
 	readExpiresAfterSec int
+	// previous keys are accepted when verifying, never used to sign
+	previousSigningKey     SigningKey
+	previousReadSigningKey SigningKey
 
 	whiteListIp      map[string]struct{}
 	whiteListCIDR    map[string]*net.IPNet
@@ -66,13 +70,15 @@ type Guard struct {
 	updateMu sync.Mutex
 }
 
-func NewGuard(whiteList []string, signingKey string, expiresAfterSec int, readSigningKey string, readExpiresAfterSec int) *Guard {
+func NewGuard(whiteList []string, signingKey string, expiresAfterSec int, readSigningKey string, readExpiresAfterSec int, previousSigningKey string, previousReadSigningKey string) *Guard {
 	g := &Guard{}
 	g.state.Store(&guardState{
-		signingKey:          SigningKey(signingKey),
-		expiresAfterSec:     expiresAfterSec,
-		readSigningKey:      SigningKey(readSigningKey),
-		readExpiresAfterSec: readExpiresAfterSec,
+		signingKey:             SigningKey(signingKey),
+		expiresAfterSec:        expiresAfterSec,
+		readSigningKey:         SigningKey(readSigningKey),
+		readExpiresAfterSec:    readExpiresAfterSec,
+		previousSigningKey:     SigningKey(previousSigningKey),
+		previousReadSigningKey: SigningKey(previousReadSigningKey),
 	})
 	g.UpdateWhiteList(whiteList)
 	return g
@@ -82,6 +88,16 @@ func (g *Guard) SigningKey() SigningKey     { return g.state.Load().signingKey }
 func (g *Guard) ExpiresAfterSec() int       { return g.state.Load().expiresAfterSec }
 func (g *Guard) ReadSigningKey() SigningKey { return g.state.Load().readSigningKey }
 func (g *Guard) ReadExpiresAfterSec() int   { return g.state.Load().readExpiresAfterSec }
+
+// VerificationKeys returns the write (or read) signing key and the previous
+// key still accepted for it, from one snapshot.
+func (g *Guard) VerificationKeys(isWrite bool) (signingKey, previousSigningKey SigningKey) {
+	st := g.state.Load()
+	if isWrite {
+		return st.signingKey, st.previousSigningKey
+	}
+	return st.readSigningKey, st.previousReadSigningKey
+}
 
 func (g *Guard) WhiteList(f http.HandlerFunc) http.HandlerFunc {
 	if !g.state.Load().isWriteActive {
@@ -155,7 +171,7 @@ func (g *Guard) IsWhiteListed(host string) bool {
 // operators can rotate keys (e.g. via SIGHUP) without restarting the process.
 // It swaps in a new snapshot carrying the existing whitelist, so a concurrent
 // reader sees either the old keys or the new ones, never a torn slice header.
-func (g *Guard) UpdateSigningKeys(signingKey string, expiresAfterSec int, readSigningKey string, readExpiresAfterSec int) {
+func (g *Guard) UpdateSigningKeys(signingKey string, expiresAfterSec int, readSigningKey string, readExpiresAfterSec int, previousSigningKey string, previousReadSigningKey string) {
 	g.updateMu.Lock()
 	defer g.updateMu.Unlock()
 	next := *g.state.Load()
@@ -163,8 +179,41 @@ func (g *Guard) UpdateSigningKeys(signingKey string, expiresAfterSec int, readSi
 	next.expiresAfterSec = expiresAfterSec
 	next.readSigningKey = SigningKey(readSigningKey)
 	next.readExpiresAfterSec = readExpiresAfterSec
+	next.previousSigningKey = SigningKey(previousSigningKey)
+	next.previousReadSigningKey = SigningKey(previousReadSigningKey)
 	next.isWriteActive = !next.isEmptyWhiteList || len(next.signingKey) != 0
 	g.state.Store(&next)
+}
+
+// ReloadSigningKeys applies the [section] keys after util.LoadConfiguration
+// merged security.toml again. The merge keeps a key the file no longer sets,
+// so the keys are read from the file anew: a removed previous key stops
+// verifying, and a swapped pair comes from one read. A file that cannot be
+// read keeps the keys in effect.
+func (g *Guard) ReloadSigningKeys(section string) {
+	fresh, used := util.ReadConfiguration("security", "")
+	if used == "" {
+		glog.Warningf("reload %s: security.toml cannot be read, keeping the keys in effect", section)
+		return
+	}
+	v := util.GetViper()
+	g.UpdateSigningKeys(
+		freshKey(fresh, section+".key"),
+		v.GetInt(section+".expires_after_seconds"),
+		freshKey(fresh, section+".read.key"),
+		v.GetInt(section+".read.expires_after_seconds"),
+		fresh.GetString(section+".previous_key"),
+		fresh.GetString(section+".read.previous_key"),
+	)
+}
+
+// freshKey returns name as the fresh read sets it, else its merged value, so
+// removing a current key from the file does not turn verification off.
+func freshKey(fresh *util.ViperProxy, name string) string {
+	if fresh.IsSet(name) {
+		return fresh.GetString(name)
+	}
+	return util.GetViper().GetString(name)
 }
 
 func (g *Guard) UpdateWhiteList(whiteList []string) {

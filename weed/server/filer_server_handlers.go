@@ -269,12 +269,7 @@ func (fs *FilerServer) authenticateFilerJwt(r *http.Request, isWrite bool) (*sec
 		return nil, true
 	}
 
-	var signingKey security.SigningKey
-	if isWrite {
-		signingKey = fs.filerGuard.SigningKey()
-	} else {
-		signingKey = fs.filerGuard.ReadSigningKey()
-	}
+	signingKey, previousSigningKey := fs.filerGuard.VerificationKeys(isWrite)
 	if len(signingKey) == 0 {
 		// Reload turns the new credential on before the old one off, so
 		// loading Basic Auth on both sides of the key read never sees both off
@@ -288,7 +283,7 @@ func (fs *FilerServer) authenticateFilerJwt(r *http.Request, isWrite bool) (*sec
 		return nil, false
 	}
 
-	token, err := security.DecodeJwt(signingKey, tokenStr, &security.SeaweedFilerClaims{})
+	token, err := security.DecodeJwt(signingKey, tokenStr, &security.SeaweedFilerClaims{}, previousSigningKey)
 	if err != nil {
 		glog.V(1).Infof("jwt verification error from %s: %v", r.RemoteAddr, err)
 		return nil, false

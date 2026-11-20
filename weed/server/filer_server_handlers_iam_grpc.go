@@ -23,18 +23,19 @@ import (
 type IamGrpcServer struct {
 	iam_pb.UnimplementedSeaweedIdentityAccessManagementServer
 	credentialManager *credential.CredentialManager
-	adminSigningKey   security.SigningKey
+	adminGuard        *security.Guard
 	oidcProviderStore integration.OIDCProviderStore
 	roleStore         integration.RoleStore
 }
 
-// NewIamGrpcServer creates a new IAM gRPC server. If adminSigningKey is empty
-// the service runs unauthenticated; otherwise every RPC requires a Bearer
-// token signed with the key.
-func NewIamGrpcServer(credentialManager *credential.CredentialManager, adminSigningKey security.SigningKey) *IamGrpcServer {
+// NewIamGrpcServer creates a new IAM gRPC server. If adminGuard has no write
+// signing key the service runs unauthenticated; otherwise every RPC requires a
+// Bearer token signed with that key or its previous key. The guard's keys
+// follow the filer's reloads.
+func NewIamGrpcServer(credentialManager *credential.CredentialManager, adminGuard *security.Guard) *IamGrpcServer {
 	return &IamGrpcServer{
 		credentialManager: credentialManager,
-		adminSigningKey:   adminSigningKey,
+		adminGuard:        adminGuard,
 	}
 }
 
@@ -43,10 +44,11 @@ func NewIamGrpcServer(credentialManager *credential.CredentialManager, adminSign
 // When no signing key is configured the service runs unauthenticated and this
 // check is a no-op.
 func (s *IamGrpcServer) checkAdminAuth(ctx context.Context) error {
-	if len(s.adminSigningKey) == 0 {
+	signingKey, previousSigningKey := s.adminGuard.VerificationKeys(true)
+	if len(signingKey) == 0 {
 		return nil
 	}
-	return security.CheckGrpcAdminToken(ctx, s.adminSigningKey)
+	return security.CheckGrpcAdminToken(ctx, signingKey, previousSigningKey)
 }
 
 //////////////////////////////////////////////////
