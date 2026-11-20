@@ -12,6 +12,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // fallbackRaceFiler holds the first create of key until the test releases it.
@@ -132,13 +134,31 @@ func TestPutFallbackKeepsWriteCondition(t *testing.T) {
 	inner.mu.Unlock()
 	t.Logf("writer 1: %v, writer 2: %v; conditions on the creates the filer received: %v", code1, code2, conds)
 
-	succeeded := 0
-	for _, code := range []s3err.ErrorCode{code1, code2} {
-		if code == s3err.ErrNone {
-			succeeded++
-		}
+	if code1 != s3err.ErrPreconditionFailed || code2 != s3err.ErrNone {
+		t.Fatalf("writer 1 got %v and writer 2 got %v, want ErrPreconditionFailed and ErrNone", code1, code2)
 	}
-	if succeeded != 1 {
-		t.Fatalf("%d of two \"If-None-Match: *\" PUTs of one key succeeded, want exactly 1", succeeded)
+}
+
+// Without a ring the filer forwards a conditional create to its owner, so a
+// lost response can hide a commit the gateway's filers do not hold yet.
+func TestPutFallbackLostConditionalCreateKeepsChunks(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	filerImpl := &ambiguousPutFiler{
+		volume: volume,
+		entries: map[string]*filer_pb.Entry{
+			"/buckets/b": {Name: "b", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+		},
+		createErr: status.Error(codes.Unavailable, "forward to owner: connection reset"),
+	}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+
+	r := httptest.NewRequest(http.MethodPut, "/b/k", nil)
+	r.Header.Set(s3_constants.IfNoneMatch, "*")
+	if _, code, _ := s3a.putToFiler(r, "/buckets/b/k", strings.NewReader("hello"), "b", "k", 1, 0, nil, false, ""); code == s3err.ErrNone {
+		t.Fatal("putToFiler succeeded although the create's outcome is unknown")
+	}
+	if deleted := volume.deleted(); len(deleted) != 0 {
+		t.Fatalf("chunks of a create that may have committed were deleted: %v", deleted)
 	}
 }
