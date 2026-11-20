@@ -150,6 +150,34 @@ func (store *TikvStore) DeleteEntry(ctx context.Context, path util.FullPath) err
 	return nil
 }
 
+// deleteExpiredEntry reads the entry again in the deleting transaction, so a
+// replacement written since the listing read it is kept.
+func (store *TikvStore) deleteExpiredEntry(ctx context.Context, path util.FullPath) error {
+	dir, name := path.DirAndName()
+	key := store.generateKey(dir, name)
+	return store.runTxn(ctx, func(txn *txnkv.KVTxn) error {
+		value, err := txn.Get(ctx, key)
+		if isNotExists(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		entry := &filer.Entry{FullPath: path}
+		if err := entry.DecodeAttributesAndChunks(util.MaybeDecompressData(value)); err != nil {
+			return err
+		}
+		if !isLogicallyExpired(entry) {
+			return nil
+		}
+		return txn.Delete(key)
+	})
+}
+
+func isLogicallyExpired(entry *filer.Entry) bool {
+	return entry.TtlSec > 0 && entry.Crtime.Add(time.Duration(entry.TtlSec)*time.Second).Before(time.Now())
+}
+
 // ~ Entry APIs
 
 // Directory APIs
@@ -280,17 +308,15 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 			}
 
 			// Check TTL expiration before calling eachEntryFunc (similar to Redis stores)
-			if entry.TtlSec > 0 {
-				if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
-					// Entry is expired, delete it and continue without counting toward limit
-					if deleteErr := store.DeleteEntry(ctx, entry.FullPath); deleteErr != nil {
-						glog.V(0).InfofCtx(ctx, "failed to delete expired entry %s: %v", entry.FullPath, deleteErr)
-					}
-					if err := iter.Next(); err != nil {
-						break
-					}
-					continue
+			if isLogicallyExpired(entry) {
+				// Entry is expired, delete it and continue without counting toward limit
+				if deleteErr := store.deleteExpiredEntry(ctx, entry.FullPath); deleteErr != nil {
+					glog.V(0).InfofCtx(ctx, "failed to delete expired entry %s: %v", entry.FullPath, deleteErr)
 				}
+				if err := iter.Next(); err != nil {
+					break
+				}
+				continue
 			}
 
 			// Only increment counter for non-expired entries
