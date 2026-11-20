@@ -111,6 +111,8 @@ type Plugin struct {
 	// state at startup, keyed by job id; see failRestoredJobsMissingFromHeartbeat.
 	restoredExecutionsMu sync.Mutex
 	restoredExecutions   map[string]*restoredExecutionState
+	// restoredExpiries counts the restored-job expiries still running.
+	restoredExpiries sync.WaitGroup
 
 	pendingPreviewMu sync.Mutex
 	pendingPreview   map[string]chan *plugin_pb.ObjectPreviewResponse

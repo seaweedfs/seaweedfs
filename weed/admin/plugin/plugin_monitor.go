@@ -466,6 +466,10 @@ func mergeTerminalDetailIntoTracked(tracked *TrackedJob, detail *TrackedJob) {
 	if !isActiveTrackedJobState(tracked.State) {
 		return
 	}
+	// a terminal detail of another attempt does not end this one
+	if detail.RequestID != "" && tracked.RequestID != "" && detail.RequestID != tracked.RequestID {
+		return
+	}
 
 	if detail.State != "" {
 		tracked.State = detail.State
@@ -1158,7 +1162,12 @@ func (r *Plugin) trackExecutionCompletionIf(completed *plugin_pb.JobCompleted, a
 	clone := cloneTrackedJob(*tracked)
 	r.dirtyJobs = true
 	r.jobsMu.Unlock()
-	r.persistJobDetailSnapshot(completed.JobId, func(detail *TrackedJob) {
+	r.persistJobDetailSnapshotIf(completed.JobId, func(detail *TrackedJob) bool {
+		// a conditional completion closes one attempt; a detail a newer
+		// dispatch already wrote belongs to another one
+		if accept != nil && detail.RequestID != "" && completed.RequestId != "" && detail.RequestID != completed.RequestId {
+			return false
+		}
 		detail.JobID = completed.JobId
 		if completed.JobType != "" {
 			detail.JobType = completed.JobType
@@ -1186,6 +1195,7 @@ func (r *Plugin) trackExecutionCompletionIf(completed *plugin_pb.JobCompleted, a
 		if detail.CompletedAt == nil || detail.CompletedAt.IsZero() {
 			detail.CompletedAt = clone.CompletedAt
 		}
+		return true
 	})
 
 	r.appendActivity(JobActivity{
@@ -1426,6 +1436,17 @@ func (r *Plugin) persistTrackedJobsSnapshot() {
 }
 
 func (r *Plugin) persistJobDetailSnapshot(jobID string, apply func(detail *TrackedJob)) {
+	r.persistJobDetailSnapshotIf(jobID, func(detail *TrackedJob) bool {
+		if apply != nil {
+			apply(detail)
+		}
+		return true
+	})
+}
+
+// persistJobDetailSnapshotIf writes the detail only when apply returns true.
+// apply runs under jobDetailsMu, so its check holds for the write.
+func (r *Plugin) persistJobDetailSnapshotIf(jobID string, apply func(detail *TrackedJob) bool) {
 	normalizedJobID, _ := sanitizeJobID(jobID)
 	if normalizedJobID == "" {
 		return
@@ -1445,8 +1466,8 @@ func (r *Plugin) persistJobDetailSnapshot(jobID string, apply func(detail *Track
 		}
 	}
 
-	if apply != nil {
-		apply(detail)
+	if apply != nil && !apply(detail) {
+		return
 	}
 
 	if err := r.store.SaveJobDetail(*detail); err != nil {

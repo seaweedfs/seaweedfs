@@ -437,9 +437,11 @@ func waitTrackedState(t *testing.T, p *Plugin, jobID, want string) *TrackedJob {
 	}
 }
 
+// expectTrackedStateHolds checks the state once every restored-job expiry
+// the heartbeats started has finished.
 func expectTrackedStateHolds(t *testing.T, p *Plugin, jobID, want string) {
 	t.Helper()
-	time.Sleep(100 * time.Millisecond)
+	p.restoredExpiries.Wait()
 	if tracked, _ := p.GetTrackedJob(jobID); tracked == nil || tracked.State != want {
 		t.Fatalf("job %s: want state %s, got %+v", jobID, want, tracked)
 	}
@@ -557,5 +559,55 @@ func TestRestoredExpiryLeavesNewerAttempt(t *testing.T) {
 	case msg := <-session.outgoing:
 		t.Fatalf("expected no cancel, got %+v", msg)
 	default:
+	}
+}
+
+// The expiry leaves the stored detail alone once a newer dispatch wrote it,
+// so a restart does not load the newer attempt as failed.
+func TestRestoredExpiryKeepsNewerAttemptDetail(t *testing.T) {
+	t.Parallel()
+	const jobID = "job-detail-moved-on"
+	p := newPluginWithRestoredJob(t, TrackedJob{JobID: jobID})
+	p.persistJobDetailSnapshot(jobID, func(detail *TrackedJob) {
+		detail.RequestID = "exec-after-restart"
+		detail.State = restoredTestStateRunning
+	})
+
+	p.expireActiveJobIf(activeJobSnapshot{jobID: jobID, jobType: orphanTestJobType, workerID: "worker-a", requestID: "exec-before-restart"},
+		"stale", time.Now().UTC(), func(*TrackedJob) bool { return true })
+
+	detail, err := p.store.LoadJobDetail(jobID)
+	if err != nil || detail == nil {
+		t.Fatalf("LoadJobDetail: %+v %v", detail, err)
+	}
+	if detail.RequestID != "exec-after-restart" || detail.State != restoredTestStateRunning {
+		t.Fatalf("newer attempt's detail was overwritten: request=%s state=%s", detail.RequestID, detail.State)
+	}
+}
+
+// A terminal detail of another attempt does not end the loaded record.
+func TestRestoreIgnoresTerminalDetailOfOtherAttempt(t *testing.T) {
+	t.Parallel()
+	dataDir := t.TempDir()
+	store, err := NewConfigStore(dataDir)
+	if err != nil {
+		t.Fatalf("NewConfigStore: %v", err)
+	}
+	now := time.Now().UTC()
+	const jobID = "job-two-attempts"
+	if err := store.SaveTrackedJobs([]TrackedJob{{JobID: jobID, JobType: orphanTestJobType, RequestID: "exec-b", State: restoredTestStateRunning,
+		CreatedAt: timeToPtr(now.Add(-time.Hour)), UpdatedAt: timeToPtr(now)}}); err != nil {
+		t.Fatalf("SaveTrackedJobs: %v", err)
+	}
+	if err := store.SaveJobDetail(TrackedJob{JobID: jobID, JobType: orphanTestJobType, RequestID: "exec-a", State: StateFailed}); err != nil {
+		t.Fatalf("SaveJobDetail: %v", err)
+	}
+	p, err := New(Options{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Shutdown()
+	if tracked, _ := p.GetTrackedJob(jobID); tracked == nil || tracked.State != restoredTestStateRunning {
+		t.Fatalf("attempt exec-b must stay running, got %+v", tracked)
 	}
 }

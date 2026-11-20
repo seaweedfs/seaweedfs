@@ -198,6 +198,10 @@ func (r *Plugin) failRestoredJobsMissingFromHeartbeat(workerID string, heartbeat
 		glog.Warningf("Plugin failing restored %s job: %s", snap.jobType, reason)
 		// the record may change before the expiry takes the lock, so the
 		// expiry judges it again there
-		go r.expireActiveJobIf(snap, reason, now, isRestoredAttempt)
+		r.restoredExpiries.Add(1)
+		go func() {
+			defer r.restoredExpiries.Done()
+			r.expireActiveJobIf(snap, reason, now, isRestoredAttempt)
+		}()
 	}
 }
