@@ -90,7 +90,7 @@ impl FilterStats {
             indexes.remove(&oldest);
         }
         let stats = indexes.entry(index.to_string()).or_default();
-        stats.last = at;
+        stats.last = stats.last.max(at);
         for (key, kinds) in keys {
             if !stats.keys.contains_key(key) && stats.keys.len() >= MAX_KEYS_PER_INDEX {
                 // Make room only by dropping a key no query used in the window.
@@ -104,7 +104,7 @@ impl FilterStats {
                         stats.keys.remove(&idle);
                     }
                     None => {
-                        stats.truncated = Some(at);
+                        stats.truncated = stats.truncated.max(Some(at));
                         continue;
                     }
                 }
@@ -259,5 +259,32 @@ mod tests {
             );
         }
         assert_eq!(stats.indexes.lock().unwrap().len(), MAX_INDEXES);
+    }
+
+    #[test]
+    fn a_record_from_an_earlier_bucket_keeps_the_later_truncation() {
+        let stats = FilterStats::new();
+        let t0 = stats.start;
+        for i in 0..=MAX_KEYS_PER_INDEX {
+            stats.record_at(
+                "b/i",
+                &keys(&[(&format!("k{i}"), operand::STRING)]),
+                Duration::ZERO,
+                t0 + BUCKET,
+            );
+        }
+        // Took its time before the lock while the later bucket recorded.
+        stats.record_at(
+            "b/i",
+            &keys(&[("late", operand::STRING)]),
+            Duration::ZERO,
+            t0,
+        );
+        let got = stats.snapshot_at("b/i", t0 + WINDOW);
+        assert!(
+            got.truncated,
+            "the later bucket's uncounted key is in the window"
+        );
+        assert_eq!(stats.indexes.lock().unwrap()["b/i"].last, 2);
     }
 }
