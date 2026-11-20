@@ -9,13 +9,16 @@ import (
 // layered on the lane scheduler. The default leaves every decision alone.
 type schedulerExtension interface {
 	// runLane may take over one scheduling pass of a lane; handled reports
-	// whether it did.
+	// whether it did. The lane loop does not sleep while a detection time of
+	// the lane is past due, so a handled pass that reports no jobs must
+	// advance those times or wait before it returns.
 	runLane(ls *schedulerLaneState, jobTypes []string) (hadJobs, handled bool)
 	// admitJob reports whether a job built from a proposal is queued.
 	admitJob(job *plugin_pb.JobSpec) bool
 	// startJob decides whether a queued job starts on the executor a slot
-	// was just reserved on. If it does, done is called once the job has
-	// stopped running; done may be nil.
+	// was just reserved on. If it does, done is called when that slot is
+	// given back: after a timeout or cancel, that is once the cancel is
+	// sent, not once the worker stops. done may be nil.
 	startJob(job *plugin_pb.JobSpec, executor *WorkerSession) (done func(), hold startHold)
 	// jobHoldsLock reports whether a job of a lane that needs the cluster
 	// admin lock holds it from start to finish on this executor.
