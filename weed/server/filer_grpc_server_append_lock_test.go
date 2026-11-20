@@ -99,3 +99,40 @@ func TestAppendToEntryKeepsLockThroughSlowAppend(t *testing.T) {
 	require.NoError(t, <-done)
 	require.Len(t, store.entries[appendLockTestPath].GetChunks(), 1)
 }
+
+// takeAppendLock hands the append's lock to another filer, as a lease that
+// expired during a stall and was granted elsewhere would.
+func takeAppendLock(fs *FilerServer, expiresIn time.Duration) {
+	fs.filer.Dlm.InsertLock(appendLockTestPath, time.Now().Add(expiresIn).UnixNano(), "other-token", "", "other-filer", 1<<30, 1)
+}
+
+// An append whose lock renewal finds another owner must not commit.
+func TestAppendToEntryAbortsAfterLosingLock(t *testing.T) {
+	t.Parallel()
+	fs, store := newAppendLockServer(t)
+	done := startAppend(fs)
+	<-store.held
+
+	takeAppendLock(fs, time.Minute)
+	time.Sleep(5 * time.Second) // past the first renewal and its retry pause
+	close(store.release)
+
+	require.ErrorContains(t, <-done, "lost distributed lock")
+	require.NotContains(t, store.entries, appendLockTestPath)
+}
+
+// A lock lost and then granted again under a new generation still lost its
+// exclusion in between, so the append must not commit either.
+func TestAppendToEntryAbortsAfterRetakingLock(t *testing.T) {
+	t.Parallel()
+	fs, store := newAppendLockServer(t)
+	done := startAppend(fs)
+	<-store.held
+
+	takeAppendLock(fs, 2*time.Second)
+	time.Sleep(8 * time.Second) // the first renewal fails, the second takes the lock again
+	close(store.release)
+
+	require.ErrorContains(t, <-done, "lost distributed lock")
+	require.NotContains(t, store.entries, appendLockTestPath)
+}
