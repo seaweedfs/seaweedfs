@@ -1342,13 +1342,23 @@ pub(crate) mod tests {
                 let stale = dataset.clone();
                 let key = add_column(&mut dataset, "author").await.unwrap();
                 let moved = |_: usize| serde_json::json!({"author": "moved"});
-                let racer = async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+                if grace.is_zero() {
+                    // The control: the write commits after the key is ready.
+                    finish_after(&mut dataset, &key, 1_000, grace)
+                        .await
+                        .unwrap();
                     upsert_with(stale, 0..50, &moved).await;
-                };
-                let (finished, _) =
-                    tokio::join!(finish_after(&mut dataset, &key, 1_000, grace), racer);
-                finished.unwrap();
+                } else {
+                    // It commits 1.5s after the add, and finish looks again
+                    // only once the grace from the add has passed.
+                    let racer = async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+                        upsert_with(stale, 0..50, &moved).await;
+                    };
+                    let (finished, _) =
+                        tokio::join!(finish_after(&mut dataset, &key, 1_000, grace), racer);
+                    finished.unwrap();
+                }
                 dataset.checkout_latest().await.unwrap();
                 assert_eq!(keys_of(&dataset)[0].state, Some(State::Ready));
                 let found = dataset
@@ -1356,7 +1366,7 @@ pub(crate) mod tests {
                     .await
                     .unwrap();
                 if grace.is_zero() {
-                    assert_eq!(found, 0, "the race did not land after ready");
+                    assert_eq!(found, 0, "the write did not land after ready");
                 } else {
                     assert_eq!(found, 50, "grace {grace:?}");
                 }
