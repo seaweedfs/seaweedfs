@@ -1342,6 +1342,7 @@ async fn get_or_head_handler_inner(
         &query,
         &ext,
         request_kind.has_image_ops,
+        request_kind.has_range,
         &mut response_headers,
     ) {
         ControlFlow::Continue(data) => data,
@@ -2039,6 +2040,7 @@ fn buffered_payload(
     query: &ReadQueryParams,
     ext: &str,
     needs_image_ops: bool,
+    has_range: bool,
     response_headers: &mut HeaderMap,
 ) -> ControlFlow<Response, Vec<u8>> {
     // Handle compressed data: if needle is compressed, either pass through or decompress
@@ -2067,7 +2069,9 @@ fn buffered_payload(
                 .get(header::ACCEPT_ENCODING)
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("");
-            if accept_encoding.contains("gzip")
+            // A range is over the decoded bytes, so only a whole read passes gzip through.
+            if !has_range
+                && accept_encoding.contains("gzip")
                 && data.len() >= 2
                 && data[0] == 0x1f
                 && data[1] == 0x8b
