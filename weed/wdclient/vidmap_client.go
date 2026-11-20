@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -46,22 +45,6 @@ type vidMapClient struct {
 	recentDeletes     map[vidLocationKey]*list.Element
 	recentDeleteOrder *list.List // of recentDelete, oldest first
 	vidMapEpoch       uint64
-
-	// dropped holds what InvalidateCache removed until the volume is looked
-	// up again. A refresh whose lookup gets no answer puts it back, so the
-	// replicas that still serve the volume are not forgotten with the one
-	// that failed.
-	droppedMu sync.Mutex
-	dropped   map[uint32]droppedVid
-	// droppedLen mirrors len(dropped) so that location updates, which all
-	// call forgetDropped, skip the lock while nothing is held.
-	droppedLen atomic.Int32
-}
-
-type droppedVid struct {
-	taken takenVid
-	at    time.Time
-	epoch uint64
 }
 
 type recentDelete struct {
@@ -81,11 +64,6 @@ const (
 	// dropped on a full client channel.
 	recentDeleteTTL = time.Minute
 	recentDeleteCap = 1 << 16
-
-	// droppedVidTTL bounds how long invalidated locations wait for the
-	// re-lookup that may put them back. The lookup follows the invalidation
-	// directly, so this only reclaims entries whose lookup never ran.
-	droppedVidTTL = time.Minute
 )
 
 const (
@@ -267,24 +245,33 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 
 		providerResults, err := vc.provider.LookupVolumeIds(ctx, stillNeedLookup)
 		if err != nil {
-			// Without an answer, what InvalidateCache dropped is still the
-			// best knowledge there is: one dead replica must not take the
-			// volume's other replicas out of the cache with it.
+			// Without an answer, the locations InvalidateCache set aside are
+			// still the best knowledge there is: one dead replica must not
+			// take the volume's other replicas out of the cache with it.
+			unresolved := 0
 			for _, vidString := range stillNeedLookup {
 				vid := vidStringToUint[vidString]
-				if vc.restoreDropped(vid) {
+				if vc.vidMap.reviveStale(vid) {
 					glog.V(1).Infof("volume %d: keeping its cached locations, re-lookup failed: %v", vid, err)
 				}
 				if locations, found := vc.vidMap.GetLocations(vid); found && len(locations) > 0 {
 					batchResult[vidString] = locations
+				} else {
+					unresolved++
 				}
+			}
+			if unresolved == 0 {
+				// Every volume has locations after all. Returning the error
+				// with them would make a gRPC handler drop its response.
+				return batchResult, nil
 			}
 			return batchResult, fmt.Errorf("provider lookup failed: %w", err)
 		}
 		for _, vidString := range stillNeedLookup {
-			// The provider answered, so its answer replaces what was dropped,
-			// including when it says the volume has no locations.
-			vc.forgetDropped(vidStringToUint[vidString])
+			// The provider answered, so its answer replaces what was set
+			// aside, including when it has no locations for the volume, and
+			// including what a lookup that failed meanwhile brought back.
+			vc.vidMap.dropSetAside(vidStringToUint[vidString])
 		}
 
 		for vidString, locations := range providerResults {
@@ -393,30 +380,23 @@ func (vc *vidMapClient) GetDataCenter() string {
 
 // Thread-safe helpers for vidMap operations
 
-// The location updates below are newer than anything InvalidateCache dropped
-// for the same volume, so each one also forgets that.
-
 // addLocation adds a volume location
 func (vc *vidMapClient) addLocation(vid uint32, location Location) {
-	vc.forgetDropped(vid)
 	vc.vidMap.addLocation(vid, location)
 }
 
 // deleteLocation removes a volume location
 func (vc *vidMapClient) deleteLocation(vid uint32, location Location) {
-	vc.forgetDropped(vid)
 	vc.vidMap.deleteLocation(vid, location)
 }
 
 // addEcLocation adds an EC volume location
 func (vc *vidMapClient) addEcLocation(vid uint32, location Location) {
-	vc.forgetDropped(vid)
 	vc.vidMap.addEcLocation(vid, location)
 }
 
 // deleteEcLocation removes an EC volume location
 func (vc *vidMapClient) deleteEcLocation(vid uint32, location Location) {
-	vc.forgetDropped(vid)
 	vc.vidMap.deleteEcLocation(vid, location)
 }
 
@@ -522,9 +502,11 @@ func (vc *vidMapClient) confirmLocations(vid uint32, locations []Location) {
 	vc.vidMap.setLocations(vid, locations)
 }
 
-// InvalidateCache removes all cached locations for a volume ID, so the next
-// lookup asks the provider. If that lookup gets no answer, the removed
-// locations are put back.
+// InvalidateCache sets a volume's cached locations aside, so the next lookup
+// asks the provider. An answer replaces them. If the lookup gets no answer
+// they are served again, less any location a pushed removal took out in the
+// meantime: the alternative is to fail reads of a volume whose other replicas
+// are serving.
 func (vc *vidMapClient) InvalidateCache(fileId string) {
 	parts := strings.Split(fileId, ",")
 	vidString := parts[0]
@@ -532,88 +514,5 @@ func (vc *vidMapClient) InvalidateCache(fileId string) {
 	if err != nil {
 		return
 	}
-	// The epoch is read first: a reset, clear or confirmation that lands
-	// after it moves the epoch on, and the dropped locations stay dropped.
-	epoch := vc.mapEpoch()
-	taken := vc.vidMap.takeVid(uint32(vid))
-	if taken.empty() {
-		return
-	}
-
-	now := time.Now()
-	vc.droppedMu.Lock()
-	defer vc.droppedMu.Unlock()
-	if vc.dropped == nil {
-		vc.dropped = make(map[uint32]droppedVid)
-	}
-	for v, d := range vc.dropped {
-		if now.Sub(d.at) > droppedVidTTL {
-			delete(vc.dropped, v)
-		}
-	}
-	vc.dropped[uint32(vid)] = droppedVid{taken: taken, at: now, epoch: epoch}
-	vc.droppedLen.Store(int32(len(vc.dropped)))
-}
-
-// restoreDropped puts back what InvalidateCache removed for vid. It does
-// nothing once the dropped locations have expired, vid has been learned again,
-// or a reset, clear or confirmation has happened since, and it leaves out the
-// locations a pushed removal fenced off in the meantime.
-func (vc *vidMapClient) restoreDropped(vid uint32) bool {
-	if vc.droppedLen.Load() == 0 {
-		return false
-	}
-	vc.droppedMu.Lock()
-	d, found := vc.dropped[vid]
-	delete(vc.dropped, vid)
-	vc.droppedLen.Store(int32(len(vc.dropped)))
-	vc.droppedMu.Unlock()
-
-	if !found || time.Since(d.at) > droppedVidTTL {
-		return false
-	}
-
-	vc.recentDeletesMu.Lock()
-	defer vc.recentDeletesMu.Unlock()
-	if vc.vidMapEpoch != d.epoch {
-		return false
-	}
-	vc.expireRecentDeletes(time.Now())
-	return vc.vidMap.restoreVid(vid, takenVid{
-		regular: vc.withoutRecentDeletes(vid, d.taken.regular),
-		ec:      vc.withoutRecentDeletes(vid, d.taken.ec),
-	})
-}
-
-// withoutRecentDeletes returns entry without the locations of vid a pushed
-// removal fenced off. Callers must hold recentDeletesMu.
-func (vc *vidMapClient) withoutRecentDeletes(vid uint32, entry *locationsEntry) *locationsEntry {
-	if entry == nil {
-		return nil
-	}
-	kept := make([]Location, 0, len(entry.locations))
-	for _, loc := range entry.locations {
-		if _, fenced := vc.recentDeletes[vidLocationKey{vid: vid, url: loc.Url}]; !fenced {
-			kept = append(kept, loc)
-		}
-	}
-	if len(kept) == len(entry.locations) {
-		return entry
-	}
-	if len(kept) == 0 {
-		return nil
-	}
-	return &locationsEntry{locations: kept, generation: entry.generation}
-}
-
-// forgetDropped discards what InvalidateCache removed for vid, once something
-// newer about vid is known.
-func (vc *vidMapClient) forgetDropped(vid uint32) {
-	if vc.droppedLen.Load() == 0 {
-		return
-	}
-	vc.droppedMu.Lock()
-	defer vc.droppedMu.Unlock()
-	delete(vc.dropped, vid)
-	vc.droppedLen.Store(int32(len(vc.dropped)))
+	vc.vidMap.markStale(uint32(vid))
 }

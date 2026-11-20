@@ -81,6 +81,11 @@ func TestFilerNotFoundAnswersDoNotOpenBreaker(t *testing.T) {
 			t.Fatalf("lookup %d of volume 7 succeeded, want not found", i)
 		}
 	}
+	// Checked on its own: with the breaker open, the lookup below would
+	// still succeed, because a lone filer in its cool-down is asked anyway.
+	if n := atomic.LoadInt32(&fc.filerHealth[0].failureCount); n != 0 {
+		t.Fatalf("not-found answers counted as %d filer failures", n)
+	}
 
 	urls, err := fc.LookupFileIdWithFallback(ctx, "8,0102")
 	if err != nil {
