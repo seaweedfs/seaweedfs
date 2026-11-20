@@ -165,6 +165,9 @@ pub async fn run(
             ))
         }
         (Action::Remove, Some(column)) if column.state == Some(State::Off) => {
+            // Dropping the column drops its restore mark: set again first
+            // what its add overwrote.
+            metadata_index::recover_add(dataset, &column).await?;
             metadata_index::remove_column(dataset, &column.column).await?;
             Ok(format!("{key} removed with {}", column.column))
         }
@@ -486,6 +489,38 @@ mod tests {
         values.insert("segment_rows".to_string(), int_value(-5));
         values.insert("min_unindexed_rows".to_string(), int_value(-1));
         assert_eq!(settings(&values), (SEGMENT_ROWS_FLOOR as u64, 0));
+    }
+
+    /// A removal of a key whose add stopped before setting again what it
+    /// overwrote sets that first: a key requested meanwhile stays requested.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_removal_keeps_what_the_add_overwrote() {
+        use crate::metadata_index::tests::lifecycle::table;
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut dataset = table(&dir, 2).await;
+        metadata_index::request(&mut dataset, "author")
+            .await
+            .unwrap();
+        let mut adder = dataset.clone();
+        metadata_index::request(&mut dataset, "lang").await.unwrap();
+        metadata_index::commit_column(&mut adder, "author")
+            .await
+            .unwrap();
+        metadata_index::request_removal(&mut adder, "author")
+            .await
+            .unwrap();
+        run(
+            &mut adder,
+            "author",
+            Action::Remove,
+            1_000,
+            0,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
+        assert!(metadata_index::keys_of(&adder).is_empty());
+        assert_eq!(metadata_index::requests(&adder), ["lang"]);
     }
 
     /// What the table asks for is what a job does, and a job the table no
