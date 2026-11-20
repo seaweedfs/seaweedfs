@@ -107,6 +107,10 @@ type Plugin struct {
 
 	pendingExecutionMu sync.Mutex
 	pendingExecution   map[string]*pendingExecutionState
+	// restoredExecutions are the active jobs loaded from the persisted
+	// state at startup, keyed by job id; see failRestoredJobsMissingFromHeartbeat.
+	restoredExecutionsMu sync.Mutex
+	restoredExecutions   map[string]*restoredExecutionState
 
 	pendingPreviewMu sync.Mutex
 	pendingPreview   map[string]chan *plugin_pb.ObjectPreviewResponse
@@ -217,6 +221,7 @@ func New(options Options) (*Plugin, error) {
 		pendingSchema:             make(map[string]chan *plugin_pb.ConfigSchemaResponse),
 		pendingDetection:          make(map[string]*pendingDetectionState),
 		pendingExecution:          make(map[string]*pendingExecutionState),
+		restoredExecutions:        make(map[string]*restoredExecutionState),
 		pendingPreview:            make(map[string]chan *plugin_pb.ObjectPreviewResponse),
 		observations:              NewObservationStore(),
 		nextDetectionAt:           make(map[string]time.Time),
@@ -1187,6 +1192,7 @@ func (r *Plugin) handleWorkerMessage(session *streamSession, message *plugin_pb.
 		}
 		r.resendUndeliveredCancels(workerID, body.Heartbeat)
 		r.failExecutionsMissingFromHeartbeat(session, body.Heartbeat)
+		r.failRestoredJobsMissingFromHeartbeat(workerID, body.Heartbeat)
 	case *plugin_pb.WorkerToAdminMessage_ConfigSchemaResponse:
 		r.handleConfigSchemaResponse(body.ConfigSchemaResponse)
 	case *plugin_pb.WorkerToAdminMessage_DetectionProposals:

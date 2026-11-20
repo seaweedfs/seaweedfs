@@ -11,6 +11,8 @@ import (
 
 const orphanTestJobType = "ec_vacuum"
 
+var restoredTestStateRunning = strings.ToLower(plugin_pb.JobState_JOB_STATE_RUNNING.String())
+
 type orphanTestResult struct {
 	completed *plugin_pb.JobCompleted
 	err       error
@@ -385,5 +387,105 @@ func TestExecutionNotOrphanedAfterDispatcherTookCompletion(t *testing.T) {
 	p.pendingExecutionMu.Unlock()
 	if failed {
 		t.Fatal("attempt whose completion was already delivered was failed as orphaned")
+	}
+}
+
+// newPluginWithRestoredJob starts an admin whose persisted state holds a job
+// a previous admin process had running on worker-a.
+func newPluginWithRestoredJob(t *testing.T, jobID string) *Plugin {
+	t.Helper()
+	dataDir := t.TempDir()
+	store, err := NewConfigStore(dataDir)
+	if err != nil {
+		t.Fatalf("NewConfigStore: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := store.SaveTrackedJobs([]TrackedJob{{
+		JobID:     jobID,
+		JobType:   orphanTestJobType,
+		WorkerID:  "worker-a",
+		RequestID: "exec-before-restart",
+		State:     restoredTestStateRunning,
+		Attempt:   1,
+		CreatedAt: timeToPtr(now.Add(-time.Hour)),
+		UpdatedAt: timeToPtr(now.Add(-time.Minute)),
+	}}); err != nil {
+		t.Fatalf("SaveTrackedJobs: %v", err)
+	}
+	p, err := New(Options{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(p.Shutdown)
+	return p
+}
+
+func waitTrackedState(t *testing.T, p *Plugin, jobID, want string) *TrackedJob {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		tracked, ok := p.GetTrackedJob(jobID)
+		if ok && tracked != nil && tracked.State == want {
+			return tracked
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job %s: want state %s, got %+v", jobID, want, tracked)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// The admin restarted while worker-a ran the job, and the worker dropped it
+// with the closed stream. Its heartbeats to the new admin do not list it, so
+// the restored record is failed instead of blocking its job type for a day.
+func TestRestoredJobFailsWhenWorkerDoesNotList(t *testing.T) {
+	t.Parallel()
+	const jobID = "job-from-previous-admin"
+	p := newPluginWithRestoredJob(t, jobID)
+	session := connectExecutor(p, "worker-a")
+
+	sendExecutionHeartbeat(p, session, 0)
+	if tracked, _ := p.GetTrackedJob(jobID); tracked == nil || tracked.State != restoredTestStateRunning {
+		t.Fatalf("one heartbeat must not fail the job yet, got %+v", tracked)
+	}
+	sendExecutionHeartbeat(p, session, 0)
+
+	tracked := waitTrackedState(t, p, jobID, StateFailed)
+	if want := "worker worker-a no longer runs job " + jobID; !strings.Contains(tracked.ErrorMessage, want) {
+		t.Fatalf("error %q does not say %q", tracked.ErrorMessage, want)
+	}
+}
+
+// A worker that kept the job across the admin restart lists it, and the
+// restored record stays running however many heartbeats follow.
+func TestRestoredJobKeptWhenWorkerLists(t *testing.T) {
+	t.Parallel()
+	const jobID = "job-survived-admin-restart"
+	p := newPluginWithRestoredJob(t, jobID)
+	session := connectExecutor(p, "worker-a")
+
+	sendExecutionHeartbeat(p, session, 1, jobID)
+	for i := 0; i < orphanedExecutionMisses+1; i++ {
+		sendExecutionHeartbeat(p, session, 0)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if tracked, _ := p.GetTrackedJob(jobID); tracked == nil || tracked.State != restoredTestStateRunning {
+		t.Fatalf("listed job must stay running, got %+v", tracked)
+	}
+}
+
+// Another worker's heartbeats say nothing about the job.
+func TestRestoredJobIgnoresOtherWorkers(t *testing.T) {
+	t.Parallel()
+	const jobID = "job-on-worker-a"
+	p := newPluginWithRestoredJob(t, jobID)
+	other := connectExecutor(p, "worker-b")
+
+	for i := 0; i < orphanedExecutionMisses+1; i++ {
+		sendExecutionHeartbeat(p, other, 0)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if tracked, _ := p.GetTrackedJob(jobID); tracked == nil || tracked.State != restoredTestStateRunning {
+		t.Fatalf("job must stay running, got %+v", tracked)
 	}
 }

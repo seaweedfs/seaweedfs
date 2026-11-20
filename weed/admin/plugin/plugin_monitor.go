@@ -92,6 +92,7 @@ func (r *Plugin) loadPersistedMonitorState() error {
 			stripTrackedJobDetailFields(&job)
 			jobCopy := job
 			r.jobs[job.JobID] = &jobCopy
+			r.trackRestoredExecution(&jobCopy)
 		}
 		r.pruneTrackedJobsLocked()
 		r.jobsMu.Unlock()
