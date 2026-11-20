@@ -15,7 +15,9 @@
 #                                         reads chunks from volume servers: filer,
 #                                         s3, mount, webdav, sftp, filer.sync,
 #                                         filer.backup, workers, admin, weed shell
-#   WEED_JWT_FILER_SIGNING_KEY,
+#   WEED_JWT_FILER_SIGNING_KEY            filer, s3, admin and workers (admin IAM and
+#                                         worker gRPC calls), and clients of the filer
+#                                         HTTP API
 #   WEED_JWT_FILER_SIGNING_READ_KEY       filer, s3, and clients of the filer HTTP API
 #   WEED_JWT_FILER_SIGNING_SUBSCRIBE_KEY  filer metadata subscriptions
 # A set env var wins over the file, so the file can stay empty (or absent).
