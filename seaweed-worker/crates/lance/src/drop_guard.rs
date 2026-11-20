@@ -18,9 +18,11 @@ use object_store::path::Path;
 use object_store::{
     CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
     ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, RenameOptions, Result,
+    UploadPart,
 };
 
-/// Fails every write once the manifest it watches is gone: the one of the
+/// Fails every write once the manifest it watches is gone or is another
+/// object (a table created again reuses version paths): the one of the
 /// version the job opened, then the newest the job committed. Armed after the
 /// open; until then it lets everything through. When the job itself deletes
 /// the watched manifest, removing old versions as a purge does, it watches
@@ -30,9 +32,11 @@ pub struct DropGuard {
     watched: Arc<Mutex<Watched>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Watched {
     manifest: Option<Path>,
+    /// The manifest's e-tag when known, telling it from a replacement.
+    e_tag: Option<String>,
     /// The job deleted the watched manifest itself.
     deleted: bool,
 }
@@ -42,9 +46,11 @@ impl DropGuard {
         Arc::new(Self::default())
     }
 
-    /// Watch `manifest`, the opened version's.
-    pub fn arm(&self, manifest: Path) {
-        self.watched.lock().unwrap().manifest = Some(manifest);
+    /// Watch `manifest`, the opened version's, with its e-tag when known.
+    pub fn arm(&self, manifest: Path, e_tag: Option<String>) {
+        let mut watched = self.watched.lock().unwrap();
+        watched.manifest = Some(manifest);
+        watched.e_tag = e_tag;
     }
 }
 
@@ -57,37 +63,71 @@ impl WrappingObjectStore for DropGuard {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Guarded {
     inner: Arc<dyn ObjectStore>,
     watched: Arc<Mutex<Watched>>,
 }
 
+/// What a check found: the table is there, or it was dropped, or created
+/// again, with the error to fail the write with.
+enum Found {
+    Table,
+    Dropped(object_store::Error),
+    Replaced(object_store::Error),
+}
+
 impl Guarded {
-    async fn check(&self, location: &Path) -> Result<()> {
-        let (manifest, deleted) = {
-            let watched = self.watched.lock().unwrap();
-            (watched.manifest.clone(), watched.deleted)
+    /// Whether the watched manifest is still the table's. An error is a
+    /// failed probe, which says nothing about the table.
+    async fn find(&self, location: &Path) -> Result<Found> {
+        let watched = self.watched.lock().unwrap().clone();
+        let Some(mut manifest) = watched.manifest else {
+            return Ok(Found::Table);
         };
-        let Some(mut manifest) = manifest else {
-            return Ok(());
-        };
-        if deleted {
-            manifest = self.newest_manifest(&manifest).await?.unwrap_or(manifest);
+        let mut e_tag = watched.e_tag;
+        if watched.deleted {
+            if let Some((newest, tag)) = self.newest_manifest(&manifest).await? {
+                manifest = newest;
+                e_tag = tag;
+            }
             let mut watched = self.watched.lock().unwrap();
             watched.manifest = Some(manifest.clone());
+            watched.e_tag = e_tag.clone();
             watched.deleted = false;
         }
-        match self.inner.head(&manifest).await {
-            Ok(_) => Ok(()),
-            Err(object_store::Error::NotFound { .. }) => Err(object_store::Error::Generic {
+        let error = |why: &str| {
+            object_store::Error::Generic {
                 store: "DropGuard",
                 source: format!(
-                    "the table was dropped while this job wrote it: {manifest} is gone, so {location} is not written"
+                    "the table was dropped while this job wrote it: {manifest} {why}, so {location} is not written"
                 )
                 .into(),
-            }),
+            }
+        };
+        match self.inner.head(&manifest).await {
+            Ok(meta) => match (&e_tag, &meta.e_tag) {
+                (Some(want), Some(have)) if want != have => {
+                    Ok(Found::Replaced(error("is another table's")))
+                }
+                _ => Ok(Found::Table),
+            },
+            // Gone with manifests beside it: a table created again, at an
+            // earlier version than the one watched.
+            Err(object_store::Error::NotFound { .. }) => {
+                match self.newest_manifest(&manifest).await? {
+                    Some(_) => Ok(Found::Replaced(error("is gone and another table is there"))),
+                    None => Ok(Found::Dropped(error("is gone"))),
+                }
+            }
             Err(e) => Err(e),
+        }
+    }
+
+    async fn check(&self, location: &Path) -> Result<()> {
+        match self.find(location).await? {
+            Found::Table => Ok(()),
+            Found::Dropped(error) | Found::Replaced(error) => Err(error),
         }
     }
 }
@@ -97,8 +137,8 @@ fn is_manifest(location: &Path) -> bool {
 }
 
 impl Guarded {
-    /// The most recently written manifest beside `manifest`.
-    async fn newest_manifest(&self, manifest: &Path) -> Result<Option<Path>> {
+    /// The most recently written manifest beside `manifest`, with its e-tag.
+    async fn newest_manifest(&self, manifest: &Path) -> Result<Option<(Path, Option<String>)>> {
         let dir: Path = manifest
             .parts()
             .take(manifest.parts().count() - 1)
@@ -109,17 +149,47 @@ impl Guarded {
             .into_iter()
             .filter(|o| is_manifest(&o.location))
             .max_by_key(|o| o.last_modified)
-            .map(|o| o.location))
+            .map(|o| (o.location, o.e_tag)))
     }
 
-    fn committed(&self, location: &Path) {
+    fn committed(&self, location: &Path, e_tag: Option<String>) {
         if is_manifest(location) {
             let mut watched = self.watched.lock().unwrap();
             if watched.manifest.is_some() {
                 watched.manifest = Some(location.clone());
+                watched.e_tag = e_tag;
                 watched.deleted = false;
             }
         }
+    }
+}
+
+/// A multipart upload that checks the table again before it completes.
+#[derive(Debug)]
+struct GuardedUpload {
+    inner: Box<dyn MultipartUpload>,
+    guard: Guarded,
+    location: Path,
+}
+
+#[async_trait::async_trait]
+impl MultipartUpload for GuardedUpload {
+    fn put_part(&mut self, data: PutPayload) -> UploadPart {
+        self.inner.put_part(data)
+    }
+
+    async fn complete(&mut self) -> Result<PutResult> {
+        if let Found::Dropped(error) | Found::Replaced(error) =
+            self.guard.find(&self.location).await?
+        {
+            let _ = self.inner.abort().await;
+            return Err(error);
+        }
+        self.inner.complete().await
+    }
+
+    async fn abort(&mut self) -> Result<()> {
+        self.inner.abort().await
     }
 }
 
@@ -141,14 +211,14 @@ impl ObjectStore for Guarded {
         let put = self.inner.put_opts(location, payload, opts).await?;
         // A drop can land between the check and the write. A manifest is
         // what makes the table readable again, so look once more and take
-        // it back.
+        // it back if the table is gone; a failed probe leaves it.
         if is_manifest(location)
-            && let Err(dropped) = self.check(location).await
+            && let Ok(Found::Dropped(error) | Found::Replaced(error)) = self.find(location).await
         {
             let _ = self.inner.delete(location).await;
-            return Err(dropped);
+            return Err(error);
         }
-        self.committed(location);
+        self.committed(location, put.e_tag.clone());
         Ok(put)
     }
 
@@ -158,7 +228,12 @@ impl ObjectStore for Guarded {
         opts: PutMultipartOptions,
     ) -> Result<Box<dyn MultipartUpload>> {
         self.check(location).await?;
-        self.inner.put_multipart_opts(location, opts).await
+        let inner = self.inner.put_multipart_opts(location, opts).await?;
+        Ok(Box::new(GuardedUpload {
+            inner,
+            guard: self.clone(),
+            location: location.clone(),
+        }))
     }
 
     async fn get_opts(&self, location: &Path, options: GetOptions) -> Result<GetResult> {
@@ -173,18 +248,35 @@ impl ObjectStore for Guarded {
         &self,
         locations: BoxStream<'static, Result<Path>>,
     ) -> BoxStream<'static, Result<Path>> {
+        // A cleanup picks its paths before it deletes them; a table created
+        // again meanwhile reuses those paths, so look once before deleting.
+        // In a dropped table there is nothing left to spare, and the job's
+        // own failed commit is cleaned up.
         let watched = self.watched.clone();
-        let locations = locations
-            .inspect(move |location| {
-                if let Ok(location) = location {
-                    let mut watched = watched.lock().unwrap();
-                    if watched.manifest.as_ref() == Some(location) {
-                        watched.deleted = true;
-                    }
+        let locations = locations.inspect(move |location| {
+            if let Ok(location) = location {
+                let mut watched = watched.lock().unwrap();
+                if watched.manifest.as_ref() == Some(location) {
+                    watched.deleted = true;
                 }
-            })
-            .boxed();
-        self.inner.delete_stream(locations)
+            }
+        });
+        let guard = self.clone();
+        let pending = Arc::new(Mutex::new(Some(locations.boxed())));
+        let checked =
+            futures::stream::once(async move { guard.find(&Path::from("cleanup")).await })
+                .flat_map(move |found| {
+                    let locations = pending.lock().unwrap().take();
+                    match (found, locations) {
+                        (Ok(Found::Table | Found::Dropped(_)), Some(locations)) => locations,
+                        (Ok(Found::Replaced(error)), _) | (Err(error), _) => {
+                            futures::stream::once(async move { Err(error) }).boxed()
+                        }
+                        (Ok(_), None) => futures::stream::empty().boxed(),
+                    }
+                })
+                .boxed();
+        self.inner.delete_stream(checked)
     }
 
     fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, Result<ObjectMeta>> {

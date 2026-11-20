@@ -34,6 +34,15 @@ pub const KEY_FIELD_META: &str = "weed:metadata_key";
 pub const STATE_FIELD_META: &str = "weed:metadata_key_state";
 /// Indexed keys an index may have.
 pub const MAX_KEYS: usize = 8;
+/// Field metadata naming the version a key's column add read.
+pub const READ_VERSION_FIELD_META: &str = "weed:metadata_key_read_version";
+/// Longest an engine's PutVectors may take from opening the table to
+/// committing; a write that would take longer fails instead.
+pub const WRITE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
+/// How long after a key's column add [`finish`] waits before marking the
+/// key ready: past [`WRITE_DEADLINE`], so every write that opened the table
+/// before the add has committed, and its rows are derived again, first.
+pub const RACE_GRACE: std::time::Duration = std::time::Duration::from_secs(180);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -231,22 +240,24 @@ pub fn requests(dataset: &Dataset) -> Vec<String> {
     keys
 }
 
-/// Records that `key` is to be indexed; the worker adds its column. Refused
-/// for a key that is indexed or asked for already, and past [`MAX_KEYS`].
+/// Records that `key` is to be indexed; the worker adds its column. Asking
+/// again for a key requested or indexed already is done; refused for a key
+/// being removed and past [`MAX_KEYS`].
 pub async fn request(dataset: &mut Dataset, key: &str) -> Result<()> {
     if key.is_empty() {
         bail!("the metadata key is empty");
     }
     let keys = keys_of(dataset);
     if let Some(existing) = keys.iter().find(|k| k.key == key) {
-        bail!(
-            "{key} is already indexed ({})",
-            existing.state.map_or("unknown", State::as_str)
-        );
+        // Asking again for a key being indexed or indexed already is done.
+        if existing.state == Some(State::Off) {
+            bail!("{key} is being removed; add it again once it is gone");
+        }
+        return Ok(());
     }
     let requested = requests(dataset);
     if requested.iter().any(|k| k == key) {
-        bail!("{key} is already being indexed (requested)");
+        return Ok(());
     }
     if keys.len() + requested.len() >= MAX_KEYS {
         bail!("an index has at most {MAX_KEYS} indexed metadata keys");
@@ -259,7 +270,8 @@ pub async fn request(dataset: &mut Dataset, key: &str) -> Result<()> {
 }
 
 /// Stops indexing `key`: a request is withdrawn, a column is set off at once,
-/// so queries stop using it, and the worker removes it.
+/// so queries stop using it, and the worker removes it. A key not indexed
+/// needs nothing, so asking again is done.
 pub async fn request_removal(dataset: &mut Dataset, key: &str) -> Result<()> {
     if let Some(column) = keys_of(dataset).into_iter().find(|k| k.key == key) {
         if column.state != Some(State::Off) {
@@ -268,10 +280,7 @@ pub async fn request_removal(dataset: &mut Dataset, key: &str) -> Result<()> {
         // A build that stopped before finishing leaves its request.
         return clear_request(dataset, key).await;
     }
-    if requests(dataset).iter().any(|k| k == key) {
-        return clear_request(dataset, key).await;
-    }
-    bail!("{key} is not indexed")
+    clear_request(dataset, key).await
 }
 
 /// Withdraws the request to index `key`, if the table holds one.
@@ -292,15 +301,36 @@ pub async fn add_column(dataset: &mut Dataset, key: &str) -> Result<IndexedKey> 
     if let Some(existing) = keys_of(dataset).into_iter().find(|k| k.key == key) {
         return Ok(existing);
     }
+    let (column, read, read_version) = commit_column(dataset, key).await?;
+    let added = dataset.version().version;
+    let state = reapply_metadata(dataset, &read, read_version, added, &column, key).await?;
+    Ok(IndexedKey {
+        column,
+        key: key.to_string(),
+        state: Some(state),
+    })
+}
+
+/// The add_columns commit of [`add_column`]: the column, the schema it read
+/// and that schema's version.
+pub(crate) async fn commit_column(
+    dataset: &mut Dataset,
+    key: &str,
+) -> Result<(String, Schema, u64)> {
     let column = (0..)
         .map(|n| format!("{COLUMN_PREFIX}{n}"))
         .find(|c| dataset.schema().field(c).is_none())
         .unwrap_or_default();
-    let output = Arc::new(Schema::new(vec![field(&column, key, State::Building)]));
-    let schema = output.clone();
-    let owned = key.to_string();
     let read = Schema::from(dataset.schema());
     let read_version = dataset.version().version;
+    let mut added = field(&column, key, State::Building);
+    added.metadata_mut().insert(
+        READ_VERSION_FIELD_META.to_string(),
+        read_version.to_string(),
+    );
+    let output = Arc::new(Schema::new(vec![added]));
+    let schema = output.clone();
+    let owned = key.to_string();
     dataset
         .add_columns(
             NewColumnTransform::BatchUDF(BatchUDF {
@@ -319,12 +349,7 @@ pub async fn add_column(dataset: &mut Dataset, key: &str) -> Result<IndexedKey> 
             None,
         )
         .await?;
-    let state = reapply_metadata(dataset, &read, read_version, &column, key).await?;
-    Ok(IndexedKey {
-        column,
-        key: key.to_string(),
-        state: Some(state),
-    })
+    Ok((column, read, read_version))
 }
 
 /// A column add commits the schema it read, so the requests and key states
@@ -334,10 +359,10 @@ async fn reapply_metadata(
     dataset: &mut Dataset,
     read: &Schema,
     read_version: u64,
+    added: u64,
     column: &str,
     key: &str,
 ) -> Result<State> {
-    let added = dataset.version().version;
     if added <= read_version + 1 {
         return Ok(State::Building);
     }
@@ -375,6 +400,47 @@ async fn reapply_metadata(
         return Ok(State::Off);
     }
     Ok(State::Building)
+}
+
+/// The version that added `column`, the first after the version its add
+/// read, and the version read; None for a column added without the record.
+async fn added_version(dataset: &Dataset, column: &str) -> Result<Option<(Dataset, u64)>> {
+    let Some(read) = dataset
+        .schema()
+        .field(column)
+        .and_then(|f| f.metadata.get(READ_VERSION_FIELD_META))
+        .and_then(|v| v.parse::<u64>().ok())
+    else {
+        return Ok(None);
+    };
+    for version in dataset.versions().await? {
+        if version.version <= read {
+            continue;
+        }
+        let at = dataset.checkout_version(version.version).await?;
+        if at.schema().field(column).is_some() {
+            return Ok(Some((at, read)));
+        }
+    }
+    Ok(None)
+}
+
+/// Sets again what the commit of `key`'s column add overwrote, for a build
+/// resumed after an add that stopped before doing so itself. Returns the
+/// key's state.
+pub async fn recover_add(dataset: &mut Dataset, key: &IndexedKey) -> Result<Option<State>> {
+    let Some((added, read_version)) = added_version(dataset, &key.column).await? else {
+        return Ok(key.state);
+    };
+    let read = Schema::from(dataset.checkout_version(read_version).await?.schema());
+    let added = added.version().version;
+    let state =
+        reapply_metadata(dataset, &read, read_version, added, &key.column, &key.key).await?;
+    // The state the add left is building; anything else came later.
+    let now = keys_of(dataset)
+        .into_iter()
+        .find(|k| k.column == key.column);
+    Ok(now.and_then(|k| k.state).or(Some(state)))
 }
 
 /// Records `state` on `column`'s field.
@@ -639,13 +705,33 @@ pub async fn index_fragments(
 
 /// Completes adding `key`: derives its column again where a write that
 /// raced the add left it NULL or stale and did not fix it itself, builds
-/// the first segments, checks the fragments written meanwhile, and marks
-/// the key ready.
+/// the first segments, waits until [`RACE_GRACE`] after the add, checks the
+/// fragments written meanwhile, and marks the key ready.
 pub async fn finish(dataset: &mut Dataset, key: &IndexedKey, segment_rows: u64) -> Result<u64> {
+    finish_after(dataset, key, segment_rows, RACE_GRACE).await
+}
+
+/// [`finish`] with the wait after the add given.
+pub async fn finish_after(
+    dataset: &mut Dataset,
+    key: &IndexedKey,
+    segment_rows: u64,
+    grace: std::time::Duration,
+) -> Result<u64> {
     let columns = std::slice::from_ref(key);
+    let added_at = added_version(dataset, &key.column)
+        .await?
+        .map(|(at, _)| at.version().timestamp);
     let checked = dataset.fragments().iter().map(|f| f.id).max();
     let mut fixed = rederive(dataset, columns, None).await?;
     index_fragments(dataset, &key.column, segment_rows, 0).await?;
+    if let Some(added_at) = added_at {
+        let until = added_at + chrono::Duration::from_std(grace)?;
+        if let Ok(wait) = (until - chrono::Utc::now()).to_std() {
+            tokio::time::sleep(wait).await;
+        }
+    }
+    dataset.checkout_latest().await?;
     let since: Vec<u64> = dataset
         .fragments()
         .iter()
@@ -1014,7 +1100,9 @@ pub(crate) mod tests {
             let mut dataset = table(&dir, 2).await;
             request(&mut dataset, "author").await.unwrap();
             let author = add_column(&mut dataset, "author").await.unwrap();
-            finish(&mut dataset, &author, 1_000).await.unwrap();
+            finish_after(&mut dataset, &author, 1_000, std::time::Duration::ZERO)
+                .await
+                .unwrap();
             request(&mut dataset, "n").await.unwrap();
             request(&mut dataset, "genre").await.unwrap();
             let mut adding = dataset.clone();
@@ -1043,13 +1131,17 @@ pub(crate) mod tests {
             let mut dataset = table(&dir, 10).await;
             request(&mut dataset, "author").await.unwrap();
             assert_eq!(requests(&dataset), ["author"]);
-            assert!(request(&mut dataset, "author").await.is_err());
+            // Asking again is done, without another commit.
+            let version = dataset.version().version;
+            request(&mut dataset, "author").await.unwrap();
+            assert_eq!(dataset.version().version, version);
             let stale = dataset.clone();
             let key = add_column(&mut dataset, "author").await.unwrap();
             assert_eq!(key.column, "_mk_0");
             assert!(requests(&dataset).is_empty());
             assert_eq!(keys_of(&dataset)[0].state, Some(State::Building));
-            assert!(request(&mut dataset, "author").await.is_err());
+            request(&mut dataset, "author").await.unwrap();
+            assert!(requests(&dataset).is_empty());
             assert_eq!(nulls(&dataset, "_mk_0").await, 0);
             // Opened before the add, committed after it, never filled: a
             // writer that died between its commit and its own fill.
@@ -1070,7 +1162,9 @@ pub(crate) mod tests {
                 .unwrap();
             dataset.checkout_latest().await.unwrap();
 
-            let fixed = finish(&mut dataset, &key, 4_000).await.unwrap();
+            let fixed = finish_after(&mut dataset, &key, 4_000, std::time::Duration::ZERO)
+                .await
+                .unwrap();
             assert!(fixed as usize >= raced_nulls + 500 - stale_moved, "{fixed}");
             assert_eq!(
                 dataset
@@ -1158,13 +1252,18 @@ pub(crate) mod tests {
 
             request_removal(&mut dataset, "author").await.unwrap();
             assert_eq!(keys_of(&dataset)[0].state, Some(State::Off));
+            request_removal(&mut dataset, "author").await.unwrap();
+            assert!(
+                request(&mut dataset, "author").await.is_err(),
+                "being removed"
+            );
             remove_column(&mut dataset, "_mk_0").await.unwrap();
             assert!(keys_of(&dataset).is_empty());
             assert!(segments(&dataset, "_mk_0").await.unwrap().is_empty());
             request(&mut dataset, "author").await.unwrap();
             request_removal(&mut dataset, "author").await.unwrap();
             assert!(requests(&dataset).is_empty());
-            assert!(request_removal(&mut dataset, "author").await.is_err());
+            request_removal(&mut dataset, "author").await.unwrap();
             assert_eq!(
                 add_column(&mut dataset, "author").await.unwrap().column,
                 "_mk_0"
@@ -1189,7 +1288,9 @@ pub(crate) mod tests {
                     .keys()
                     .any(|k| k.starts_with(REQUEST_SCHEMA_META_PREFIX))
             );
-            finish(&mut dataset, &key, 1_000).await.unwrap();
+            finish_after(&mut dataset, &key, 1_000, std::time::Duration::ZERO)
+                .await
+                .unwrap();
             assert_eq!(keys_of(&dataset)[0].state, Some(State::Off));
             remove_column(&mut dataset, "_mk_0").await.unwrap();
             assert!(keys_of(&dataset).is_empty());
@@ -1202,6 +1303,64 @@ pub(crate) mod tests {
             set_state(&mut dataset, "_mk_0", State::Off).await.unwrap();
             remove_column(&mut dataset, "_mk_0").await.unwrap();
             assert!(requests(&dataset).is_empty());
+        }
+
+        /// An add that stopped after its commit overwrote a withdrawal of its
+        /// request leaves the build that resumes it to set the withdrawal
+        /// again: the key goes off, not ready.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_resumed_add_keeps_a_withdrawal_its_commit_overwrote() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let mut dataset = table(&dir, 2).await;
+            request(&mut dataset, "author").await.unwrap();
+            let mut adder = dataset.clone();
+            request_removal(&mut dataset, "author").await.unwrap();
+            commit_column(&mut adder, "author").await.unwrap();
+            let entry = format!("{REQUEST_SCHEMA_META_PREFIX}author");
+            assert!(
+                adder.schema().metadata.contains_key(&entry),
+                "the add's commit did not overwrite the withdrawal"
+            );
+            let key = keys_of(&adder).remove(0);
+            assert_eq!(key.state, Some(State::Building));
+            assert_eq!(
+                recover_add(&mut adder, &key).await.unwrap(),
+                Some(State::Off)
+            );
+            assert!(!adder.schema().metadata.contains_key(&entry));
+            assert_eq!(keys_of(&adder)[0].state, Some(State::Off));
+        }
+
+        /// A write that opened the table before the add and commits while
+        /// finish waits out the grace is derived again before the key is
+        /// ready; without the wait it lands after, stale, on a ready key.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn finish_waits_out_writes_that_raced_the_add() {
+            for grace in [std::time::Duration::from_secs(3), std::time::Duration::ZERO] {
+                let dir = tempfile::TempDir::new().unwrap();
+                let mut dataset = table(&dir, 2).await;
+                let stale = dataset.clone();
+                let key = add_column(&mut dataset, "author").await.unwrap();
+                let moved = |_: usize| serde_json::json!({"author": "moved"});
+                let racer = async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+                    upsert_with(stale, 0..50, &moved).await;
+                };
+                let (finished, _) =
+                    tokio::join!(finish_after(&mut dataset, &key, 1_000, grace), racer);
+                finished.unwrap();
+                dataset.checkout_latest().await.unwrap();
+                assert_eq!(keys_of(&dataset)[0].state, Some(State::Ready));
+                let found = dataset
+                    .count_rows(Some("array_has(_mk_0, 'moved')".to_string()))
+                    .await
+                    .unwrap();
+                if grace.is_zero() {
+                    assert_eq!(found, 0, "the race did not land after ready");
+                } else {
+                    assert_eq!(found, 50, "grace {grace:?}");
+                }
+            }
         }
     }
 }

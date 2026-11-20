@@ -9,13 +9,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytes::Bytes;
+use futures::StreamExt;
 use futures::stream::BoxStream;
 use lance::Dataset;
 use lance::io::WrappingObjectStore;
 use object_store::path::Path;
 use object_store::{
     CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-    PutMultipartOptions, PutOptions, PutPayload, PutResult, RenameOptions, Result,
+    ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, RenameOptions, Result,
 };
 
 use crate::metadata_index::tests::lifecycle::{table, upsert};
@@ -230,7 +231,7 @@ async fn a_job_on_a_dropped_table_fails_and_leaves_it_dropped() {
             async |d| metadata_index::request(d, "author").await.unwrap(),
             async |mut d| {
                 let key = metadata_index::add_column(&mut d, "author").await?;
-                metadata_index::finish(&mut d, &key, 1_000)
+                metadata_index::finish_after(&mut d, &key, 1_000, std::time::Duration::ZERO)
                     .await
                     .map(|_| ())
             },
@@ -241,7 +242,9 @@ async fn a_job_on_a_dropped_table_fails_and_leaves_it_dropped() {
             during,
             async |d| {
                 let key = metadata_index::add_column(d, "author").await.unwrap();
-                metadata_index::finish(d, &key, 1_000).await.unwrap();
+                metadata_index::finish_after(d, &key, 1_000, std::time::Duration::ZERO)
+                    .await
+                    .unwrap();
                 *d = upsert(d.clone(), 4_000..4_500).await;
             },
             async |mut d| {
@@ -257,7 +260,9 @@ async fn a_job_on_a_dropped_table_fails_and_leaves_it_dropped() {
             during,
             async |d| {
                 let key = metadata_index::add_column(d, "author").await.unwrap();
-                metadata_index::finish(d, &key, 1_000).await.unwrap();
+                metadata_index::finish_after(d, &key, 1_000, std::time::Duration::ZERO)
+                    .await
+                    .unwrap();
                 metadata_index::set_state(d, "_mk_0", State::Off)
                     .await
                     .unwrap();
@@ -307,4 +312,258 @@ async fn a_purge_through_the_guard_completes() {
         .unwrap();
     crate::jobs::purge::purge(&mut guarded, "t1").await.unwrap();
     assert_eq!(guarded.count_rows(None).await.unwrap(), 3_998);
+}
+
+/// The table is dropped and created again up to the version the job opened,
+/// so the manifest path the job watches exists again, as another object:
+/// the job must still fail and leave the new table as it was.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_job_on_a_table_created_again_fails() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let mut dataset = table(&dir, 4).await;
+    let key = metadata_index::add_column(&mut dataset, "author")
+        .await
+        .unwrap();
+    metadata_index::finish_after(&mut dataset, &key, 1_000, std::time::Duration::ZERO)
+        .await
+        .unwrap();
+    metadata_index::set_state(&mut dataset, "_mk_0", State::Off)
+        .await
+        .unwrap();
+    let description = crate::catalog::TableDescription {
+        location: dir.path().to_str().unwrap().to_string(),
+        storage_options: Default::default(),
+        managed_versioning: false,
+    };
+    let mut job = crate::dataset::open_guarded(&description, None)
+        .await
+        .unwrap();
+    let opened = job.version().version;
+
+    std::fs::remove_dir_all(dir.path()).unwrap();
+    let mut recreated = table(&dir, 1).await;
+    while recreated.version().version < opened {
+        let version = recreated.version().version.to_string();
+        recreated
+            .update_config([("seaweedfs.test", version.as_str())])
+            .await
+            .unwrap();
+    }
+    assert_eq!(recreated.version().version, opened);
+
+    let error = metadata_index::remove_column(&mut job, "_mk_0")
+        .await
+        .expect_err("a job on a table created again succeeded");
+    assert!(format!("{error:#}").contains("DropGuard"), "{error:#}");
+    recreated.checkout_latest().await.unwrap();
+    assert_eq!(recreated.version().version, opened);
+    assert_eq!(recreated.count_rows(None).await.unwrap(), 1_000);
+}
+
+fn guarded_description(dir: &tempfile::TempDir) -> crate::catalog::TableDescription {
+    crate::catalog::TableDescription {
+        location: dir.path().to_str().unwrap().to_string(),
+        storage_options: Default::default(),
+        managed_versioning: false,
+    }
+}
+
+/// The table's directory in the store's own paths.
+fn table_root(dataset: &Dataset) -> Path {
+    let manifest = &dataset.manifest_location().path;
+    manifest
+        .parts()
+        .take(manifest.parts().count() - 2)
+        .collect()
+}
+
+/// A multipart upload started before the drop does not complete after it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_multipart_upload_does_not_complete_into_a_dropped_table() {
+    let dir = tempfile::TempDir::new().unwrap();
+    table(&dir, 1).await;
+    let s3_like: Arc<dyn WrappingObjectStore> = Arc::new(FailHeadAfterManifest {
+        armed: Arc::new(AtomicBool::new(false)),
+    });
+    let job = crate::dataset::open_guarded(&guarded_description(&dir), Some(s3_like))
+        .await
+        .unwrap();
+    let store = job.object_store(None).await.unwrap().inner.clone();
+    let path = table_root(&job).child("data").child("late.lance");
+    let mut upload = store.put_multipart(&path).await.unwrap();
+    upload
+        .put_part(PutPayload::from(vec![0u8; 16]))
+        .await
+        .unwrap();
+    std::fs::remove_dir_all(dir.path()).unwrap();
+    let completed = upload.complete().await;
+    assert!(
+        completed.is_err(),
+        "an upload completed into a dropped table"
+    );
+    assert!(files(dir.path()).is_empty(), "{:?}", files(dir.path()));
+}
+
+/// A cleanup that picked its paths before the drop does not delete the files
+/// of the table created again there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_cleanup_does_not_delete_a_table_created_again() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let mut dataset = table(&dir, 1).await;
+    dataset
+        .update_config([("seaweedfs.test", "1")])
+        .await
+        .unwrap();
+    let job = crate::dataset::open_guarded(&guarded_description(&dir), None)
+        .await
+        .unwrap();
+    let store = job.object_store(None).await.unwrap().inner.clone();
+    // The old version-1 manifest, as a cleanup would have picked it.
+    let mut first = dataset.checkout_version(1).await.unwrap();
+    let old = first.manifest_location().path.clone();
+    std::fs::remove_dir_all(dir.path()).unwrap();
+    let recreated = table(&dir, 1).await;
+    assert_eq!(recreated.manifest_location().path, old);
+    let deleted: Vec<_> = store
+        .delete_stream(futures::stream::iter(vec![Ok(old.clone())]).boxed())
+        .collect()
+        .await;
+    assert!(deleted.iter().any(|r| r.is_err()), "{deleted:?}");
+    first = Dataset::open(dir.path().to_str().unwrap()).await.unwrap();
+    assert_eq!(first.version().version, 1);
+}
+
+/// A probe that fails after a manifest was written says nothing about the
+/// table: the manifest stays and the commit succeeds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failed_probe_does_not_take_back_a_commit() {
+    let dir = tempfile::TempDir::new().unwrap();
+    table(&dir, 1).await;
+    let flaky: Arc<dyn WrappingObjectStore> = Arc::new(FailHeadAfterManifest {
+        armed: Arc::new(AtomicBool::new(false)),
+    });
+    let mut job = crate::dataset::open_guarded(&guarded_description(&dir), Some(flaky))
+        .await
+        .unwrap();
+    let before = job.version().version;
+    job.update_config([("seaweedfs.test", "1")]).await.unwrap();
+    let reopened = Dataset::open(dir.path().to_str().unwrap()).await.unwrap();
+    assert_eq!(reopened.version().version, before + 1);
+}
+
+/// Behaves as an object store, not a file system: a multipart upload holds
+/// its parts until it completes. Fails one HEAD after a manifest is written,
+/// as a timeout would.
+#[derive(Debug)]
+struct FailHeadAfterManifest {
+    armed: Arc<AtomicBool>,
+}
+
+impl WrappingObjectStore for FailHeadAfterManifest {
+    fn wrap(&self, _prefix: &str, original: Arc<dyn ObjectStore>) -> Arc<dyn ObjectStore> {
+        Arc::new(FailingHead {
+            inner: original,
+            armed: self.armed.clone(),
+        })
+    }
+}
+
+#[derive(Debug)]
+struct FailingHead {
+    inner: Arc<dyn ObjectStore>,
+    armed: Arc<AtomicBool>,
+}
+
+impl fmt::Display for FailingHead {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "FailingHead({})", self.inner)
+    }
+}
+
+#[async_trait::async_trait]
+impl ObjectStore for FailingHead {
+    async fn put_opts(
+        &self,
+        location: &Path,
+        payload: PutPayload,
+        opts: PutOptions,
+    ) -> Result<PutResult> {
+        let put = self.inner.put_opts(location, payload, opts).await?;
+        if location.extension() == Some("manifest") {
+            self.armed.store(true, Ordering::SeqCst);
+        }
+        Ok(put)
+    }
+    async fn put_multipart_opts(
+        &self,
+        location: &Path,
+        _opts: PutMultipartOptions,
+    ) -> Result<Box<dyn MultipartUpload>> {
+        Ok(Box::new(HeldParts {
+            inner: self.inner.clone(),
+            location: location.clone(),
+            parts: Vec::new(),
+        }))
+    }
+    async fn get_opts(&self, location: &Path, options: GetOptions) -> Result<GetResult> {
+        if options.head && self.armed.swap(false, Ordering::SeqCst) {
+            return Err(object_store::Error::Generic {
+                store: "FailingHead",
+                source: "timed out".into(),
+            });
+        }
+        self.inner.get_opts(location, options).await
+    }
+    async fn get_ranges(&self, location: &Path, ranges: &[Range<u64>]) -> Result<Vec<Bytes>> {
+        self.inner.get_ranges(location, ranges).await
+    }
+    fn delete_stream(
+        &self,
+        locations: BoxStream<'static, Result<Path>>,
+    ) -> BoxStream<'static, Result<Path>> {
+        self.inner.delete_stream(locations)
+    }
+    fn list(&self, prefix: Option<&Path>) -> BoxStream<'static, Result<ObjectMeta>> {
+        self.inner.list(prefix)
+    }
+    fn list_with_offset(
+        &self,
+        prefix: Option<&Path>,
+        offset: &Path,
+    ) -> BoxStream<'static, Result<ObjectMeta>> {
+        self.inner.list_with_offset(prefix, offset)
+    }
+    async fn list_with_delimiter(&self, prefix: Option<&Path>) -> Result<ListResult> {
+        self.inner.list_with_delimiter(prefix).await
+    }
+    async fn copy_opts(&self, from: &Path, to: &Path, options: CopyOptions) -> Result<()> {
+        self.inner.copy_opts(from, to, options).await
+    }
+    async fn rename_opts(&self, from: &Path, to: &Path, options: RenameOptions) -> Result<()> {
+        self.inner.rename_opts(from, to, options).await
+    }
+}
+
+/// Parts held outside the table until the upload completes, as S3 does.
+#[derive(Debug)]
+struct HeldParts {
+    inner: Arc<dyn ObjectStore>,
+    location: Path,
+    parts: Vec<Bytes>,
+}
+
+#[async_trait::async_trait]
+impl MultipartUpload for HeldParts {
+    fn put_part(&mut self, data: PutPayload) -> object_store::UploadPart {
+        self.parts.extend(data);
+        Box::pin(async { Ok(()) })
+    }
+    async fn complete(&mut self) -> Result<PutResult> {
+        let payload: PutPayload = self.parts.drain(..).collect();
+        self.inner.put(&self.location, payload).await
+    }
+    async fn abort(&mut self) -> Result<()> {
+        self.parts.clear();
+        Ok(())
+    }
 }

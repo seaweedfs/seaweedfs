@@ -389,12 +389,27 @@ impl Fixture {
 
 fn assert_same(got: &[(String, f32)], want: &[(String, f32)], what: &str) {
     assert_eq!(got.len(), want.len(), "{what}: {got:?} vs {want:?}");
+    // Ties may come back in either order: the same keys, and the same
+    // distance at each rank.
+    fn keys(hits: &[(String, f32)]) -> Vec<&str> {
+        let mut keys: Vec<&str> = hits.iter().map(|(k, _)| k.as_str()).collect();
+        keys.sort();
+        keys
+    }
+    assert_eq!(keys(got), keys(want), "{what}: {got:?} vs {want:?}");
     for (g, w) in got.iter().zip(want) {
-        let same = g.0 == w.0 || (g.1 - w.1).abs() < 1e-4;
-        assert!(
-            same && ((g.1 - w.1).abs() < 1e-4 || (g.1.is_infinite() && w.1.is_infinite())),
-            "{what}: {got:?} vs {want:?}"
-        );
+        let same = (g.1 - w.1).abs() < 1e-4 || (g.1.is_infinite() && w.1.is_infinite());
+        assert!(same, "{what}: {got:?} vs {want:?}");
+        if g.0 != w.0 {
+            let tie = want
+                .iter()
+                .any(|(k, d)| k == &g.0 && (d - w.1).abs() < 1e-4);
+            assert!(
+                tie,
+                "{what}: {} at {} is no tie: {got:?} vs {want:?}",
+                g.0, g.1
+            );
+        }
     }
 }
 
@@ -647,14 +662,16 @@ async fn keys_are_requested_and_listed_through_the_engine() {
     assert_eq!(listed.keys.len(), 1);
     assert_eq!(listed.keys[0].state, "requested");
     assert_eq!(listed.keys[0].rows, 600);
-    let again = update("author", false).await.unwrap_err();
-    assert_eq!(again.code(), tonic::Code::FailedPrecondition);
+    // A retry of a committed request answers as the first one did.
+    let again = update("author", false).await.unwrap().into_inner();
+    assert_eq!(again.keys.len(), 1);
+    assert_eq!(again.keys[0].state, "requested");
 
     let mut dataset = fixture.dataset(0).await;
     let key = metadata_index::add_column(&mut dataset, "author")
         .await
         .unwrap();
-    metadata_index::finish(&mut dataset, &key, 1_000_000)
+    metadata_index::finish_after(&mut dataset, &key, 1_000_000, std::time::Duration::ZERO)
         .await
         .unwrap();
     let listed = fixture
@@ -686,9 +703,13 @@ async fn keys_are_requested_and_listed_through_the_engine() {
     assert_eq!(listed.keys[0].state, "off");
     let dataset = fixture.dataset(0).await;
     assert_eq!(metadata_index::keys_of(&dataset)[0].state, Some(State::Off));
+    // Removing a key that is not indexed needs nothing.
+    let nobody = update("nobody", true).await.unwrap().into_inner();
+    assert_eq!(nobody.keys.len(), 1);
     assert_eq!(
-        update("nobody", true).await.unwrap_err().code(),
-        tonic::Code::FailedPrecondition
+        update("author", false).await.unwrap_err().code(),
+        tonic::Code::FailedPrecondition,
+        "being removed"
     );
 }
 

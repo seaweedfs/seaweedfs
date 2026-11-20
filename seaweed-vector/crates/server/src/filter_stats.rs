@@ -16,6 +16,7 @@ const BUCKET: Duration = Duration::from_secs(300);
 pub const WINDOW: Duration = Duration::from_secs(BUCKET.as_secs() * BUCKETS as u64);
 pub const MAX_INDEXES: usize = 512;
 pub const MAX_KEYS_PER_INDEX: usize = 32;
+const MAX_RETIRED_TABLES: usize = 4;
 
 #[derive(Default, Clone, Copy)]
 struct Bucket {
@@ -37,6 +38,8 @@ struct IndexStats {
     /// The table the stats were counted on: an index dropped and created
     /// again under its name is another table.
     table: String,
+    /// Tables the name held before, whose late queries are not counted.
+    retired: Vec<String>,
     keys: HashMap<String, KeyStats>,
     /// The last bucket a key was left uncounted in.
     truncated: Option<u64>,
@@ -76,29 +79,26 @@ impl FilterStats {
         self.indexes.lock().unwrap().remove(index);
     }
 
-    /// Notes that `index` is now `table`, dropping stats counted on another.
-    pub fn follow(&self, index: &str, table: &str) {
-        let mut indexes = self.indexes.lock().unwrap();
-        let Some(stats) = indexes.get_mut(index) else {
-            return;
-        };
-        if stats.table.is_empty() {
-            stats.table = table.to_string();
-        } else if stats.table != table {
-            *stats = IndexStats {
-                table: table.to_string(),
-                last: stats.last,
-                ..Default::default()
-            };
-        }
+    /// One query of `index`, whose table is `table`, that took `elapsed` and
+    /// filtered on `keys`. Stats counted on another table under the name are
+    /// dropped; a query of a table the name no longer holds is not counted.
+    pub fn record(&self, index: &str, table: &str, keys: &BTreeMap<String, u8>, elapsed: Duration) {
+        self.record_table_at(index, table, keys, elapsed, Instant::now());
     }
 
-    /// One query of `index` that took `elapsed` and filtered on `keys`.
-    pub fn record(&self, index: &str, keys: &BTreeMap<String, u8>, elapsed: Duration) {
-        self.record_at(index, keys, elapsed, Instant::now());
-    }
-
+    #[cfg(test)]
     fn record_at(&self, index: &str, keys: &BTreeMap<String, u8>, elapsed: Duration, now: Instant) {
+        self.record_table_at(index, "", keys, elapsed, now);
+    }
+
+    fn record_table_at(
+        &self,
+        index: &str,
+        table: &str,
+        keys: &BTreeMap<String, u8>,
+        elapsed: Duration,
+        now: Instant,
+    ) {
         if keys.is_empty() {
             return;
         }
@@ -115,6 +115,24 @@ impl FilterStats {
             indexes.remove(&oldest);
         }
         let stats = indexes.entry(index.to_string()).or_default();
+        if !table.is_empty() && stats.table != table {
+            if stats.retired.iter().any(|t| t == table) {
+                return;
+            }
+            if !stats.table.is_empty() {
+                let mut retired = std::mem::take(&mut stats.retired);
+                retired.push(std::mem::take(&mut stats.table));
+                if retired.len() > MAX_RETIRED_TABLES {
+                    retired.remove(0);
+                }
+                *stats = IndexStats {
+                    retired,
+                    last: stats.last,
+                    ..Default::default()
+                };
+            }
+            stats.table = table.to_string();
+        }
         stats.last = stats.last.max(at);
         for (key, kinds) in keys {
             if !stats.keys.contains_key(key) && stats.keys.len() >= MAX_KEYS_PER_INDEX {
@@ -318,16 +336,27 @@ mod tests {
         let stats = FilterStats::new();
         let t0 = stats.start;
         let author = keys(&[("author", operand::STRING)]);
-        stats.follow("b/i", "t1");
-        stats.record_at("b/i", &author, Duration::ZERO, t0);
-        stats.follow("b/i", "t1");
-        stats.record_at("b/i", &author, Duration::ZERO, t0);
-        assert_eq!(stats.snapshot_at("b/i", t0).keys[0].queries, 2);
-        stats.follow("b/i", "t2");
-        assert!(stats.snapshot_at("b/i", t0).keys.is_empty());
-        stats.record_at("b/i", &author, Duration::ZERO, t0);
-        assert_eq!(stats.snapshot_at("b/i", t0).keys[0].queries, 1);
+        let count = |stats: &FilterStats| {
+            stats
+                .snapshot_at("b/i", t0)
+                .keys
+                .first()
+                .map_or(0, |k| k.queries)
+        };
+        stats.record_table_at("b/i", "t1", &author, Duration::ZERO, t0);
+        stats.record_table_at("b/i", "t1", &author, Duration::ZERO, t0);
+        assert_eq!(count(&stats), 2);
+        // The index was created again: its first query starts over.
+        stats.record_table_at("b/i", "t2", &author, Duration::ZERO, t0);
+        assert_eq!(count(&stats), 1);
+        // A late query of the old table is not counted on the new one.
+        stats.record_table_at("b/i", "t1", &author, Duration::ZERO, t0);
+        assert_eq!(count(&stats), 1);
         stats.forget("b/i");
-        assert!(stats.snapshot_at("b/i", t0).keys.is_empty());
+        assert_eq!(count(&stats), 0);
+        // A first query records its table: a later table starts over.
+        stats.record_table_at("b/i", "t3", &author, Duration::ZERO, t0);
+        stats.record_table_at("b/i", "t4", &author, Duration::ZERO, t0);
+        assert_eq!(count(&stats), 1);
     }
 }

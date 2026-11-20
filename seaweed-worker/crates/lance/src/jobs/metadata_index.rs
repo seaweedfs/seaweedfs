@@ -124,6 +124,7 @@ pub async fn run(
     action: Action,
     segment_rows: u64,
     min_unindexed_rows: u64,
+    grace: std::time::Duration,
 ) -> Result<String> {
     let column = metadata_index::keys_of(dataset)
         .into_iter()
@@ -140,14 +141,24 @@ pub async fn run(
                     added.column
                 ));
             }
-            let filled = metadata_index::finish(dataset, &added, segment_rows).await?;
+            let filled = metadata_index::finish_after(dataset, &added, segment_rows, grace).await?;
             Ok(format!(
                 "{key} indexed in {} ({filled} rows a racing write left derived again)",
                 added.column
             ))
         }
         (Action::Add, Some(column)) if column.state == Some(State::Building) => {
-            let filled = metadata_index::finish(dataset, &column, segment_rows).await?;
+            // An add that stopped before setting again what its commit
+            // overwrote leaves that to the build resuming it.
+            let state = metadata_index::recover_add(dataset, &column).await?;
+            if state != Some(State::Building) {
+                return Ok(format!(
+                    "{key} is {} after its add was recovered",
+                    state.map_or("unknown", State::as_str)
+                ));
+            }
+            let filled =
+                metadata_index::finish_after(dataset, &column, segment_rows, grace).await?;
             Ok(format!(
                 "{key} indexed in {} ({filled} rows a racing write left derived again)",
                 column.column
@@ -403,6 +414,7 @@ impl JobHandler for MetadataIndexHandler {
             action,
             segment_rows,
             min_unindexed_rows,
+            metadata_index::RACE_GRACE,
         )
         .await?;
         sender.send_completed(JobCompleted {
@@ -500,13 +512,27 @@ mod tests {
         metadata_index::request_removal(&mut dataset, "genre")
             .await
             .unwrap();
-        let skipped = run(&mut dataset, "genre", Action::Add, 1_000, 0)
-            .await
-            .unwrap();
+        let skipped = run(
+            &mut dataset,
+            "genre",
+            Action::Add,
+            1_000,
+            0,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
         assert_eq!(skipped, "genre is no longer requested");
-        run(&mut dataset, "author", Action::Add, 1_000, 0)
-            .await
-            .unwrap();
+        run(
+            &mut dataset,
+            "author",
+            Action::Add,
+            1_000,
+            0,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
         let keys = metadata_index::keys_of(&dataset);
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].state, Some(State::Ready));
@@ -525,9 +551,16 @@ mod tests {
             pending(&dataset, 500).await.unwrap(),
             [("author".to_string(), Action::Maintain)]
         );
-        run(&mut dataset, "author", Action::Maintain, 1_000, 500)
-            .await
-            .unwrap();
+        run(
+            &mut dataset,
+            "author",
+            Action::Maintain,
+            1_000,
+            500,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
         assert!(pending(&dataset, 0).await.unwrap().is_empty());
 
         // A raced write that left NULL rows is maintained at once.
@@ -539,13 +572,27 @@ mod tests {
             pending(&dataset, 1_000_000).await.unwrap(),
             [("author".to_string(), Action::Maintain)]
         );
-        run(&mut dataset, "author", Action::Maintain, 1_000, 1_000_000)
-            .await
-            .unwrap();
+        run(
+            &mut dataset,
+            "author",
+            Action::Maintain,
+            1_000,
+            1_000_000,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
         assert!(pending(&dataset, 1_000_000).await.unwrap().is_empty());
-        let noop = run(&mut dataset, "author", Action::Remove, 1_000, 0)
-            .await
-            .unwrap();
+        let noop = run(
+            &mut dataset,
+            "author",
+            Action::Remove,
+            1_000,
+            0,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
         assert_eq!(noop, "author needs no remove: ready");
 
         metadata_index::request_removal(&mut dataset, "author")
@@ -555,9 +602,16 @@ mod tests {
             pending(&dataset, 0).await.unwrap(),
             [("author".to_string(), Action::Remove)]
         );
-        run(&mut dataset, "author", Action::Remove, 1_000, 0)
-            .await
-            .unwrap();
+        run(
+            &mut dataset,
+            "author",
+            Action::Remove,
+            1_000,
+            0,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
         assert!(metadata_index::keys_of(&dataset).is_empty());
         assert!(pending(&dataset, 0).await.unwrap().is_empty());
     }
