@@ -8,6 +8,7 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/tikv/client-go/v2/config"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/txnkv"
 )
 
@@ -87,11 +89,7 @@ func (store *TikvStore) InsertEntry(ctx context.Context, entry *filer.Entry) err
 	if err != nil {
 		return fmt.Errorf("encoding %s %+v: %v", entry.FullPath, entry.Attr, err)
 	}
-	txn, err := store.getTxn(ctx)
-	if err != nil {
-		return err
-	}
-	err = txn.RunInTxn(ctx, func(txn *txnkv.KVTxn) error {
+	err = store.runTxn(ctx, func(txn *txnkv.KVTxn) error {
 		return txn.Set(key, value)
 	})
 	if err != nil {
@@ -143,12 +141,7 @@ func (store *TikvStore) DeleteEntry(ctx context.Context, path util.FullPath) err
 	dir, name := path.DirAndName()
 	key := store.generateKey(dir, name)
 
-	txn, err := store.getTxn(ctx)
-	if err != nil {
-		return err
-	}
-
-	err = txn.RunInTxn(ctx, func(txn *txnkv.KVTxn) error {
+	err := store.runTxn(ctx, func(txn *txnkv.KVTxn) error {
 		return txn.Delete(key)
 	})
 	if err != nil {
@@ -216,26 +209,14 @@ func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.Full
 }
 
 func (store *TikvStore) deleteBatch(ctx context.Context, keys [][]byte) error {
-	deleteTxn, err := store.getTxn(ctx)
-	if err != nil {
-		return err
-	}
-
-	if !deleteTxn.inContext {
-		defer func() { _ = deleteTxn.Rollback() }()
-	}
-
-	for _, key := range keys {
-		if err := deleteTxn.Delete(key); err != nil {
-			return err
+	return store.runTxn(ctx, func(txn *txnkv.KVTxn) error {
+		for _, key := range keys {
+			if err := txn.Delete(key); err != nil {
+				return err
+			}
 		}
-	}
-
-	if !deleteTxn.inContext {
-		return deleteTxn.Commit(ctx)
-	}
-
-	return nil
+		return nil
+	})
 }
 
 func (store *TikvStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (string, error) {
@@ -408,6 +389,49 @@ func (store *TikvStore) getTxn(ctx context.Context) (*TxnWrapper, error) {
 		txn.SetEnable1PC(store.onePC)
 	}
 	return &TxnWrapper{txn, false}, nil
+}
+
+// writeConflictRetries bounds how many times a write that the store commits
+// itself is run again after a write conflict.
+const writeConflictRetries = 5
+
+// runTxn runs f in the transaction ctx carries, or in a new one that it
+// commits.
+//
+// TiKV transactions are optimistic: a commit fails with a write conflict when
+// another transaction committed one of its keys after it began, as when two
+// requests save or delete the same entry at the same moment. A transaction
+// the store began for this one write has stored nothing when that happens, so
+// the write is run again in a new transaction, which lands after the other
+// writer. A transaction carried by ctx is left alone: its owner commits it,
+// and only the owner can run all of it again.
+func (store *TikvStore) runTxn(ctx context.Context, f func(txn *txnkv.KVTxn) error) error {
+	return runOwnTxn(ctx, func() (bool, error) {
+		txn, err := store.getTxn(ctx)
+		if err != nil {
+			return false, err
+		}
+		return txn.inContext, txn.RunInTxn(ctx, f)
+	})
+}
+
+// runOwnTxn calls run until it succeeds, fails with anything other than a
+// write conflict, ran in the caller's transaction, or has been retried
+// writeConflictRetries times. The wait between runs doubles and is jittered
+// so that writers that collided do not collide again.
+func runOwnTxn(ctx context.Context, run func() (inContext bool, err error)) error {
+	for attempt := 0; ; attempt++ {
+		inContext, err := run()
+		if err == nil || inContext || attempt == writeConflictRetries || !tikverr.IsErrWriteConflict(err) {
+			return err
+		}
+		wait := time.Duration(1<<attempt) * time.Millisecond
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(wait + rand.N(wait)):
+		}
+	}
 }
 
 // ~ Transaction Wrapper
