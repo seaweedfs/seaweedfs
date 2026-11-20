@@ -2,6 +2,7 @@ package redis2
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -299,13 +300,29 @@ func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context
 	}
 }
 
-var existsScript = redis.NewScript(`return redis.call('EXISTS', KEYS[1])`)
+const (
+	existsScript     = `return redis.call('EXISTS', KEYS[1])`
+	existsScriptSHA1 = "36470718001cbf79c047c6e440069970b40bb3b4"
+)
+
+// runScript runs a Lua script by its digest with EVALSHA and falls back to EVAL
+// when Redis does not have it cached, as redis.Script.Run does. The digest is a
+// constant pinned by TestScriptDigests rather than computed in Go, so no SHA-1
+// runs here or at package init (GODEBUG=fips140=only panics on SHA-1), and
+// there is no SCRIPT LOAD and no lock.
+func runScript(ctx context.Context, c redis.Scripter, src, sha1Hex string, keys []string, args ...interface{}) *redis.Cmd {
+	r := c.EvalSha(ctx, sha1Hex, keys, args...)
+	if err := r.Err(); errors.Is(err, redis.ErrNoScript) || redis.HasErrorPrefix(err, "NOSCRIPT") {
+		return c.Eval(ctx, src, keys, args...)
+	}
+	return r
+}
 
 // replica-routed clients (useReadOnly, routeByLatency) would run a plain EXISTS on a lagging
 // replica and misread a live value as absent, turning the repair destructive; a script always
 // runs on the key's master
 func (store *UniversalRedis2Store) existsOnMaster(ctx context.Context, key string) (int64, error) {
-	return existsScript.Run(ctx, store.Client, []string{key}).Int64()
+	return runScript(ctx, store.Client, existsScript, existsScriptSHA1, []string{key}).Int64()
 }
 
 func isLogicallyExpired(entry *filer.Entry) bool {
@@ -315,7 +332,7 @@ func isLogicallyExpired(entry *filer.Entry) bool {
 // deletes the value only when it still holds exactly the bytes the expiry decision was made on;
 // single-key, so it runs on all transports where a multi-key script would be CROSSSLOT.
 // -1: already gone, 0: changed under us, 1: deleted
-var deleteIfUnchangedScript = redis.NewScript(`
+const deleteIfUnchangedScript = `
 local v = redis.call('GET', KEYS[1])
 if v == false then
 	return -1
@@ -323,7 +340,9 @@ end
 if v == ARGV[1] then
 	return redis.call('DEL', KEYS[1])
 end
-return 0`)
+return 0`
+
+const deleteIfUnchangedScriptSHA1 = "0d3bc8239b52ed42ffa708b9250dcc75f5d17694"
 
 func (store *UniversalRedis2Store) deleteExpiredEntry(ctx context.Context, dirPath util.FullPath, path util.FullPath, fileName string) {
 	// survive the listing request being canceled mid-delete
@@ -351,7 +370,7 @@ func (store *UniversalRedis2Store) deleteExpiredEntry(ctx context.Context, dirPa
 
 	// 0 means a concurrent recreate changed the value: keep it. -1 means the redis
 	// TTL won after the re-read: the member still needs the not-found repair.
-	deleted, err := deleteIfUnchangedScript.Run(ctx, store.Client, []string{valueKey}, data).Int()
+	deleted, err := runScript(ctx, store.Client, deleteIfUnchangedScript, deleteIfUnchangedScriptSHA1, []string{valueKey}, data).Int()
 	if err != nil || deleted == 0 {
 		return
 	}
