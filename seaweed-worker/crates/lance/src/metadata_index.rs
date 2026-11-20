@@ -36,6 +36,13 @@ pub const STATE_FIELD_META: &str = "weed:metadata_key_state";
 pub const MAX_KEYS: usize = 8;
 /// Field metadata naming the version a key's column add read.
 pub const READ_VERSION_FIELD_META: &str = "weed:metadata_key_read_version";
+/// Longest an engine's PutVectors may take from opening the table to
+/// committing; a write that would take longer fails instead.
+pub const WRITE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
+/// How long after a key's column add [`finish`] waits before marking the
+/// key ready: past [`WRITE_DEADLINE`], so every write that opened the table
+/// before the add has committed, and its rows are derived again, first.
+pub const RACE_GRACE: std::time::Duration = std::time::Duration::from_secs(180);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -698,13 +705,33 @@ pub async fn index_fragments(
 
 /// Completes adding `key`: derives its column again where a write that
 /// raced the add left it NULL or stale and did not fix it itself, builds
-/// the first segments, checks the fragments written meanwhile, and marks
-/// the key ready.
+/// the first segments, waits until [`RACE_GRACE`] after the add, checks the
+/// fragments written meanwhile, and marks the key ready.
 pub async fn finish(dataset: &mut Dataset, key: &IndexedKey, segment_rows: u64) -> Result<u64> {
+    finish_after(dataset, key, segment_rows, RACE_GRACE).await
+}
+
+/// [`finish`] with the wait after the add given.
+pub async fn finish_after(
+    dataset: &mut Dataset,
+    key: &IndexedKey,
+    segment_rows: u64,
+    grace: std::time::Duration,
+) -> Result<u64> {
     let columns = std::slice::from_ref(key);
+    let added_at = added_version(dataset, &key.column)
+        .await?
+        .map(|(at, _)| at.version().timestamp);
     let checked = dataset.fragments().iter().map(|f| f.id).max();
     let mut fixed = rederive(dataset, columns, None).await?;
     index_fragments(dataset, &key.column, segment_rows, 0).await?;
+    if let Some(added_at) = added_at {
+        let until = added_at + chrono::Duration::from_std(grace)?;
+        if let Ok(wait) = (until - chrono::Utc::now()).to_std() {
+            tokio::time::sleep(wait).await;
+        }
+    }
+    dataset.checkout_latest().await?;
     let since: Vec<u64> = dataset
         .fragments()
         .iter()
@@ -1073,7 +1100,9 @@ pub(crate) mod tests {
             let mut dataset = table(&dir, 2).await;
             request(&mut dataset, "author").await.unwrap();
             let author = add_column(&mut dataset, "author").await.unwrap();
-            finish(&mut dataset, &author, 1_000).await.unwrap();
+            finish_after(&mut dataset, &author, 1_000, std::time::Duration::ZERO)
+                .await
+                .unwrap();
             request(&mut dataset, "n").await.unwrap();
             request(&mut dataset, "genre").await.unwrap();
             let mut adding = dataset.clone();
@@ -1133,7 +1162,9 @@ pub(crate) mod tests {
                 .unwrap();
             dataset.checkout_latest().await.unwrap();
 
-            let fixed = finish(&mut dataset, &key, 4_000).await.unwrap();
+            let fixed = finish_after(&mut dataset, &key, 4_000, std::time::Duration::ZERO)
+                .await
+                .unwrap();
             assert!(fixed as usize >= raced_nulls + 500 - stale_moved, "{fixed}");
             assert_eq!(
                 dataset
@@ -1257,7 +1288,9 @@ pub(crate) mod tests {
                     .keys()
                     .any(|k| k.starts_with(REQUEST_SCHEMA_META_PREFIX))
             );
-            finish(&mut dataset, &key, 1_000).await.unwrap();
+            finish_after(&mut dataset, &key, 1_000, std::time::Duration::ZERO)
+                .await
+                .unwrap();
             assert_eq!(keys_of(&dataset)[0].state, Some(State::Off));
             remove_column(&mut dataset, "_mk_0").await.unwrap();
             assert!(keys_of(&dataset).is_empty());
@@ -1296,6 +1329,38 @@ pub(crate) mod tests {
             );
             assert!(!adder.schema().metadata.contains_key(&entry));
             assert_eq!(keys_of(&adder)[0].state, Some(State::Off));
+        }
+
+        /// A write that opened the table before the add and commits while
+        /// finish waits out the grace is derived again before the key is
+        /// ready; without the wait it lands after, stale, on a ready key.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn finish_waits_out_writes_that_raced_the_add() {
+            for grace in [std::time::Duration::from_secs(3), std::time::Duration::ZERO] {
+                let dir = tempfile::TempDir::new().unwrap();
+                let mut dataset = table(&dir, 2).await;
+                let stale = dataset.clone();
+                let key = add_column(&mut dataset, "author").await.unwrap();
+                let moved = |_: usize| serde_json::json!({"author": "moved"});
+                let racer = async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+                    upsert_with(stale, 0..50, &moved).await;
+                };
+                let (finished, _) =
+                    tokio::join!(finish_after(&mut dataset, &key, 1_000, grace), racer);
+                finished.unwrap();
+                dataset.checkout_latest().await.unwrap();
+                assert_eq!(keys_of(&dataset)[0].state, Some(State::Ready));
+                let found = dataset
+                    .count_rows(Some("array_has(_mk_0, 'moved')".to_string()))
+                    .await
+                    .unwrap();
+                if grace.is_zero() {
+                    assert_eq!(found, 0, "the race did not land after ready");
+                } else {
+                    assert_eq!(found, 50, "grace {grace:?}");
+                }
+            }
         }
     }
 }

@@ -671,7 +671,7 @@ async fn keys_are_requested_and_listed_through_the_engine() {
     let key = metadata_index::add_column(&mut dataset, "author")
         .await
         .unwrap();
-    metadata_index::finish(&mut dataset, &key, 1_000_000)
+    metadata_index::finish_after(&mut dataset, &key, 1_000_000, std::time::Duration::ZERO)
         .await
         .unwrap();
     let listed = fixture

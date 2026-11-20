@@ -230,7 +230,7 @@ async fn a_job_on_a_dropped_table_fails_and_leaves_it_dropped() {
             async |d| metadata_index::request(d, "author").await.unwrap(),
             async |mut d| {
                 let key = metadata_index::add_column(&mut d, "author").await?;
-                metadata_index::finish(&mut d, &key, 1_000)
+                metadata_index::finish_after(&mut d, &key, 1_000, std::time::Duration::ZERO)
                     .await
                     .map(|_| ())
             },
@@ -241,7 +241,9 @@ async fn a_job_on_a_dropped_table_fails_and_leaves_it_dropped() {
             during,
             async |d| {
                 let key = metadata_index::add_column(d, "author").await.unwrap();
-                metadata_index::finish(d, &key, 1_000).await.unwrap();
+                metadata_index::finish_after(d, &key, 1_000, std::time::Duration::ZERO)
+                    .await
+                    .unwrap();
                 *d = upsert(d.clone(), 4_000..4_500).await;
             },
             async |mut d| {
@@ -257,7 +259,9 @@ async fn a_job_on_a_dropped_table_fails_and_leaves_it_dropped() {
             during,
             async |d| {
                 let key = metadata_index::add_column(d, "author").await.unwrap();
-                metadata_index::finish(d, &key, 1_000).await.unwrap();
+                metadata_index::finish_after(d, &key, 1_000, std::time::Duration::ZERO)
+                    .await
+                    .unwrap();
                 metadata_index::set_state(d, "_mk_0", State::Off)
                     .await
                     .unwrap();

@@ -985,13 +985,34 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
-        let dataset = self.open(&table).await?;
-        if req.vectors.is_empty() {
-            return Ok(Response::new(pb::PutVectorsResponse {
-                version: dataset.version().version,
-            }));
-        }
-        let dataset = write_vectors(dataset, &req.vectors).await?;
+        // A write commits within its deadline of opening the table or not
+        // at all: a key's column add waits longer than that before the key
+        // is ready, so a write that opened before the add has committed,
+        // and been derived again, before any query uses the key.
+        let merged = tokio::time::timeout(metadata_index::WRITE_DEADLINE, async {
+            let dataset = self.open(&table).await?;
+            if req.vectors.is_empty() {
+                return Ok::<_, Status>((dataset, None));
+            }
+            let written = Arc::new(Into::<arrow_schema::Schema>::into(dataset.schema()));
+            Ok((merge_vectors(dataset, &req.vectors).await?, Some(written)))
+        })
+        .await
+        .map_err(|_| {
+            Status::deadline_exceeded(format!(
+                "PutVectors took longer than {:?} to commit",
+                metadata_index::WRITE_DEADLINE
+            ))
+        })??;
+        let dataset = match merged {
+            (dataset, Some(written)) => {
+                let keys: Vec<String> = req.vectors.iter().map(|v| v.key.clone()).collect();
+                heal_columns(dataset, &written, &keys)
+                    .await
+                    .map_err(internal)?
+            }
+            (dataset, None) => dataset,
+        };
         Ok(Response::new(pb::PutVectorsResponse {
             version: dataset.version().version,
         }))
