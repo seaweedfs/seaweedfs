@@ -392,7 +392,7 @@ func TestExecutionNotOrphanedAfterDispatcherTookCompletion(t *testing.T) {
 
 // newPluginWithRestoredJob starts an admin whose persisted state holds the
 // job a previous admin process had sent to worker-a.
-func newPluginWithRestoredJob(t *testing.T, job TrackedJob) *Plugin {
+func newPluginWithRestoredJob(t *testing.T, job TrackedJob, details ...TrackedJob) *Plugin {
 	t.Helper()
 	dataDir := t.TempDir()
 	store, err := NewConfigStore(dataDir)
@@ -413,6 +413,11 @@ func newPluginWithRestoredJob(t *testing.T, job TrackedJob) *Plugin {
 	job.UpdatedAt = timeToPtr(now.Add(-time.Minute))
 	if err := store.SaveTrackedJobs([]TrackedJob{job}); err != nil {
 		t.Fatalf("SaveTrackedJobs: %v", err)
+	}
+	for _, detail := range details {
+		if err := store.SaveJobDetail(detail); err != nil {
+			t.Fatalf("SaveJobDetail: %v", err)
+		}
 	}
 	p, err := New(Options{DataDir: dataDir})
 	if err != nil {
@@ -571,6 +576,8 @@ func TestRestoredExpiryKeepsNewerAttemptDetail(t *testing.T) {
 	p.persistJobDetailSnapshot(jobID, func(detail *TrackedJob) bool {
 		detail.RequestID = "exec-after-restart"
 		detail.State = restoredTestStateRunning
+		detail.Attempt = 2
+		detail.UpdatedAt = timeToPtr(time.Now().UTC())
 		return true
 	})
 
@@ -695,5 +702,45 @@ func TestRestoreFillsRequestIDOfQueuedJobFromDetail(t *testing.T) {
 	tracked, _ := p.GetTrackedJob(jobID)
 	if tracked == nil || tracked.State != StateSucceeded || tracked.RequestID != "exec-a" {
 		t.Fatalf("want exec-a succeeded, got %+v", tracked)
+	}
+}
+
+// The restored attempt's detail write failed before the restart, so the
+// detail still holds an older finished attempt. Failing the restored
+// attempt replaces that detail, or the next restart would load it running.
+func TestRestoredExpiryReplacesOlderAttemptDetail(t *testing.T) {
+	t.Parallel()
+	const jobID = "job-detail-behind"
+	older := time.Now().UTC().Add(-2 * time.Hour)
+	p := newPluginWithRestoredJob(t, TrackedJob{JobID: jobID}, TrackedJob{JobID: jobID, JobType: orphanTestJobType,
+		RequestID: "exec-older", State: StateFailed, UpdatedAt: timeToPtr(older), CompletedAt: timeToPtr(older)})
+	session := connectExecutor(p, "worker-a")
+
+	sendExecutionHeartbeat(p, session, 0)
+	sendExecutionHeartbeat(p, session, 0)
+	waitTrackedState(t, p, jobID, StateFailed)
+	p.restoredExpiries.Wait()
+
+	detail, err := p.store.LoadJobDetail(jobID)
+	if err != nil || detail == nil {
+		t.Fatalf("LoadJobDetail: %+v %v", detail, err)
+	}
+	if detail.RequestID != "exec-before-restart" || detail.State != StateFailed {
+		t.Fatalf("want exec-before-restart failed in the detail, got request=%s state=%s", detail.RequestID, detail.State)
+	}
+}
+
+// A completion that arrives for an earlier attempt after a retry started
+// leaves the retry's record alone.
+func TestLateCompletionOfEarlierAttemptKeepsRetry(t *testing.T) {
+	t.Parallel()
+	const jobID = "job-retry-running"
+	p := newPluginWithRestoredJob(t, TrackedJob{JobID: jobID, RequestID: "exec-b"})
+
+	p.handleJobCompleted(&plugin_pb.JobCompleted{JobId: jobID, JobType: orphanTestJobType, RequestId: "exec-a", Success: false, ErrorMessage: "late"}, nil)
+
+	tracked, _ := p.GetTrackedJob(jobID)
+	if tracked == nil || tracked.State != restoredTestStateRunning || tracked.RequestID != "exec-b" {
+		t.Fatalf("want exec-b running, got %+v", tracked)
 	}
 }

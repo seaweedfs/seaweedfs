@@ -1140,6 +1140,15 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted, acc
 		r.jobsMu.Unlock()
 		return nil, false
 	}
+	// a late completion of an earlier attempt does not end a retry
+	if tracked != nil && tracked.RequestID != "" && completed.RequestId != "" && tracked.RequestID != completed.RequestId {
+		r.jobsMu.Unlock()
+		return nil, false
+	}
+	var closing TrackedJob
+	if tracked != nil {
+		closing = cloneTrackedJob(*tracked)
+	}
 	if tracked == nil {
 		tracked = &TrackedJob{
 			JobID:     completed.JobId,
@@ -1182,9 +1191,10 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted, acc
 	r.dirtyJobs = true
 	r.jobsMu.Unlock()
 	r.persistJobDetailSnapshot(completed.JobId, func(detail *TrackedJob) bool {
-		// a conditional completion closes one attempt; a detail a newer
-		// dispatch already wrote belongs to another one
-		if accept != nil && detail.RequestID != "" && completed.RequestId != "" && detail.RequestID != completed.RequestId {
+		// a conditional completion closes one attempt: it leaves a detail a
+		// newer dispatch already wrote, and replaces an older attempt's
+		if accept != nil && detail.RequestID != "" && completed.RequestId != "" && detail.RequestID != completed.RequestId &&
+			detailIsNewerAttempt(&closing, detail) {
 			return false
 		}
 		detail.JobID = completed.JobId
