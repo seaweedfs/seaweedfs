@@ -1054,6 +1054,8 @@ pub struct SecurityConfig {
     pub grpc_volume_allowed_common_names: Vec<String>,
     pub tls_policy: TlsPolicy,
     pub access_ui: bool,
+    /// The file was read; otherwise only defaults and WEED_ overrides are set.
+    pub file_read: bool,
     /// IPs from [guard] white_list in security.toml
     pub guard_white_list: Vec<String>,
 }
@@ -1270,6 +1272,7 @@ fn parse_security_config_with_env(path: &str, env: EnvLookup<'_>) -> SecurityCon
     // prefix WEED_, uppercase, replace . with _).
     // e.g. WEED_JWT_SIGNING_KEY overrides [jwt.signing] key
     apply_env_overrides(&mut cfg, env);
+    cfg.file_read = true;
 
     cfg
 }
@@ -2219,6 +2222,20 @@ previous_key = "read-old"
         let cfg = parse_security_config_with_env(path, &env);
         assert_eq!(cfg.jwt_previous_signing_key, b"env-write-old");
         assert_eq!(cfg.jwt_previous_read_signing_key, b"env-read-old");
+    }
+
+    #[test]
+    fn test_security_config_file_read() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "[jwt.signing]\nkey = \"secret\"\n").unwrap();
+        let path = tmp.path().to_str().unwrap().to_string();
+        assert!(parse_security_config_with_env(&path, &fake_env(&[])).file_read);
+
+        drop(tmp);
+        let env = fake_env(&[("WEED_JWT_SIGNING_KEY", "env-secret")]);
+        let cfg = parse_security_config_with_env(&path, &env);
+        assert!(!cfg.file_read);
+        assert_eq!(cfg.jwt_signing_key, b"env-secret");
     }
 
     #[test]

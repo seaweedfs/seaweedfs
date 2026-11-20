@@ -621,9 +621,13 @@ async fn run(
                 }
 
                 // 2. Reload security config (Go's Reload)
-                {
+                'security: {
                     info!("Reloading security config...");
                     let sec = config::parse_security_config(&state_reload.security_file);
+                    if !sec.file_read {
+                        warn!("SIGHUP: security config cannot be read, keeping the keys in effect");
+                        break 'security;
+                    }
                     let mut whitelist = state_reload.cli_white_list.clone();
                     whitelist.extend(sec.guard_white_list.iter().cloned());
                     let mut guard = state_reload.guard.write().unwrap();
