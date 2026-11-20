@@ -204,3 +204,43 @@ func TestUnreachableOwnerTTL(t *testing.T) {
 		t.Fatal("owner should be read owner-first again once the TTL passed")
 	}
 }
+
+// trailingListFiler streams one entry at once and a second after tail, like a
+// store scan that keeps going after its first rows.
+type trailingListFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	tail time.Duration
+}
+
+func (f *trailingListFiler) ListEntries(_ *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
+	if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: &filer_pb.Entry{Name: "v1"}}); err != nil {
+		return err
+	}
+	select {
+	case <-time.After(f.tail):
+	case <-stream.Context().Done():
+		return stream.Context().Err()
+	}
+	return stream.Send(&filer_pb.ListEntriesResponse{Entry: &filer_pb.Entry{Name: "v2"}})
+}
+
+// The deadline bounds the wait for the owner's first answer, not a listing it
+// has started streaming: the walk cannot replay a stream that already
+// delivered entries, so cutting it off would fail the listing.
+func TestRoutedListDeadlineEndsAtFirstEntry(t *testing.T) {
+	owner := &trailingListFiler{tail: 400 * time.Millisecond}
+	local := &slowLookupFiler{name: "local"}
+	ownerAddr := startFakeFiler(t, owner)
+	s3a := newRoutedReadTestServer(t, ownerAddr, 100*time.Millisecond, startFakeFiler(t, local))
+
+	entries, _, err := s3a.listObjectScopedEntriesRoutedByKey("b", "k", "/buckets/b/k.versions", "", "", false, 10)
+	if err != nil {
+		t.Fatalf("listObjectScopedEntriesRoutedByKey: %v", err)
+	}
+	if len(entries) != 2 || entries[0].Name != "v1" || entries[1].Name != "v2" {
+		t.Fatalf("entries %v, want the owner's full listing", entries)
+	}
+	if s3a.ownerRecentlyUnreachable(ownerAddr) {
+		t.Fatal("an owner that answered should not be flagged unreachable")
+	}
+}

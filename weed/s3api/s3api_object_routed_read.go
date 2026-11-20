@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc"
 )
 
 // defaultUnreachableOwnerTTL is how long a route-by-key owner that just failed a
@@ -31,25 +32,30 @@ func (s3a *S3ApiServer) unreachableOwnerTTL() time.Duration {
 // deadline, so an owner that cannot answer (a dropped SYN waits out gRPC's 20 s
 // connect timeout) costs the read that long before the walk asks the next
 // filer, any of which reads the same entry. The current filer and every later
-// attempt run unbounded, as before.
+// attempt run unbounded, as before. The deadline covers the wait for the
+// owner's first response only: answered lifts it, so a stream that has started
+// answering runs to its end (the walk cannot replay it past that point).
 //
 // The returned function must be called once per attempt, in walk order.
-func (s3a *S3ApiServer) routedLookupContext(preferred pb.ServerAddress) func() (context.Context, context.CancelFunc) {
+func (s3a *S3ApiServer) routedLookupContext(preferred pb.ServerAddress) func() (ctx context.Context, answered func(), cancel context.CancelFunc) {
 	bounded := preferred != "" && s3a.option != nil && s3a.option.RoutedLookupTimeout > 0 &&
 		preferred != s3a.filerClient.GetCurrentFiler()
-	return func() (context.Context, context.CancelFunc) {
-		if bounded {
-			bounded = false
-			return context.WithTimeout(context.Background(), s3a.option.RoutedLookupTimeout)
+	return func() (context.Context, func(), context.CancelFunc) {
+		if !bounded {
+			return context.Background(), func() {}, func() {}
 		}
-		return context.Background(), func() {}
+		bounded = false
+		ctx, cancel := context.WithCancelCause(context.Background())
+		timer := time.AfterFunc(s3a.option.RoutedLookupTimeout, func() { cancel(context.DeadlineExceeded) })
+		return ctx, func() { timer.Stop() }, func() { timer.Stop(); cancel(nil) }
 	}
 }
 
 // routedProbeContext bounds a single-filer probe of a key's prior owner the way
 // routedLookupContext bounds the walk's first attempt.
 func (s3a *S3ApiServer) routedProbeContext(filer pb.ServerAddress) (context.Context, context.CancelFunc) {
-	return s3a.routedLookupContext(filer)()
+	ctx, _, cancel := s3a.routedLookupContext(filer)()
+	return ctx, cancel
 }
 
 // getObjectEntryRoutedByKey resolves an object's entry preferring the key's write
@@ -82,7 +88,7 @@ func (s3a *S3ApiServer) getObjectScopedEntryRoutedByKey(bucket, object, dir, nam
 	var entry *filer_pb.Entry
 	attemptContext := s3a.routedLookupContext(preferred)
 	err := s3a.withFilerClientFailover(context.Background(), preferred, false, true, func(client filer_pb.SeaweedFilerClient) error {
-		ctx, cancel := attemptContext()
+		ctx, _, cancel := attemptContext()
 		defer cancel()
 		resp, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
@@ -127,9 +133,9 @@ func (s3a *S3ApiServer) listObjectScopedEntriesRoutedByKey(bucket, object, paren
 		isLast = false
 		attemptContext := s3a.routedLookupContext(preferred)
 		return s3a.withFilerClientFailover(context.Background(), preferred, false, true, func(client filer_pb.SeaweedFilerClient) error {
-			ctx, cancel := attemptContext()
+			ctx, answered, cancel := attemptContext()
 			defer cancel()
-			return filer_pb.SeaweedList(ctx, client, parentDirectoryPath, prefix, func(entry *filer_pb.Entry, isLastEntry bool) error {
+			return filer_pb.SeaweedList(ctx, answeringClient{client, answered}, parentDirectoryPath, prefix, func(entry *filer_pb.Entry, isLastEntry bool) error {
 				entries = append(entries, entry)
 				if isLastEntry {
 					isLast = true
@@ -142,6 +148,34 @@ func (s3a *S3ApiServer) listObjectScopedEntriesRoutedByKey(bucket, object, paren
 		isLast = true
 	}
 	return entries, isLast, err
+}
+
+// answeringClient calls answered once a listing stream delivers its first
+// message, ahead of SeaweedList's one-entry look-ahead.
+type answeringClient struct {
+	filer_pb.SeaweedFilerClient
+	answered func()
+}
+
+func (c answeringClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (filer_pb.SeaweedFiler_ListEntriesClient, error) {
+	stream, err := c.SeaweedFilerClient.ListEntries(ctx, in, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return answeringStream{stream, c.answered}, nil
+}
+
+type answeringStream struct {
+	filer_pb.SeaweedFiler_ListEntriesClient
+	answered func()
+}
+
+func (s answeringStream) Recv() (*filer_pb.ListEntriesResponse, error) {
+	resp, err := s.SeaweedFiler_ListEntriesClient.Recv()
+	if err == nil {
+		s.answered()
+	}
+	return resp, err
 }
 
 func (s3a *S3ApiServer) priorWriteOwner(bucket, object string) pb.ServerAddress {
