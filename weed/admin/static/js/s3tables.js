@@ -12,6 +12,7 @@ let s3tablesBucketDeleteModal = null;
 let s3tablesBucketPolicyModal = null;
 let s3tablesTableDeleteModal = null;
 let s3tablesSelectedDeleteModal = null;
+let s3tablesBulkDelete = null;
 let s3tablesTablePolicyModal = null;
 let s3tablesTagsModal = null;
 let icebergTableDeleteModal = null;
@@ -851,7 +852,11 @@ function initS3TablesTableSelection() {
     });
     boxes.forEach(box => box.addEventListener('change', refresh));
     document.getElementById('deleteS3TablesSelectedConfirm').disabled = false;
-    s3tablesSelectedDeleteModal = new bootstrap.Modal(document.getElementById('deleteS3TablesSelectedModal'));
+    const selectedModalEl = document.getElementById('deleteS3TablesSelectedModal');
+    s3tablesSelectedDeleteModal = new bootstrap.Modal(selectedModalEl);
+    selectedModalEl.addEventListener('hide.bs.modal', () => {
+        if (s3tablesBulkDelete) s3tablesBulkDelete.cancelled = true;
+    });
     deleteSelected.addEventListener('click', () => {
         const names = selectedS3TablesTableNames();
         if (names.length === 0) return;
@@ -874,7 +879,12 @@ async function deleteSelectedS3TablesTables() {
     const confirmBtn = document.getElementById('deleteS3TablesSelectedConfirm');
     confirmBtn.disabled = true;
     const failures = [];
+    const run = { cancelled: false };
+    s3tablesBulkDelete = run;
+    let attempted = 0;
     for (const name of names) {
+        if (run.cancelled) break;
+        attempted++;
         const query = new URLSearchParams({
             bucket: dataContainer.dataset.bucketArn || '',
             namespace: dataContainer.dataset.namespace || '',
@@ -890,12 +900,17 @@ async function deleteSelectedS3TablesTables() {
             failures.push(`${name}: ${error.message}`);
         }
     }
+    s3tablesBulkDelete = null;
     s3tablesSelectedDeleteModal.hide();
-    if (failures.length > 0) {
-        alert(`Deleted ${names.length - failures.length} of ${names.length} tables. Failed: ${failures.join('; ')}`);
-    } else {
-        alert(`Deleted ${names.length} tables`);
+    const deleted = attempted - failures.length;
+    let message = `Deleted ${deleted} of ${names.length} tables`;
+    if (attempted < names.length) {
+        message += ', stopped by Cancel';
     }
+    if (failures.length > 0) {
+        message += `. Failed: ${failures.join('; ')}`;
+    }
+    alert(message);
     // alert() is a non-blocking modal here; reload once it is closed.
     const alertModal = document.getElementById('globalAlertModal');
     if (alertModal) {
