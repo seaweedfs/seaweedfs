@@ -211,6 +211,7 @@ func buildSeaweedFileSystem(option *MountOptions, p fileSystemParams) *mount.WFS
 		FilerSigningKey:             security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key")),
 		FilerSigningExpiresAfterSec: util.GetViper().GetInt("jwt.filer_signing.expires_after_seconds"),
 		FilerMountRootPath:          p.mountRoot,
+		VolumeReadAuth:              option.volumeReadAuth != nil && *option.volumeReadAuth,
 		Collection:                  *option.collection,
 		Replication:                 *option.replication,
 		TtlSec:                      int32(*option.ttlSec),
