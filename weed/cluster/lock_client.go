@@ -391,6 +391,7 @@ func (lock *LiveLock) AttemptToLock(lockDuration time.Duration) error {
 
 func (lock *LiveLock) attemptToLockWithin(lockDuration, attemptTimeout time.Duration) (granted bool, err error) {
 	glog.V(4).Infof("LOCK: AttemptToLock key=%s owner=%s", lock.key, lock.self)
+	sentAt := time.Now()
 	errorMessage, granted, err := lock.doLock(lockDuration, attemptTimeout)
 	if err != nil {
 		glog.V(1).Infof("LOCK: doLock failed for key=%s: %v", lock.key, err)
@@ -417,6 +418,9 @@ func (lock *LiveLock) attemptToLockWithin(lockDuration, attemptTimeout time.Dura
 		// Only log when transitioning from unlocked to locked
 		glog.V(1).Infof("LOCK: Successfully acquired key=%s owner=%s", lock.key, lock.self)
 	}
+	// The server counts the lease from when it got the request, so a lease
+	// counted from the send never outlives the one the server holds.
+	atomic.StoreInt64(&lock.expireAtNs, sentAt.Add(lockDuration.Truncate(time.Second)).UnixNano())
 	atomic.StoreInt32(&lock.isLocked, 1)
 	return true, nil
 }
@@ -566,7 +570,9 @@ func (lock *LiveLock) Generation() int64 {
 	return atomic.LoadInt64(&lock.generation)
 }
 
-// IsLocked returns true if this instance currently holds the lock
+// IsLocked returns true if this instance currently holds the lock and the
+// lease of its last grant or renewal has not run out, so a renewal that
+// stalled past the lease does not read as still holding it.
 func (lock *LiveLock) IsLocked() bool {
-	return atomic.LoadInt32(&lock.isLocked) == 1
+	return atomic.LoadInt32(&lock.isLocked) == 1 && time.Now().UnixNano() < atomic.LoadInt64(&lock.expireAtNs)
 }

@@ -1088,11 +1088,12 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	fullpath := util.NewFullPath(req.Directory, req.EntryName)
 
 	lockClient := cluster.NewLockClient(fs.grpcDialOption, fs.option.Host)
-	lock := lockClient.NewShortLivedLock(string(fullpath), string(fs.option.Host))
+	lock := lockClient.NewBlockingLongLivedLock(string(fullpath), string(fs.option.Host), 0)
 	if lock == nil {
 		return nil, fmt.Errorf("failed to acquire lock for %s", fullpath)
 	}
-	defer lock.StopShortLivedLock()
+	defer lock.Stop()
+	generation := lock.Generation()
 
 	// The cluster lock serializes appenders across filers; the path lock makes
 	// this read-modify-write atomic against conditional updates and deletes on
@@ -1128,10 +1129,19 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 		glog.WarningfCtx(ctx, "applyStorageDefaultsToEntry: %v", err)
 		return &filer_pb.AppendToEntryResponse{}, err
 	}
-	entry.Chunks, err = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), fs.filer.DeleteChunksNotRecursive, entry.GetChunks())
+	appended := entry.GetChunks()
+	entry.Chunks, err = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), fs.filer.DeleteChunksNotRecursive, appended)
 	if err != nil {
 		// the append is still correct with the flat list
 		glog.V(0).InfofCtx(ctx, "MaybeManifestize %s: %v", fullpath, err)
+	}
+
+	// Best effort: a lock lost, or lost and taken again, since the entry was
+	// read means another filer may have appended in between. The store write
+	// is not conditional, so a lapse after this check still goes unnoticed.
+	if !lock.IsLocked() || lock.Generation() != generation {
+		fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunks(entry.GetChunks(), appended))
+		return &filer_pb.AppendToEntryResponse{}, fmt.Errorf("lost distributed lock for %s; retry the request", fullpath)
 	}
 
 	err = fs.filer.CreateEntry(context.Background(), entry, nil, false, false, nil, false, fs.filer.MaxFilenameLength)
