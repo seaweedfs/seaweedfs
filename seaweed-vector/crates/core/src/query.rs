@@ -160,7 +160,10 @@ async fn scanner(
     let mut indexed = false;
     if use_index && !no_segments {
         let probes = match query.nprobes {
-            Some(n) => Some(crate::index::Probes { min: n, max: n }),
+            Some(n) => crate::index::index_names(dataset, &table.vector_column)
+                .await?
+                .first()
+                .map(|_| crate::index::Probes { min: n, max: n }),
             None => crate::index::default_probes(dataset, &table.vector_column).await?,
         };
         if let Some(probes) = probes {
@@ -550,5 +553,36 @@ mod tests {
             indexed.iter().map(|h| &h.key).collect::<Vec<_>>(),
             exact.iter().map(|h| &h.key).collect::<Vec<_>>()
         );
+    }
+
+    /// An explicit probe count does not make an unindexed table's scan count
+    /// as indexed, so a short filtered answer is not scanned a second time.
+    #[tokio::test]
+    async fn explicit_probes_need_an_index() {
+        let dir = TempDir::new().unwrap();
+        let rows = crate::testing::vectors(300, DIM);
+        let mut dataset = write_dataset(&dir, &rows, &["a"; 300]).await;
+        let table = VectorTable::resolve(&dataset, None, None).unwrap();
+        let query = Query {
+            vector: rows[0].clone(),
+            k: 10,
+            filter: Some("tag = 'a'".to_string()),
+            postfilter: false,
+            distance: DistanceType::L2,
+            nprobes: Some(4),
+            index_segments: None,
+            fragments: None,
+        };
+        assert!(!scanner(&dataset, &table, &query, true).await.unwrap().1);
+        crate::index::build(
+            &mut dataset,
+            &table.vector_column,
+            crate::index::INDEX_NAME,
+            4,
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(scanner(&dataset, &table, &query, true).await.unwrap().1);
     }
 }
