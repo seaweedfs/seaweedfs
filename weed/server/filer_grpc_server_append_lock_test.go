@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -86,7 +87,7 @@ func TestAppendToEntryKeepsLockThroughSlowAppend(t *testing.T) {
 	done := startAppend(fs)
 	<-store.held
 
-	time.Sleep(6 * time.Second)
+	time.Sleep(lock_manager.LiveLockTTL + time.Second) // past the first lease
 	resp, err := fs.DistributedLock(context.Background(), &filer_pb.LockRequest{
 		Name:          appendLockTestPath,
 		SecondsToLock: 5,
