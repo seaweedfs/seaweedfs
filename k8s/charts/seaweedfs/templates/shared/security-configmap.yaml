@@ -15,8 +15,6 @@ type: Opaque
 stringData:
   {{- $fullname := include "seaweedfs.fullname" . }}
   {{- $securityConfigName := printf "%s-security-config" $fullname }}
-  {{- $existingToml := dig "data" "security.toml" "" (lookup "v1" "Secret" (include "seaweedfs.namespace" .) $securityConfigName) | b64dec }}
-  {{- if not $existingToml }}
   {{- $existing := lookup "v1" "ConfigMap" (include "seaweedfs.namespace" .) $securityConfigName }}
   {{- if not $existing }}
   {{- $legacyName := printf "%s-%s" (include "seaweedfs.name" .) "security-config" }}
@@ -25,8 +23,7 @@ stringData:
   {{- if and $existing (or (and .Values.master.enabled (gt (int .Values.master.updatePartition) 0)) (and .Values.filer.enabled (gt (int .Values.filer.updatePartition) 0))) }}
   {{- fail "this upgrade moves security.toml from a ConfigMap to a Secret and removes the ConfigMap; run it with master.updatePartition=0 and filer.updatePartition=0 so no pod is left on the old template" }}
   {{- end }}
-  {{- $existingToml = dig "data" "security.toml" "" $existing }}
-  {{- end }}
+  {{- $existingToml := dig "data" "security.toml" "" (lookup "v1" "Secret" (include "seaweedfs.namespace" .) $securityConfigName) | b64dec | default (dig "data" "security.toml" "" $existing) }}
   {{- $securityConfigValues := .Values.global.seaweedfs.securityConfig | default dict }}
   {{- $jwtSigning := $securityConfigValues.jwtSigning | default dict }}
   {{- $expiresAfterSeconds := $jwtSigning.expiresAfterSeconds | default dict }}
