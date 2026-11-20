@@ -151,7 +151,8 @@ async fn scanner(
         .use_index(use_index)
         .with_row_id();
     if let Some(filter) = &query.filter {
-        crate::filter::apply(&mut scanner, filter)?;
+        let ready = crate::indexed_filter::ready_columns(dataset);
+        crate::filter::apply(&mut scanner, filter, &ready)?;
         scanner.prefilter(!query.postfilter);
     }
     // An explicitly empty segment list searches no index, so there is

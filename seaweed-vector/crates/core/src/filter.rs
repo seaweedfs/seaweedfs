@@ -4,6 +4,7 @@
 //! compares the elements as typed JSON values: Lance's compares their text, so
 //! 1 would match "1".
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow_array::builder::{BooleanBuilder, StringBuilder};
@@ -19,13 +20,21 @@ use lance::deps::datafusion::logical_expr::{
     ColumnarValue, Expr, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature, Volatility,
 };
 
-/// Set `filter` on the scanner with the JSONPath functions swapped.
-pub(crate) fn apply(scanner: &mut Scanner, filter: &str) -> anyhow::Result<()> {
+/// Set `filter` on the scanner with the JSONPath functions swapped and the
+/// conjuncts on `ready` indexed keys answered by their columns. Returns the
+/// conjunction of those.
+pub(crate) fn apply(
+    scanner: &mut Scanner,
+    filter: &str,
+    ready: &HashMap<String, String>,
+) -> anyhow::Result<Option<Expr>> {
     scanner.filter(filter)?;
-    if let Some(expr) = scanner.get_expr_filter()? {
-        scanner.filter_expr(swap(expr)?);
-    }
-    Ok(())
+    let Some(expr) = scanner.get_expr_filter()? else {
+        return Ok(None);
+    };
+    let (expr, indexed) = crate::indexed_filter::rewrite(expr, ready);
+    scanner.filter_expr(swap(expr)?);
+    Ok(indexed)
 }
 
 fn swap(expr: Expr) -> Result<Expr> {
@@ -268,7 +277,7 @@ mod tests {
     async fn keys(dataset: &Dataset, filter: &str, swapped: bool) -> anyhow::Result<Vec<String>> {
         let mut scanner = dataset.scan();
         if swapped {
-            apply(&mut scanner, filter)?;
+            apply(&mut scanner, filter, &HashMap::new())?;
         } else {
             scanner.filter(filter)?;
         }
@@ -395,6 +404,7 @@ mod tests {
         apply(
             &mut scanner,
             r#"json_extract(`metadata`, '$["k"]') = '"v"' AND json_exists(`metadata`, '$["k"]') AND json_get_string(`metadata`, 'k') = 'v' AND json_array_contains(`metadata`, '$["k"]', '"v"') AND NOT json_array_contains(`metadata`, '$["k"]', key)"#,
+            &HashMap::new(),
         )
         .unwrap();
         let mut swapped = Vec::new();
