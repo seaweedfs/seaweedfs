@@ -1127,8 +1127,9 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 		glog.V(0).InfofCtx(ctx, "MaybeManifestize %s: %v", fullpath, err)
 	}
 
-	// A lock lost, or lost and taken again, since the entry was read means
-	// another filer may have appended in between.
+	// Best effort: a lock lost, or lost and taken again, since the entry was
+	// read means another filer may have appended in between. The store write
+	// is not conditional, so a lapse after this check still goes unnoticed.
 	if !lock.IsLocked() || lock.Generation() != generation {
 		fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunks(entry.GetChunks(), appended))
 		return &filer_pb.AppendToEntryResponse{}, fmt.Errorf("lost distributed lock for %s; retry the request", fullpath)
