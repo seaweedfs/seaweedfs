@@ -148,6 +148,11 @@ func ShouldReassignUpload(err error) bool {
 	if err == nil {
 		return false
 	}
+	// Another assign gets the same verdict. The text below names the path, so
+	// a path with "transport" in it must not turn the verdict into a retry.
+	if errors.Is(err, filer_pb.ErrReadOnly) {
+		return false
+	}
 	var se *uploadStatusError
 	if errors.As(err, &se) {
 		return se.StatusCode == 0 || se.StatusCode >= 500 || (se.StatusCode == http.StatusConflict && se.refusedBeforeAppend) || (se.StatusCode == http.StatusUnauthorized && se.expiredBeforeAppend)

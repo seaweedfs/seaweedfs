@@ -75,7 +75,7 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 
 	if err != nil {
 		glog.V(0).Infof("Symlink %s => %s: %v", entryFullPath, target, err)
-		return fuse.EIO
+		return entryCreateErrorToFuseStatus(err)
 	}
 
 	inode = wfs.inodeToPath.Lookup(entryFullPath, request.Entry.Attributes.Crtime, false, false, inode, true)

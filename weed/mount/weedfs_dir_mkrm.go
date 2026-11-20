@@ -116,7 +116,7 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 			return fuse.Status(syscall.EEXIST)
 		}
-		return fuse.EIO
+		return entryCreateErrorToFuseStatus(err)
 	}
 
 	// Map uid/gid back to local-space before writing attributes to the

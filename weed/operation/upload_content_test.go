@@ -73,6 +73,15 @@ func TestShouldReassignUpload(t *testing.T) {
 		{name: "401 unauthorized", err: &uploadStatusError{StatusCode: 401, err: fmt.Errorf("wrong jwt")}, want: false},
 		{name: "assign rpc transport", err: fmt.Errorf("assign volume: transport is closing"), want: true},
 		{name: "other permanent", err: fmt.Errorf("mismatching cookie"), want: false},
+		// A read-only path is the filer's verdict for any volume, unlike a read-only volume above.
+		{
+			name: "read-only path, path mentions transport",
+			err: fmt.Errorf("assign volume failure path:\"/buckets/b/transport/x\": %w", filer_pb.AssignVolumeResponseError(&filer_pb.AssignVolumeResponse{
+				Error:     "assign volume: read only: /buckets/b/ (e.g. bucket over quota)",
+				ErrorCode: filer_pb.FilerError_READ_ONLY,
+			})),
+			want: false,
+		},
 	}
 
 	for _, tc := range testCases {

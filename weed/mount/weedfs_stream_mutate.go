@@ -114,6 +114,10 @@ func createEntryFromResponse(resp *filer_pb.StreamMutateEntryResponse, req *file
 		return nil, &streamMutateError{msg: cr.Error, errno: syscall.EIO}
 	}
 	if cr.Error != "" {
+		// An older filer sends a read-only verdict as bare text, without the code.
+		if readOnly := filer_pb.LegacyReadOnlyError(cr.Error); readOnly != nil {
+			return nil, fmt.Errorf("CreateEntry %s/%s: %w", req.Directory, req.Entry.Name, readOnly)
+		}
 		return nil, &streamMutateError{msg: cr.Error, errno: syscall.EIO}
 	}
 	if resp.Error != "" {

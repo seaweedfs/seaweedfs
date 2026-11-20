@@ -71,6 +71,15 @@ func TestWriteErrorToFuseStatus(t *testing.T) {
 			errors.New("upload data: put http://volume:8080/3,0144: connection reset by peer"),
 			fuse.EIO,
 		},
+		{
+			"bucket over quota",
+			fmt.Errorf("flush data: upload data: filerGrpcAddress assign volume: assign volume failure count:1: %w",
+				filer_pb.AssignVolumeResponseError(&filer_pb.AssignVolumeResponse{
+					Error:     "assign volume: read only: /buckets/b/ (e.g. bucket over quota)",
+					ErrorCode: filer_pb.FilerError_READ_ONLY,
+				})),
+			fuse.Status(syscall.EDQUOT),
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -100,6 +109,8 @@ func TestIsRetryableFilerError(t *testing.T) {
 		{"unauthenticated", status.Error(codes.Unauthenticated, "missing creds"), false},
 		{"failed_precondition", status.Error(codes.FailedPrecondition, "not empty"), false},
 		{"create_condition_failed", fmt.Errorf("fh flush create /f: CreateEntry /f: %w", filer_pb.ErrPreconditionFailed), false},
+		{"create_read_only", fmt.Errorf("fh flush create /f: CreateEntry /f: %w", filer_pb.ErrReadOnly), false},
+		{"create_read_only_from_older_filer", fmt.Errorf("fh flush create /f: CreateEntry /f: %w", filer_pb.LegacyReadOnlyError("read only: /buckets/b/ (e.g. bucket over quota)")), false},
 		{"plain_error_retries", errors.New("random network glitch"), true},
 		{"wrapped_canceled_still_retries", fmt.Errorf("ctx: %w", status.Error(codes.Canceled, "closing")), true},
 		{"wrapped_not_found_still_skipped", fmt.Errorf("ctx: %w", status.Error(codes.NotFound, "gone")), false},
@@ -137,6 +148,69 @@ func TestRetryMetadataFlushIfShortCircuitsOnPermanentError(t *testing.T) {
 	}
 	if !errors.Is(err, permanent) {
 		t.Fatalf("err = %v, want permanent sentinel", err)
+	}
+}
+
+// readOnlyFlushCreateErrors are the shapes a close() of a new file sees when
+// its bucket is read-only, from a filer that codes the verdict and from one
+// that only sends text, wrapped the way flushMetadataToFiler wraps them.
+func readOnlyFlushCreateErrors() map[string]error {
+	const path = "/buckets/b/dir/.git/index.lock"
+	wrap := func(cause error) error {
+		return &contentPublicationError{cause: fmt.Errorf("fh flush create %s: %w", path, cause)}
+	}
+	return map[string]error{
+		"coded":  wrap(fmt.Errorf("CreateEntry /buckets/b/dir/index.lock: %w", filer_pb.ErrReadOnly)),
+		"legacy": wrap(fmt.Errorf("CreateEntry /buckets/b/dir/index.lock: %w", filer_pb.LegacyReadOnlyError("read only: /buckets/b/ (e.g. bucket over quota)"))),
+	}
+}
+
+// A close() on a read-only bucket used to retry its create four times (7 s)
+// and then return EIO. It must fail on the first answer, as EDQUOT.
+func TestRetryMetadataFlushIfStopsOnReadOnly(t *testing.T) {
+	originalSleep := metadataFlushSleep
+	t.Cleanup(func() {
+		metadataFlushSleep = originalSleep
+	})
+	metadataFlushSleep = func(_ context.Context, _ time.Duration) {
+		t.Fatal("sleep should not be called for a read-only verdict")
+	}
+
+	for name, readOnly := range readOnlyFlushCreateErrors() {
+		t.Run(name, func(t *testing.T) {
+			attempts := 0
+			err := retryMetadataFlushIf(context.Background(), func() error {
+				attempts++
+				return readOnly
+			}, isRetryableFilerError, nil)
+			if attempts != 1 {
+				t.Fatalf("attempts = %d, want 1", attempts)
+			}
+			if got, want := grpcErrorToFuseStatus(err), fuse.Status(syscall.EDQUOT); got != want {
+				t.Fatalf("grpcErrorToFuseStatus(%v) = %v, want %v", err, got, want)
+			}
+		})
+	}
+}
+
+// mkdir, symlink and link name the read-only verdict and keep EIO for the rest.
+func TestEntryCreateErrorToFuseStatus(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want fuse.Status
+	}{
+		{"read_only", fmt.Errorf("CreateEntry /buckets/b/d: %w", filer_pb.ErrReadOnly), fuse.Status(syscall.EDQUOT)},
+		{"read_only_from_older_filer", fmt.Errorf("CreateEntry /buckets/b/d: %w", filer_pb.LegacyReadOnlyError("read only: /buckets/b/ (e.g. bucket over quota)")), fuse.Status(syscall.EDQUOT)},
+		{"other", &streamMutateError{msg: "store unavailable", errno: syscall.EIO}, fuse.EIO},
+		{"unavailable", status.Error(codes.Unavailable, "connection refused"), fuse.EIO},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := entryCreateErrorToFuseStatus(tc.err); got != tc.want {
+				t.Fatalf("entryCreateErrorToFuseStatus(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 
