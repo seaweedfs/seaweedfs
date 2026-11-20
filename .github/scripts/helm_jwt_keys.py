@@ -77,8 +77,7 @@ def fixtures():
 
 
 def check_generated(value):
-    decoded = base64.b64decode(value, validate=True).decode("ascii")
-    assert len(decoded) == 10 and decoded.isascii() and decoded.isalnum(), "invalid generated JWT key"
+    assert len(value) == 64 and value.isascii() and value.isalnum(), "invalid generated JWT key"
 
 
 def check_helpers(helm, reference_helm):
