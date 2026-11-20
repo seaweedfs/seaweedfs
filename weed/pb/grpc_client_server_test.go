@@ -10,6 +10,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 // TestShouldInvalidateConnection_MarshalErrorIsPerRequest ensures that a
@@ -125,6 +127,28 @@ func TestShouldInvalidateConnection_PeerAnswerNamingTransportKeepsChannel(t *tes
 		if shouldInvalidateConnection(context.Background(), fmt.Errorf("touch: %w", answer)) {
 			t.Errorf("wrapped %v answer from the peer must not invalidate the shared connection", code)
 		}
+	}
+}
+
+// A filer verdict is the peer answering over a working channel. Its message
+// names a path, and "transport" in that path must not drop the shared channel.
+func TestShouldInvalidateConnection_FilerVerdictNamingTransportKeepsChannel(t *testing.T) {
+	const legacyText = "read only: /buckets/transport/ (e.g. bucket over quota)"
+	legacy := status.Error(codes.Unknown, legacyText)
+	for name, err := range map[string]error{
+		"read-only code":         fmt.Errorf("CreateEntry /buckets/transport/dir/f: %w", filer_pb.ErrReadOnly),
+		"other code":             fmt.Errorf("CreateEntry /buckets/transport/dir/f: %w", filer_pb.ErrEntryAlreadyExists),
+		"older filer, mapped":    fmt.Errorf("CreateEntry /buckets/transport/dir/f: %w", filer_pb.LegacyReadOnlyError(legacyText)),
+		"older filer status":     legacy,
+		"older filer, wrapped":   fmt.Errorf("create stage marker: %w", legacy),
+		"assign refused by rule": fmt.Errorf("assign volume failure path:\"/buckets/transport/f\": %w", filer_pb.AssignVolumeResponseError(&filer_pb.AssignVolumeResponse{Error: "assign volume: " + legacyText, ErrorCode: filer_pb.FilerError_READ_ONLY})),
+	} {
+		if shouldInvalidateConnection(context.Background(), err) {
+			t.Errorf("%s: %v must not invalidate the shared connection", name, err)
+		}
+	}
+	if !shouldInvalidateConnection(context.Background(), status.Error(codes.Unknown, "transport is closing")) {
+		t.Errorf("an Unknown transport failure must still invalidate the shared connection")
 	}
 }
 

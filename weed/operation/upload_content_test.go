@@ -1013,3 +1013,26 @@ func TestUploadWithRetryKeepsReadOnlyVerdict(t *testing.T) {
 		t.Fatalf("UploadWithRetry error = %v, want it to wrap filer_pb.ErrReadOnly", err)
 	}
 }
+
+// RetryForever waits out failures that clear. A read-only verdict does not
+// clear, so the upload must return it instead of looping.
+func TestUploadWithRetryForeverStopsOnReadOnlyVerdict(t *testing.T) {
+	client := &fsyncAssignClient{response: &filer_pb.AssignVolumeResponse{
+		Error:     "assign volume: read only: /unavailable",
+		ErrorCode: filer_pb.FilerError_READ_ONLY,
+	}}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err, _ := newUploader(http.DefaultClient).UploadWithRetry(client,
+			&filer_pb.AssignVolumeRequest{Path: "/unavailable/object"}, &UploadOption{RetryForever: true}, strings.NewReader("abc"))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, filer_pb.ErrReadOnly) {
+			t.Fatalf("UploadWithRetry error = %v, want it to wrap filer_pb.ErrReadOnly", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RetryForever kept retrying a read-only verdict")
+	}
+}

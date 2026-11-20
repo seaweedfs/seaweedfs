@@ -299,6 +299,24 @@ func AssignVolumeResponseError(resp *AssignVolumeResponse) error {
 	return &codedError{msg: resp.Error, sentinel: FilerErrorToSentinel(resp.ErrorCode)}
 }
 
+// IsFilerVerdict reports whether err carries a sentinel that a filer response
+// code maps to (see FilerErrorToSentinel). The filer answered over a working
+// channel, so the failure is neither transient nor a broken connection,
+// whatever its message says. The message names a path, which can contain a
+// word such as "transport" that text-based classifiers take for a network
+// failure.
+func IsFilerVerdict(err error) bool {
+	if err == nil {
+		return false
+	}
+	for code := range FilerError_name {
+		if sentinel := FilerErrorToSentinel(FilerError(code)); sentinel != nil && errors.Is(err, sentinel) {
+			return true
+		}
+	}
+	return false
+}
+
 // LegacyReadOnlyError returns an error matching ErrReadOnly when msg is how an
 // older filer refused a create on a read-only path, or nil otherwise. Such a
 // filer has no FilerError_READ_ONLY in CreateEntryResponse. It fails the create

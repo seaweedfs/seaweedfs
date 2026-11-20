@@ -276,6 +276,10 @@ func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, ho
 			if errors.As(err, &statusErr) && (statusErr.StatusCode == http.StatusConflict || (statusErr.StatusCode == http.StatusUnauthorized && statusErr.expiredBeforeAppend)) {
 				return shouldRetry(err)
 			}
+			// Forever is for failures that clear. A read-only path does not.
+			if errors.Is(err, filer_pb.ErrReadOnly) {
+				return false
+			}
 			return true
 		})
 	} else {

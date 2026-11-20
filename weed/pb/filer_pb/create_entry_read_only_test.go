@@ -3,6 +3,7 @@ package filer_pb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -67,5 +68,32 @@ func TestCreateEntryWithResponseKeepsLegacyReadOnlyText(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "rpc error") {
 		t.Fatalf("err = %v still carries the transport framing", err)
+	}
+}
+
+// IsFilerVerdict tells the filer's answer apart from a failed call, so that
+// retry and connection classifiers never read the path in its message.
+func TestIsFilerVerdict(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"read only", fmt.Errorf("CreateEntry /buckets/transport/f: %w", ErrReadOnly), true},
+		{"already exists", fmt.Errorf("CreateEntry /d/f: %w", ErrEntryAlreadyExists), true},
+		{"precondition failed", fmt.Errorf("CreateEntry /d/f: %w", ErrPreconditionFailed), true},
+		{"older filer read only", LegacyReadOnlyError("read only: /buckets/transport/ (e.g. bucket over quota)"), true},
+		{"coded assign refusal", AssignVolumeResponseError(&AssignVolumeResponse{Error: "assign volume: read only: /b/", ErrorCode: FilerError_READ_ONLY}), true},
+		{"uncoded assign failure", AssignVolumeResponseError(&AssignVolumeResponse{Error: "assign volume: no free volumes"}), false},
+		{"transport failure", status.Error(codes.Unavailable, "transport is closing"), false},
+		{"plain error", errors.New("read only: not a sentinel"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsFilerVerdict(tc.err); got != tc.want {
+				t.Fatalf("IsFilerVerdict(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }

@@ -237,3 +237,30 @@ func TestRetryMetadataFlushIfRetriesTransientErrors(t *testing.T) {
 		t.Fatalf("err = %v, want transient sentinel", err)
 	}
 }
+
+// withFilerClient must not retry a filer verdict, even when the path in its
+// message contains a word the transient-text match looks for.
+func TestIsRetryableFilerCall(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"read only, path names transport", fmt.Errorf("CreateEntry /buckets/b/transport/f: %w", filer_pb.ErrReadOnly), false},
+		{"older filer read only", fmt.Errorf("CreateEntry /buckets/b/transport/f: %w", filer_pb.LegacyReadOnlyError("read only: /buckets/b/ (e.g. bucket over quota)")), false},
+		{"assign refused by rule", fmt.Errorf("assign volume failure path:\"/buckets/b/transport/f\": %w", filer_pb.AssignVolumeResponseError(&filer_pb.AssignVolumeResponse{
+			Error:     "assign volume: read only: /buckets/b/ (e.g. bucket over quota)",
+			ErrorCode: filer_pb.FilerError_READ_ONLY,
+		})), false},
+		{"filer unavailable", status.Error(codes.Unavailable, "connection refused"), true},
+		{"transport failure text", errors.New("assign volume: transport is closing"), true},
+		{"not transient", errors.New("mismatching cookie"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isRetryableFilerCall(tc.err); got != tc.want {
+				t.Fatalf("isRetryableFilerCall(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
