@@ -165,8 +165,10 @@ impl SourceReadRequest {
     fn served_from_source(&self, n: &Needle) -> bool {
         if self.is_head {
             // HEAD is meta-only unless the payload is needed to expand a
-            // manifest or to answer an image transform's length.
-            return !self.has_image_ops && !(n.is_chunk_manifest() && !self.bypass_cm);
+            // manifest or to answer a decoded or transformed length.
+            return !self.has_image_ops
+                && !n.is_compressed()
+                && !(n.is_chunk_manifest() && !self.bypass_cm);
         }
         self.direct(n) && (self.has_range || n.data_size > STREAMING_THRESHOLD)
     }
@@ -1644,8 +1646,8 @@ async fn read_volume_needle(
 
     let can_stream =
         can_direct_source_read && n.data_size > STREAMING_THRESHOLD && !has_range && !is_head;
-    // HEAD is meta-only when served_from_source loaded no payload. A chunk
-    // manifest without cm=false is read in full so expansion can run.
+    // HEAD is meta-only when served_from_source loaded no payload. A compressed
+    // needle, or a chunk manifest without cm=false, is read in full.
     let can_handle_head_from_meta = stream_info.is_some() && is_head;
     let can_handle_range_from_source = can_direct_source_read && has_range;
 
