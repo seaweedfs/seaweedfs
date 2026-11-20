@@ -1115,6 +1115,12 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 			return result, nil
 		}
 
+		if lastErr == nil {
+			// Every filer was skipped: one tripped after the pass chose to skip
+			// unhealthy filers. The next pass asks them anyway.
+			lastErr = status.Error(codes.Unavailable, "no filer was asked")
+		}
+
 		// All filers failed on this attempt
 		// Check if the error is retryable (transient gRPC error)
 		if !isRetryableGrpcError(lastErr) {

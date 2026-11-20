@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -144,5 +145,31 @@ func TestFilerUnreachable(t *testing.T) {
 				t.Fatalf("filerUnreachable(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+// A filer can trip its breaker after the pass decided to skip unhealthy
+// filers but before the pass reaches it, as when a concurrent lookup records
+// its failure in between. A pass that asked nobody must be retried, not
+// reported as a non-retryable failure with no error.
+func TestFilerTrippedDuringPassIsRetried(t *testing.T) {
+	filer := &lookupFiler{known: map[string]string{"8": "10.0.0.8:8080"}}
+	fc := newBreakerTestClient(t, startLookupFiler(t, filer))
+	health := fc.filerHealth[0]
+	now := time.Now()
+	atomic.StoreInt32(&health.failureCount, fc.failureThreshold)
+	atomic.StoreInt64(&health.lastFailureTimeNs, now.Add(-2*fc.resetTimeout).UnixNano())
+	var trip sync.Once
+	fc.now = func() time.Time {
+		trip.Do(func() { atomic.StoreInt64(&health.lastFailureTimeNs, now.UnixNano()) })
+		return now
+	}
+
+	locations, err := (&filerVolumeProvider{filerClient: fc}).LookupVolumeIds(context.Background(), []string{"8"})
+	if err != nil {
+		t.Fatalf("lookup with the filer tripped mid-pass: %v", err)
+	}
+	if len(locations["8"]) != 1 || filer.calls.Load() == 0 {
+		t.Fatalf("locations = %v after %d filer calls", locations, filer.calls.Load())
 	}
 }
