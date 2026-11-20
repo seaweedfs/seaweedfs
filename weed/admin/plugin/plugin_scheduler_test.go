@@ -873,7 +873,7 @@ func TestDispatchScheduledProposalsDrainsStartedJobOnWindowClose(t *testing.T) {
 		JobType:     jobType,
 		Success:     true,
 		CompletedAt: timestamppb.Now(),
-	})
+	}, nil)
 
 	result := <-resultCh
 	if result[0] != 1 || result[1] != 0 || result[2] != 1 {
@@ -1343,7 +1343,7 @@ func TestDispatchWaitsForItsOwnLaneToReleaseCapacity(t *testing.T) {
 	}
 	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
 		RequestId: first.RequestId, JobId: execReq.Job.JobId, JobType: "admin_script", Success: true, CompletedAt: timestamppb.Now(),
-	})
+	}, nil)
 	if result := <-resultCh; result != [3]int{1, 0, 0} {
 		t.Fatalf("unexpected dispatch counts: success=%d errors=%d canceled=%d", result[0], result[1], result[2])
 	}
@@ -1445,7 +1445,7 @@ func TestDispatchWaitsForTheEchoOfItsOwnCompletedJob(t *testing.T) {
 				pluginSvc.registry.UpdateHeartbeat(workerID, running)
 				pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
 					RequestId: message.RequestId, JobId: execReq.Job.JobId, JobType: "vacuum", Success: true, CompletedAt: timestamppb.Now(),
-				})
+				}, nil)
 			}
 
 			complete(<-session.outgoing)
