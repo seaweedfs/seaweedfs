@@ -146,10 +146,14 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 	done := make(chan struct{})
 	defer close(done)
 
+	keys := make(mergedKeys)
+	histories := make([]*keyHistoryStream, 0, len(replicas))
 	sources := make([]needleStream, 0, len(replicas))
-	for _, replica := range replicas {
+	for i, replica := range replicas {
 		server := pb.NewServerAddressFromDataNode(replica.location.dataNode)
-		sources = append(sources, startTailNeedleStream(commandEnv.option.GrpcDialOption, volumeId, server, done))
+		history := &keyHistoryStream{needleStream: startTailNeedleStream(commandEnv.option.GrpcDialOption, volumeId, server, done), bit: 1 << i, keys: keys}
+		histories = append(histories, history)
+		sources = append(sources, history)
 	}
 
 	mergeErr := operation.WithVolumeServerClient(false, targetServer, commandEnv.option.GrpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
@@ -157,9 +161,8 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 		if version == 0 {
 			version = needle.GetCurrentVersion()
 		}
-		written := make(map[types.NeedleId]struct{})
 		return mergeNeedleStreams(sources, func(streamIndex int, n *needle.Needle) error {
-			return writeMergedNeedle(client, volumeId, version, written, n)
+			return keys.writeMergedNeedle(client, volumeId, version, n, histories[streamIndex].hadKey)
 		})
 	})
 	if mergeErr != nil {
@@ -192,11 +195,38 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 	return nil
 }
 
+// mergedKeys holds, per key, a bit for each source stream that has returned a
+// record for it, and mergedKeyDeleted once the merged copy holds it deleted.
+type mergedKeys map[types.NeedleId]uint64
+
+const mergedKeyDeleted = uint64(1) << 63
+
+// keyHistoryStream records the keys its source returns. hadKey reports whether
+// the key of the record returned last appeared earlier in the same source.
+type keyHistoryStream struct {
+	needleStream
+	bit    uint64
+	keys   mergedKeys
+	hadKey bool
+}
+
+func (s *keyHistoryStream) Next() (*needle.Needle, bool) {
+	n, ok := s.needleStream.Next()
+	if ok {
+		s.hadKey = s.keys[n.Id]&s.bit != 0
+		s.keys[n.Id] |= s.bit
+	}
+	return n, ok
+}
+
 // writeMergedNeedle copies one merged record to the target. A delete and an
-// empty write both arrive as a size-0 record; it is a delete when the key
-// already has a record in the merged stream, and an empty write otherwise.
-func writeMergedNeedle(client volume_server_pb.VolumeServerClient, volumeId needle.VolumeId, version needle.Version, written map[types.NeedleId]struct{}, n *needle.Needle) error {
-	if _, seen := written[n.Id]; seen && n.Size == 0 {
+// empty write both arrive as a size-0 record; it is a delete when its source
+// already had a record for the key, and an empty write otherwise.
+func (keys mergedKeys) writeMergedNeedle(client volume_server_pb.VolumeServerClient, volumeId needle.VolumeId, version needle.Version, n *needle.Needle, sourceHadKey bool) error {
+	if n.Size == 0 && sourceHadKey {
+		if keys[n.Id]&mergedKeyDeleted != 0 {
+			return nil
+		}
 		fid := needle.NewFileId(volumeId, uint64(n.Id), 0).String()
 		resp, err := client.BatchDelete(context.Background(), &volume_server_pb.BatchDeleteRequest{
 			FileIds:         []string{fid},
@@ -210,6 +240,7 @@ func writeMergedNeedle(client volume_server_pb.VolumeServerClient, volumeId need
 				return fmt.Errorf("delete merged needle %s: status %d: %s", fid, result.Status, result.Error)
 			}
 		}
+		keys[n.Id] |= mergedKeyDeleted
 		return nil
 	}
 	blob, size, err := needleBlobFromNeedle(n, version)
@@ -224,7 +255,7 @@ func writeMergedNeedle(client volume_server_pb.VolumeServerClient, volumeId need
 	}); err != nil {
 		return err
 	}
-	written[n.Id] = struct{}{}
+	keys[n.Id] &^= mergedKeyDeleted
 	return nil
 }
 

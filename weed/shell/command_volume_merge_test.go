@@ -589,30 +589,49 @@ func (c *mergeTargetClient) BatchDelete(_ context.Context, req *volume_server_pb
 }
 
 func TestWriteMergedNeedleSizeZeroRecords(t *testing.T) {
-	record := func(id uint64, data string) *needle.Needle {
-		return &needle.Needle{Id: types.Uint64ToNeedleId(id), Cookie: 7, Data: []byte(data), Size: types.Size(len(data))}
+	second := int64(time.Second)
+	record := func(id uint64, data string, at int64) *needle.Needle {
+		return &needle.Needle{Id: types.Uint64ToNeedleId(id), Cookie: 7, Data: []byte(data), Size: types.Size(len(data)), AppendAtNs: uint64(at)}
+	}
+	streamA := []*needle.Needle{
+		record(1, "live", 1*second),
+		record(1, "", 2*second),
+		record(2, "", 3*second),
+		record(3, "rewritten", 4*second),
+		record(3, "again", 5*second),
+		record(4, "kept", 7*second),
+	}
+	// The same writes reach replica B a moment later, two of them more than
+	// a dedup window later, and B has a delete that A missed.
+	streamB := []*needle.Needle{
+		record(1, "live", 1*second+1),
+		record(1, "", 9*second),
+		record(2, "", 10*second),
+		record(4, "kept", 7*second+1),
+		record(4, "", 20*second),
+	}
+
+	keys := make(mergedKeys)
+	histories := []*keyHistoryStream{
+		{needleStream: &sliceNeedleStream{needles: streamA}, bit: 1 << 0, keys: keys},
+		{needleStream: &sliceNeedleStream{needles: streamB}, bit: 1 << 1, keys: keys},
 	}
 	client := &mergeTargetClient{}
-	written := make(map[types.NeedleId]struct{})
-	for _, n := range []*needle.Needle{
-		record(1, "live"),
-		record(1, ""),
-		record(2, ""),
-		record(2, ""),
-		record(3, "rewritten"),
-		record(3, "again"),
-	} {
-		if err := writeMergedNeedle(client, 5, needle.GetCurrentVersion(), written, n); err != nil {
-			t.Fatalf("merge needle %d: %v", n.Id, err)
-		}
+	err := mergeNeedleStreams([]needleStream{histories[0], histories[1]}, func(streamIndex int, n *needle.Needle) error {
+		return keys.writeMergedNeedle(client, 5, needle.GetCurrentVersion(), n, histories[streamIndex].hadKey)
+	})
+	if err != nil {
+		t.Fatalf("merge: %v", err)
 	}
 	want := []string{
 		"write 1 size 9",
 		"delete 5,0100000000 skipCookie=true",
 		"write 2 size 0",
-		"delete 5,0200000000 skipCookie=true",
 		"write 3 size 14",
 		"write 3 size 10",
+		"write 4 size 9",
+		"write 2 size 0",
+		"delete 5,0400000000 skipCookie=true",
 	}
 	if !reflect.DeepEqual(client.ops, want) {
 		t.Errorf("target ops:\n got %q\nwant %q", client.ops, want)
