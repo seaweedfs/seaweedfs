@@ -285,7 +285,7 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 				continue
 			}
 
-			live := vc.fillLocations(uint32(vid), locations, fillEpoch)
+			live := vc.fillLocations(uint32(vid), locations, fillEpoch, asked)
 			if len(live) > 0 {
 				batchResult[vidString] = live
 			}
@@ -479,10 +479,11 @@ func (vc *vidMapClient) untombstone(vid uint32, loc Location) {
 
 // fillLocations returns the locations of a provider answer for vid that may
 // be served, and caches them unless a reset, clear or confirmation happened
-// since epoch. Holding recentDeletesMu across the check and the add keeps a
-// concurrent removal or confirmation from being undone, and caches the
-// answer for vid whole or not at all.
-func (vc *vidMapClient) fillLocations(vid uint32, locations []Location, epoch uint64) (live []Location) {
+// since epoch, or vid has set-aside locations learned after the lookup was
+// asked, as marked by learnedSoFar. Holding recentDeletesMu across the check
+// and the add keeps a concurrent removal or confirmation from being undone,
+// and caches the answer for vid whole or not at all.
+func (vc *vidMapClient) fillLocations(vid uint32, locations []Location, epoch, asked uint64) (live []Location) {
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
 	vc.expireRecentDeletes(time.Now())
@@ -491,9 +492,9 @@ func (vc *vidMapClient) fillLocations(vid uint32, locations []Location, epoch ui
 			continue
 		}
 		live = append(live, loc)
-		if vc.vidMapEpoch == epoch {
-			vc.vidMap.addLocation(vid, loc)
-		}
+	}
+	if vc.vidMapEpoch == epoch {
+		vc.vidMap.addAnswer(vid, live, asked)
 	}
 	return live
 }

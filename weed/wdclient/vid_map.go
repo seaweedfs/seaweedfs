@@ -332,6 +332,28 @@ func (vc *vidMap) addLocation(vid uint32, location Location) {
 	vc.addLocationToMap(vc.vid2Locations, vid, location)
 }
 
+// addAnswer caches the locations a lookup answer reported for vid, as
+// addLocation does, unless a failed read has set aside locations of vid that
+// were learned after the lookup was asked, as marked by learnedSoFar. Those
+// are newer than the answer, and adding it would replace them. It reports
+// whether it cached the answer.
+func (vc *vidMap) addAnswer(vid uint32, locations []Location, asked uint64) bool {
+	vc.Lock()
+	defer vc.Unlock()
+
+	for _, vid2Locations := range []map[uint32]*locationsEntry{vc.vid2Locations, vc.ecVid2Locations} {
+		if entry, found := vid2Locations[vid]; found && entry.state != entryLearned && entry.learnedAt > asked {
+			return false
+		}
+	}
+	for _, location := range locations {
+		glog.V(4).Infof("+ volume id %d: %+v", vid, location)
+		vc.dropSetAsideEntry(vc.ecVid2Locations, vid, vc.learned)
+		vc.addLocationToMap(vc.vid2Locations, vid, location)
+	}
+	return true
+}
+
 func (vc *vidMap) addEcLocation(vid uint32, location Location) {
 	vc.Lock()
 	defer vc.Unlock()
