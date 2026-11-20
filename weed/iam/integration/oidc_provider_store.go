@@ -285,7 +285,7 @@ func (f *FilerOIDCProviderStore) StoreProvider(ctx context.Context, filerAddress
 	}
 
 	return f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+		err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 			Directory: f.basePath,
 			Entry: &filer_pb.Entry{
 				Name:        f.fileName(record.ARN),

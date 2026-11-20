@@ -47,7 +47,7 @@ func (c *commandFsMkdir) Do(args []string, commandEnv *CommandEnv, writer io.Wri
 
 	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		_, createErr := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+		createErr := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
 			Directory: dir,
 			Entry: &filer_pb.Entry{
 				Name:        name,
