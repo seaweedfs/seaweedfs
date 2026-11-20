@@ -369,6 +369,8 @@ func removeDuplicateSlashes(object string) string {
 
 // hasChildren checks if a path has any child objects (is a directory with contents).
 // On unexpected errors, it logs and conservatively returns true to avoid hiding entries.
+// It answers the listing, where keeping an entry is the safe side; HEAD of a 0-byte
+// file asks zeroByteFileHasChildren instead, which fails the other way.
 //
 // This helper function is used to distinguish implicit directories from regular files or empty directories.
 // An implicit directory is one that exists only because it has children, not because it was explicitly created.
@@ -378,10 +380,6 @@ func removeDuplicateSlashes(object string) string {
 //   - Returns true if any child exists, false otherwise
 //   - Efficient: only fetches one entry to minimize overhead
 //
-// Used by HeadObjectHandler to implement AWS S3-compatible implicit directory behavior:
-//   - If a 0-byte object or directory has children → it's an implicit directory → HEAD returns 404
-//   - If a 0-byte object or directory has no children → it's empty → HEAD returns 200
-//
 // Examples:
 //
 //	hasChildren("bucket", "dataset") where "dataset/file.txt" exists → true
@@ -389,6 +387,46 @@ func removeDuplicateSlashes(object string) string {
 //
 // Performance: ~1-5ms per call (one gRPC LIST request with Limit=1)
 func (s3a *S3ApiServer) hasChildren(ctx context.Context, bucket, prefix string) bool {
+	found, err := s3a.probeChildren(ctx, bucket, prefix)
+	if err != nil {
+		glog.V(1).Infof("hasChildren: list entries failed for %s/%s: %v", bucket, strings.TrimPrefix(prefix, "/"), err)
+		return true
+	}
+	return found
+}
+
+// zeroByteFileHasChildren reports whether a regular 0-byte file has children, which
+// makes HEAD answer it as an implicit directory (404) so clients like s3fs fall back
+// to LIST:
+//   - If the 0-byte file has children → it's an implicit directory → HEAD returns 404
+//   - If it has no children → it's an empty file → HEAD returns 200
+//
+// The file was just found, so a probe that fails is no evidence of children, and a
+// 404 would tell the client an existing object is gone: a copy tool that HEADs the
+// key it just wrote then reports the copy as failed. A failed probe therefore
+// answers false and HEAD serves the file. One way the probe fails is a request
+// context canceled while the client still waits for the answer: net/http cancels
+// a connection's context when its background read fails, and a keep-alive
+// connection whose read deadline expired during a long, silent request goes on
+// serving later requests with that canceled context.
+func (s3a *S3ApiServer) zeroByteFileHasChildren(ctx context.Context, bucket, object string) bool {
+	found, err := s3a.probeChildren(ctx, bucket, object)
+	if err != nil {
+		glog.V(1).Infof("HEAD %s/%s: child probe failed, serving the 0-byte file: %v", bucket, strings.TrimPrefix(object, "/"), err)
+		return false
+	}
+	return found
+}
+
+// probeChildren lists at most one child of prefix. A prefix the filer does not
+// know has no children.
+func (s3a *S3ApiServer) probeChildren(ctx context.Context, bucket, prefix string) (bool, error) {
+	// With the context already ended every filer of the failover walk would fail
+	// at once and be counted as a failed filer; there is nothing to ask.
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+
 	// Clean up prefix: remove leading slashes
 	cleanPrefix := strings.TrimPrefix(prefix, "/")
 
@@ -407,13 +445,12 @@ func (s3a *S3ApiServer) hasChildren(ctx context.Context, bucket, prefix string) 
 	}, "", true, 1)
 
 	if err == nil {
-		return found
+		return found, nil
 	}
 	if errors.Is(err, filer_pb.ErrNotFound) {
-		return false
+		return false, nil
 	}
-	glog.V(1).Infof("hasChildren: list entries failed for %s/%s: %v", bucket, cleanPrefix, err)
-	return true
+	return false, err
 }
 
 // isBareDirectory reports whether entry is a directory carrying no object data of its own.
@@ -2812,6 +2849,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 	//
 	// Edge Cases Handled:
 	//   - Empty files (0-byte, no children) → 200 OK (legitimate empty file)
+	//   - Empty files whose child probe fails → 200 OK (the file exists; a failed probe is no evidence of children)
 	//   - Empty directories (no children) → 404 Not Found (directories are not objects)
 	//   - Explicit directory requests (trailing slash) → 200 OK (handled earlier)
 	//   - Versioned objects → Skip this check (different semantics)
@@ -2832,7 +2870,7 @@ func (s3a *S3ApiServer) HeadObjectHandler(w http.ResponseWriter, r *http.Request
 			}
 			if isZeroByteFile {
 				// Check if it has children (making it an implicit directory)
-				if s3a.hasChildren(r.Context(), bucket, object) {
+				if s3a.zeroByteFileHasChildren(r.Context(), bucket, object) {
 					// This is an implicit directory with children
 					// Return 404 to force clients (like s3fs) to use LIST-based discovery
 					s3a.writeAnonymousAwareNotFound(w, r, bucket, s3err.ErrNoSuchKey)
