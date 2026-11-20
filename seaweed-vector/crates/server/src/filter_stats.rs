@@ -46,6 +46,25 @@ struct IndexStats {
     last: u64,
 }
 
+impl IndexStats {
+    /// Starts counting on `table`, retiring the table counted on before.
+    fn replace(&mut self, table: &str) {
+        let mut retired = std::mem::take(&mut self.retired);
+        if !self.table.is_empty() {
+            retired.push(std::mem::take(&mut self.table));
+            if retired.len() > MAX_RETIRED_TABLES {
+                retired.remove(0);
+            }
+        }
+        *self = IndexStats {
+            table: table.to_string(),
+            retired,
+            last: self.last,
+            ..Default::default()
+        };
+    }
+}
+
 /// Whether bucket `at` is still in the window of bucket `now`.
 fn live(at: u64, now: u64) -> bool {
     at + BUCKETS as u64 > now
@@ -74,9 +93,15 @@ impl FilterStats {
         (now.duration_since(self.start).as_secs() / BUCKET.as_secs()) + 1
     }
 
-    /// Drops the stats of `index`, whose table was created or dropped.
-    pub fn forget(&self, index: &str) {
-        self.indexes.lock().unwrap().remove(index);
+    /// Drops the stats of `index`, which now holds `table` ("" once
+    /// dropped): late queries of the table it held before are not counted.
+    pub fn forget(&self, index: &str, table: &str) {
+        let mut indexes = self.indexes.lock().unwrap();
+        if let Some(stats) = indexes.get_mut(index)
+            && (table.is_empty() || stats.table != table)
+        {
+            stats.replace(table);
+        }
     }
 
     /// One query of `index`, whose table is `table`, that took `elapsed` and
@@ -119,19 +144,11 @@ impl FilterStats {
             if stats.retired.iter().any(|t| t == table) {
                 return;
             }
-            if !stats.table.is_empty() {
-                let mut retired = std::mem::take(&mut stats.retired);
-                retired.push(std::mem::take(&mut stats.table));
-                if retired.len() > MAX_RETIRED_TABLES {
-                    retired.remove(0);
-                }
-                *stats = IndexStats {
-                    retired,
-                    last: stats.last,
-                    ..Default::default()
-                };
+            if stats.table.is_empty() {
+                stats.table = table.to_string();
+            } else {
+                stats.replace(table);
             }
-            stats.table = table.to_string();
         }
         stats.last = stats.last.max(at);
         for (key, kinds) in keys {
@@ -352,7 +369,7 @@ mod tests {
         // A late query of the old table is not counted on the new one.
         stats.record_table_at("b/i", "t1", &author, Duration::ZERO, t0);
         assert_eq!(count(&stats), 1);
-        stats.forget("b/i");
+        stats.forget("b/i", "");
         assert_eq!(count(&stats), 0);
         // A first query records its table: a later table starts over.
         stats.record_table_at("b/i", "t3", &author, Duration::ZERO, t0);
@@ -366,7 +383,7 @@ mod tests {
         let t0 = stats.start;
         let author = keys(&[("author", operand::STRING)]);
         stats.record_table_at("b/i", "t1", &author, Duration::ZERO, t0);
-        stats.forget("b/i");
+        stats.forget("b/i", "");
         stats.record_table_at("b/i", "t2", &author, Duration::ZERO, t0);
         stats.record_table_at("b/i", "t2", &author, Duration::ZERO, t0);
         stats.record_table_at("b/i", "t1", &author, Duration::ZERO, t0);

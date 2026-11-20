@@ -920,7 +920,8 @@ impl VectorService for VectorServer {
         .await;
         let dataset = match dataset {
             Ok(dataset) => {
-                self.filter_stats.forget(&table.id.join("/"));
+                self.filter_stats
+                    .forget(&table.id.join("/"), table_id(&dataset));
                 dataset
             }
             Err(error) => match self.open(&table).await {
@@ -973,7 +974,7 @@ impl VectorService for VectorServer {
                 store.remove_dir_all(path).await.map_err(internal)?;
             }
         }
-        self.filter_stats.forget(&table.id.join("/"));
+        self.filter_stats.forget(&table.id.join("/"), "");
         Ok(Response::new(pb::DropIndexResponse {}))
     }
 
