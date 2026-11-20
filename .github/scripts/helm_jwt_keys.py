@@ -276,6 +276,16 @@ def check_configmap_release_upgrade(helm, context):
         assert secret_keys(kubectl, name) == before, "upgrade from the ConfigMap chart changed a key"
         assert not exists("configmap"), "upgrade left the ConfigMap behind"
         print("PASS upgrade: ConfigMap chart release moves its keys to the Secret")
+
+        # The unprefixed legacy name can belong to another release in the namespace.
+        other = "seaweedfs-security-config"
+        run(*kubectl, "create", "configmap", other, '--from-literal=security.toml=[jwt.signing]\nkey = "other"')
+        run(*kubectl, "annotate", "configmap", other, "meta.helm.sh/release-name=other",
+            "meta.helm.sh/release-namespace=" + namespace)
+        run(helm, *upgrade, "--set", "master.updatePartition=1")
+        assert secret_keys(kubectl, name) == before, "another release's ConfigMap changed a key"
+        assert run(*kubectl, "get", "configmap", other, "-o", "name").strip(), "removed another release's ConfigMap"
+        print("PASS upgrade: another release's legacy ConfigMap does not block a partitioned upgrade")
     finally:
         run(*kubectl, "delete", "namespace", namespace, "--wait=false")
 
