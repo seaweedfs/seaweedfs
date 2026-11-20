@@ -148,6 +148,11 @@ func ShouldReassignUpload(err error) bool {
 	if err == nil {
 		return false
 	}
+	// Another assign gets the same verdict. The text below names the path, so
+	// a path with "transport" in it must not turn the verdict into a retry.
+	if errors.Is(err, filer_pb.ErrReadOnly) {
+		return false
+	}
 	var se *uploadStatusError
 	if errors.As(err, &se) {
 		return se.StatusCode == 0 || se.StatusCode >= 500 || (se.StatusCode == http.StatusConflict && se.refusedBeforeAppend) || (se.StatusCode == http.StatusUnauthorized && se.expiredBeforeAppend)
@@ -270,6 +275,10 @@ func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, ho
 			var statusErr *uploadStatusError
 			if errors.As(err, &statusErr) && (statusErr.StatusCode == http.StatusConflict || (statusErr.StatusCode == http.StatusUnauthorized && statusErr.expiredBeforeAppend)) {
 				return shouldRetry(err)
+			}
+			// Forever is for failures that clear. A read-only path does not.
+			if errors.Is(err, filer_pb.ErrReadOnly) {
+				return false
 			}
 			return true
 		})

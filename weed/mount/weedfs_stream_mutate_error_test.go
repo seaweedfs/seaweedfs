@@ -80,6 +80,31 @@ func TestStreamMutateCreateEntryUnwrapsAlreadyExists(t *testing.T) {
 	}
 }
 
+// A read-only verdict must reach Mkdir as ErrReadOnly (EDQUOT), both coded and
+// as the bare text an older filer sends.
+func TestStreamMutateCreateEntryUnwrapsReadOnly(t *testing.T) {
+	const msg = "read only: /buckets/b/ (e.g. bucket over quota)"
+	for name, cr := range map[string]*filer_pb.CreateEntryResponse{
+		"coded":  {Error: msg, ErrorCode: filer_pb.FilerError_READ_ONLY},
+		"legacy": {Error: msg},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resp := &filer_pb.StreamMutateEntryResponse{
+				Error:    msg,
+				Errno:    int32(syscall.EIO),
+				Response: &filer_pb.StreamMutateEntryResponse_CreateResponse{CreateResponse: cr},
+			}
+			_, err := createEntryFromResponse(resp, &filer_pb.CreateEntryRequest{
+				Directory: "/buckets/b",
+				Entry:     &filer_pb.Entry{Name: "d"},
+			})
+			if !errors.Is(err, filer_pb.ErrReadOnly) {
+				t.Fatalf("err = %v, want it to wrap ErrReadOnly", err)
+			}
+		})
+	}
+}
+
 // Any other create failure keeps the generic errno rather than inventing one.
 func TestStreamMutateCreateEntryKeepsGenericFailure(t *testing.T) {
 	resp := &filer_pb.StreamMutateEntryResponse{

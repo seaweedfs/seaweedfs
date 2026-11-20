@@ -12,9 +12,19 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
+// readOnlyStatus is the status the kernel gets when the filer refuses a write
+// under a read-only filer.conf rule. That rule is how bucket quotas are
+// enforced (s3.bucket.quota.enforce), so EDQUOT names the usual cause, where
+// EIO named none. A path locked by hand reads as over quota too. A cluster out
+// of space stays ENOSPC.
+const readOnlyStatus = fuse.Status(syscall.EDQUOT)
+
 func grpcErrorToFuseStatus(err error) fuse.Status {
 	if err == nil {
 		return fuse.OK
+	}
+	if errors.Is(err, filer_pb.ErrReadOnly) {
+		return readOnlyStatus
 	}
 
 	// Unpack error for inspection
@@ -65,10 +75,24 @@ func isStorageFullError(err error) bool {
 }
 
 // writeErrorToFuseStatus maps a dirty-page write/flush failure to the status
-// returned to the kernel: ENOSPC when the cluster is out of space, EIO otherwise.
+// returned to the kernel: EDQUOT when the path is read-only (a bucket over
+// quota), ENOSPC when the cluster is out of space, EIO otherwise.
 func writeErrorToFuseStatus(err error) fuse.Status {
+	if errors.Is(err, filer_pb.ErrReadOnly) {
+		return readOnlyStatus
+	}
 	if isStorageFullError(err) {
 		return fuse.Status(syscall.ENOSPC)
+	}
+	return fuse.EIO
+}
+
+// entryCreateErrorToFuseStatus maps a failed mkdir, symlink or link create to
+// the status returned to the kernel. Only the read-only verdict gets its own
+// errno. Everything else stays the EIO these calls have always returned.
+func entryCreateErrorToFuseStatus(err error) fuse.Status {
+	if errors.Is(err, filer_pb.ErrReadOnly) {
+		return readOnlyStatus
 	}
 	return fuse.EIO
 }
@@ -86,6 +110,11 @@ func isRetryableFilerError(err error) bool {
 	}
 	// CreateEntry reports a failed write condition in its response, not as a status.
 	if errors.Is(err, filer_pb.ErrPreconditionFailed) {
+		return false
+	}
+	// A read-only path is a verdict. It holds until the bucket is back under
+	// quota, so retrying only held close() for 7 s before the same failure.
+	if errors.Is(err, filer_pb.ErrReadOnly) {
 		return false
 	}
 	if s, ok := status.FromError(err); ok {

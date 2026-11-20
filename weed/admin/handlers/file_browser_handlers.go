@@ -222,7 +222,7 @@ func (h *FileBrowserHandlers) CreateFolder(w http.ResponseWriter, r *http.Reques
 
 	// Create folder via filer
 	err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+		err := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
 			Directory: path.Dir(fullPath),
 			Entry: &filer_pb.Entry{
 				Name:        path.Base(fullPath),

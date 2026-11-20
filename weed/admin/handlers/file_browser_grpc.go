@@ -180,7 +180,7 @@ func (h *FileBrowserHandlers) uploadFileGrpc(ctx context.Context, filePath strin
 	entry.Chunks = chunkResult.FileChunks
 
 	err = h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, createErr := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+		createErr := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 			Directory: dir,
 			Entry:     entry,
 		})

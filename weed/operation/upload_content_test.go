@@ -73,6 +73,15 @@ func TestShouldReassignUpload(t *testing.T) {
 		{name: "401 unauthorized", err: &uploadStatusError{StatusCode: 401, err: fmt.Errorf("wrong jwt")}, want: false},
 		{name: "assign rpc transport", err: fmt.Errorf("assign volume: transport is closing"), want: true},
 		{name: "other permanent", err: fmt.Errorf("mismatching cookie"), want: false},
+		// A read-only path is the filer's verdict for any volume, unlike a read-only volume above.
+		{
+			name: "read-only path, path mentions transport",
+			err: fmt.Errorf("assign volume failure path:\"/buckets/b/transport/x\": %w", filer_pb.AssignVolumeResponseError(&filer_pb.AssignVolumeResponse{
+				Error:     "assign volume: read only: /buckets/b/ (e.g. bucket over quota)",
+				ErrorCode: filer_pb.FilerError_READ_ONLY,
+			})),
+			want: false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -1002,5 +1011,28 @@ func TestUploadWithRetryKeepsReadOnlyVerdict(t *testing.T) {
 		&filer_pb.AssignVolumeRequest{Path: "/unavailable/object"}, &UploadOption{}, strings.NewReader("abc"))
 	if !errors.Is(err, filer_pb.ErrReadOnly) {
 		t.Fatalf("UploadWithRetry error = %v, want it to wrap filer_pb.ErrReadOnly", err)
+	}
+}
+
+// RetryForever waits out failures that clear. A read-only verdict does not
+// clear, so the upload must return it instead of looping.
+func TestUploadWithRetryForeverStopsOnReadOnlyVerdict(t *testing.T) {
+	client := &fsyncAssignClient{response: &filer_pb.AssignVolumeResponse{
+		Error:     "assign volume: read only: /unavailable",
+		ErrorCode: filer_pb.FilerError_READ_ONLY,
+	}}
+	done := make(chan error, 1)
+	go func() {
+		_, _, err, _ := newUploader(http.DefaultClient).UploadWithRetry(client,
+			&filer_pb.AssignVolumeRequest{Path: "/unavailable/object"}, &UploadOption{RetryForever: true}, strings.NewReader("abc"))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, filer_pb.ErrReadOnly) {
+			t.Fatalf("UploadWithRetry error = %v, want it to wrap filer_pb.ErrReadOnly", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RetryForever kept retrying a read-only verdict")
 	}
 }

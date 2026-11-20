@@ -273,7 +273,7 @@ func (f *FilerRoleStore) StoreRole(ctx context.Context, filerAddress string, rol
 		}
 
 		glog.V(3).Infof("Storing role %s at %s", roleName, rolePath)
-		_, err := client.CreateEntry(ctx, request)
+		err := filer_pb.CreateEntry(ctx, client, request)
 		if err != nil {
 			return fmt.Errorf("failed to store role %s: %v", roleName, err)
 		}

@@ -245,6 +245,12 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	newEntry.Chunks = chunks
 	so, err := fs.applyStorageDefaultsToEntry(ctx, newEntry)
 	if err != nil {
+		if errors.Is(err, ErrReadOnly) {
+			// A verdict, reported like AssignVolume does. As a status-less error
+			// it reached clients as codes.Unknown, which they retry like a filer
+			// outage: a mount held every close() of a new file for 7 s.
+			return &filer_pb.CreateEntryResponse{Error: err.Error(), ErrorCode: filer_pb.FilerError_READ_ONLY}, nil
+		}
 		return nil, err
 	}
 

@@ -483,10 +483,24 @@ func shouldInvalidateConnection(ctx context.Context, err error) bool {
 		return false
 	}
 
+	// A filer verdict rebuilt from its response (a read-only path, an existing
+	// entry, a failed write condition) is the peer answering over a working
+	// channel. Its message names the path, which can contain "transport".
+	if filer_pb.IsFilerVerdict(err) {
+		return false
+	}
+
 	// Check gRPC status codes first (more reliable)
 	if s, ok := status.FromError(err); ok {
 		code := s.Code()
 		switch code {
+		case codes.Unknown:
+			// An older filer refuses a write to a read-only path with a
+			// status-less error, which arrives as Unknown. The rule it names
+			// can contain "transport" too.
+			if filer_pb.LegacyReadOnlyError(peerStatusMessage(err)) != nil {
+				return false
+			}
 		case codes.Unavailable:
 			// gRPC raises its own Unavailable without details, so one that
 			// carries details is the peer answering over a working channel,
@@ -530,6 +544,19 @@ func shouldInvalidateConnection(ctx context.Context, err error) bool {
 		strings.Contains(errLower, "no route to host") ||
 		strings.Contains(errLower, "network is unreachable") ||
 		strings.Contains(errLower, "connection reset")
+}
+
+// peerStatusMessage returns the message of the gRPC status that err carries,
+// as the peer sent it. status.FromError reports a wrapped status with the text
+// of the whole chain instead.
+func peerStatusMessage(err error) string {
+	var carrier interface{ GRPCStatus() *status.Status }
+	if errors.As(err, &carrier) {
+		if st := carrier.GRPCStatus(); st != nil {
+			return st.Message()
+		}
+	}
+	return ""
 }
 
 // WithGrpcClient In streamingMode, always use a fresh connection. Otherwise, try to reuse an existing connection.

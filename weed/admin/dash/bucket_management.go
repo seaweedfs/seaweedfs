@@ -695,7 +695,7 @@ func (s *AdminServer) CreateS3BucketWithQuota(bucketName string, quotaBytes int6
 func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes int64, quotaEnabled, versioningEnabled, objectLockEnabled bool, objectLockMode string, setDefaultRetention bool, objectLockDuration int32, owner string) error {
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// First ensure /buckets directory exists
-		_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+		err := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
 			Directory: "/",
 			Entry: &filer_pb.Entry{
 				Name:        "buckets",
@@ -790,7 +790,7 @@ func (s *AdminServer) CreateS3BucketWithObjectLock(bucketName string, quotaBytes
 		}
 
 		// Create bucket directory under /buckets
-		_, err = client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+		err = filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
 			Directory: "/buckets",
 			Entry:     bucketEntry,
 		})

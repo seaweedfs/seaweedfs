@@ -23,6 +23,13 @@ func (wfs *WFS) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFile
 	})
 }
 
+// isRetryableFilerCall decides whether withFilerClient tries a failed call
+// again. A filer verdict, such as a read-only path, is final whatever its
+// message says, and the path it names can contain "transport".
+func isRetryableFilerCall(err error) bool {
+	return !filer_pb.IsFilerVerdict(err) && util.IsTransientError(err)
+}
+
 // withFilerClient walks the filer addresses until one answers fn. callWait
 // bounds one attempt; callWait <= 0 leaves the attempt to ctx alone, for
 // calls whose duration the metadata bound cannot anticipate (a whole-file
@@ -33,7 +40,7 @@ func (wfs *WFS) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFile
 // channel's other callers.
 func (wfs *WFS) withFilerClient(ctx context.Context, streamingMode bool, callWait time.Duration, fn func(ctx context.Context, client filer_pb.SeaweedFilerClient) error) (err error) {
 
-	return util.Retry("filer grpc", func() error {
+	return util.RetryOnError("filer grpc", isRetryableFilerCall, func() error {
 
 		i := atomic.LoadInt32(&wfs.option.filerIndex)
 		n := len(wfs.option.FilerAddresses)
@@ -44,6 +51,13 @@ func (wfs *WFS) withFilerClient(ctx context.Context, streamingMode bool, callWai
 
 			if err != nil {
 				// glog.V(0).Infof("WithFilerClient %d %v: %v", x, filerGrpcAddress, err)
+				// A verdict is the filer's answer, and another filer would give
+				// the same one. Stop here, so that a later filer's transport
+				// error cannot replace it and turn it into a retry.
+				if filer_pb.IsFilerVerdict(err) {
+					atomic.StoreInt32(&wfs.option.filerIndex, i)
+					return err
+				}
 			} else {
 				atomic.StoreInt32(&wfs.option.filerIndex, i)
 				return nil

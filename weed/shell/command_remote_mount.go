@@ -202,7 +202,7 @@ func ensureMountDirectory(commandEnv *CommandEnv, dir string, nonEmpty bool, rem
 		})
 		if lookupErr != nil {
 			if errors.Is(lookupErr, filer_pb.ErrNotFound) {
-				_, createErr := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+				createErr := filer_pb.CreateEntry(context.Background(), client, &filer_pb.CreateEntryRequest{
 					Directory: parent,
 					Entry: &filer_pb.Entry{
 						Name:        name,
