@@ -8,7 +8,7 @@ import (
 )
 
 func TestSumFilterStatsPerHourAcrossEngines(t *testing.T) {
-	got := sumFilterStats([]*vector_pb.FilterStatsResponse{
+	got, truncated := sumFilterStats([]*vector_pb.FilterStatsResponse{
 		{WindowSeconds: 3600, Keys: []*vector_pb.FilterKeyStats{
 			{Key: "author", Queries: 100, Seconds: 2, StringOperand: true},
 			{Key: "year", Queries: 10, Seconds: 0.5, NumberOperand: true},
@@ -29,5 +29,18 @@ func TestSumFilterStatsPerHourAcrossEngines(t *testing.T) {
 	}
 	if _, ok := got["ignored"]; ok {
 		t.Fatal("an engine with no window must not count")
+	}
+	if truncated {
+		t.Fatal("no engine stopped counting keys")
+	}
+}
+
+func TestSumFilterStatsKeepsTruncated(t *testing.T) {
+	_, truncated := sumFilterStats([]*vector_pb.FilterStatsResponse{
+		{WindowSeconds: 3600, Keys: []*vector_pb.FilterKeyStats{{Key: "author", Queries: 1}}},
+		{WindowSeconds: 3600, Truncated: true},
+	})
+	if !truncated {
+		t.Fatal("one engine's truncated stats make the sum truncated")
 	}
 }

@@ -375,6 +375,9 @@ templ S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) {
 			if panel.StatsError != "" {
 				<div class="text-muted small">{ panel.StatsError }</div>
 			}
+			if panel.StatsTruncated {
+				<div class="text-muted small">Partial: an engine counts a limited number of keys per index, so some filtered keys are missing.</div>
+			}
 			if len(panel.Frequent) == 0 {
 				<div class="text-muted small mt-1">No filtered queries in the last hour on keys without an index.</div>
 			}

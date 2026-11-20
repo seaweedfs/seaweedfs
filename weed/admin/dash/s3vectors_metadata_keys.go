@@ -28,14 +28,17 @@ const frequentFilterKeys = 10
 // count and vector index, its indexed metadata keys, and the keys its
 // queries filter on most that are not indexed.
 type S3VectorsIndexPanel struct {
-	Index       *s3vectors.Index           `json:"index"`
-	Vectors     uint64                     `json:"vectors"`
-	VectorIndex string                     `json:"vector_index"`
-	Keys        []S3VectorsMetadataKeyRow  `json:"keys"`
-	Frequent    []S3VectorsFilterKeyRow    `json:"frequent"`
-	Error       string                     `json:"error,omitempty"`
-	StatsError  string                     `json:"stats_error,omitempty"`
-	stats       map[string]*filterKeyTotal `json:"-"`
+	Index       *s3vectors.Index          `json:"index"`
+	Vectors     uint64                    `json:"vectors"`
+	VectorIndex string                    `json:"vector_index"`
+	Keys        []S3VectorsMetadataKeyRow `json:"keys"`
+	Frequent    []S3VectorsFilterKeyRow   `json:"frequent"`
+	Error       string                    `json:"error,omitempty"`
+	StatsError  string                    `json:"stats_error,omitempty"`
+	// StatsTruncated marks stats from an engine that stopped counting new
+	// keys, so Frequent can miss keys.
+	StatsTruncated bool                       `json:"stats_truncated,omitempty"`
+	stats          map[string]*filterKeyTotal `json:"-"`
 }
 
 type S3VectorsMetadataKeyRow struct {
@@ -73,7 +76,8 @@ func (s *AdminServer) s3VectorsIndexPanel(ctx context.Context, bucket string, in
 	if err != nil {
 		panel.Error = err.Error()
 	}
-	stats, err := s.s3VectorsFilterStats(ctx, bucket, index.IndexName, engines)
+	stats, truncated, err := s.s3VectorsFilterStats(ctx, bucket, index.IndexName, engines)
+	panel.StatsTruncated = truncated
 	if err != nil {
 		panel.StatsError = err.Error()
 	}
@@ -124,7 +128,7 @@ func (s *AdminServer) s3VectorsIndexPanel(ctx context.Context, bucket string, in
 
 // s3VectorsFilterStats sums an index's filter stats over the engines, each
 // counted per hour over its own window.
-func (s *AdminServer) s3VectorsFilterStats(ctx context.Context, bucket, index string, engines []VectorNode) (map[string]*filterKeyTotal, error) {
+func (s *AdminServer) s3VectorsFilterStats(ctx context.Context, bucket, index string, engines []VectorNode) (map[string]*filterKeyTotal, bool, error) {
 	responses := make([]*vector_pb.FilterStatsResponse, len(engines))
 	errs := make([]error, len(engines))
 	var calls errgroup.Group
@@ -146,15 +150,18 @@ func (s *AdminServer) s3VectorsFilterStats(ctx context.Context, bucket, index st
 		})
 	}
 	_ = calls.Wait()
-	return sumFilterStats(responses), firstError(engines, errs)
+	stats, truncated := sumFilterStats(responses)
+	return stats, truncated, firstError(engines, errs)
 }
 
-func sumFilterStats(responses []*vector_pb.FilterStatsResponse) map[string]*filterKeyTotal {
+func sumFilterStats(responses []*vector_pb.FilterStatsResponse) (map[string]*filterKeyTotal, bool) {
 	out := map[string]*filterKeyTotal{}
+	truncated := false
 	for _, resp := range responses {
 		if resp == nil || resp.WindowSeconds == 0 {
 			continue
 		}
+		truncated = truncated || resp.Truncated
 		for _, k := range resp.Keys {
 			total := out[k.Key]
 			if total == nil {
@@ -168,7 +175,7 @@ func sumFilterStats(responses []*vector_pb.FilterStatsResponse) map[string]*filt
 			total.numbers = total.numbers || k.NumberOperand
 		}
 	}
-	return out
+	return out, truncated
 }
 
 func firstError(engines []VectorNode, errs []error) error {
