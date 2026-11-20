@@ -1162,6 +1162,37 @@ pub(crate) mod tests {
             indexed
         }
 
+        /// A repair that loses to a compaction of its fragments repairs the
+        /// rows where the compaction moved them.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_repair_retried_over_a_compaction_follows_the_rows() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let mut dataset = table(&dir, 1).await;
+            request(&mut dataset, "author").await.unwrap();
+            let author = add_column(&mut dataset, "author").await.unwrap();
+            finish_after(&mut dataset, &author, 1_000, std::time::Duration::ZERO)
+                .await
+                .unwrap();
+            let ready = keys_of(&dataset)[0].clone();
+            let dataset = upsert_with_null_columns(dataset, 1_000..1_100).await;
+            let mut dataset = upsert_with_null_columns(dataset, 1_100..1_200).await;
+            let pending: Vec<u64> =
+                unindexed(&dataset, &segments(&dataset, "_mk_0").await.unwrap())
+                    .iter()
+                    .map(|(id, _)| *id as u64)
+                    .collect();
+            assert_eq!(nulls(&dataset, "_mk_0").await, 200);
+            let mut repair = dataset.clone();
+            compact_files(&mut dataset, CompactionOptions::default(), None)
+                .await
+                .unwrap();
+            rederive(&mut repair, std::slice::from_ref(&ready), Some(&pending))
+                .await
+                .unwrap();
+            repair.checkout_latest().await.unwrap();
+            assert_eq!(nulls(&repair, "_mk_0").await, 0);
+        }
+
         /// Requests and removals an operator commits while a column add runs
         /// survive the add.
         #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
