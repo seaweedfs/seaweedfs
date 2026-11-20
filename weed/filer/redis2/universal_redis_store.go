@@ -299,7 +299,7 @@ func (store *UniversalRedis2Store) removeOrphanedDirectoryListMember(ctx context
 	}
 }
 
-var existsScript = redis.NewScript(`return redis.call('EXISTS', KEYS[1])`)
+var existsScript = redis.NewScriptServerSHA(`return redis.call('EXISTS', KEYS[1])`)
 
 // replica-routed clients (useReadOnly, routeByLatency) would run a plain EXISTS on a lagging
 // replica and misread a live value as absent, turning the repair destructive; a script always
@@ -315,7 +315,7 @@ func isLogicallyExpired(entry *filer.Entry) bool {
 // deletes the value only when it still holds exactly the bytes the expiry decision was made on;
 // single-key, so it runs on all transports where a multi-key script would be CROSSSLOT.
 // -1: already gone, 0: changed under us, 1: deleted
-var deleteIfUnchangedScript = redis.NewScript(`
+var deleteIfUnchangedScript = redis.NewScriptServerSHA(`
 local v = redis.call('GET', KEYS[1])
 if v == false then
 	return -1
