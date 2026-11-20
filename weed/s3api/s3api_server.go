@@ -496,7 +496,11 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		util.LoadConfiguration("security", false)
 		v := util.GetViper()
 		// LoadConfiguration merges, so read previous keys fresh: a removed one must stop verifying.
-		fresh, _ := util.ReadConfiguration("security", "")
+		// A file that cannot be read keeps the keys in effect.
+		fresh, used := util.ReadConfiguration("security", "")
+		if used == "" {
+			fresh = v
+		}
 		s3ApiServer.filerGuard.UpdateSigningKeys(
 			v.GetString("jwt.filer_signing.key"),
 			v.GetInt("jwt.filer_signing.expires_after_seconds"),

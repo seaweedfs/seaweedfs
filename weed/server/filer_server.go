@@ -784,7 +784,11 @@ func (fs *FilerServer) Reload() {
 	util.LoadConfiguration("security", false)
 	v := util.GetViper()
 	// LoadConfiguration merges, so read previous keys fresh: a removed one must stop verifying.
-	fresh, _ := util.ReadConfiguration("security", "")
+	// A file that cannot be read keeps the keys in effect.
+	fresh, used := util.ReadConfiguration("security", "")
+	if used == "" {
+		fresh = v
+	}
 	// Turn the new credential on before the old one goes off, so a switch
 	// between Basic Auth and JWT never leaves a window with neither.
 	basicAuth, basicAuthFile := loadBasicAuth(fs.basicAuth.Load(), fs.basicAuthFile)
