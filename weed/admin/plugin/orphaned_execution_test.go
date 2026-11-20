@@ -812,3 +812,48 @@ func TestRestoreTakesNewerRunningAttemptFromDetail(t *testing.T) {
 		t.Fatalf("want exec-b succeeded, got %+v", tracked)
 	}
 }
+
+// A dispatch without an attempt number is still the admin's own attempt, so a
+// late completion of another request for the job does not close it.
+func TestDispatchWithoutAttemptKeepsOwnRequest(t *testing.T) {
+	t.Parallel()
+	p, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer p.Shutdown()
+
+	session := connectExecutor(p, "worker-a")
+	executor, ok := p.registry.Get(session.workerID)
+	if !ok {
+		t.Fatal("worker-a is not registered")
+	}
+	const jobID = "job-attempt-zero"
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.executeJobWithExecutor(ctx, executor, &plugin_pb.JobSpec{JobId: jobID, JobType: orphanTestJobType}, &plugin_pb.ClusterContext{}, 0)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	var requestID string
+	select {
+	case msg := <-session.outgoing:
+		if got := msg.GetExecuteJobRequest().GetAttempt(); got != 1 {
+			t.Fatalf("want attempt 1 sent to the worker, got %d", got)
+		}
+		requestID = msg.RequestId
+	case <-time.After(2 * time.Second):
+		t.Fatal("no execute request")
+	}
+
+	p.handleJobCompleted(&plugin_pb.JobCompleted{JobId: jobID, JobType: orphanTestJobType, RequestId: "exec-earlier", Success: false, ErrorMessage: "late"}, nil)
+	tracked, _ := p.GetTrackedJob(jobID)
+	if tracked == nil || tracked.RequestID != requestID || !isActiveTrackedJobState(tracked.State) {
+		t.Fatalf("want %s still active, got %+v", requestID, tracked)
+	}
+}

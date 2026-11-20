@@ -795,6 +795,10 @@ func (r *Plugin) executeJobWithExecutor(
 	if strings.TrimSpace(job.JobType) == "" {
 		return nil, fmt.Errorf("job_type is required")
 	}
+	// a dispatched record takes only its own request's reports once its attempt is set
+	if attempt < 1 {
+		attempt = 1
+	}
 
 	if strings.TrimSpace(job.JobId) == "" {
 		var err error
