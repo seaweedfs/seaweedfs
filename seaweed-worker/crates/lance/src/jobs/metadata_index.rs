@@ -526,6 +526,55 @@ mod tests {
         assert_eq!(metadata_index::requests(&adder), ["lang"]);
     }
 
+    /// A withdrawal of a request an interrupted add overwrote sets that
+    /// first, so recovering the add does not bring the request back.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_withdrawal_of_a_request_an_add_overwrote_stays_withdrawn() {
+        use crate::metadata_index::tests::lifecycle::table;
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut dataset = table(&dir, 2).await;
+        metadata_index::request(&mut dataset, "author")
+            .await
+            .unwrap();
+        let mut adder = dataset.clone();
+        metadata_index::request(&mut dataset, "lang").await.unwrap();
+        metadata_index::commit_column(&mut adder, "author")
+            .await
+            .unwrap();
+        dataset.checkout_latest().await.unwrap();
+        metadata_index::request_removal(&mut dataset, "lang")
+            .await
+            .unwrap();
+        let author = metadata_index::keys_of(&dataset).remove(0);
+        metadata_index::recover_add(&mut dataset, &author)
+            .await
+            .unwrap();
+        assert!(metadata_index::requests(&dataset).is_empty());
+    }
+
+    /// A withdrawal that read the request before the key's column was added
+    /// and committed after sets the column off.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_withdrawal_racing_the_add_sets_the_column_off() {
+        use crate::metadata_index::tests::lifecycle::table;
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut dataset = table(&dir, 2).await;
+        metadata_index::request(&mut dataset, "genre")
+            .await
+            .unwrap();
+        let mut operator = dataset.clone();
+        let added = metadata_index::add_column(&mut dataset, "genre")
+            .await
+            .unwrap();
+        assert_eq!(added.state, Some(State::Building));
+        metadata_index::request_removal(&mut operator, "genre")
+            .await
+            .unwrap();
+        dataset.checkout_latest().await.unwrap();
+        assert_eq!(metadata_index::keys_of(&dataset)[0].state, Some(State::Off));
+        assert!(metadata_index::requests(&dataset).is_empty());
+    }
+
     /// A key that went ready on an empty table builds its first segment
     /// once rows arrive, below the threshold.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
