@@ -408,7 +408,9 @@ func newPluginWithRestoredJob(t *testing.T, job TrackedJob, details ...TrackedJo
 	if job.RequestID == "" && job.State == restoredTestStateRunning {
 		job.RequestID = "exec-before-restart"
 	}
-	job.Attempt = 1
+	if job.Attempt == 0 {
+		job.Attempt = 1
+	}
 	job.CreatedAt = timeToPtr(now.Add(-time.Hour))
 	job.UpdatedAt = timeToPtr(now.Add(-time.Minute))
 	if err := store.SaveTrackedJobs([]TrackedJob{job}); err != nil {
@@ -763,6 +765,50 @@ func TestLateProgressOfEarlierAttemptKeepsRetry(t *testing.T) {
 
 	p.handleJobCompleted(&plugin_pb.JobCompleted{JobId: jobID, JobType: orphanTestJobType, RequestId: "exec-b", Success: true}, nil)
 	if tracked, _ := p.GetTrackedJob(jobID); tracked == nil || tracked.State != StateSucceeded || tracked.RequestID != "exec-b" {
+		t.Fatalf("want exec-b succeeded, got %+v", tracked)
+	}
+}
+
+// Replacing an older attempt's detail writes the restored attempt's
+// identity: its request, attempt number and worker, not the older ones.
+func TestRestoredExpiryReplacesOlderAttemptIdentity(t *testing.T) {
+	t.Parallel()
+	const jobID = "job-detail-older-attempt"
+	older := time.Now().UTC().Add(-2 * time.Hour)
+	p := newPluginWithRestoredJob(t, TrackedJob{JobID: jobID, RequestID: "exec-b", Attempt: 2}, TrackedJob{JobID: jobID, JobType: orphanTestJobType,
+		RequestID: "exec-a", WorkerID: "worker-old", Attempt: 1, State: StateFailed, UpdatedAt: timeToPtr(older), CompletedAt: timeToPtr(older)})
+	session := connectExecutor(p, "worker-a")
+
+	sendExecutionHeartbeat(p, session, 0)
+	sendExecutionHeartbeat(p, session, 0)
+	waitTrackedState(t, p, jobID, StateFailed)
+	p.restoredExpiries.Wait()
+
+	detail, err := p.store.LoadJobDetail(jobID)
+	if err != nil || detail == nil {
+		t.Fatalf("LoadJobDetail: %+v %v", detail, err)
+	}
+	if detail.RequestID != "exec-b" || detail.Attempt != 2 || detail.WorkerID != "worker-a" || detail.State != StateFailed {
+		t.Fatalf("want exec-b/2 on worker-a failed, got request=%s attempt=%d worker=%s state=%s",
+			detail.RequestID, detail.Attempt, detail.WorkerID, detail.State)
+	}
+}
+
+// The job list names attempt A, but the detail shows retry B was running
+// when the admin stopped. The record takes B's identity, so B's completion
+// is accepted rather than dropped as another attempt's.
+func TestRestoreTakesNewerRunningAttemptFromDetail(t *testing.T) {
+	t.Parallel()
+	const jobID = "job-retry-running-at-restart"
+	p := newPluginWithRestoredJob(t, TrackedJob{JobID: jobID, RequestID: "exec-a"}, TrackedJob{JobID: jobID, JobType: orphanTestJobType,
+		RequestID: "exec-b", WorkerID: "worker-a", Attempt: 2, State: restoredTestStateRunning, UpdatedAt: timeToPtr(time.Now().UTC())})
+
+	tracked, _ := p.GetTrackedJob(jobID)
+	if tracked == nil || tracked.RequestID != "exec-b" || tracked.Attempt != 2 || tracked.State != restoredTestStateRunning {
+		t.Fatalf("want exec-b/2 running, got %+v", tracked)
+	}
+	p.handleJobCompleted(&plugin_pb.JobCompleted{JobId: jobID, JobType: orphanTestJobType, RequestId: "exec-b", Success: true}, nil)
+	if tracked, _ := p.GetTrackedJob(jobID); tracked == nil || tracked.State != StateSucceeded {
 		t.Fatalf("want exec-b succeeded, got %+v", tracked)
 	}
 }

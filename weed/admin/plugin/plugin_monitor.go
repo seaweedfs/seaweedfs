@@ -464,10 +464,26 @@ func mergeTerminalDetailIntoTracked(tracked *TrackedJob, detail *TrackedJob) {
 	if tracked == nil || detail == nil {
 		return
 	}
-	if !isTerminalTrackedJobState(detail.State) {
+	if !isActiveTrackedJobState(tracked.State) {
 		return
 	}
-	if !isActiveTrackedJobState(tracked.State) {
+	if !isTerminalTrackedJobState(detail.State) {
+		// a newer attempt still running when the admin stopped: the job
+		// list may name the attempt before it, and only this attempt's
+		// reports are taken once the record names it
+		if detail.RequestID != "" && tracked.RequestID != "" && detail.RequestID != tracked.RequestID &&
+			detailIsNewerAttempt(tracked, detail) {
+			tracked.RequestID = detail.RequestID
+			if detail.WorkerID != "" {
+				tracked.WorkerID = detail.WorkerID
+			}
+			if detail.Attempt > 0 {
+				tracked.Attempt = detail.Attempt
+			}
+			if detail.UpdatedAt != nil && !detail.UpdatedAt.IsZero() {
+				tracked.UpdatedAt = detail.UpdatedAt
+			}
+		}
 		return
 	}
 	if detail.RequestID != "" && tracked.RequestID != "" && detail.RequestID != tracked.RequestID {
