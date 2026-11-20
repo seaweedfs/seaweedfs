@@ -213,14 +213,20 @@ impl ObjectStore for Guarded {
         // what makes the table readable again, so look once more and take
         // it back if the table is gone; a failed probe leaves it. A table
         // created again since may have written its own manifest there:
-        // only this write's is taken back.
-        if is_manifest(location)
-            && let Ok(Found::Dropped(error) | Found::Replaced(error)) = self.find(location).await
-        {
+        // only a manifest known to be this write's is taken back.
+        if is_manifest(location) {
+            let (error, replaced) = match self.find(location).await {
+                Ok(Found::Dropped(error)) => (error, false),
+                Ok(Found::Replaced(error)) => (error, true),
+                _ => {
+                    self.committed(location, put.e_tag.clone());
+                    return Ok(put);
+                }
+            };
             let ours = match (&put.e_tag, self.inner.head(location).await) {
                 (Some(wrote), Ok(meta)) => meta.e_tag.as_ref() == Some(wrote),
                 (_, Err(object_store::Error::NotFound { .. })) => false,
-                _ => true,
+                _ => !replaced,
             };
             if ours {
                 let _ = self.inner.delete(location).await;
