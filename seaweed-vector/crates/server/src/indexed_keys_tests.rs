@@ -690,3 +690,83 @@ async fn keys_are_requested_and_listed_through_the_engine() {
         tonic::Code::FailedPrecondition
     );
 }
+
+/// DeleteIndex purges the table's directory and an index created again
+/// under the same name reuses it: the same running engine serves nothing of
+/// the old table, neither rows, nor its indexed key, nor its filter stats.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_dropped_and_recreated_index_serves_nothing_old() {
+    let fixture = Fixture::new().await;
+    fixture
+        .put((0..600).map(|i| row(i, author(i))).collect())
+        .await;
+    let mut dataset = fixture.dataset(0).await;
+    weed_lance_worker::vector_index::build(&mut dataset, "vector", "vector_idx", 4, false)
+        .await
+        .unwrap();
+    fixture.index_author().await;
+    let bob = FILTERS[1].1;
+    let old = fixture
+        .query(&fixture.server, 0, bob, 50, &vector_of(10))
+        .await;
+    assert_eq!(old.len(), 6);
+    let server = &fixture.server;
+    let stats = || {
+        server.filter_stats(Request::new(pb::FilterStatsRequest {
+            table: Some(fixture.table.clone()),
+        }))
+    };
+    assert_eq!(stats().await.unwrap().into_inner().keys[0].queries, 1);
+
+    // What the catalog's DeleteTable does, then CreateIndex again.
+    let (store, path) = lance::io::ObjectStore::from_uri(&fixture.table.location)
+        .await
+        .unwrap();
+    store.remove_dir_all(path).await.unwrap();
+    fixture
+        .server
+        .create_index(Request::new(pb::CreateIndexRequest {
+            table: Some(fixture.table.clone()),
+            dimension: DIM as u32,
+            distance_metric: pb::DistanceMetric::L2 as i32,
+            ..Default::default()
+        }))
+        .await
+        .unwrap();
+    let keys = fixture
+        .server
+        .metadata_keys(Request::new(pb::MetadataKeysRequest {
+            table: Some(fixture.table.clone()),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(keys.keys.is_empty());
+    assert!(
+        stats().await.unwrap().into_inner().keys.is_empty(),
+        "the old table's filter stats"
+    );
+
+    fixture
+        .put((1000..1100).map(|i| row(i, author(i))).collect())
+        .await;
+    let new = |hits: &[(String, f32)]| {
+        hits.iter().all(|(k, _)| {
+            k[1..]
+                .parse::<usize>()
+                .is_ok_and(|i| (1000..1100).contains(&i))
+        })
+    };
+    let unfiltered = fixture
+        .query(&fixture.server, 0, "", 200, &vector_of(10))
+        .await;
+    assert_eq!(unfiltered.len(), 100);
+    assert!(new(&unfiltered), "{unfiltered:?}");
+    let bob_now = fixture
+        .query(&fixture.server, 0, bob, 50, &vector_of(10))
+        .await;
+    assert_eq!(bob_now.len(), 1);
+    assert!(new(&bob_now), "{bob_now:?}");
+    let author = stats().await.unwrap().into_inner().keys;
+    assert_eq!((author.len(), author[0].queries), (1, 1));
+}
