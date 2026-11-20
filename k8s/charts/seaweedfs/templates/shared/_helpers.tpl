@@ -491,6 +491,17 @@ true
 {{- end -}}
 {{- end -}}
 
+{{/* True when the volume servers serve HTTPS. Their certificates come from
+     enableSecurity, so the option fails without it. */}}
+{{- define "seaweedfs.volumeHttps" -}}
+{{- if ((.Values.global.seaweedfs).volumeHttps).enabled -}}
+{{- if not .Values.global.seaweedfs.enableSecurity -}}
+{{- fail "global.seaweedfs.volumeHttps.enabled requires global.seaweedfs.enableSecurity, which provides the certificates" -}}
+{{- end -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{/* Read a JWT key from the chart's existing security.toml without fromToml
      (which requires Helm >=3.17). Args: (list "<section>" $raw).
      Return the single-line TOML string token, including its quotes, so escapes

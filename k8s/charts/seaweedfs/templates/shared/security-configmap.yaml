@@ -121,13 +121,25 @@ data:
     cert = "/usr/local/share/ca-certificates/client/tls.crt"
     key  = "/usr/local/share/ca-certificates/client/tls.key"
 
-    # volume server https options
-    # Note: work in progress!
-    #     this does not work with other clients, e.g., "weed filer|mount" etc, yet.
+    {{- if include "seaweedfs.volumeHttps" . }}
+
+    [https.client]
+    enabled = true
+    cert = "/usr/local/share/ca-certificates/client/tls.crt"
+    key  = "/usr/local/share/ca-certificates/client/tls.key"
+    ca   = "/usr/local/share/ca-certificates/ca/tls.crt"
+
+    [https.volume]
+    cert = "/usr/local/share/ca-certificates/volume/tls.crt"
+    key  = "/usr/local/share/ca-certificates/volume/tls.key"
+    {{- else }}
+
+    # volume server https: set global.seaweedfs.volumeHttps.enabled
     [https.client]
     enabled = false
     [https.volume]
     cert = ""
     key  = ""
+    {{- end }}
     {{- end }}
 {{- end }}
