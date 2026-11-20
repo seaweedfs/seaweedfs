@@ -1,7 +1,16 @@
 package util
 
 import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/fips140"
+	"crypto/rand"
 	"encoding/base64"
+	"io"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -14,4 +23,105 @@ func TestSameAsJavaImplementation(t *testing.T) {
 		println(err.Error())
 	}
 	println(string(plaintext))
+}
+
+// legacyEncrypt is Encrypt as it was before NewGCMWithRandomNonce: a
+// caller-generated 12-byte nonce prepended to ciphertext || tag.
+func legacyEncrypt(plaintext []byte, key CipherKey) ([]byte, error) {
+	c, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(c)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, err
+	}
+	return gcm.Seal(nonce, nonce, plaintext, nil), nil
+}
+
+// legacyDecrypt is Decrypt as it was before NewGCMWithRandomNonce.
+func legacyDecrypt(ciphertext []byte, key CipherKey) ([]byte, error) {
+	c, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(c)
+	if err != nil {
+		return nil, err
+	}
+	nonceSize := gcm.NonceSize()
+	return gcm.Open(nil, ciphertext[:nonceSize], ciphertext[nonceSize:], nil)
+}
+
+// TestCipherReadsAndWritesLegacyLayout checks that chunks encrypted before and
+// after the switch to NewGCMWithRandomNonce decrypt with either version.
+func TestCipherReadsAndWritesLegacyLayout(t *testing.T) {
+	key := GenCipherKey()
+	plaintext := []byte("chunk data written by -encryptVolumeData")
+
+	old, err := legacyEncrypt(plaintext, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Decrypt(old, key); err != nil || !bytes.Equal(got, plaintext) {
+		t.Fatalf("Decrypt(legacy output) = %q, %v", got, err)
+	}
+
+	sealed, err := Encrypt(plaintext, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sealed) != len(old) {
+		t.Fatalf("Encrypt output is %d bytes, legacy output is %d", len(sealed), len(old))
+	}
+	if got, err := legacyDecrypt(sealed, key); err != nil || !bytes.Equal(got, plaintext) {
+		t.Fatalf("legacy decrypt of Encrypt output = %q, %v", got, err)
+	}
+}
+
+// TestCipherUnderFIPS140Only runs an Encrypt/Decrypt round trip with
+// GODEBUG=fips140=only, where cipher.NewGCM refuses caller-chosen nonces.
+func TestCipherUnderFIPS140Only(t *testing.T) {
+	if !runUnderFIPS140Only(t) {
+		return
+	}
+	key := GenCipherKey()
+	plaintext := []byte("chunk data written by -encryptVolumeData")
+	sealed, err := Encrypt(plaintext, key)
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	if got, err := Decrypt(sealed, key); err != nil || !bytes.Equal(got, plaintext) {
+		t.Fatalf("Decrypt = %q, %v", got, err)
+	}
+}
+
+// runUnderFIPS140Only reports whether the test is running with
+// GODEBUG=fips140=only. If it is not, it re-runs the calling test in a child
+// process with that setting (GODEBUG fips140 is fixed at program start) and
+// fails if the child fails. It skips when the test binary cannot start in
+// that mode, which happens when a package init uses a non-approved algorithm.
+func runUnderFIPS140Only(t *testing.T) bool {
+	t.Helper()
+	if fips140.Enforced() {
+		return true
+	}
+	godebug := "fips140=only"
+	if v := os.Getenv("GODEBUG"); v != "" {
+		godebug = v + "," + godebug
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$", "-test.count=1", "-test.v")
+	cmd.Env = append(os.Environ(), "GODEBUG="+godebug)
+	out, err := cmd.CombinedOutput()
+	if !strings.Contains(string(out), "=== RUN   "+t.Name()) {
+		t.Skipf("test binary does not start with GODEBUG=fips140=only: %v\n%s", err, out)
+	}
+	if err != nil || !strings.Contains(string(out), "--- PASS: "+t.Name()) {
+		t.Fatalf("with GODEBUG=fips140=only: %v\n%s", err, out)
+	}
+	return false
 }

@@ -20,41 +20,38 @@ func GenCipherKey() CipherKey {
 	return CipherKey(key)
 }
 
+// Encrypt seals plaintext with AES-GCM under a random 12-byte nonce. The
+// output is nonce || ciphertext || tag. NewGCMWithRandomNonce generates the
+// nonce itself, which GODEBUG=fips140=only requires.
 func Encrypt(plaintext []byte, key CipherKey) ([]byte, error) {
 	c, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}
 
-	gcm, err := cipher.NewGCM(c)
+	gcm, err := cipher.NewGCMWithRandomNonce(c)
 	if err != nil {
 		return nil, err
 	}
 
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err
-	}
-
-	return gcm.Seal(nonce, nonce, plaintext, nil), nil
+	return gcm.Seal(nil, nil, plaintext, nil), nil
 }
 
+// Decrypt opens the nonce || ciphertext || tag layout that Encrypt produces.
 func Decrypt(ciphertext []byte, key CipherKey) ([]byte, error) {
 	c, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}
 
-	gcm, err := cipher.NewGCM(c)
+	gcm, err := cipher.NewGCMWithRandomNonce(c)
 	if err != nil {
 		return nil, err
 	}
 
-	nonceSize := gcm.NonceSize()
-	if len(ciphertext) < nonceSize {
+	if len(ciphertext) < gcm.Overhead() {
 		return nil, errors.New("ciphertext too short")
 	}
 
-	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
-	return gcm.Open(nil, nonce, ciphertext, nil)
+	return gcm.Open(nil, nil, ciphertext, nil)
 }
