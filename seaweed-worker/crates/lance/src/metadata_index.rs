@@ -7,7 +7,7 @@
 //! `metadata` JSON column stays the source of truth: every writer derives the
 //! columns from it, and queries use one only once its state is `ready`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
@@ -534,7 +534,9 @@ const REDERIVE_ATTEMPTS: usize = 10;
 ///
 /// A rewrite moves its rows to a new fragment. A write committing while
 /// the rewrite does makes it start over from that version, so it never
-/// puts values derived before the write onto the write's rows.
+/// puts values derived before the write onto the write's rows; the
+/// fragments that version added, where a compaction moved the rows, are
+/// derived again too.
 pub async fn rederive(
     dataset: &mut Dataset,
     columns: &[IndexedKey],
@@ -543,6 +545,7 @@ pub async fn rederive(
     if columns.is_empty() || fragments.is_some_and(|f| f.is_empty()) {
         return Ok(0);
     }
+    let mut fragments = fragments.map(<[u64]>::to_vec);
     for _ in 0..REDERIVE_ATTEMPTS {
         let schema = Schema::from(dataset.schema());
         let mut fields = vec![schema.field_with_name(KEY_COLUMN)?.clone()];
@@ -554,7 +557,7 @@ pub async fn rederive(
         let patch_schema = Arc::new(Schema::new(fields));
         let mut scanner = dataset.scan();
         scanner.project(&projection)?;
-        if let Some(ids) = fragments {
+        if let Some(ids) = &fragments {
             scanner.with_fragments(
                 dataset
                     .fragments()
@@ -614,7 +617,19 @@ pub async fn rederive(
                 *dataset = Arc::unwrap_or_clone(patched);
                 return Ok(rows);
             }
-            Err(lance::Error::TooMuchWriteContention { .. }) => dataset.checkout_latest().await?,
+            Err(lance::Error::TooMuchWriteContention { .. }) => {
+                let read: HashSet<u64> = dataset.fragments().iter().map(|f| f.id).collect();
+                dataset.checkout_latest().await?;
+                if let Some(ids) = &mut fragments {
+                    ids.extend(
+                        dataset
+                            .fragments()
+                            .iter()
+                            .map(|f| f.id)
+                            .filter(|id| !read.contains(id)),
+                    );
+                }
+            }
             Err(e) => return Err(e.into()),
         }
     }
