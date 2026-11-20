@@ -563,7 +563,9 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		case routed && errors.Is(dbErr, filer_pb.ErrPreconditionFailed):
 			replyerr = fmt.Errorf("entry %s changed during append; retry the request", path)
 		case routed:
-			uncommittedChunks = fs.inlineAppendChunksNotReferenced(ctx, util.FullPath(path), uncommittedChunks)
+			// The owner may have committed before the reply was lost, and a
+			// separate local store may not hold that commit yet.
+			uncommittedChunks = nil
 		case inlineAppendConverted:
 			uncommittedChunks = fs.inlineAppendChunksNotReferenced(ctx, util.FullPath(path), mergedChunks)
 		}
