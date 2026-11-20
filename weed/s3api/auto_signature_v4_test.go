@@ -2017,6 +2017,11 @@ func TestBucketFromVirtualHost(t *testing.T) {
 		{"alpha-bkt.s3.test", "s3.test,develop.s3.test", "alpha-bkt", true},
 		{"bucket.develop.s3.test", "s3.test,develop.s3.test", "bucket.develop", true},
 		{"develop.s3.test", "s3.test,develop.s3.test", "", false},
+		{"alpha-bkt.s3.test:8333", "s3.test:8333", "alpha-bkt", true},
+		{"alpha-bkt.s3.test", "s3.test:8333", "", false},
+		{"alpha-bkt.s3.test:9000", "s3.test:8333", "", false},
+		{"s3.test:8333", "s3.test:8333", "", false},
+		{"develop.s3.test:8333", "s3.test:8333,develop.s3.test:8333", "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.host, func(t *testing.T) {
