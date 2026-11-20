@@ -38,16 +38,25 @@ func TestEvaluateMergedVolume(t *testing.T) {
 	const vid = needle.VolumeId(7)
 	a, b := pb.ServerAddress("a:8080"), pb.ServerAddress("b:8080")
 
-	if err := evaluateMergedVolume(vid, 0, map[pb.ServerAddress]uint64{a: 5}); err == nil {
+	if err := evaluateMergedVolume(vid, 0, 0, map[pb.ServerAddress]uint64{a: 5}); err == nil {
 		t.Fatal("expected empty merged volume to be rejected")
 	}
-	if err := evaluateMergedVolume(vid, 4, map[pb.ServerAddress]uint64{a: 5, b: 3}); err == nil {
+	if err := evaluateMergedVolume(vid, 0, 5, map[pb.ServerAddress]uint64{a: 5}); err == nil {
+		t.Fatal("expected fully deleted merged volume to be rejected")
+	}
+	if err := evaluateMergedVolume(vid, 4, 0, map[pb.ServerAddress]uint64{a: 5, b: 3}); err == nil {
 		t.Fatal("expected short merged volume to be rejected")
 	}
-	if err := evaluateMergedVolume(vid, 5, map[pb.ServerAddress]uint64{a: 5, b: 3}); err != nil {
+	if err := evaluateMergedVolume(vid, 3, 1, map[pb.ServerAddress]uint64{a: 5, b: 3}); err == nil {
+		t.Fatal("expected short merged volume with a delete to be rejected")
+	}
+	if err := evaluateMergedVolume(vid, 4, 1, map[pb.ServerAddress]uint64{a: 5, b: 4}); err != nil {
+		t.Fatalf("expected merged volume that deleted a key a stale replica keeps to pass: %v", err)
+	}
+	if err := evaluateMergedVolume(vid, 5, 0, map[pb.ServerAddress]uint64{a: 5, b: 3}); err != nil {
 		t.Fatalf("expected merged volume matching largest replica to pass: %v", err)
 	}
-	if err := evaluateMergedVolume(vid, 9, map[pb.ServerAddress]uint64{a: 5, b: 3}); err != nil {
+	if err := evaluateMergedVolume(vid, 9, 0, map[pb.ServerAddress]uint64{a: 5, b: 3}); err != nil {
 		t.Fatalf("expected larger merged volume to pass: %v", err)
 	}
 }
@@ -635,5 +644,8 @@ func TestWriteMergedNeedleSizeZeroRecords(t *testing.T) {
 	}
 	if !reflect.DeepEqual(client.ops, want) {
 		t.Errorf("target ops:\n got %q\nwant %q", client.ops, want)
+	}
+	if got := keys.deletedCount(); got != 2 {
+		t.Errorf("deleted keys: got %d, want 2", got)
 	}
 }

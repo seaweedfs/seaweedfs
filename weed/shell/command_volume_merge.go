@@ -172,7 +172,7 @@ func (c *commandVolumeMerge) Do(args []string, commandEnv *CommandEnv, writer io
 	// Verify the merged copy before overwriting any replica. A short or empty
 	// merge stamped over every replica at once is unrecoverable; on failure the
 	// originals are left intact and the bad merged copy is cleaned up.
-	if err = verifyMergedVolume(commandEnv.option.GrpcDialOption, volumeId, targetServer, replicas); err != nil {
+	if err = verifyMergedVolume(commandEnv.option.GrpcDialOption, volumeId, targetServer, replicas, keys.deletedCount()); err != nil {
 		return err
 	}
 
@@ -257,6 +257,15 @@ func (keys mergedKeys) writeMergedNeedle(client volume_server_pb.VolumeServerCli
 	}
 	keys[n.Id] &^= mergedKeyDeleted
 	return nil
+}
+
+func (keys mergedKeys) deletedCount() (count uint64) {
+	for _, state := range keys {
+		if state&mergedKeyDeleted != 0 {
+			count++
+		}
+	}
+	return count
 }
 
 type needleStream interface {
@@ -559,7 +568,7 @@ func ensureVolumeReadonly(commandEnv *CommandEnv, replicas []*VolumeReplica) ([]
 
 // verifyMergedVolume checks the freshly merged copy is at least as complete as the
 // most complete source replica before the originals are overwritten.
-func verifyMergedVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, targetServer pb.ServerAddress, replicas []*VolumeReplica) error {
+func verifyMergedVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, targetServer pb.ServerAddress, replicas []*VolumeReplica, mergedDeleted uint64) error {
 	merged, err := readVolumeStatus(grpcDialOption, targetServer, volumeId)
 	if err != nil {
 		return fmt.Errorf("read merged volume %d on %s: %w", volumeId, targetServer, err)
@@ -573,14 +582,15 @@ func verifyMergedVolume(grpcDialOption grpc.DialOption, volumeId needle.VolumeId
 		}
 		replicaLive[server] = liveNeedleCount(status)
 	}
-	return evaluateMergedVolume(volumeId, liveNeedleCount(merged), replicaLive)
+	return evaluateMergedVolume(volumeId, liveNeedleCount(merged), mergedDeleted, replicaLive)
 }
 
 // evaluateMergedVolume reports why a merged copy with mergedLive live needles is
 // unsafe to overwrite replicas whose live counts are replicaLive. The merge is the
-// union of every replica's needles, so the merged copy must be non-empty and hold
-// at least as many live needles as the most complete replica.
-func evaluateMergedVolume(volumeId needle.VolumeId, mergedLive uint64, replicaLive map[pb.ServerAddress]uint64) error {
+// union of every replica's needles, so the merged copy must be non-empty, and every
+// key live on the most complete replica must be live or deleted in it: mergedLive
+// plus the mergedDeleted keys the merge deleted is at least that replica's count.
+func evaluateMergedVolume(volumeId needle.VolumeId, mergedLive, mergedDeleted uint64, replicaLive map[pb.ServerAddress]uint64) error {
 	if mergedLive == 0 {
 		return fmt.Errorf("merged volume %d is empty; keeping original replicas", volumeId)
 	}
@@ -591,8 +601,8 @@ func evaluateMergedVolume(volumeId needle.VolumeId, mergedLive uint64, replicaLi
 			maxLive, maxFrom = live, server
 		}
 	}
-	if mergedLive < maxLive {
-		return fmt.Errorf("merged volume %d has %d live needles, fewer than replica %s with %d; refusing to overwrite replicas", volumeId, mergedLive, maxFrom, maxLive)
+	if mergedLive+mergedDeleted < maxLive {
+		return fmt.Errorf("merged volume %d has %d live and %d deleted needles, fewer than replica %s with %d live; refusing to overwrite replicas", volumeId, mergedLive, mergedDeleted, maxFrom, maxLive)
 	}
 	return nil
 }
