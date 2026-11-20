@@ -125,6 +125,9 @@ func (iam *IdentityAccessManagement) newChunkedReader(req *http.Request) (io.Rea
 		glog.V(3).Infof("error extracting checksum algorithm: %v", err)
 		return nil, s3err.ErrInvalidRequest
 	}
+	if checksumAlgorithm == ChecksumAlgorithmSHA1 && fips140Enforced() {
+		return nil, s3err.ErrNotImplemented
+	}
 
 	checkSumWriter := getCheckSumWriter(checksumAlgorithm)
 	hasTrailer := amzTrailerHeader != ""

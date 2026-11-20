@@ -1662,8 +1662,19 @@ func detectRequestedChecksumAlgorithm(r *http.Request) (ChecksumAlgorithm, strin
 
 // detectRequestedChecksumAlgorithmQ is the pre-parsed-query variant of
 // detectRequestedChecksumAlgorithm. Pass nil for `query` when the caller has
-// no parsed query to reuse.
+// no parsed query to reuse. SHA-1 is refused under fips140=only.
 func detectRequestedChecksumAlgorithmQ(r *http.Request, query url.Values) (ChecksumAlgorithm, string, s3err.ErrorCode) {
+	alg, name, code := detectAnyChecksumAlgorithm(r, query)
+	if alg == ChecksumAlgorithmSHA1 && fips140Enforced() {
+		return ChecksumAlgorithmNone, "", s3err.ErrNotImplemented
+	}
+	return alg, name, code
+}
+
+// detectAnyChecksumAlgorithm reads the requested checksum algorithm from the
+// SDK algorithm header, the algorithm header, x-amz-trailer or a checksum
+// value header, in that order.
+func detectAnyChecksumAlgorithm(r *http.Request, query url.Values) (ChecksumAlgorithm, string, s3err.ErrorCode) {
 	// Check x-amz-sdk-checksum-algorithm (set by AWS SDKs; hoisted to query for presigned URLs)
 	if algo := lookupHeaderOrQuery(r, query, s3_constants.AmzSdkChecksumAlgorithm); algo != "" {
 		if m, ok := checksumAlgorithmMapping[strings.ToUpper(algo)]; ok {

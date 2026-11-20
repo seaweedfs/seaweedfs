@@ -181,8 +181,12 @@ func validateEncryptionCompatibility(headers http.Header) error {
 
 // ValidateRequestEncryption rejects PutObject or CreateMultipartUpload
 // encryption headers that no single method can honor, with the InvalidArgument
-// codes S3 returns for them.
+// codes S3 returns for them. Under fips140=only it also refuses SSE-C,
+// including the CopyObject copy-source headers.
 func ValidateRequestEncryption(headers http.Header) s3err.ErrorCode {
+	if fips140Enforced() && (hasSSECHeaders(headers) || hasSSECCopyHeaders(headers)) {
+		return s3err.ErrNotImplemented
+	}
 	err := validateEncryptionCompatibility(headers)
 	if err == nil {
 		return s3err.ErrNone

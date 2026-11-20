@@ -81,7 +81,11 @@ var resourceList = []string{
 }
 
 // Verify if request has AWS Signature Version '2'.
+// SigV2 signs with HMAC-SHA1, so it is refused under fips140=only.
 func (iam *IdentityAccessManagement) isReqAuthenticatedV2(r *http.Request) (*Identity, s3err.ErrorCode) {
+	if fips140Enforced() {
+		return nil, s3err.ErrSignatureVersionNotSupported
+	}
 	var identity *Identity
 	var errCode s3err.ErrorCode
 	if isRequestSignatureV2(r) {
@@ -95,7 +99,12 @@ func (iam *IdentityAccessManagement) isReqAuthenticatedV2(r *http.Request) (*Ide
 	return identity, bindSignedPayload(r, unsignedPayload)
 }
 
+// doesPolicySignatureV2Match verifies a SigV2 POST policy signature. It signs
+// with HMAC-SHA1, so it is refused under fips140=only.
 func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(ctx context.Context, formValues http.Header) (*Identity, s3err.ErrorCode) {
+	if fips140Enforced() {
+		return nil, s3err.ErrSignatureVersionNotSupported
+	}
 
 	accessKey := formValues.Get("AWSAccessKeyId")
 	if accessKey == "" {

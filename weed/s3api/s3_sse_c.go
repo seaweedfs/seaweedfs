@@ -54,6 +54,7 @@ var (
 	ErrSSECustomerKeyMD5Mismatch  = errors.New("customer key MD5 mismatch")
 	ErrSSECustomerKeyMissing      = errors.New("customer key missing")
 	ErrSSECustomerKeyNotNeeded    = errors.New("customer key not needed")
+	ErrSSECNotSupportedFIPS140    = errors.New("SSE-C is not supported under fips140=only")
 )
 
 // SSECustomerKey represents a customer-provided encryption key for SSE-C
@@ -91,10 +92,15 @@ func IsSSECEncrypted(metadata map[string][]byte) bool {
 	return false
 }
 
-// validateAndParseSSECHeaders does the core validation and parsing logic
+// validateAndParseSSECHeaders does the core validation and parsing logic.
+// The key check needs MD5, so SSE-C is refused under fips140=only.
 func validateAndParseSSECHeaders(algorithm, key, keyMD5 string) (*SSECustomerKey, error) {
 	if algorithm == "" && key == "" && keyMD5 == "" {
 		return nil, nil // No SSE-C headers
+	}
+
+	if fips140Enforced() {
+		return nil, ErrSSECNotSupportedFIPS140
 	}
 
 	if algorithm == "" || key == "" || keyMD5 == "" {
@@ -333,6 +339,8 @@ func MapSSECErrorToS3Error(err error) s3err.ErrorCode {
 		return s3err.ErrSSECustomerKeyMissing
 	case ErrSSECustomerKeyNotNeeded:
 		return s3err.ErrSSECustomerKeyNotNeeded
+	case ErrSSECNotSupportedFIPS140:
+		return s3err.ErrNotImplemented
 	default:
 		return s3err.ErrInvalidRequest
 	}
