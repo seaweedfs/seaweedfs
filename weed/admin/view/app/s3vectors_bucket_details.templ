@@ -166,6 +166,28 @@ templ S3VectorsBucketDetails(data dash.S3VectorsBucketData) {
 			</div>
 		</div>
 	</div>
+	<div class="modal fade" id="removeS3VectorsMetadataKeyModal" tabindex="-1" aria-labelledby="removeS3VectorsMetadataKeyModalLabel" aria-hidden="true">
+		<div class="modal-dialog">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="removeS3VectorsMetadataKeyModalLabel">
+						<i class="bi bi-exclamation-triangle me-2 text-warning"></i><span id="removeS3VectorsMetadataKeyTitle">Remove Metadata Index</span>
+					</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<p><span id="removeS3VectorsMetadataKeyAction">Remove</span> the index of metadata key <strong id="removeS3VectorsMetadataKeyName"></strong> on index <strong id="removeS3VectorsMetadataKeyIndex"></strong>? Filters on the key read every row's metadata again.</p>
+					<div class="text-danger small mt-2" id="removeS3VectorsMetadataKeyError"></div>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+					<button type="button" class="btn btn-danger" id="removeS3VectorsMetadataKeyBtn">
+						<i class="bi bi-trash me-1"></i><span id="removeS3VectorsMetadataKeyBtnLabel">Remove</span>
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
 	<div id="s3vectorsBucketDetails" data-bucket-name={ data.Bucket.Name }></div>
 	<script>
 		document.addEventListener('DOMContentLoaded', function () {
@@ -228,16 +250,33 @@ templ S3VectorsBucketDetails(data dash.S3VectorsBucketData) {
 					keyError.textContent = error.message;
 				}
 			});
+			const removeModalEl = document.getElementById('removeS3VectorsMetadataKeyModal');
+			const removeModal = new bootstrap.Modal(removeModalEl);
+			const removeError = document.getElementById('removeS3VectorsMetadataKeyError');
 			document.querySelectorAll('.s3vectors-remove-key-btn').forEach(button => {
-				button.addEventListener('click', async function () {
-					if (!confirm((this.dataset.action || 'Remove') + ' the index of metadata key ' + this.dataset.key + '?')) return;
-					try {
-						await updateMetadataKey(this.dataset.indexName, this.dataset.key, true);
-						location.reload();
-					} catch (error) {
-						alert(error.message);
-					}
+				button.addEventListener('click', function () {
+					const action = this.dataset.action || 'Remove';
+					removeModalEl.dataset.indexName = this.dataset.indexName || '';
+					removeModalEl.dataset.key = this.dataset.key || '';
+					document.getElementById('removeS3VectorsMetadataKeyTitle').textContent = action + ' Metadata Index';
+					document.getElementById('removeS3VectorsMetadataKeyAction').textContent = action;
+					document.getElementById('removeS3VectorsMetadataKeyBtnLabel').textContent = action;
+					document.getElementById('removeS3VectorsMetadataKeyName').textContent = this.dataset.key || '';
+					document.getElementById('removeS3VectorsMetadataKeyIndex').textContent = this.dataset.indexName || '';
+					removeError.textContent = '';
+					removeModal.show();
 				});
+			});
+			document.getElementById('removeS3VectorsMetadataKeyBtn').addEventListener('click', async function () {
+				const index = removeModalEl.dataset.indexName;
+				const key = removeModalEl.dataset.key;
+				if (!index || !key) return;
+				try {
+					await updateMetadataKey(index, key, true);
+					location.reload();
+				} catch (error) {
+					removeError.textContent = error.message;
+				}
 			});
 			document.getElementById('deleteS3VectorsIndexBtn').addEventListener('click', async function () {
 				const index = modalEl.dataset.indexName;
