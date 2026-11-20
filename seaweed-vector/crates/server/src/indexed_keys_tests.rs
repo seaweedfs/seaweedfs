@@ -662,8 +662,10 @@ async fn keys_are_requested_and_listed_through_the_engine() {
     assert_eq!(listed.keys.len(), 1);
     assert_eq!(listed.keys[0].state, "requested");
     assert_eq!(listed.keys[0].rows, 600);
-    let again = update("author", false).await.unwrap_err();
-    assert_eq!(again.code(), tonic::Code::FailedPrecondition);
+    // A retry of a committed request answers as the first one did.
+    let again = update("author", false).await.unwrap().into_inner();
+    assert_eq!(again.keys.len(), 1);
+    assert_eq!(again.keys[0].state, "requested");
 
     let mut dataset = fixture.dataset(0).await;
     let key = metadata_index::add_column(&mut dataset, "author")
@@ -700,9 +702,13 @@ async fn keys_are_requested_and_listed_through_the_engine() {
     assert_eq!(listed.keys[0].state, "off");
     let dataset = fixture.dataset(0).await;
     assert_eq!(metadata_index::keys_of(&dataset)[0].state, Some(State::Off));
+    // Removing a key that is not indexed needs nothing.
+    let nobody = update("nobody", true).await.unwrap().into_inner();
+    assert_eq!(nobody.keys.len(), 1);
     assert_eq!(
-        update("nobody", true).await.unwrap_err().code(),
-        tonic::Code::FailedPrecondition
+        update("author", false).await.unwrap_err().code(),
+        tonic::Code::FailedPrecondition,
+        "being removed"
     );
 }
 

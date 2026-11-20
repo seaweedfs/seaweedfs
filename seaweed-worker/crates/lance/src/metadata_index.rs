@@ -231,22 +231,24 @@ pub fn requests(dataset: &Dataset) -> Vec<String> {
     keys
 }
 
-/// Records that `key` is to be indexed; the worker adds its column. Refused
-/// for a key that is indexed or asked for already, and past [`MAX_KEYS`].
+/// Records that `key` is to be indexed; the worker adds its column. Asking
+/// again for a key requested or indexed already is done; refused for a key
+/// being removed and past [`MAX_KEYS`].
 pub async fn request(dataset: &mut Dataset, key: &str) -> Result<()> {
     if key.is_empty() {
         bail!("the metadata key is empty");
     }
     let keys = keys_of(dataset);
     if let Some(existing) = keys.iter().find(|k| k.key == key) {
-        bail!(
-            "{key} is already indexed ({})",
-            existing.state.map_or("unknown", State::as_str)
-        );
+        // Asking again for a key being indexed or indexed already is done.
+        if existing.state == Some(State::Off) {
+            bail!("{key} is being removed; add it again once it is gone");
+        }
+        return Ok(());
     }
     let requested = requests(dataset);
     if requested.iter().any(|k| k == key) {
-        bail!("{key} is already being indexed (requested)");
+        return Ok(());
     }
     if keys.len() + requested.len() >= MAX_KEYS {
         bail!("an index has at most {MAX_KEYS} indexed metadata keys");
@@ -259,7 +261,8 @@ pub async fn request(dataset: &mut Dataset, key: &str) -> Result<()> {
 }
 
 /// Stops indexing `key`: a request is withdrawn, a column is set off at once,
-/// so queries stop using it, and the worker removes it.
+/// so queries stop using it, and the worker removes it. A key not indexed
+/// needs nothing, so asking again is done.
 pub async fn request_removal(dataset: &mut Dataset, key: &str) -> Result<()> {
     if let Some(column) = keys_of(dataset).into_iter().find(|k| k.key == key) {
         if column.state != Some(State::Off) {
@@ -268,10 +271,7 @@ pub async fn request_removal(dataset: &mut Dataset, key: &str) -> Result<()> {
         // A build that stopped before finishing leaves its request.
         return clear_request(dataset, key).await;
     }
-    if requests(dataset).iter().any(|k| k == key) {
-        return clear_request(dataset, key).await;
-    }
-    bail!("{key} is not indexed")
+    clear_request(dataset, key).await
 }
 
 /// Withdraws the request to index `key`, if the table holds one.
@@ -1043,13 +1043,17 @@ pub(crate) mod tests {
             let mut dataset = table(&dir, 10).await;
             request(&mut dataset, "author").await.unwrap();
             assert_eq!(requests(&dataset), ["author"]);
-            assert!(request(&mut dataset, "author").await.is_err());
+            // Asking again is done, without another commit.
+            let version = dataset.version().version;
+            request(&mut dataset, "author").await.unwrap();
+            assert_eq!(dataset.version().version, version);
             let stale = dataset.clone();
             let key = add_column(&mut dataset, "author").await.unwrap();
             assert_eq!(key.column, "_mk_0");
             assert!(requests(&dataset).is_empty());
             assert_eq!(keys_of(&dataset)[0].state, Some(State::Building));
-            assert!(request(&mut dataset, "author").await.is_err());
+            request(&mut dataset, "author").await.unwrap();
+            assert!(requests(&dataset).is_empty());
             assert_eq!(nulls(&dataset, "_mk_0").await, 0);
             // Opened before the add, committed after it, never filled: a
             // writer that died between its commit and its own fill.
@@ -1158,13 +1162,18 @@ pub(crate) mod tests {
 
             request_removal(&mut dataset, "author").await.unwrap();
             assert_eq!(keys_of(&dataset)[0].state, Some(State::Off));
+            request_removal(&mut dataset, "author").await.unwrap();
+            assert!(
+                request(&mut dataset, "author").await.is_err(),
+                "being removed"
+            );
             remove_column(&mut dataset, "_mk_0").await.unwrap();
             assert!(keys_of(&dataset).is_empty());
             assert!(segments(&dataset, "_mk_0").await.unwrap().is_empty());
             request(&mut dataset, "author").await.unwrap();
             request_removal(&mut dataset, "author").await.unwrap();
             assert!(requests(&dataset).is_empty());
-            assert!(request_removal(&mut dataset, "author").await.is_err());
+            request_removal(&mut dataset, "author").await.unwrap();
             assert_eq!(
                 add_column(&mut dataset, "author").await.unwrap().column,
                 "_mk_0"
