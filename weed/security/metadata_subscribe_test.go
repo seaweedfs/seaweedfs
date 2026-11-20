@@ -2,6 +2,8 @@ package security
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"slices"
 	"testing"
 	"time"
@@ -9,9 +11,93 @@ import (
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
+
+// mtlsPeerCtx is the context of a caller whose client certificate the server
+// verified, the peer CheckGrpcMetadataSubscription trusts without a token.
+func mtlsPeerCtx() context.Context {
+	return peer.NewContext(context.Background(), &peer.Peer{
+		AuthInfo: credentials.TLSInfo{State: tls.ConnectionState{VerifiedChains: [][]*x509.Certificate{{}}}},
+	})
+}
+
+func mtlsBearerCtx(token string) context.Context {
+	return metadata.NewIncomingContext(mtlsPeerCtx(), metadata.Pairs("authorization", "Bearer "+token))
+}
+
+// CheckGrpcMetadataSubscriptionToken validates the bearer token alone, without
+// the mTLS shortcut, so grpc_require_token can refuse an mTLS peer that carries
+// no valid token; and CheckGrpcMetadataSubscription applies a subscription
+// token's scope even to an mTLS peer, rather than treating it as unrestricted.
+func TestMetadataSubscriptionMtlsAndTokenOnly(t *testing.T) {
+	subKey := SigningKey("subscribe-key")
+	adminKey := SigningKey("admin-key")
+	scoped := string(GenJwtForMetadataSubscription(subKey, 60, []string{"/buckets/a"}))
+	admin := string(GenJwtForFilerAdmin(adminKey, 60))
+	foreign := string(GenJwtForMetadataSubscription(SigningKey("other"), 60, []string{"/buckets/a"}))
+	if scoped == "" || admin == "" {
+		t.Fatal("failed to mint tokens")
+	}
+	method := MethodSubscribeMetadata
+
+	// Token-only check: mTLS never substitutes for a valid token.
+	t.Run("token-only ignores mTLS", func(t *testing.T) {
+		// mTLS peer with no token -> refused (this is what keeps require mode
+		// fail-closed when the interceptor falls back to this check).
+		if _, err := CheckGrpcMetadataSubscriptionToken(mtlsPeerCtx(), subKey, adminKey, method); status.Code(err) != codes.Unauthenticated {
+			t.Fatalf("mTLS peer, no token: code = %v, want Unauthenticated", status.Code(err))
+		}
+		// mTLS peer with an invalid (foreign-key) token -> refused.
+		if _, err := CheckGrpcMetadataSubscriptionToken(mtlsBearerCtx(foreign), subKey, adminKey, method); status.Code(err) != codes.Unauthenticated {
+			t.Fatalf("mTLS peer, foreign token: code = %v, want Unauthenticated", status.Code(err))
+		}
+		// mTLS peer with a valid scoped token -> accepted AND scoped.
+		scope, err := CheckGrpcMetadataSubscriptionToken(mtlsBearerCtx(scoped), subKey, adminKey, method)
+		if err != nil {
+			t.Fatalf("mTLS peer, scoped token: %v", err)
+		}
+		if scope == nil || !slices.Equal(scope.Prefixes, []string{"/buckets/a"}) {
+			t.Fatalf("scope = %+v, want /buckets/a", scope)
+		}
+		// Admin token -> unrestricted (nil scope), no error.
+		if scope, err := CheckGrpcMetadataSubscriptionToken(mtlsBearerCtx(admin), subKey, adminKey, method); err != nil || scope != nil {
+			t.Fatalf("mTLS peer, admin token: scope=%+v err=%v, want nil,nil", scope, err)
+		}
+		// Plain (no mTLS) scoped token -> accepted AND scoped.
+		if scope, err := CheckGrpcMetadataSubscriptionToken(incomingBearer(scoped), subKey, adminKey, method); err != nil || scope == nil {
+			t.Fatalf("plain scoped token: scope=%+v err=%v, want a scope", scope, err)
+		}
+	})
+
+	// Full check: the mTLS shortcut still trusts a tokenless peer, but a present
+	// scoped token's scope is applied even under mTLS (no longer unrestricted).
+	t.Run("full check honors a scoped token over the mTLS shortcut", func(t *testing.T) {
+		// mTLS peer, no token -> unrestricted (pre-existing trust model preserved).
+		if scope, err := CheckGrpcMetadataSubscription(mtlsPeerCtx(), subKey, adminKey, method); err != nil || scope != nil {
+			t.Fatalf("mTLS peer, no token: scope=%+v err=%v, want nil,nil", scope, err)
+		}
+		// mTLS peer, scoped token -> BOUNDED to the token's scope (the fix).
+		scope, err := CheckGrpcMetadataSubscription(mtlsBearerCtx(scoped), subKey, adminKey, method)
+		if err != nil {
+			t.Fatalf("mTLS peer, scoped token: %v", err)
+		}
+		if scope == nil || !slices.Equal(scope.Prefixes, []string{"/buckets/a"}) {
+			t.Fatalf("mTLS peer, scoped token: scope = %+v, want it bounded to /buckets/a", scope)
+		}
+		// mTLS peer, admin token -> unrestricted.
+		if scope, err := CheckGrpcMetadataSubscription(mtlsBearerCtx(admin), subKey, adminKey, method); err != nil || scope != nil {
+			t.Fatalf("mTLS peer, admin token: scope=%+v err=%v, want nil,nil", scope, err)
+		}
+		// No mTLS, no token, subscribe key set -> refused.
+		if _, err := CheckGrpcMetadataSubscription(context.Background(), subKey, adminKey, method); status.Code(err) != codes.Unauthenticated {
+			t.Fatalf("no mTLS, no token: code = %v, want Unauthenticated", status.Code(err))
+		}
+	})
+}
 
 func incomingBearer(token string) context.Context {
 	return metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+token))

@@ -101,14 +101,14 @@ func metadataSubscriptionScope(signingKey SigningKey, token EncodedJwt, method s
 	return &MetadataSubscriptionScope{Prefixes: prefixes, ExpiresAt: claims.ExpiresAt.Time}, true
 }
 
-// CheckGrpcMetadataSubscription authorizes a metadata subscription call.
-// Without subscribeKey every caller is unrestricted (nil scope). With it, an
-// mTLS-verified peer or an admin token signed by adminKey is unrestricted,
-// and a token signed by subscribeKey is limited to the returned scope.
-func CheckGrpcMetadataSubscription(ctx context.Context, subscribeKey, adminKey SigningKey, method string) (scope *MetadataSubscriptionScope, err error) {
-	if len(subscribeKey) == 0 || isMtlsVerifiedPeer(ctx) {
-		return nil, nil
-	}
+// CheckGrpcMetadataSubscriptionToken authorizes a metadata subscription from the
+// bearer token alone, without the mTLS-peer shortcut. It returns a non-nil scope
+// for a token signed by subscribeKey, (nil, nil) for an admin token signed by
+// adminKey, and an Unauthenticated error when no bearer token authorizes the
+// call. A caller that must enforce a token on every subscriber
+// (jwt.filer_signing.grpc_require_token) uses this rather than
+// CheckGrpcMetadataSubscription, which also admits an mTLS peer with no token.
+func CheckGrpcMetadataSubscriptionToken(ctx context.Context, subscribeKey, adminKey SigningKey, method string) (*MetadataSubscriptionScope, error) {
 	md, _ := metadata.FromIncomingContext(ctx)
 	authHeaders := md.Get("authorization")
 	if len(authHeaders) > maxGrpcAdminAuthValues {
@@ -120,12 +120,28 @@ func CheckGrpcMetadataSubscription(ctx context.Context, subscribeKey, adminKey S
 			continue
 		}
 		token := EncodedJwt(parts[1])
-		if IsFilerAdminToken(adminKey, token) {
+		if len(adminKey) > 0 && IsFilerAdminToken(adminKey, token) {
 			return nil, nil
 		}
-		if scope, ok := metadataSubscriptionScope(subscribeKey, token, method); ok {
-			return scope, nil
+		if len(subscribeKey) > 0 {
+			if scope, ok := metadataSubscriptionScope(subscribeKey, token, method); ok {
+				return scope, nil
+			}
 		}
+	}
+	return nil, status.Error(codes.Unauthenticated, "metadata subscription requires an admin token or a subscription token for this method")
+}
+
+// CheckGrpcMetadataSubscription authorizes a metadata subscription call. A bearer
+// token is honored first, so a subscription token's scope is applied even to an
+// mTLS peer. Absent an authorizing token, an mTLS-verified peer -- or a filer
+// with no subscribeKey configured -- is unrestricted (nil scope).
+func CheckGrpcMetadataSubscription(ctx context.Context, subscribeKey, adminKey SigningKey, method string) (scope *MetadataSubscriptionScope, err error) {
+	if scope, err := CheckGrpcMetadataSubscriptionToken(ctx, subscribeKey, adminKey, method); err == nil {
+		return scope, nil
+	}
+	if len(subscribeKey) == 0 || isMtlsVerifiedPeer(ctx) {
+		return nil, nil
 	}
 	return nil, status.Error(codes.Unauthenticated, "metadata subscription requires mTLS, an admin token, or a subscription token for this method")
 }

@@ -15,6 +15,13 @@ import (
 )
 
 func metadataSubscriptionScope(ctx context.Context, method string) (*security.MetadataSubscriptionScope, error) {
+	// A scoped grpc_key subscription token was already verified and is bounded
+	// by the scope stream interceptor (subscriptionPreAuthKey). The handler adds
+	// no further restriction, so the token is not rejected here for being signed
+	// with a key this check does not hold.
+	if ctx.Value(subscriptionPreAuthKey) != nil {
+		return nil, nil
+	}
 	v := util.GetViper()
 	return security.CheckGrpcMetadataSubscription(ctx,
 		security.SigningKey(v.GetString("jwt.filer_signing.subscribe.key")),

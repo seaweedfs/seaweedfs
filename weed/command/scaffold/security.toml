@@ -81,6 +81,35 @@ expires_after_seconds = 10           # seconds
 [jwt.filer_signing]
 key = ""
 expires_after_seconds = 10           # seconds
+# Filesystem gRPC service (weed mount and other filer_pb clients): a call may
+# carry "authorization: Bearer <token>" signed with this key. A token with
+# allowed_prefixes (read-write) and/or read_prefixes (read-only) is restricted
+# to those paths; a token without them has full access. Clients that load this
+# key present an unscoped token automatically. When grpc_require_token is true, a
+# call without a valid token is refused; the default serves it as before. Enable
+# it on SINGLE-FILER deployments only for now: the filer's own peer-to-peer calls
+# (forwarded writes, locks, metadata subscription) carry no bearer token, so on a
+# multi-filer deployment require mode refuses them and breaks forwarding and
+# metadata subscription. A trusted network or [grpc.filer] mTLS does not change
+# this, because those calls present no token at all; a filer-to-filer
+# authentication path is needed first.
+# grpc_require_token = false
+# grpc_key, when set, replaces key for the filesystem gRPC service only: tokens
+# are verified (and assignment tokens derived) with it, clients that load it
+# mint their unscoped token with it, and the HTTP API keeps following key. Set
+# grpc_key alone to enforce scoped tokens on gRPC without the HTTP API starting
+# to demand JWTs on writes.
+# grpc_key = ""
+# A scoped token's AssignVolume answers carry an assignment token per file id
+# (assign_auth) that the client returns when it stores the chunk (chunk_auth);
+# this is how a chunk assigned on one filer may be stored through another.
+# assign_expires_after_seconds bounds them (0: no expiry; they are accepted only
+# with a live token of the same holder anyway). clock_leeway_seconds is tolerated
+# on every expiry. previous_key keeps verifying tokens minted before a key
+# rotation for as long as it is set.
+# assign_expires_after_seconds = 86400
+# clock_leeway_seconds = 30
+# previous_key = ""
 
 # If this JWT key is configured, Filer only accepts reads over HTTP if they are signed with this JWT:
 # - f.e. the S3 API Shim generates the JWT

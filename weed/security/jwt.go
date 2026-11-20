@@ -1,8 +1,12 @@
 package security
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,10 +37,47 @@ type SeaweedFileIdClaims struct {
 type SeaweedFilerClaims struct {
 	AllowedPrefixes []string `json:"allowed_prefixes,omitempty"`
 	AllowedMethods  []string `json:"allowed_methods,omitempty"`
+	// ReadPrefixes scopes the token to paths it may read but not write. The
+	// filer HTTP API honours it for GET and HEAD; the filesystem gRPC API for
+	// every read-only call. A token with AllowedPrefixes or ReadPrefixes is a
+	// scoped credential (IsScoped); one with neither has full access.
+	ReadPrefixes []string `json:"read_prefixes,omitempty"`
 	// SessionId is present only on STS session tokens; a token carrying it is
 	// an S3 session credential, not a filer API credential.
 	SessionId string `json:"sid,omitempty"`
 	jwt.RegisteredClaims
+}
+
+// IsScoped reports whether the token restricts the paths it may touch.
+func (c *SeaweedFilerClaims) IsScoped() bool {
+	return c != nil && (len(c.AllowedPrefixes) > 0 || len(c.ReadPrefixes) > 0)
+}
+
+// GenJwtForFilerScope mints a filer credential restricted to allowedPrefixes
+// (read and write) and readPrefixes (read only). id becomes the "jti" claim:
+// the filer keys the chunks it hands out to the holder by it, so a renewed
+// token for the same holder must carry the same id. Returns an empty string
+// if the signing key is not configured or the token would not expire.
+func GenJwtForFilerScope(signingKey SigningKey, expiresAfter time.Duration, id string, allowedPrefixes, readPrefixes []string) EncodedJwt {
+	if len(signingKey) == 0 || expiresAfter <= 0 {
+		return ""
+	}
+	claims := SeaweedFilerClaims{
+		AllowedPrefixes: allowedPrefixes,
+		ReadPrefixes:    readPrefixes,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        id,
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiresAfter)),
+		},
+	}
+	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	encoded, e := t.SignedString([]byte(signingKey))
+	if e != nil {
+		glog.V(0).Infof("Failed to sign claims %+v: %v", t.Claims, e)
+		return ""
+	}
+	return EncodedJwt(encoded)
 }
 
 // SeaweedFilerAdminClaims is presented by callers of the filer's IAM gRPC
@@ -55,6 +96,8 @@ type SeaweedFilerAdminClaims struct {
 	// A filer token scoped to paths or methods is not an admin credential.
 	AllowedPrefixes []string `json:"allowed_prefixes,omitempty"`
 	AllowedMethods  []string `json:"allowed_methods,omitempty"`
+	// Read-only path grants also exclude a filer token from the admin plane.
+	ReadPrefixes []string `json:"read_prefixes,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -159,6 +202,106 @@ func decodeJwt(signingKey SigningKey, tokenString EncodedJwt, claims jwt.Claims,
 		}
 		return []byte(signingKey), nil
 	}, options...)
+}
+
+// DecodeJwtWith is DecodeJwt with a clock leeway for "exp"/"nbf" and an
+// optional previous key: a token whose signature fails under signingKey is
+// verified once more under previousKey (jwt.filer_signing.previous_key), so a
+// key rotation can keep accepting tokens minted before it for a window.
+func DecodeJwtWith(signingKey, previousKey SigningKey, tokenString EncodedJwt, claims jwt.Claims, leeway time.Duration) (token *jwt.Token, err error) {
+	token, err = decodeJwt(signingKey, tokenString, claims, jwt.WithLeeway(leeway))
+	if err != nil && len(previousKey) > 0 && errors.Is(err, jwt.ErrTokenSignatureInvalid) {
+		token, err = decodeJwt(previousKey, tokenString, claims, jwt.WithLeeway(leeway))
+	}
+	return token, err
+}
+
+// SeaweedAssignClaims is the assignment token a filer returns with
+// AssignVolume to the holder of a scoped filer token (AssignVolumeResponse
+// assign_auth): it states that file id Fid was assigned to the holder named
+// by "jti". The holder sends it back (chunk_auth) when it stores the chunk,
+// and any filer that shares the signing key verifies it without remembering
+// the assignment. It is signed with AssignSigningKey, derived from the filer
+// key, so it is never accepted as a filer, admin or volume credential.
+type SeaweedAssignClaims struct {
+	Fid string `json:"fid"`
+	// Count is the number of file ids the assignment issued: the base Fid plus
+	// Fid_1 .. Fid_{Count-1}, which the volume server derives from the base. A
+	// suffixed id is covered only when its index is within Count, so a proof
+	// cannot cover ids the allocation never issued.
+	Count int32 `json:"cnt,omitempty"`
+	jwt.RegisteredClaims
+}
+
+// AssignSigningKey derives the key assignment tokens are signed with from
+// jwt.filer_signing.key. Returns nil when no filer key is configured.
+func AssignSigningKey(filerKey SigningKey) SigningKey {
+	if len(filerKey) == 0 {
+		return nil
+	}
+	h := hmac.New(sha256.New, []byte(filerKey))
+	h.Write([]byte("seaweedfs/filer/assign"))
+	return SigningKey(h.Sum(nil))
+}
+
+// GenJwtForAssign mints the assignment token of fileId for holder. A
+// lifetime of zero or less mints a token without "exp": it then lives as long
+// as the holder's own scoped tokens are renewed, since the filer accepts it
+// only together with a valid token of the same holder.
+func GenJwtForAssign(filerKey SigningKey, lifetime time.Duration, fileId, holder string, count int32) EncodedJwt {
+	key := AssignSigningKey(filerKey)
+	if len(key) == 0 || fileId == "" || holder == "" {
+		return ""
+	}
+	if count < 1 {
+		count = 1
+	}
+	claims := SeaweedAssignClaims{
+		Fid:              fileId,
+		Count:            count,
+		RegisteredClaims: jwt.RegisteredClaims{ID: holder, IssuedAt: jwt.NewNumericDate(time.Now())},
+	}
+	if lifetime > 0 {
+		claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(lifetime))
+	}
+	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	encoded, e := t.SignedString([]byte(key))
+	if e != nil {
+		glog.V(0).Infof("Failed to sign assignment claims %+v: %v", t.Claims, e)
+		return ""
+	}
+	return EncodedJwt(encoded)
+}
+
+// VerifyAssignJwt reports whether token is a valid assignment token of fileId
+// for holder under filerKey or previousFilerKey, within leeway of its expiry.
+// A multi-count assignment ("fid_1", "fid_2", ...) is covered by the token of
+// its base file id, as the volume server accepts those ids.
+func VerifyAssignJwt(filerKey, previousFilerKey SigningKey, token EncodedJwt, fileId, holder string, leeway time.Duration) bool {
+	if token == "" || fileId == "" || holder == "" {
+		return false
+	}
+	claims := &SeaweedAssignClaims{}
+	parsed, err := DecodeJwtWith(AssignSigningKey(filerKey), AssignSigningKey(previousFilerKey), token, claims, leeway)
+	if err != nil || parsed == nil || !parsed.Valid {
+		return false
+	}
+	if claims.ID != holder {
+		return false
+	}
+	// The base id the assignment issued is always covered.
+	if claims.Fid == fileId {
+		return true
+	}
+	// A multi-count assignment of Count ids covers base, base_1 .. base_{Count-1}.
+	// Accept a suffixed id only when its base matches and its index is within the
+	// allocated count, so a single-id proof cannot reference ids never issued.
+	suffix, ok := strings.CutPrefix(fileId, claims.Fid+"_")
+	if !ok {
+		return false
+	}
+	n, convErr := strconv.Atoi(suffix)
+	return convErr == nil && n >= 1 && int32(n) < claims.Count
 }
 
 // FilerJwtProvider signs the credential a filer's HTTP API expects. A nil

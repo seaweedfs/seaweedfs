@@ -139,6 +139,23 @@ type FilerServer struct {
 	grpcDialOptionVolume grpc.DialOption
 	grpcDialOptionS3     grpc.DialOption
 
+	// grpcScope enforces scoped filer tokens on the filesystem gRPC service;
+	// grpcRequireToken (jwt.filer_signing.grpc_require_token) refuses calls
+	// that present none.
+	grpcScope        *filerGrpcScope
+	grpcRequireToken atomic.Bool
+	// grpcPreviousKey (jwt.filer_signing.previous_key) still verifies tokens
+	// minted before a key rotation; grpcClockLeeway (clock_leeway_seconds)
+	// is tolerated on every expiry; grpcAssignLifetime
+	// (assign_expires_after_seconds) bounds assignment tokens.
+	grpcPreviousKey atomic.Pointer[string]
+	// grpcKey (jwt.filer_signing.grpc_key) verifies filesystem gRPC tokens
+	// in place of jwt.filer_signing.key when set, so the gRPC check can be
+	// enabled without the HTTP API starting to demand JWTs on writes.
+	grpcKey            atomic.Pointer[string]
+	grpcClockLeeway    atomic.Int64
+	grpcAssignLifetime atomic.Int64
+
 	// metrics read from the master
 	metricsAddress     string
 	metricsIntervalSec int
@@ -332,6 +349,21 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.basicAuth.Store(basicAuth)
 	fs.basicAuthFile = basicAuthFile
 	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec)
+	fs.loadGrpcScopeConfig(v)
+	fs.grpcScope = newFilerGrpcScope(scopeConfig{
+		signingKey:  func() security.SigningKey { return grpcScopeSigningKey(*fs.grpcKey.Load(), fs.filerGuard.SigningKey()) },
+		previousKey: func() security.SigningKey { return security.SigningKey(*fs.grpcPreviousKey.Load()) },
+		subscribeKey: func() security.SigningKey {
+			return security.SigningKey(util.GetViper().GetString("jwt.filer_signing.subscribe.key"))
+		},
+		adminKey:       func() security.SigningKey { return fs.filerGuard.SigningKey() },
+		require:        fs.grpcRequireToken.Load,
+		leeway:         func() time.Duration { return time.Duration(fs.grpcClockLeeway.Load()) * time.Second },
+		assignLifetime: func() time.Duration { return time.Duration(fs.grpcAssignLifetime.Load()) * time.Second },
+	}, fs)
+	if fs.grpcRequireToken.Load() && len(grpcScopeSigningKey(*fs.grpcKey.Load(), fs.filerGuard.SigningKey())) == 0 {
+		glog.Warningf("filer: jwt.filer_signing.grpc_require_token is set without jwt.filer_signing.grpc_key or jwt.filer_signing.key: every filesystem gRPC call will be refused")
+	}
 
 	fs.checkWithMaster()
 
@@ -803,5 +835,33 @@ func (fs *FilerServer) Reload() {
 		v.GetString("jwt.signing.read.key"),
 		v.GetInt("jwt.signing.read.expires_after_seconds"),
 	)
+	fs.loadGrpcScopeConfig(v)
 	util_http.ReloadJwtSigningReadConfig()
+}
+
+// loadGrpcScopeConfig reads the jwt.filer_signing settings of the scoped
+// token check; it runs at start and on every reload.
+func (fs *FilerServer) loadGrpcScopeConfig(v *util.ViperProxy) {
+	v.SetDefault("jwt.filer_signing.grpc_require_token", false)
+	v.SetDefault("jwt.filer_signing.clock_leeway_seconds", 30)
+	v.SetDefault("jwt.filer_signing.assign_expires_after_seconds", 86400)
+	fs.grpcRequireToken.Store(v.GetBool("jwt.filer_signing.grpc_require_token"))
+	previous := v.GetString("jwt.filer_signing.previous_key")
+	fs.grpcPreviousKey.Store(&previous)
+	grpcKey := v.GetString("jwt.filer_signing.grpc_key")
+	fs.grpcKey.Store(&grpcKey)
+	fs.grpcClockLeeway.Store(int64(v.GetInt("jwt.filer_signing.clock_leeway_seconds")))
+	fs.grpcAssignLifetime.Store(int64(v.GetInt("jwt.filer_signing.assign_expires_after_seconds")))
+}
+
+// grpcScopeSigningKey is the key filesystem gRPC tokens are verified (and
+// assignment tokens derived) with: jwt.filer_signing.grpc_key when set,
+// otherwise jwt.filer_signing.key. A deployment that sets only grpc_key keeps
+// the filer HTTP API as it was (no JWT demanded on writes) while scoped tokens
+// are enforced on gRPC.
+func grpcScopeSigningKey(grpcKey string, filerKey security.SigningKey) security.SigningKey {
+	if grpcKey != "" {
+		return security.SigningKey(grpcKey)
+	}
+	return filerKey
 }

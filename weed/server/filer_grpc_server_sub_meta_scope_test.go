@@ -393,3 +393,38 @@ func TestMetadataSubscriptionTokenRefusedOverHTTP(t *testing.T) {
 		}
 	}
 }
+
+// A scoped grpc_key subscription token passes the scope stream interceptor,
+// which verifies it, bounds the stream to its prefixes, and marks the context
+// pre-authorized. metadataSubscriptionScope must then accept it rather than
+// reject a token the interceptor already verified (the token is signed with the
+// grpc key, which is neither the subscribe key nor the filer key). The fake
+// scope harness does not run metadataSubscriptionScope, so this exercises it
+// directly.
+func TestMetadataSubscriptionScopeHonorsInterceptorPreAuth(t *testing.T) {
+	v := util.GetViper()
+	v.Set("jwt.filer_signing.subscribe.key", "sub-key")
+	v.Set("jwt.filer_signing.key", "filer-key")
+	t.Cleanup(func() {
+		v.Set("jwt.filer_signing.subscribe.key", "")
+		v.Set("jwt.filer_signing.key", "")
+	})
+
+	grpcKeyToken := security.GenJwtForFilerScope(security.SigningKey("grpc-key"), time.Hour, "alice", []string{"/t"}, nil)
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+string(grpcKeyToken)))
+
+	// Without the interceptor's marker the handler check rejects it (the bug this
+	// fixes: the interceptor accepted and bounded the stream, the handler refused).
+	if _, err := metadataSubscriptionScope(ctx, security.MethodSubscribeMetadata); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("a grpc_key token must be rejected by the handler check without the marker, got %v", err)
+	}
+	// With the marker the handler adds no further restriction and accepts it; the
+	// interceptor's stream wrapper enforces the token's prefixes.
+	marked := context.WithValue(ctx, subscriptionPreAuthKey, true)
+	for _, method := range []string{security.MethodSubscribeMetadata, security.MethodSubscribeLocalMetadata} {
+		scope, err := metadataSubscriptionScope(marked, method)
+		if err != nil || scope != nil {
+			t.Fatalf("%s: a pre-authorized subscription returns no error and no further restriction, got scope=%v err=%v", method, scope, err)
+		}
+	}
+}
