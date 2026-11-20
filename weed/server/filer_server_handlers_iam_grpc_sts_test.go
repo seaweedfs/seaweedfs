@@ -316,7 +316,7 @@ func TestIamGrpc_PutOIDCProviderRequiresHTTPSExceptOnLoopback(t *testing.T) {
 func TestIamGrpc_STSRPCsRefuseAnUnauthenticatedService(t *testing.T) {
 	cm, err := credential.NewCredentialManager(credential.StoreTypeMemory, nil, "")
 	require.NoError(t, err)
-	s := NewIamGrpcServer(cm, nil)
+	s := NewIamGrpcServer(cm, nil, nil)
 	s.SetSTSStores(integration.NewMemoryOIDCProviderStore(), integration.NewMemoryRoleStore())
 	ctx := context.Background()
 	calls := map[string]func() error{

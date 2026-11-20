@@ -22,19 +22,21 @@ import (
 // Protect a filer gRPC port reachable by untrusted clients with [grpc.filer] mTLS.
 type IamGrpcServer struct {
 	iam_pb.UnimplementedSeaweedIdentityAccessManagementServer
-	credentialManager *credential.CredentialManager
-	adminSigningKey   security.SigningKey
-	oidcProviderStore integration.OIDCProviderStore
-	roleStore         integration.RoleStore
+	credentialManager       *credential.CredentialManager
+	adminSigningKey         security.SigningKey
+	previousAdminSigningKey security.SigningKey
+	oidcProviderStore       integration.OIDCProviderStore
+	roleStore               integration.RoleStore
 }
 
 // NewIamGrpcServer creates a new IAM gRPC server. If adminSigningKey is empty
 // the service runs unauthenticated; otherwise every RPC requires a Bearer
-// token signed with the key.
-func NewIamGrpcServer(credentialManager *credential.CredentialManager, adminSigningKey security.SigningKey) *IamGrpcServer {
+// token signed with the key or with previousAdminSigningKey.
+func NewIamGrpcServer(credentialManager *credential.CredentialManager, adminSigningKey, previousAdminSigningKey security.SigningKey) *IamGrpcServer {
 	return &IamGrpcServer{
-		credentialManager: credentialManager,
-		adminSigningKey:   adminSigningKey,
+		credentialManager:       credentialManager,
+		adminSigningKey:         adminSigningKey,
+		previousAdminSigningKey: previousAdminSigningKey,
 	}
 }
 
@@ -46,7 +48,7 @@ func (s *IamGrpcServer) checkAdminAuth(ctx context.Context) error {
 	if len(s.adminSigningKey) == 0 {
 		return nil
 	}
-	return security.CheckGrpcAdminToken(ctx, s.adminSigningKey)
+	return security.CheckGrpcAdminToken(ctx, s.adminSigningKey, s.previousAdminSigningKey)
 }
 
 //////////////////////////////////////////////////

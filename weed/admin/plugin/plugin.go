@@ -306,7 +306,8 @@ func (r *Plugin) Shutdown() {
 }
 
 func (r *Plugin) WorkerStream(stream plugin_pb.PluginControlService_WorkerStreamServer) error {
-	if err := security.CheckGrpcAdminPeer(stream.Context(), security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key"))); err != nil {
+	v := util.GetViper()
+	if err := security.CheckGrpcAdminPeer(stream.Context(), security.SigningKey(v.GetString("jwt.filer_signing.key")), security.SigningKey(v.GetString("jwt.filer_signing.previous_key"))); err != nil {
 		return err
 	}
 

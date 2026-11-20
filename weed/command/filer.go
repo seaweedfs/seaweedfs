@@ -519,7 +519,8 @@ func (fo *FilerOptions) startFiler() {
 	// [grpc.filer] mTLS.
 	if credentialManager != nil {
 		adminSigningKey := security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key"))
-		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager, adminSigningKey)
+		previousAdminSigningKey := security.SigningKey(util.GetViper().GetString("jwt.filer_signing.previous_key"))
+		iamGrpcServer := weed_server.NewIamGrpcServer(credentialManager, adminSigningKey, previousAdminSigningKey)
 		// The OIDC provider and role RPCs write where S3 servers configured with
 		// filer-typed "oidcProviderStore" and "roleStore" read: this filer, at
 		// the stores' default base paths.

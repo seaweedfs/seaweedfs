@@ -199,7 +199,8 @@ func (s *WorkerGrpcServer) Stop() error {
 func (s *WorkerGrpcServer) WorkerStream(stream worker_pb.WorkerService_WorkerStreamServer) error {
 	ctx := stream.Context()
 
-	if err := security.CheckGrpcAdminPeer(ctx, security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key"))); err != nil {
+	v := util.GetViper()
+	if err := security.CheckGrpcAdminPeer(ctx, security.SigningKey(v.GetString("jwt.filer_signing.key")), security.SigningKey(v.GetString("jwt.filer_signing.previous_key"))); err != nil {
 		return err
 	}
 
