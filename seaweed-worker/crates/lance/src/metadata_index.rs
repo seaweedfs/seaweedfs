@@ -7,7 +7,7 @@
 //! `metadata` JSON column stays the source of truth: every writer derives the
 //! columns from it, and queries use one only once its state is `ready`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
@@ -276,6 +276,11 @@ pub async fn request(dataset: &mut Dataset, key: &str) -> Result<()> {
 /// so queries stop using it, and the worker removes it. A key not indexed
 /// needs nothing, so asking again is done.
 pub async fn request_removal(dataset: &mut Dataset, key: &str) -> Result<()> {
+    // An add that stopped before setting again what it overwrote may hide
+    // this key's request, which its recovery would bring back later.
+    for added in keys_of(dataset) {
+        recover_add(dataset, &added).await?;
+    }
     if let Some(column) = keys_of(dataset).into_iter().find(|k| k.key == key) {
         if column.state != Some(State::Off) {
             set_state(dataset, &column.column, State::Off).await?;
@@ -283,7 +288,15 @@ pub async fn request_removal(dataset: &mut Dataset, key: &str) -> Result<()> {
         // A build that stopped before finishing leaves its request.
         return clear_request(dataset, key).await;
     }
-    clear_request(dataset, key).await
+    clear_request(dataset, key).await?;
+    // The withdrawal commits over an add that read the request before it.
+    dataset.checkout_latest().await?;
+    if let Some(column) = keys_of(dataset).into_iter().find(|k| k.key == key)
+        && column.state != Some(State::Off)
+    {
+        set_state(dataset, &column.column, State::Off).await?;
+    }
+    Ok(())
 }
 
 /// Withdraws the request to index `key`, if the table holds one.
@@ -395,53 +408,88 @@ async fn reapply_metadata(
             Err(e) => return Err(e.into()),
         }
     }
+    let (schema_updates, mut field_updates) = match &history {
+        Some((prior, read)) => overwritten(dataset, prior, read),
+        None => Default::default(),
+    };
+    let request = format!("{REQUEST_SCHEMA_META_PREFIX}{key}");
+    let withdrawn = schema_updates
+        .iter()
+        .any(|e| e.key == request && e.value.is_none());
+    let own_updates = field_updates.entry(own).or_default();
+    own_updates.push(map_entry(RESTORE_FIELD_META, None));
+    if withdrawn {
+        own_updates.push(map_entry(STATE_FIELD_META, Some(State::Off.as_str())));
+    }
+    commit_metadata(dataset, schema_updates, field_updates).await?;
+    if history.is_none() {
+        tracing::warn!(
+            "{column}: the versions around its add are gone, so what the add overwrote is not set again"
+        );
+    }
+    Ok(state_of(dataset))
+}
+
+fn map_entry(key: &str, value: Option<&str>) -> UpdateMapEntry {
+    UpdateMapEntry {
+        key: key.to_string(),
+        value: value.map(str::to_string),
+    }
+}
+
+/// What a commit that wrote `read` over `prior` overwrote of the metadata
+/// committed while it ran: the request entries and key states `prior` holds
+/// and `read` does not, set back where the latest version still holds what
+/// the commit wrote. A column gone or holding another key since is left
+/// alone.
+fn overwritten(
+    dataset: &Dataset,
+    prior: &Schema,
+    read: &Schema,
+) -> (Vec<UpdateMapEntry>, HashMap<i32, Vec<UpdateMapEntry>>) {
     let now = Schema::from(dataset.schema());
     let mut schema_updates = Vec::new();
     let mut field_updates: HashMap<i32, Vec<UpdateMapEntry>> = HashMap::new();
-    let entry = |key: &str, value: Option<&str>| UpdateMapEntry {
-        key: key.to_string(),
-        value: value.map(str::to_string),
-    };
-    let mut withdrawn = false;
-    if let Some((prior, read)) = &history {
-        let mut names: Vec<&String> = prior.metadata.keys().chain(read.metadata.keys()).collect();
-        names.sort();
-        names.dedup();
-        for k in names {
-            let (before, wrote) = (prior.metadata.get(k), read.metadata.get(k));
-            if before == wrote || now.metadata.get(k) != wrote {
-                continue;
-            }
-            withdrawn |= before.is_none() && *k == format!("{REQUEST_SCHEMA_META_PREFIX}{key}");
-            schema_updates.push(entry(k, before.map(String::as_str)));
+    let mut names: Vec<&String> = prior.metadata.keys().chain(read.metadata.keys()).collect();
+    names.sort();
+    names.dedup();
+    for k in names {
+        let (before, wrote) = (prior.metadata.get(k), read.metadata.get(k));
+        if before == wrote || now.metadata.get(k) != wrote {
+            continue;
         }
-        let wrote = indexed_keys(read);
-        let current = indexed_keys(&now);
-        for before in indexed_keys(prior) {
-            let same = |k: &&IndexedKey| k.column == before.column && k.key == before.key;
-            let Some(overwritten) = wrote.iter().find(same) else {
-                continue;
-            };
-            let unchanged = current
-                .iter()
-                .find(same)
-                .is_some_and(|k| k.state == overwritten.state);
-            if let (Some(state), true, true) =
-                (before.state, overwritten.state != before.state, unchanged)
-                && let Some(field) = dataset.schema().field(&before.column)
-            {
-                field_updates
-                    .entry(field.id)
-                    .or_default()
-                    .push(entry(STATE_FIELD_META, Some(state.as_str())));
-            }
+        schema_updates.push(map_entry(k, before.map(String::as_str)));
+    }
+    let wrote = indexed_keys(read);
+    let current = indexed_keys(&now);
+    for before in indexed_keys(prior) {
+        let same = |k: &&IndexedKey| k.column == before.column && k.key == before.key;
+        let Some(overwritten) = wrote.iter().find(same) else {
+            continue;
+        };
+        let unchanged = current
+            .iter()
+            .find(same)
+            .is_some_and(|k| k.state == overwritten.state);
+        if let (Some(state), true, true) =
+            (before.state, overwritten.state != before.state, unchanged)
+            && let Some(field) = dataset.schema().field(&before.column)
+        {
+            field_updates
+                .entry(field.id)
+                .or_default()
+                .push(map_entry(STATE_FIELD_META, Some(state.as_str())));
         }
     }
-    let own_updates = field_updates.entry(own).or_default();
-    own_updates.push(entry(RESTORE_FIELD_META, None));
-    if withdrawn {
-        own_updates.push(entry(STATE_FIELD_META, Some(State::Off.as_str())));
-    }
+    (schema_updates, field_updates)
+}
+
+/// Commits schema and field metadata updates in one UpdateConfig.
+async fn commit_metadata(
+    dataset: &mut Dataset,
+    schema_updates: Vec<UpdateMapEntry>,
+    field_updates: HashMap<i32, Vec<UpdateMapEntry>>,
+) -> Result<()> {
     let map = |update_entries: Vec<UpdateMapEntry>| UpdateMap {
         update_entries,
         replace: false,
@@ -462,12 +510,7 @@ async fn reapply_metadata(
     *dataset = CommitBuilder::new(WriteDestination::Dataset(Arc::new(dataset.clone())))
         .execute(transaction)
         .await?;
-    if history.is_none() {
-        tracing::warn!(
-            "{column}: the versions around its add are gone, so what the add overwrote is not set again"
-        );
-    }
-    Ok(state_of(dataset))
+    Ok(())
 }
 
 /// The earliest version kept that has `column`: the add's, unless a cleanup
@@ -534,7 +577,9 @@ const REDERIVE_ATTEMPTS: usize = 10;
 ///
 /// A rewrite moves its rows to a new fragment. A write committing while
 /// the rewrite does makes it start over from that version, so it never
-/// puts values derived before the write onto the write's rows.
+/// puts values derived before the write onto the write's rows; the
+/// fragments that version added, where a compaction moved the rows, are
+/// derived again too.
 pub async fn rederive(
     dataset: &mut Dataset,
     columns: &[IndexedKey],
@@ -543,6 +588,7 @@ pub async fn rederive(
     if columns.is_empty() || fragments.is_some_and(|f| f.is_empty()) {
         return Ok(0);
     }
+    let mut fragments = fragments.map(<[u64]>::to_vec);
     for _ in 0..REDERIVE_ATTEMPTS {
         let schema = Schema::from(dataset.schema());
         let mut fields = vec![schema.field_with_name(KEY_COLUMN)?.clone()];
@@ -554,7 +600,7 @@ pub async fn rederive(
         let patch_schema = Arc::new(Schema::new(fields));
         let mut scanner = dataset.scan();
         scanner.project(&projection)?;
-        if let Some(ids) = fragments {
+        if let Some(ids) = &fragments {
             scanner.with_fragments(
                 dataset
                     .fragments()
@@ -614,7 +660,19 @@ pub async fn rederive(
                 *dataset = Arc::unwrap_or_clone(patched);
                 return Ok(rows);
             }
-            Err(lance::Error::TooMuchWriteContention { .. }) => dataset.checkout_latest().await?,
+            Err(lance::Error::TooMuchWriteContention { .. }) => {
+                let read: HashSet<u64> = dataset.fragments().iter().map(|f| f.id).collect();
+                dataset.checkout_latest().await?;
+                if let Some(ids) = &mut fragments {
+                    ids.extend(
+                        dataset
+                            .fragments()
+                            .iter()
+                            .map(|f| f.id)
+                            .filter(|id| !read.contains(id)),
+                    );
+                }
+            }
             Err(e) => return Err(e.into()),
         }
     }
@@ -859,6 +917,18 @@ pub async fn remove_column(dataset: &mut Dataset, column: &str) -> Result<()> {
         dataset.drop_index(&index_name(column)).await?;
     }
     dataset.drop_columns(&[column]).await?;
+    // The drop commits the schema it read: set again what was committed
+    // while it ran.
+    let prior = dataset
+        .checkout_version(dataset.version().version - 1)
+        .await?;
+    let read = Schema::from(dataset.schema());
+    dataset.checkout_latest().await?;
+    let (schema_updates, field_updates) =
+        overwritten(dataset, &Schema::from(prior.schema()), &read);
+    if !schema_updates.is_empty() || !field_updates.is_empty() {
+        commit_metadata(dataset, schema_updates, field_updates).await?;
+    }
     Ok(())
 }
 
@@ -1160,6 +1230,58 @@ pub(crate) mod tests {
                 .unwrap();
             assert_eq!(indexed, json);
             indexed
+        }
+
+        /// A request an operator commits while a column is dropped survives
+        /// the drop.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_drop_keeps_what_was_committed_while_it_ran() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let mut dataset = table(&dir, 1).await;
+            request(&mut dataset, "author").await.unwrap();
+            let author = add_column(&mut dataset, "author").await.unwrap();
+            finish_after(&mut dataset, &author, 1_000, std::time::Duration::ZERO)
+                .await
+                .unwrap();
+            request_removal(&mut dataset, "author").await.unwrap();
+            dataset.drop_index(&index_name("_mk_0")).await.unwrap();
+            let mut worker = dataset.clone();
+            request(&mut dataset, "lang").await.unwrap();
+            remove_column(&mut worker, "_mk_0").await.unwrap();
+            worker.checkout_latest().await.unwrap();
+            assert!(keys_of(&worker).is_empty());
+            assert_eq!(requests(&worker), ["lang"]);
+        }
+
+        /// A repair that loses to a compaction of its fragments repairs the
+        /// rows where the compaction moved them.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_repair_retried_over_a_compaction_follows_the_rows() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let mut dataset = table(&dir, 1).await;
+            request(&mut dataset, "author").await.unwrap();
+            let author = add_column(&mut dataset, "author").await.unwrap();
+            finish_after(&mut dataset, &author, 1_000, std::time::Duration::ZERO)
+                .await
+                .unwrap();
+            let ready = keys_of(&dataset)[0].clone();
+            let dataset = upsert_with_null_columns(dataset, 1_000..1_100).await;
+            let mut dataset = upsert_with_null_columns(dataset, 1_100..1_200).await;
+            let pending: Vec<u64> =
+                unindexed(&dataset, &segments(&dataset, "_mk_0").await.unwrap())
+                    .iter()
+                    .map(|(id, _)| *id as u64)
+                    .collect();
+            assert_eq!(nulls(&dataset, "_mk_0").await, 200);
+            let mut repair = dataset.clone();
+            compact_files(&mut dataset, CompactionOptions::default(), None)
+                .await
+                .unwrap();
+            rederive(&mut repair, std::slice::from_ref(&ready), Some(&pending))
+                .await
+                .unwrap();
+            repair.checkout_latest().await.unwrap();
+            assert_eq!(nulls(&repair, "_mk_0").await, 0);
         }
 
         /// Requests and removals an operator commits while a column add runs

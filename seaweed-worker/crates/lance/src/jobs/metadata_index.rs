@@ -81,7 +81,10 @@ pub async fn pending(
                 // Rows a write left NULL (one that raced the key's add and
                 // stopped before fixing them) wait for no threshold: queries
                 // through the key miss them until they are derived again.
+                // Nor does the first segment of a key that went ready on an
+                // empty table.
                 if unindexed < min_unindexed_rows
+                    && !segments.is_empty()
                     && !has_nulls(dataset, &key.column, &pending).await?
                 {
                     continue;
@@ -521,6 +524,107 @@ mod tests {
         .unwrap();
         assert!(metadata_index::keys_of(&adder).is_empty());
         assert_eq!(metadata_index::requests(&adder), ["lang"]);
+    }
+
+    /// A withdrawal of a request an interrupted add overwrote sets that
+    /// first, so recovering the add does not bring the request back.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_withdrawal_of_a_request_an_add_overwrote_stays_withdrawn() {
+        use crate::metadata_index::tests::lifecycle::table;
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut dataset = table(&dir, 2).await;
+        metadata_index::request(&mut dataset, "author")
+            .await
+            .unwrap();
+        let mut adder = dataset.clone();
+        metadata_index::request(&mut dataset, "lang").await.unwrap();
+        metadata_index::commit_column(&mut adder, "author")
+            .await
+            .unwrap();
+        dataset.checkout_latest().await.unwrap();
+        metadata_index::request_removal(&mut dataset, "lang")
+            .await
+            .unwrap();
+        let author = metadata_index::keys_of(&dataset).remove(0);
+        metadata_index::recover_add(&mut dataset, &author)
+            .await
+            .unwrap();
+        assert!(metadata_index::requests(&dataset).is_empty());
+    }
+
+    /// A withdrawal that read the request before the key's column was added
+    /// and committed after sets the column off.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_withdrawal_racing_the_add_sets_the_column_off() {
+        use crate::metadata_index::tests::lifecycle::table;
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut dataset = table(&dir, 2).await;
+        metadata_index::request(&mut dataset, "genre")
+            .await
+            .unwrap();
+        let mut operator = dataset.clone();
+        let added = metadata_index::add_column(&mut dataset, "genre")
+            .await
+            .unwrap();
+        assert_eq!(added.state, Some(State::Building));
+        metadata_index::request_removal(&mut operator, "genre")
+            .await
+            .unwrap();
+        dataset.checkout_latest().await.unwrap();
+        assert_eq!(metadata_index::keys_of(&dataset)[0].state, Some(State::Off));
+        assert!(metadata_index::requests(&dataset).is_empty());
+    }
+
+    /// A key that went ready on an empty table builds its first segment
+    /// once rows arrive, below the threshold.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_key_ready_without_a_segment_is_maintained_at_once() {
+        use crate::metadata_index::tests::lifecycle::{table, upsert};
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut dataset = table(&dir, 1).await;
+        dataset.delete("true").await.unwrap();
+        metadata_index::request(&mut dataset, "author")
+            .await
+            .unwrap();
+        run(
+            &mut dataset,
+            "author",
+            Action::Add,
+            1_000,
+            0,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            metadata_index::keys_of(&dataset)[0].state,
+            Some(State::Ready)
+        );
+        assert!(pending(&dataset, 1_000_000).await.unwrap().is_empty());
+
+        let mut dataset = upsert(dataset, 0..100).await;
+        assert_eq!(
+            pending(&dataset, 1_000_000).await.unwrap(),
+            [("author".to_string(), Action::Maintain)]
+        );
+        run(
+            &mut dataset,
+            "author",
+            Action::Maintain,
+            1_000,
+            1_000_000,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            metadata_index::segments(&dataset, "_mk_0")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(pending(&dataset, 1_000_000).await.unwrap().is_empty());
     }
 
     /// What the table asks for is what a job does, and a job the table no

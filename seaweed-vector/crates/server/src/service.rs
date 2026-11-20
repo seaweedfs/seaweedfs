@@ -1270,6 +1270,7 @@ impl VectorService for VectorServer {
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
         let dataset = self.open_to_read(&table).await?;
+        let _lease = self.leases.try_pin(&dataset).await.map_err(internal)?;
         Ok(Response::new(
             metadata_keys(&dataset).await.map_err(internal)?,
         ))
