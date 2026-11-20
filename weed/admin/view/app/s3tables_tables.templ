@@ -86,6 +86,9 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 					<div class="card-header py-3 d-flex flex-row align-items-center justify-content-between">
 						<h6 class="m-0 font-weight-bold text-primary">
 							<i class="bi bi-table me-2"></i>Tables
+							if data.Truncated {
+								<span class="text-muted small ms-2">{ fmt.Sprintf("showing the first %d; select all covers only these", data.TotalTables) }</span>
+							}
 						</h6>
 						<button type="button" class="btn btn-sm btn-outline-danger" id="s3tablesDeleteSelectedBtn" disabled title="Delete the selected tables">
 							<i class="bi bi-trash me-1"></i>Delete Selected (<span id="s3tablesSelectedCount">0</span>)
@@ -97,7 +100,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 								<thead>
 									<tr>
 										<th>
-											<input class="form-check-input" type="checkbox" id="s3tablesSelectAllTables" title="Select all tables" aria-label="Select all tables"/>
+											<input class="form-check-input" type="checkbox" id="s3tablesSelectAllTables" title="Select all displayed tables" aria-label="Select all displayed tables"/>
 										</th>
 										<th>Name</th>
 										<th>Format</th>

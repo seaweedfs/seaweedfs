@@ -61,6 +61,7 @@ type S3TablesTablesData struct {
 	Namespace    string                  `json:"namespace"`
 	Tables       []s3tables.TableSummary `json:"tables"`
 	TotalTables  int                     `json:"total_tables"`
+	Truncated    bool                    `json:"truncated,omitempty"`
 	// ObservedRows holds what a worker last counted, by table name, for formats
 	// this server cannot read itself. A table nothing has looked at is absent
 	// rather than zero: those are different facts.
@@ -273,6 +274,7 @@ func (s *AdminServer) GetS3TablesTablesData(ctx context.Context, bucketArn, name
 		Namespace:    namespace,
 		Tables:       resp.Tables,
 		TotalTables:  len(resp.Tables),
+		Truncated:    resp.ContinuationToken != "",
 		LastUpdated:  time.Now(),
 	}
 	data.ObservedRows = s.observedRowCounts(bucketArn, ns, resp.Tables)
