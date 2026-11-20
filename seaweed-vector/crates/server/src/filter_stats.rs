@@ -359,4 +359,17 @@ mod tests {
         stats.record_table_at("b/i", "t4", &author, Duration::ZERO, t0);
         assert_eq!(count(&stats), 1);
     }
+
+    #[test]
+    fn a_late_query_after_a_drop_is_not_counted_on_the_new_table() {
+        let stats = FilterStats::new();
+        let t0 = stats.start;
+        let author = keys(&[("author", operand::STRING)]);
+        stats.record_table_at("b/i", "t1", &author, Duration::ZERO, t0);
+        stats.forget("b/i");
+        stats.record_table_at("b/i", "t2", &author, Duration::ZERO, t0);
+        stats.record_table_at("b/i", "t2", &author, Duration::ZERO, t0);
+        stats.record_table_at("b/i", "t1", &author, Duration::ZERO, t0);
+        assert_eq!(stats.snapshot_at("b/i", t0).keys[0].queries, 2);
+    }
 }
