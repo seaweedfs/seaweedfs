@@ -986,6 +986,9 @@ impl VectorService for VectorServer {
         let table = req
             .table
             .ok_or_else(|| Status::invalid_argument("missing table"))?;
+        if table.version != 0 {
+            return Err(Status::invalid_argument("a write takes no table version"));
+        }
         // A write commits within its deadline of opening the table or not
         // at all: a key's column add waits longer than that before the key
         // is ready, so a write that opened before the add has committed,
