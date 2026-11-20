@@ -238,23 +238,43 @@ def check_configmap_release_upgrade(helm, context):
     common = ["--kube-context", context, "-n", namespace]
     for setting in RELEASE_SETTINGS:
         common += ["--set", setting]
+    upgrade = ["upgrade", "jk", str(CHART), *common, "--set", "master.enabled=true"]
+
+    def refuse_partitioned(stage):
+        try:
+            run(helm, *upgrade, "--set", "master.updatePartition=1")
+        except subprocess.CalledProcessError as error:
+            assert "updatePartition=0" in error.stderr, error.stderr
+        else:
+            raise AssertionError(f"partitioned upgrade removed the ConfigMap ({stage})")
+
+    def exists(kind):
+        return run(*kubectl, "get", kind, name, "--ignore-not-found", "-o", "name").strip()
+
     run(*kubectl, "create", "namespace", namespace)
     try:
         run(helm, "install", "jk", *CONFIGMAP_CHART, *common)
         before = keys(run(*kubectl, "get", "configmap", name, "-o", "jsonpath={.data.security\\.toml}"))
         assert set(before) == set(SECTIONS), "ConfigMap chart omitted a JWT section"
-        try:
-            run(helm, "upgrade", "jk", str(CHART), *common,
-                "--set", "master.enabled=true", "--set", "master.updatePartition=1")
-        except subprocess.CalledProcessError as error:
-            assert "updatePartition=0" in error.stderr, error.stderr
-        else:
-            raise AssertionError("partitioned upgrade removed the ConfigMap")
+        refuse_partitioned("ConfigMap release")
         print("PASS upgrade: partitioned upgrade from the ConfigMap chart is refused")
+
+        # Fail an upgrade after Helm created the Secret, so it never removes the ConfigMap.
+        run(*kubectl, "create", "quota", "no-statefulsets", "--hard=count/statefulsets.apps=0")
+        try:
+            run(helm, *upgrade)
+        except subprocess.CalledProcessError as error:
+            assert "quota" in error.stderr, error.stderr
+        else:
+            raise AssertionError("upgrade was not blocked by the quota")
+        run(*kubectl, "delete", "quota", "no-statefulsets")
+        assert exists("secret") and exists("configmap"), "failed upgrade did not leave both objects"
+        refuse_partitioned("retry after a failed upgrade")
+        print("PASS upgrade: partitioned retry after a failed migration is refused")
+
         run(helm, "upgrade", "jk", str(CHART), *common)
         assert secret_keys(kubectl, name) == before, "upgrade from the ConfigMap chart changed a key"
-        assert not run(*kubectl, "get", "configmap", name, "--ignore-not-found", "-o", "name").strip(), \
-            "upgrade left the ConfigMap behind"
+        assert not exists("configmap"), "upgrade left the ConfigMap behind"
         print("PASS upgrade: ConfigMap chart release moves its keys to the Secret")
     finally:
         run(*kubectl, "delete", "namespace", namespace, "--wait=false")
