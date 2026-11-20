@@ -265,16 +265,24 @@ pub async fn request_removal(dataset: &mut Dataset, key: &str) -> Result<()> {
         if column.state != Some(State::Off) {
             set_state(dataset, &column.column, State::Off).await?;
         }
-        return Ok(());
+        // A build that stopped before finishing leaves its request.
+        return clear_request(dataset, key).await;
     }
     if requests(dataset).iter().any(|k| k == key) {
-        let entry = format!("{REQUEST_SCHEMA_META_PREFIX}{key}");
+        return clear_request(dataset, key).await;
+    }
+    bail!("{key} is not indexed")
+}
+
+/// Withdraws the request to index `key`, if the table holds one.
+async fn clear_request(dataset: &mut Dataset, key: &str) -> Result<()> {
+    let entry = format!("{REQUEST_SCHEMA_META_PREFIX}{key}");
+    if dataset.schema().metadata.contains_key(&entry) {
         dataset
             .update_schema_metadata([(entry.as_str(), None::<&str>)])
             .await?;
-        return Ok(());
     }
-    bail!("{key} is not indexed")
+    Ok(())
 }
 
 /// Adds `key`'s column, `building`, computed from every row's metadata.
@@ -592,13 +600,16 @@ pub async fn finish(dataset: &mut Dataset, key: &IndexedKey, segment_rows: u64) 
         .filter(|id| checked.is_none_or(|c| *id > c))
         .collect();
     fixed += rederive(dataset, columns, Some(&since)).await?;
-    set_state(dataset, &key.column, State::Ready).await?;
-    let entry = format!("{REQUEST_SCHEMA_META_PREFIX}{}", key.key);
-    if dataset.schema().metadata.contains_key(&entry) {
-        dataset
-            .update_schema_metadata([(entry.as_str(), None::<&str>)])
-            .await?;
+    // An operator may have removed the key while it was built: keep it off.
+    dataset.checkout_latest().await?;
+    let building = keys_of(dataset)
+        .iter()
+        .any(|k| k.column == key.column && k.state == Some(State::Building));
+    if !building {
+        return Ok(fixed);
     }
+    set_state(dataset, &key.column, State::Ready).await?;
+    clear_request(dataset, &key.key).await?;
     Ok(fixed)
 }
 
@@ -634,6 +645,7 @@ pub async fn remove_column(dataset: &mut Dataset, column: &str) -> Result<()> {
     if key.state != Some(State::Off) {
         set_state(dataset, column, State::Off).await?;
     }
+    clear_request(dataset, &key.key).await?;
     if !segments(dataset, column).await?.is_empty() {
         dataset.drop_index(&index_name(column)).await?;
     }
@@ -825,6 +837,45 @@ pub(crate) mod tests {
         /// Upserts rows `range` in the schema of the version `dataset` is at.
         pub(crate) async fn upsert(dataset: Dataset, range: std::ops::Range<usize>) -> Dataset {
             upsert_with(dataset, range, &author).await
+        }
+
+        /// Rows `range` with every indexed-key column NULL, as a write that
+        /// raced the key's add and never fixed its rows leaves them.
+        pub(crate) async fn upsert_with_null_columns(
+            dataset: Dataset,
+            range: std::ops::Range<usize>,
+        ) -> Dataset {
+            let mut fields: Vec<Field> = base_schema()
+                .fields()
+                .iter()
+                .map(|f| f.as_ref().clone())
+                .collect();
+            fields.extend(
+                indexed_keys(&Schema::from(dataset.schema()))
+                    .iter()
+                    .map(|k| field(&k.column, &k.key, State::Building)),
+            );
+            let schema = Schema::new(fields);
+            let mut batch = rows(&schema, range);
+            for (i, f) in schema.fields().iter().enumerate() {
+                if indexed_key(f).is_some() {
+                    let mut columns = batch.columns().to_vec();
+                    columns[i] = arrow_array::new_null_array(f.data_type(), batch.num_rows());
+                    batch = RecordBatch::try_new(batch.schema(), columns).unwrap();
+                }
+            }
+            let mut builder =
+                MergeInsertBuilder::try_new(Arc::new(dataset), vec!["key".to_string()]).unwrap();
+            builder
+                .when_matched(WhenMatched::UpdateAll)
+                .when_not_matched(WhenNotMatched::InsertAll);
+            let (dataset, _) = builder
+                .try_build()
+                .unwrap()
+                .execute_batches(vec![batch])
+                .await
+                .unwrap();
+            Arc::unwrap_or_clone(dataset)
         }
 
         async fn upsert_with(
@@ -1036,6 +1087,39 @@ pub(crate) mod tests {
                 add_column(&mut dataset, "author").await.unwrap().column,
                 "_mk_0"
             );
+        }
+
+        /// Removing a key whose build has not finished wins: the build does
+        /// not mark it ready, and nothing asks to add it again.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_removal_during_a_build_wins() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let mut dataset = table(&dir, 2).await;
+            request(&mut dataset, "author").await.unwrap();
+            let key = add_column(&mut dataset, "author").await.unwrap();
+            // The build stops here; the request is still recorded.
+            request_removal(&mut dataset, "author").await.unwrap();
+            assert_eq!(keys_of(&dataset)[0].state, Some(State::Off));
+            assert!(
+                !dataset
+                    .schema()
+                    .metadata
+                    .keys()
+                    .any(|k| k.starts_with(REQUEST_SCHEMA_META_PREFIX))
+            );
+            finish(&mut dataset, &key, 1_000).await.unwrap();
+            assert_eq!(keys_of(&dataset)[0].state, Some(State::Off));
+            remove_column(&mut dataset, "_mk_0").await.unwrap();
+            assert!(keys_of(&dataset).is_empty());
+            assert!(requests(&dataset).is_empty());
+
+            // A request left by a build that stopped is withdrawn by the
+            // removal job too.
+            request(&mut dataset, "author").await.unwrap();
+            add_column(&mut dataset, "author").await.unwrap();
+            set_state(&mut dataset, "_mk_0", State::Off).await.unwrap();
+            remove_column(&mut dataset, "_mk_0").await.unwrap();
+            assert!(requests(&dataset).is_empty());
         }
     }
 }
