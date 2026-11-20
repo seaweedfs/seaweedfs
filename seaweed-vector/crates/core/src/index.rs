@@ -198,6 +198,83 @@ mod tests {
         assert_eq!(filtered.len(), 10);
     }
 
+    /// A filtered query through the index returns every eligible row when
+    /// fewer than k match, though the probed partitions cannot hold them all:
+    /// 400 of 4000 rows match, the index has 63 partitions and probes at most
+    /// 32 of them.
+    #[tokio::test]
+    async fn filtered_ann_returns_every_match_below_k() {
+        let dir = TempDir::new().unwrap();
+        let rows = scattered(4000, 8, 0x9E3779B97F4A7C15);
+        let tags: Vec<&str> = (0..4000)
+            .map(|i| if i % 10 == 0 { "rare" } else { "common" })
+            .collect();
+        let mut dataset = testing::write_dataset(&dir, &rows, &tags).await;
+        let table = VectorTable::resolve(&dataset, None, None).unwrap();
+        build(
+            &mut dataset,
+            &table.vector_column,
+            INDEX_NAME,
+            partitions_for(4000),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(partitions_for(4000), 63);
+        for vector in &scattered(3, 8, 0xD1B54A32D192ED03) {
+            let q = Query {
+                filter: Some("tag = 'rare'".to_string()),
+                ..exact(vector, 500)
+            };
+            let flat = query::flat(&dataset, &table, &q).await.unwrap();
+            assert_eq!(flat.len(), 400);
+            let ann = query::ann(&dataset, &table, &q).await.unwrap();
+            assert_eq!(ann.len(), 400, "the index path dropped eligible rows");
+            for (f, a) in flat.iter().zip(ann.iter()) {
+                assert!((f.distance - a.distance).abs() < 1e-5);
+            }
+        }
+    }
+
+    /// When no more than k rows match, every match comes back with its own
+    /// distance, nearest first — not the rows the probes missed with an
+    /// infinite distance. Ten fragments of 400 rows, 5 of them matching.
+    #[tokio::test]
+    async fn filtered_ann_scores_every_match_at_or_below_k() {
+        let dir = TempDir::new().unwrap();
+        let rows = scattered(4000, 8, 0x9E3779B97F4A7C15);
+        let tags: Vec<&str> = (0..4000)
+            .map(|i| if i % 800 == 0 { "rare" } else { "common" })
+            .collect();
+        let mut dataset = testing::write_dataset(&dir, &rows[..400], &tags[..400]).await;
+        for chunk in 1..10 {
+            let r = chunk * 400..(chunk + 1) * 400;
+            testing::append_dataset(&mut dataset, &rows[r.clone()], &tags[r]).await;
+        }
+        let table = VectorTable::resolve(&dataset, None, None).unwrap();
+        build(&mut dataset, &table.vector_column, INDEX_NAME, 63, false)
+            .await
+            .unwrap();
+        for vector in &scattered(3, 8, 0xD1B54A32D192ED03) {
+            for k in [5, 10] {
+                let q = Query {
+                    filter: Some("tag = 'rare'".to_string()),
+                    ..exact(vector, k)
+                };
+                let flat = query::flat(&dataset, &table, &q).await.unwrap();
+                assert_eq!(flat.len(), 5);
+                let ann = query::ann(&dataset, &table, &q).await.unwrap();
+                assert_eq!(ann.len(), 5);
+                for (f, a) in flat.iter().zip(ann.iter()) {
+                    assert!(
+                        (f.distance - a.distance).abs() < 1e-5,
+                        "k={k}: {flat:?} vs {ann:?}"
+                    );
+                }
+            }
+        }
+    }
+
     #[tokio::test]
     async fn default_probes_take_the_largest_index() {
         use lance::index::DatasetIndexExt;

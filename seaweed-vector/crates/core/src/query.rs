@@ -53,14 +53,48 @@ pub struct Hit {
 
 /// Exact top-K over every fragment, ignoring any index.
 pub async fn flat(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<Vec<Hit>> {
-    run(scanner(dataset, table, query, false).await?, table).await
+    run(scanner(dataset, table, query, false).await?.0, table).await
 }
 
 /// Top-K with the ANN index where it covers the fragment and a flat pass over
 /// the rest. Whether the index is used is Lance's decision per fragment, so
 /// rows written after the last index build are always candidates.
+///
+/// A prefiltered search sees only the probed partitions: it can come back
+/// short of k, or with unscored rows (infinite distance) when at most k rows
+/// match. Either way it is answered again by an exact scan of the same scope.
 pub async fn ann(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<Vec<Hit>> {
-    run(scanner(dataset, table, query, true).await?, table).await
+    let (scanner, indexed) = scanner(dataset, table, query, true).await?;
+    let hits = run(scanner, table).await?;
+    if indexed
+        && query.filter.is_some()
+        && !query.postfilter
+        && (hits.len() < query.k || hits.iter().any(|h| !h.distance.is_finite()))
+    {
+        return exact_in_scope(dataset, table, query).await;
+    }
+    Ok(hits)
+}
+
+/// [`flat`] over what [`ann`] searches for `query`: the listed fragments plus
+/// the live coverage of the listed index segments, or the whole table.
+async fn exact_in_scope(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<Vec<Hit>> {
+    let fragments = match &query.index_segments {
+        Some(segments) if !segments.is_empty() => {
+            let mut ids = query.fragments.clone().unwrap_or_default();
+            ids.extend(
+                crate::segments::covered_fragments(dataset, &table.vector_column, segments).await?,
+            );
+            Some(ids)
+        }
+        _ => query.fragments.clone(),
+    };
+    let exact = Query {
+        index_segments: None,
+        fragments,
+        ..query.clone()
+    };
+    run(scanner(dataset, table, &exact, false).await?.0, table).await
 }
 
 /// Fetch rows by key, projected to `columns` (all of them when None).
@@ -101,7 +135,7 @@ async fn scanner(
     table: &VectorTable,
     query: &Query,
     use_index: bool,
-) -> Result<Scanner> {
+) -> Result<(Scanner, bool)> {
     if query.vector.len() != table.dimension {
         bail!(
             "query dim({}) does not match the table's dim({})",
@@ -123,12 +157,17 @@ async fn scanner(
     // An explicitly empty segment list searches no index, so there is
     // nothing to size probes for.
     let no_segments = query.index_segments.as_ref().is_some_and(|s| s.is_empty());
+    let mut indexed = false;
     if use_index && !no_segments {
         let probes = match query.nprobes {
-            Some(n) => Some(crate::index::Probes { min: n, max: n }),
+            Some(n) => crate::index::index_names(dataset, &table.vector_column)
+                .await?
+                .first()
+                .map(|_| crate::index::Probes { min: n, max: n }),
             None => crate::index::default_probes(dataset, &table.vector_column).await?,
         };
         if let Some(probes) = probes {
+            indexed = true;
             // Lance searches `min` partitions, and under a prefilter keeps
             // going up to `max` until it has k rows. An open bound would
             // make it prepare every partition for that, which costs as much
@@ -178,7 +217,7 @@ async fn scanner(
     columns.push(DISTANCE_COLUMN.to_string());
     columns.push(ROW_ID_COLUMN.to_string());
     scanner.project(&columns)?;
-    Ok(scanner)
+    Ok((scanner, indexed))
 }
 
 async fn run(scanner: Scanner, table: &VectorTable) -> Result<Vec<Hit>> {
@@ -514,5 +553,36 @@ mod tests {
             indexed.iter().map(|h| &h.key).collect::<Vec<_>>(),
             exact.iter().map(|h| &h.key).collect::<Vec<_>>()
         );
+    }
+
+    /// An explicit probe count does not make an unindexed table's scan count
+    /// as indexed, so a short filtered answer is not scanned a second time.
+    #[tokio::test]
+    async fn explicit_probes_need_an_index() {
+        let dir = TempDir::new().unwrap();
+        let rows = crate::testing::vectors(300, DIM);
+        let mut dataset = write_dataset(&dir, &rows, &["a"; 300]).await;
+        let table = VectorTable::resolve(&dataset, None, None).unwrap();
+        let query = Query {
+            vector: rows[0].clone(),
+            k: 10,
+            filter: Some("tag = 'a'".to_string()),
+            postfilter: false,
+            distance: DistanceType::L2,
+            nprobes: Some(4),
+            index_segments: None,
+            fragments: None,
+        };
+        assert!(!scanner(&dataset, &table, &query, true).await.unwrap().1);
+        crate::index::build(
+            &mut dataset,
+            &table.vector_column,
+            crate::index::INDEX_NAME,
+            4,
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(scanner(&dataset, &table, &query, true).await.unwrap().1);
     }
 }
