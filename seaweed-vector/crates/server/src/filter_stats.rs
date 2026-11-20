@@ -23,19 +23,26 @@ struct Bucket {
     at: u64,
     queries: u64,
     seconds: f64,
+    /// The operand kinds the bucket's queries compared the key with.
+    kinds: u8,
 }
 
 #[derive(Default)]
 struct KeyStats {
-    kinds: u8,
     buckets: [Bucket; BUCKETS],
 }
 
 #[derive(Default)]
 struct IndexStats {
     keys: HashMap<String, KeyStats>,
-    truncated: bool,
+    /// The last bucket a key was left uncounted in.
+    truncated: Option<u64>,
     last: u64,
+}
+
+/// Whether bucket `at` is still in the window of bucket `now`.
+fn live(at: u64, now: u64) -> bool {
+    at + BUCKETS as u64 > now
 }
 
 pub struct FilterStats {
@@ -90,20 +97,19 @@ impl FilterStats {
                 let idle = stats
                     .keys
                     .iter()
-                    .find(|(_, k)| k.buckets.iter().all(|b| b.at + BUCKETS as u64 <= at))
+                    .find(|(_, k)| k.buckets.iter().all(|b| !live(b.at, at)))
                     .map(|(name, _)| name.clone());
                 match idle {
                     Some(idle) => {
                         stats.keys.remove(&idle);
                     }
                     None => {
-                        stats.truncated = true;
+                        stats.truncated = Some(at);
                         continue;
                     }
                 }
             }
             let entry = stats.keys.entry(key.clone()).or_default();
-            entry.kinds |= kinds;
             let bucket = &mut entry.buckets[(at % BUCKETS as u64) as usize];
             if bucket.at != at {
                 *bucket = Bucket {
@@ -113,6 +119,7 @@ impl FilterStats {
             }
             bucket.queries += 1;
             bucket.seconds += elapsed.as_secs_f64();
+            bucket.kinds |= kinds;
         }
     }
 
@@ -135,16 +142,20 @@ impl FilterStats {
             .keys
             .iter()
             .filter_map(|(key, s)| {
-                let live = s.buckets.iter().filter(|b| b.at + (BUCKETS as u64) > at);
-                let (queries, seconds) =
-                    live.fold((0, 0.0), |(q, t), b| (q + b.queries, t + b.seconds));
+                let (queries, seconds, kinds) = s
+                    .buckets
+                    .iter()
+                    .filter(|b| live(b.at, at))
+                    .fold((0, 0.0, 0), |(q, t, k), b| {
+                        (q + b.queries, t + b.seconds, k | b.kinds)
+                    });
                 (queries > 0).then(|| pb::FilterKeyStats {
                     key: key.clone(),
                     queries,
                     seconds,
-                    string_operand: s.kinds & operand::STRING != 0,
-                    number_operand: s.kinds & operand::NUMBER != 0,
-                    bool_operand: s.kinds & operand::BOOL != 0,
+                    string_operand: kinds & operand::STRING != 0,
+                    number_operand: kinds & operand::NUMBER != 0,
+                    bool_operand: kinds & operand::BOOL != 0,
                 })
             })
             .collect();
@@ -152,7 +163,7 @@ impl FilterStats {
         pb::FilterStatsResponse {
             keys,
             window_seconds,
-            truncated: stats.truncated,
+            truncated: stats.truncated.is_some_and(|t| live(t, at)),
         }
     }
 }
@@ -191,7 +202,22 @@ mod tests {
         let later = stats.snapshot_at("b/i", t0 + WINDOW + Duration::from_secs(1));
         assert_eq!(later.window_seconds, WINDOW.as_secs() as u32);
         assert_eq!(later.keys[0].queries, 1);
-        let gone = stats.snapshot_at("b/i", t0 + WINDOW + Duration::from_secs(900));
+        let year = later.keys.iter().find(|k| k.key == "year").unwrap();
+        assert!(year.number_operand);
+        // A string query that left the window no longer marks the key.
+        stats.record_at(
+            "b/i",
+            &keys(&[("author", operand::NUMBER)]),
+            ms(1),
+            t0 + WINDOW + Duration::from_secs(2),
+        );
+        let mixed = stats.snapshot_at("b/i", t0 + WINDOW + Duration::from_secs(3));
+        let author = mixed.keys.iter().find(|k| k.key == "author").unwrap();
+        assert!(author.string_operand && author.number_operand);
+        let numeric = stats.snapshot_at("b/i", t0 + WINDOW + Duration::from_secs(700));
+        let author = numeric.keys.iter().find(|k| k.key == "author").unwrap();
+        assert!(!author.string_operand && author.number_operand);
+        let gone = stats.snapshot_at("b/i", t0 + 2 * WINDOW + Duration::from_secs(900));
         assert!(gone.keys.is_empty());
         assert!(stats.snapshot_at("other", t0).keys.is_empty());
     }
@@ -220,6 +246,7 @@ mod tests {
             later,
         );
         let got = stats.snapshot_at("b/i", later);
+        assert!(!got.truncated, "the uncounted keys left the window");
         assert_eq!(got.keys.len(), 1);
         assert_eq!(got.keys[0].key, "new");
 
