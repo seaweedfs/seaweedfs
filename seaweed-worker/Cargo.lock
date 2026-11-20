@@ -7205,6 +7205,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "x509-parser",
  "zstd",
 ]

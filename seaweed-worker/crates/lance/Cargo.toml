@@ -43,6 +43,7 @@ arrow-cast = "58"
 jsonb = { version = "0.5", default-features = false }
 chrono = "0.4"
 futures = "0.3"
+uuid = "1"
 anyhow.workspace = true
 async-trait.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
