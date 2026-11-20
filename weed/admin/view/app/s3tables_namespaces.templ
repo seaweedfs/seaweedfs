@@ -108,7 +108,7 @@ templ S3TablesNamespaces(data dash.S3TablesNamespacesData) {
 											<td>
 												<div class="btn-group btn-group-sm" role="group">
 													if parseErr == nil {
-														<a class="btn btn-outline-primary btn-sm" href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables", bucketName, namespaceName)) }>
+														<a class="btn btn-outline-primary btn-sm" href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables", bucketName, namespaceName)) } title="Tables">
 															<i class="bi bi-table"></i>
 														</a>
 													} else {

@@ -102,7 +102,7 @@ templ Topics(data dash.TopicsData) {
                                                     }
                                                 </td>
                                                 <td>
-                                                    <button class="btn btn-sm btn-outline-primary" data-action="view-topic-details" data-topic-name={ topic.Name }>
+                                                    <button class="btn btn-sm btn-outline-primary" data-action="view-topic-details" data-topic-name={ topic.Name } title="View Details">
                                                         <i class="bi bi-eye"></i>
                                                     </button>
                                                 </td>
@@ -339,12 +339,14 @@ templ Topics(data dash.TopicsData) {
                     if (detailsRow.style.display === 'none') {
                         detailsRow.style.display = 'table-row';
                         this.innerHTML = '<i class="bi bi-eye-slash"></i>';
+                        this.title = 'Hide Details';
                         
                         // Load topic details
                         loadTopicDetails(topicName);
                     } else {
                         detailsRow.style.display = 'none';
                         this.innerHTML = '<i class="bi bi-eye"></i>';
+                        this.title = 'View Details';
                     }
                 });
             });
