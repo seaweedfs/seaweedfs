@@ -254,66 +254,78 @@ pub(crate) async fn merge_vectors(
     Ok(Arc::unwrap_or_clone(dataset))
 }
 
+/// Attempts [`heal_columns`] makes against writes committing meanwhile.
+const HEAL_ATTEMPTS: usize = 10;
+
 /// Lance rebases a write onto a column add committed after the write opened
-/// its version, and the rows it wrote then hold NULL in the new column. Fill
-/// such rows of `keys` from their stored metadata, where still NULL.
-async fn heal_columns(dataset: Dataset, written: &Schema, keys: &[String]) -> Result<Dataset> {
-    let schema: Schema = dataset.schema().into();
-    let missing: Vec<metadata_index::IndexedKey> = metadata_index::indexed_keys(&schema)
-        .into_iter()
-        .filter(|k| written.field_with_name(&k.column).is_err())
-        .collect();
-    if missing.is_empty() || keys.is_empty() {
-        return Ok(dataset);
-    }
-    let null = |prefix: &str| {
-        missing
-            .iter()
-            .map(|k| format!("{prefix}`{}` IS NULL", k.column.replace('`', "``")))
-            .collect::<Vec<_>>()
-            .join(" OR ")
-    };
-    let mut scanner = dataset.scan();
-    scanner
-        .filter(&format!("{} AND ({})", key_list(keys), null("")))?
-        .project(&[KEY_COLUMN, METADATA_COLUMN])?;
-    let rows: Vec<RecordBatch> = scanner.try_into_stream().await?.try_collect().await?;
-    let mut fields = vec![schema.field_with_name(KEY_COLUMN)?.clone()];
-    for k in &missing {
-        fields.push(schema.field_with_name(&k.column)?.clone());
-    }
-    let patch_schema = Arc::new(Schema::new(fields));
-    let mut patches = Vec::new();
-    for batch in rows.iter().filter(|b| b.num_rows() > 0) {
-        let (Some(keys), Some(metadata)) = (
-            batch.column_by_name(KEY_COLUMN),
-            batch.column_by_name(METADATA_COLUMN),
-        ) else {
-            bail!("the scan did not return keys and metadata");
-        };
-        let mut columns = vec![keys.clone()];
-        for k in &missing {
-            columns.push(metadata_index::column_from_metadata(
-                metadata.as_ref(),
-                &k.key,
-            )?);
+/// its version: the rows it inserted hold NULL in the new column and the
+/// rows it updated keep the value derived from their old metadata. Derive
+/// such columns again for the rows of `keys` from their stored metadata.
+pub(crate) async fn heal_columns(
+    mut dataset: Dataset,
+    written: &Schema,
+    keys: &[String],
+) -> Result<Dataset> {
+    for _ in 0..HEAL_ATTEMPTS {
+        let schema: Schema = dataset.schema().into();
+        let missing: Vec<metadata_index::IndexedKey> = metadata_index::indexed_keys(&schema)
+            .into_iter()
+            .filter(|k| written.field_with_name(&k.column).is_err())
+            .collect();
+        if missing.is_empty() || keys.is_empty() {
+            return Ok(dataset);
         }
-        patches.push(RecordBatch::try_new(patch_schema.clone(), columns)?);
+        let mut scanner = dataset.scan();
+        scanner
+            .filter(&key_list(keys))?
+            .project(&[KEY_COLUMN, METADATA_COLUMN])?;
+        let rows: Vec<RecordBatch> = scanner.try_into_stream().await?.try_collect().await?;
+        let mut fields = vec![schema.field_with_name(KEY_COLUMN)?.clone()];
+        for k in &missing {
+            fields.push(schema.field_with_name(&k.column)?.clone());
+        }
+        let patch_schema = Arc::new(Schema::new(fields));
+        let mut patches = Vec::new();
+        for batch in rows.iter().filter(|b| b.num_rows() > 0) {
+            let (Some(keys), Some(metadata)) = (
+                batch.column_by_name(KEY_COLUMN),
+                batch.column_by_name(METADATA_COLUMN),
+            ) else {
+                bail!("the scan did not return keys and metadata");
+            };
+            let mut columns = vec![keys.clone()];
+            for k in &missing {
+                columns.push(metadata_index::column_from_metadata(
+                    metadata.as_ref(),
+                    &k.key,
+                )?);
+            }
+            patches.push(RecordBatch::try_new(patch_schema.clone(), columns)?);
+        }
+        if patches.is_empty() {
+            return Ok(dataset);
+        }
+        // Lance's own retry would join these values onto rows a later write
+        // replaced; derive them again from the version that write left.
+        let mut builder =
+            MergeInsertBuilder::try_new(Arc::new(dataset.clone()), vec![KEY_COLUMN.to_string()])?;
+        builder
+            .when_matched(WhenMatched::UpdateAll)
+            .when_not_matched(WhenNotMatched::DoNothing)
+            .conflict_retries(0);
+        match builder.try_build()?.execute_batches(patches).await {
+            Ok((healed, _stats)) => {
+                tracing::info!(
+                    rows = rows.iter().map(|b| b.num_rows()).sum::<usize>(),
+                    "derived indexed metadata key columns a concurrent column add left stale"
+                );
+                return Ok(Arc::unwrap_or_clone(healed));
+            }
+            Err(lance::Error::TooMuchWriteContention { .. }) => dataset.checkout_latest().await?,
+            Err(e) => return Err(e.into()),
+        }
     }
-    if patches.is_empty() {
-        return Ok(dataset);
-    }
-    tracing::info!(
-        rows = patches.iter().map(|b| b.num_rows()).sum::<usize>(),
-        "filling indexed metadata key columns a concurrent column add left empty"
-    );
-    let condition = null("target.");
-    let mut builder =
-        MergeInsertBuilder::try_new(Arc::new(dataset.clone()), vec![KEY_COLUMN.to_string()])?;
-    builder.when_matched(WhenMatched::update_if(&dataset, &condition)?);
-    builder.when_not_matched(WhenNotMatched::DoNothing);
-    let (dataset, _stats) = builder.try_build()?.execute_batches(patches).await?;
-    Ok(Arc::unwrap_or_clone(dataset))
+    bail!("writes kept replacing the rows while their indexed key columns were derived")
 }
 
 fn struct_to_json(s: &Struct) -> serde_json::Value {

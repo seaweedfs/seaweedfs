@@ -563,3 +563,51 @@ async fn a_write_that_raced_the_column_add_fills_the_column() {
     );
     assert_eq!(fixture.flat(latest, filter, 400, &v).await.len(), 4);
 }
+
+/// Two writes updating the same keys raced the column add, and the first
+/// one's fill commits last: each write's rows get the values of its own
+/// metadata, not the ones derived before it or from the other write.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_write_that_raced_the_column_add_derives_its_updated_rows() {
+    let fixture = Fixture::new().await;
+    fixture
+        .put((0..300).map(|i| row(i, author(i))).collect())
+        .await;
+    let first = fixture.dataset(0).await;
+    let second = fixture.dataset(0).await;
+    let written: Schema = first.schema().into();
+    fixture.index_author().await;
+    let rows = |name: &str| -> Vec<pb::Vector> {
+        (250..300)
+            .map(|i| row(i, Some(serde_json::json!(name))))
+            .collect()
+    };
+    let keys: Vec<String> = (250..300).map(|i| format!("k{i}")).collect();
+
+    let first = crate::service::merge_vectors(first, &rows("alice"))
+        .await
+        .unwrap();
+    let second = crate::service::merge_vectors(second, &rows("bob"))
+        .await
+        .unwrap();
+    crate::service::heal_columns(second, &written, &keys)
+        .await
+        .unwrap();
+    crate::service::heal_columns(first, &written, &keys)
+        .await
+        .unwrap();
+
+    let latest = fixture.dataset(0).await;
+    let count = |filter: String| {
+        let latest = latest.clone();
+        async move { latest.count_rows(Some(filter)).await.unwrap() }
+    };
+    assert_eq!(count(format!("{COLUMN} IS NULL")).await, 0);
+    for (name, filter) in [("alice", FILTERS[0].1), ("bob", FILTERS[1].1)] {
+        assert_eq!(
+            count(format!("array_has({COLUMN}, '{name}')")).await,
+            count(filter.to_string()).await,
+            "{name}"
+        );
+    }
+}
