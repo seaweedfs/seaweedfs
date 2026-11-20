@@ -5939,20 +5939,12 @@ fn write_tailed_needle(
     vol: &crate::storage::volume::Volume,
     n: &mut Needle,
 ) -> Result<(), crate::storage::volume::VolumeError> {
-    use crate::storage::volume::VolumeError;
     if n.size.0 == 0 {
-        let mut probe = Needle {
-            id: n.id,
-            ..Needle::default()
-        };
-        match vol.read_needle_with_option(
-            &mut probe,
-            &mut crate::server::handlers::delete_read_option(),
-        ) {
-            Ok(_) => return vol.delete_needle(n, false).map(|_| ()),
-            Err(VolumeError::Deleted) => return Ok(()),
-            Err(VolumeError::NotFound) => {}
-            Err(e) => return Err(e),
+        if let Some(size) = vol.lookup_needle(n.id)? {
+            if !size.is_deleted() {
+                vol.delete_needle(n, false)?;
+            }
+            return Ok(());
         }
     }
     vol.write_needle(n, true, false).map(|_| ())
