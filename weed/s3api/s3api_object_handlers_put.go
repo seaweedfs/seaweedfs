@@ -1033,6 +1033,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	glog.V(3).Infof("putToFiler: About to create entry - dir=%s, name=%s, chunks=%d, extended keys=%d",
 		path.Dir(filePath), path.Base(filePath), len(entry.Chunks), len(entry.Extended))
 	var createErr error
+	var createCond *filer_pb.WriteCondition
 	var rollbackErr error
 	entryCreated := false
 	var owner pb.ServerAddress
@@ -1043,6 +1044,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		return s3a.checkConditionalHeaders(r, bucket, object)
 	}
 	createUnderLock := func(cond *filer_pb.WriteCondition) s3err.ErrorCode {
+		createCond = cond
 		create := func(client filer_pb.SeaweedFilerClient) error {
 			req := &filer_pb.CreateEntryRequest{
 				Directory: path.Dir(filePath),
@@ -1210,7 +1212,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			// The filer forwards a conditional create to its ring owner, which
 			// the lookups may not reach; only a refusal proves it never committed.
 			refused := lockCond != nil && errors.Is(createErr, filer_pb.ErrPreconditionFailed)
-			reclaim := lockCond == nil || createErr == nil || refused
+			reclaim := createCond == nil || createErr == nil || refused
 			if createCode != s3err.ErrNone && (refused || absent && reclaim) {
 				orphaned := chunkResult.FileChunks
 				if manifestChunks, _ := filer.SeparateManifestChunks(entry.GetChunks()); len(manifestChunks) > 0 {
