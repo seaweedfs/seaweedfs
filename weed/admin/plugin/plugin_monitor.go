@@ -197,7 +197,7 @@ func (r *Plugin) ExpireJob(jobID, reason string) (*TrackedJob, bool, error) {
 		jobType:   jobType,
 		workerID:  workerID,
 		requestID: requestID,
-	}, reason, now)
+	}, reason, now, nil)
 	r.appendActivity(JobActivity{
 		JobID:      normalizedJobID,
 		JobType:    jobType,
@@ -240,7 +240,7 @@ func (r *Plugin) expireStaleJobs(now time.Time) int {
 			continue
 		}
 
-		r.expireActiveJob(snap, reason, now)
+		r.expireActiveJob(snap, reason, now, nil)
 		expired++
 	}
 
@@ -250,14 +250,10 @@ func (r *Plugin) expireStaleJobs(now time.Time) int {
 // expireActiveJob fails the tracked job and tells its worker to stop it.
 // Failing the record alone leaves the worker running the job and its slot
 // taken, which is what kept a stuck job's slot out of reach for days.
-func (r *Plugin) expireActiveJob(snap activeJobSnapshot, reason string, now time.Time) {
-	r.expireActiveJobIf(snap, reason, now, nil)
-}
-
-// expireActiveJobIf is expireActiveJob for the record accept takes; see
-// handleJobCompletedIf. Nothing is failed or canceled otherwise.
-func (r *Plugin) expireActiveJobIf(snap activeJobSnapshot, reason string, now time.Time, accept func(*TrackedJob) bool) {
-	if !r.handleJobCompletedIf(&plugin_pb.JobCompleted{
+// A non-nil accept limits this to the record it takes (see
+// handleJobCompleted); nothing is failed or canceled otherwise.
+func (r *Plugin) expireActiveJob(snap activeJobSnapshot, reason string, now time.Time, accept func(*TrackedJob) bool) {
+	if !r.handleJobCompleted(&plugin_pb.JobCompleted{
 		JobId:        snap.jobID,
 		JobType:      snap.jobType,
 		RequestId:    snap.requestID,
@@ -911,7 +907,7 @@ func (r *Plugin) trackExecutionStart(requestID, workerID string, job *plugin_pb.
 	r.pruneTrackedJobsLocked()
 	r.dirtyJobs = true
 	r.jobsMu.Unlock()
-	r.persistJobDetailSnapshot(job.JobId, func(detail *TrackedJob) {
+	r.persistJobDetailSnapshot(job.JobId, func(detail *TrackedJob) bool {
 		detail.JobID = job.JobId
 		detail.JobType = job.JobType
 		detail.RequestID = requestID
@@ -938,6 +934,7 @@ func (r *Plugin) trackExecutionStart(requestID, workerID string, job *plugin_pb.
 			detail.CreatedAt = trackedSnapshot.CreatedAt
 		}
 		detail.UpdatedAt = trackedSnapshot.UpdatedAt
+		return true
 	})
 
 	r.appendActivity(JobActivity{
@@ -984,7 +981,7 @@ func (r *Plugin) trackExecutionQueued(job *plugin_pb.JobSpec) {
 	r.pruneTrackedJobsLocked()
 	r.dirtyJobs = true
 	r.jobsMu.Unlock()
-	r.persistJobDetailSnapshot(job.JobId, func(detail *TrackedJob) {
+	r.persistJobDetailSnapshot(job.JobId, func(detail *TrackedJob) bool {
 		detail.JobID = job.JobId
 		detail.JobType = job.JobType
 		detail.DedupeKey = job.DedupeKey
@@ -1008,6 +1005,7 @@ func (r *Plugin) trackExecutionQueued(job *plugin_pb.JobSpec) {
 			detail.CreatedAt = trackedSnapshot.CreatedAt
 		}
 		detail.UpdatedAt = trackedSnapshot.UpdatedAt
+		return true
 	})
 
 	r.appendActivity(JobActivity{
@@ -1044,10 +1042,11 @@ func (r *Plugin) bindQueuedJobWorker(job *plugin_pb.JobSpec, workerID string) {
 	r.dirtyJobs = true
 	r.jobsMu.Unlock()
 
-	r.persistJobDetailSnapshot(job.JobId, func(detail *TrackedJob) {
+	r.persistJobDetailSnapshot(job.JobId, func(detail *TrackedJob) bool {
 		detail.WorkerID = snap.WorkerID
 		detail.Message = snap.Message
 		detail.UpdatedAt = snap.UpdatedAt
+		return true
 	})
 }
 
@@ -1097,7 +1096,7 @@ func (r *Plugin) markJobCanceled(job *plugin_pb.JobSpec, reason string) {
 	r.dirtyJobs = true
 	r.jobsMu.Unlock()
 
-	r.persistJobDetailSnapshot(job.JobId, func(detail *TrackedJob) {
+	r.persistJobDetailSnapshot(job.JobId, func(detail *TrackedJob) bool {
 		detail.JobID = job.JobId
 		if job.JobType != "" {
 			detail.JobType = job.JobType
@@ -1112,6 +1111,7 @@ func (r *Plugin) markJobCanceled(job *plugin_pb.JobSpec, reason string) {
 		}
 		detail.UpdatedAt = trackedSnapshot.UpdatedAt
 		detail.CompletedAt = trackedSnapshot.CompletedAt
+		return true
 	})
 
 	r.appendActivity(JobActivity{
@@ -1124,12 +1124,7 @@ func (r *Plugin) markJobCanceled(job *plugin_pb.JobSpec, reason string) {
 	})
 }
 
-func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted) *TrackedJob {
-	tracked, _ := r.trackExecutionCompletionIf(completed, nil)
-	return tracked
-}
-
-func (r *Plugin) trackExecutionCompletionIf(completed *plugin_pb.JobCompleted, accept func(*TrackedJob) bool) (*TrackedJob, bool) {
+func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted, accept func(*TrackedJob) bool) (*TrackedJob, bool) {
 	if completed == nil || strings.TrimSpace(completed.JobId) == "" {
 		return nil, accept == nil
 	}
@@ -1186,7 +1181,7 @@ func (r *Plugin) trackExecutionCompletionIf(completed *plugin_pb.JobCompleted, a
 	clone := cloneTrackedJob(*tracked)
 	r.dirtyJobs = true
 	r.jobsMu.Unlock()
-	r.persistJobDetailSnapshotIf(completed.JobId, func(detail *TrackedJob) bool {
+	r.persistJobDetailSnapshot(completed.JobId, func(detail *TrackedJob) bool {
 		// a conditional completion closes one attempt; a detail a newer
 		// dispatch already wrote belongs to another one
 		if accept != nil && detail.RequestID != "" && completed.RequestId != "" && detail.RequestID != completed.RequestId {
@@ -1459,18 +1454,9 @@ func (r *Plugin) persistTrackedJobsSnapshot() {
 	}
 }
 
-func (r *Plugin) persistJobDetailSnapshot(jobID string, apply func(detail *TrackedJob)) {
-	r.persistJobDetailSnapshotIf(jobID, func(detail *TrackedJob) bool {
-		if apply != nil {
-			apply(detail)
-		}
-		return true
-	})
-}
-
-// persistJobDetailSnapshotIf writes the detail only when apply returns true.
+// persistJobDetailSnapshot writes the detail only when apply returns true.
 // apply runs under jobDetailsMu, so its check holds for the write.
-func (r *Plugin) persistJobDetailSnapshotIf(jobID string, apply func(detail *TrackedJob) bool) {
+func (r *Plugin) persistJobDetailSnapshot(jobID string, apply func(detail *TrackedJob) bool) {
 	normalizedJobID, _ := sanitizeJobID(jobID)
 	if normalizedJobID == "" {
 		return

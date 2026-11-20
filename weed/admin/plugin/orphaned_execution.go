@@ -85,7 +85,7 @@ func (r *Plugin) failExecutionsMissingFromHeartbeat(session *streamSession, hear
 		reason := fmt.Sprintf("worker %s re-registered without job %s", snap.workerID, snap.jobID)
 		glog.Warningf("Plugin failing %s request %s: %s", snap.jobType, snap.requestID, reason)
 		// off the stream's receive loop: the cancel may wait on a full buffer
-		go r.expireActiveJob(snap, reason, time.Now().UTC())
+		go r.expireActiveJob(snap, reason, time.Now().UTC(), nil)
 	}
 }
 
@@ -201,7 +201,7 @@ func (r *Plugin) failRestoredJobsMissingFromHeartbeat(workerID string, heartbeat
 		r.restoredExpiries.Add(1)
 		go func() {
 			defer r.restoredExpiries.Done()
-			r.expireActiveJobIf(snap, reason, now, isRestoredAttempt)
+			r.expireActiveJob(snap, reason, now, isRestoredAttempt)
 		}()
 	}
 }

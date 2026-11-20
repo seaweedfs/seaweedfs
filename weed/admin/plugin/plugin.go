@@ -878,7 +878,7 @@ func (r *Plugin) executeJobWithExecutor(
 				RequestId:    requestID,
 				ErrorMessage: err.Error(),
 				CompletedAt:  timestamppb.Now(),
-			})
+			}, nil)
 		}
 		return nil, err
 	}
@@ -1204,7 +1204,7 @@ func (r *Plugin) handleWorkerMessage(session *streamSession, message *plugin_pb.
 	case *plugin_pb.WorkerToAdminMessage_JobProgressUpdate:
 		r.handleJobProgressUpdate(workerID, body.JobProgressUpdate)
 	case *plugin_pb.WorkerToAdminMessage_JobCompleted:
-		r.handleJobCompleted(body.JobCompleted)
+		r.handleJobCompleted(body.JobCompleted, nil)
 	case *plugin_pb.WorkerToAdminMessage_Observations:
 		r.observations.Record(workerID, body.Observations)
 	case *plugin_pb.WorkerToAdminMessage_ObjectPreviewResponse:
@@ -1479,14 +1479,10 @@ func (r *Plugin) safeSendDetectionComplete(requestID string, message *plugin_pb.
 	}
 }
 
-func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted) {
-	r.handleJobCompletedIf(completed, nil)
-}
-
-// handleJobCompletedIf records the completion only when accept, judged under
+// handleJobCompleted records the completion only when accept, judged under
 // the jobs lock that applies it, takes the tracked record (nil when the job
 // is untracked). A nil accept takes every completion.
-func (r *Plugin) handleJobCompletedIf(completed *plugin_pb.JobCompleted, accept func(*TrackedJob) bool) bool {
+func (r *Plugin) handleJobCompleted(completed *plugin_pb.JobCompleted, accept func(*TrackedJob) bool) bool {
 	if completed == nil || completed.JobType == "" {
 		return false
 	}
@@ -1501,7 +1497,7 @@ func (r *Plugin) handleJobCompletedIf(completed *plugin_pb.JobCompleted, accept 
 		return false
 	}
 
-	tracked, accepted := r.trackExecutionCompletionIf(completed, accept)
+	tracked, accepted := r.trackExecutionCompletion(completed, accept)
 	if !accepted {
 		return false
 	}

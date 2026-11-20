@@ -88,7 +88,7 @@ func TestPluginPersistsMonitorStateAfterJobUpdates(t *testing.T) {
 		Success:     true,
 		Result:      &plugin_pb.JobResult{Summary: "done"},
 		CompletedAt: timestamppb.New(time.Now().UTC()),
-	})
+	}, nil)
 	pluginSvc.Shutdown()
 
 	store, err := NewConfigStore(dataDir)
@@ -317,7 +317,7 @@ func TestHandleJobCompletedCarriesWorkerIDInActivitiesAndRunHistory(t *testing.T
 			},
 		},
 		CompletedAt: timestamppb.Now(),
-	})
+	}, nil)
 	pluginSvc.Shutdown()
 
 	activities := pluginSvc.ListActivities("vacuum", 0)
@@ -572,7 +572,7 @@ func TestBuildJobDetailIncludesActivitiesAndRunRecord(t *testing.T) {
 			},
 		},
 		CompletedAt: timestamppb.Now(),
-	})
+	}, nil)
 	pluginSvc.Shutdown()
 
 	detail, found, err := pluginSvc.BuildJobDetail("job-detail", 100, 5)
@@ -616,7 +616,7 @@ func TestBuildJobDetailFallsBackToRunRecordAfterPrune(t *testing.T) {
 		Success:      false,
 		ErrorMessage: "volume busy",
 		CompletedAt:  timestamppb.Now(),
-	})
+	}, nil)
 
 	// What pruneTrackedJobsLocked does once newer jobs push this one out.
 	pluginSvc.jobsMu.Lock()
@@ -654,7 +654,7 @@ func TestBuildJobDetailFallsBackToRunRecordAfterPrune(t *testing.T) {
 		JobType:     "vacuum",
 		Success:     true,
 		CompletedAt: timestamppb.Now(),
-	})
+	}, nil)
 	pluginSvc.jobsMu.Lock()
 	delete(pluginSvc.jobs, "job-pruned-ok")
 	pluginSvc.jobsMu.Unlock()
@@ -780,7 +780,7 @@ func TestBuildJobDetailKeepsFailedJobResult(t *testing.T) {
 			},
 		},
 		CompletedAt: timestamppb.Now(),
-	})
+	}, nil)
 	pluginSvc.Shutdown()
 
 	detail, found, err := pluginSvc.BuildJobDetail("job-failed", 100, 5)
@@ -820,7 +820,7 @@ func TestRetryWithoutResultDropsFailedAttemptSummary(t *testing.T) {
 		ErrorMessage: "walk bad-a: filer down",
 		Result:       &plugin_pb.JobResult{Summary: "pass failed"},
 		CompletedAt:  timestamppb.Now(),
-	})
+	}, nil)
 	pluginSvc.trackExecutionStart("req-retry", "worker-r", job, 2)
 	pluginSvc.handleJobCompleted(&plugin_pb.JobCompleted{
 		RequestId:   "req-retry",
@@ -828,7 +828,7 @@ func TestRetryWithoutResultDropsFailedAttemptSummary(t *testing.T) {
 		JobType:     "s3_lifecycle",
 		Success:     true,
 		CompletedAt: timestamppb.Now(),
-	})
+	}, nil)
 	pluginSvc.Shutdown()
 
 	detail, found, err := pluginSvc.BuildJobDetail("job-retry", 100, 5)
@@ -1175,7 +1175,7 @@ func TestExpiredAttemptIgnoresItsLateReports(t *testing.T) {
 		JobType:      jobType,
 		RequestId:    "req-late-1",
 		ErrorMessage: "context canceled",
-	})
+	}, nil)
 
 	got, _ := pluginSvc.GetTrackedJob(jobID)
 	if got == nil || got.State != StateFailed || got.ErrorMessage != "stuck" {
@@ -1195,7 +1195,7 @@ func TestExpiredAttemptIgnoresItsLateReports(t *testing.T) {
 		JobType:   jobType,
 		RequestId: "req-late-2",
 		Success:   true,
-	})
+	}, nil)
 	got, _ = pluginSvc.GetTrackedJob(jobID)
 	if got == nil || got.State != StateSucceeded {
 		t.Fatalf("expected the retry to complete, got %+v", got)

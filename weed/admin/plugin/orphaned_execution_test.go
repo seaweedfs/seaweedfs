@@ -551,7 +551,7 @@ func TestRestoredExpiryLeavesNewerAttempt(t *testing.T) {
 	isRestoredAttempt := func(job *TrackedJob) bool {
 		return job != nil && job.RequestID == "exec-before-restart"
 	}
-	p.expireActiveJobIf(activeJobSnapshot{jobID: jobID, jobType: orphanTestJobType, workerID: "worker-a", requestID: "exec-before-restart"},
+	p.expireActiveJob(activeJobSnapshot{jobID: jobID, jobType: orphanTestJobType, workerID: "worker-a", requestID: "exec-before-restart"},
 		"stale", time.Now().UTC(), isRestoredAttempt)
 
 	expectTrackedStateHolds(t, p, jobID, restoredTestStateRunning)
@@ -568,12 +568,13 @@ func TestRestoredExpiryKeepsNewerAttemptDetail(t *testing.T) {
 	t.Parallel()
 	const jobID = "job-detail-moved-on"
 	p := newPluginWithRestoredJob(t, TrackedJob{JobID: jobID})
-	p.persistJobDetailSnapshot(jobID, func(detail *TrackedJob) {
+	p.persistJobDetailSnapshot(jobID, func(detail *TrackedJob) bool {
 		detail.RequestID = "exec-after-restart"
 		detail.State = restoredTestStateRunning
+		return true
 	})
 
-	p.expireActiveJobIf(activeJobSnapshot{jobID: jobID, jobType: orphanTestJobType, workerID: "worker-a", requestID: "exec-before-restart"},
+	p.expireActiveJob(activeJobSnapshot{jobID: jobID, jobType: orphanTestJobType, workerID: "worker-a", requestID: "exec-before-restart"},
 		"stale", time.Now().UTC(), func(*TrackedJob) bool { return true })
 
 	detail, err := p.store.LoadJobDetail(jobID)
