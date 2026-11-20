@@ -137,6 +137,9 @@ func TestPutFallbackKeepsWriteCondition(t *testing.T) {
 	if code1 != s3err.ErrPreconditionFailed || code2 != s3err.ErrNone {
 		t.Fatalf("writer 1 got %v and writer 2 got %v, want ErrPreconditionFailed and ErrNone", code1, code2)
 	}
+	if deleted := volume.deleted(); len(deleted) != 1 {
+		t.Fatalf("deleted chunks %v, want only the refused writer's one chunk", deleted)
+	}
 }
 
 // Without a ring the filer forwards a conditional create to its owner, so a
