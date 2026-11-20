@@ -728,6 +728,9 @@ func TestRestoredExpiryReplacesOlderAttemptDetail(t *testing.T) {
 	if detail.RequestID != "exec-before-restart" || detail.State != StateFailed {
 		t.Fatalf("want exec-before-restart failed in the detail, got request=%s state=%s", detail.RequestID, detail.State)
 	}
+	if detail.WorkerID != "worker-a" || detail.Attempt != 1 || detail.CompletedAt == nil || !detail.CompletedAt.After(older) {
+		t.Fatalf("detail kept the older attempt's fields: worker=%s attempt=%d completed=%v", detail.WorkerID, detail.Attempt, detail.CompletedAt)
+	}
 }
 
 // A completion that arrives for an earlier attempt after a retry started
@@ -742,5 +745,24 @@ func TestLateCompletionOfEarlierAttemptKeepsRetry(t *testing.T) {
 	tracked, _ := p.GetTrackedJob(jobID)
 	if tracked == nil || tracked.State != restoredTestStateRunning || tracked.RequestID != "exec-b" {
 		t.Fatalf("want exec-b running, got %+v", tracked)
+	}
+}
+
+// A late progress report of an earlier attempt neither takes over the
+// retry's request id nor makes the retry's own completion look foreign.
+func TestLateProgressOfEarlierAttemptKeepsRetry(t *testing.T) {
+	t.Parallel()
+	const jobID = "job-retry-late-progress"
+	p := newPluginWithRestoredJob(t, TrackedJob{JobID: jobID, RequestID: "exec-b"})
+
+	p.handleJobProgressUpdate("worker-a", &plugin_pb.JobProgressUpdate{JobId: jobID, JobType: orphanTestJobType, RequestId: "exec-a",
+		State: plugin_pb.JobState_JOB_STATE_RUNNING, ProgressPercent: 10})
+	if tracked, _ := p.GetTrackedJob(jobID); tracked == nil || tracked.RequestID != "exec-b" {
+		t.Fatalf("late progress took over the record: %+v", tracked)
+	}
+
+	p.handleJobCompleted(&plugin_pb.JobCompleted{JobId: jobID, JobType: orphanTestJobType, RequestId: "exec-b", Success: true}, nil)
+	if tracked, _ := p.GetTrackedJob(jobID); tracked == nil || tracked.State != StateSucceeded || tracked.RequestID != "exec-b" {
+		t.Fatalf("want exec-b succeeded, got %+v", tracked)
 	}
 }

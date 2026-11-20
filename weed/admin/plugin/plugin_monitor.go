@@ -376,6 +376,14 @@ func (r *Plugin) snapshotActiveJobs() []activeJobSnapshot {
 // attemptEnded reports whether the job's record already closed the attempt
 // requestID names, as an expiry does while the worker is still running it.
 // That attempt's late reports must not reopen the record or log a second run.
+// reportFromOtherAttempt reports whether a progress report or completion for
+// requestID belongs to another attempt than the one the admin dispatched
+// last, such as a late report of an attempt that timed out before a retry.
+// A record the admin did not dispatch (attempt 0) takes any request.
+func reportFromOtherAttempt(job *TrackedJob, requestID string) bool {
+	return job != nil && job.Attempt > 0 && job.RequestID != "" && requestID != "" && job.RequestID != requestID
+}
+
 func attemptEnded(job *TrackedJob, requestID string) bool {
 	return job != nil && requestID != "" && job.RequestID == requestID && !isActiveTrackedJobState(job.State)
 }
@@ -817,7 +825,7 @@ func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobP
 	if strings.TrimSpace(update.JobId) != "" {
 		r.jobsMu.Lock()
 		job := r.jobs[update.JobId]
-		if attemptEnded(job, update.RequestId) {
+		if attemptEnded(job, update.RequestId) || reportFromOtherAttempt(job, update.RequestId) {
 			r.jobsMu.Unlock()
 			return
 		}
@@ -1140,8 +1148,7 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted, acc
 		r.jobsMu.Unlock()
 		return nil, false
 	}
-	// a late completion of an earlier attempt does not end a retry
-	if tracked != nil && tracked.RequestID != "" && completed.RequestId != "" && tracked.RequestID != completed.RequestId {
+	if reportFromOtherAttempt(tracked, completed.RequestId) {
 		r.jobsMu.Unlock()
 		return nil, false
 	}
@@ -1193,9 +1200,17 @@ func (r *Plugin) trackExecutionCompletion(completed *plugin_pb.JobCompleted, acc
 	r.persistJobDetailSnapshot(completed.JobId, func(detail *TrackedJob) bool {
 		// a conditional completion closes one attempt: it leaves a detail a
 		// newer dispatch already wrote, and replaces an older attempt's
-		if accept != nil && detail.RequestID != "" && completed.RequestId != "" && detail.RequestID != completed.RequestId &&
-			detailIsNewerAttempt(&closing, detail) {
+		otherAttempt := detail.RequestID != "" && completed.RequestId != "" && detail.RequestID != completed.RequestId
+		if accept != nil && otherAttempt && detailIsNewerAttempt(&closing, detail) {
 			return false
+		}
+		if otherAttempt {
+			// replacing an older attempt's detail: none of its fields describe this one
+			detail.WorkerID = clone.WorkerID
+			detail.Attempt = clone.Attempt
+			detail.CreatedAt = clone.CreatedAt
+			detail.UpdatedAt = clone.UpdatedAt
+			detail.CompletedAt = clone.CompletedAt
 		}
 		detail.JobID = completed.JobId
 		if completed.JobType != "" {
