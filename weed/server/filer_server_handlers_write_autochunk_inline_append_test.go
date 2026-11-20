@@ -976,6 +976,74 @@ func TestFilerInlineAppendConcurrentKeepsAllData(t *testing.T) {
 	}
 }
 
+func TestFilerConcurrentOverwritesQueueReplacedChunks(t *testing.T) {
+	ctx := context.Background()
+	const filePath = "/overwrite.txt"
+	store := newRenameTestStore()
+	f := newRenameTestFiler(t, store)
+	f.Store = filer.NewFilerStoreWrapper(&inlineAppendSlowFindStore{renameTestStore: store, delay: 2 * time.Millisecond})
+	written := []string{"1,00000001"}
+	if err := store.InsertEntry(ctx, &filer.Entry{
+		FullPath: util.FullPath(filePath),
+		Attr:     filer.Attr{Mtime: time.Unix(1, 0), Crtime: time.Unix(1, 0), FileSize: 4},
+		Chunks:   []*filer_pb.FileChunk{{FileId: written[0], Size: 4}},
+	}); err != nil {
+		t.Fatalf("insert chunk-backed entry: %v", err)
+	}
+
+	fs := &FilerServer{
+		filer:          f,
+		option:         &FilerOption{MaxMB: 1},
+		entryLockTable: util.NewLockTable[util.FullPath](),
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for i := 2; i < 10; i++ {
+		fileId := fmt.Sprintf("1,%08x", i)
+		written = append(written, fileId)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r := httptest.NewRequest(http.MethodPut, filePath, strings.NewReader("data"))
+			_, err, _ := fs.saveMetaData(ctx, r, "overwrite.txt", "", &operation.StorageOption{}, 4, nil, []*filer_pb.FileChunk{{FileId: fileId, Size: 4}}, 4, nil)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent overwrite failed: %v", err)
+		}
+	}
+
+	final, err := f.FindEntry(ctx, util.FullPath(filePath))
+	if err != nil {
+		t.Fatalf("find overwritten entry: %v", err)
+	}
+	if len(final.Chunks) != 1 {
+		t.Fatalf("final entry has %d chunks, want 1", len(final.Chunks))
+	}
+	queued := make(map[string]bool)
+	for i := 0; i < 2; i++ {
+		f.FileIdDeletionQueue.Consume(func(fileIds []string) {
+			for _, fileId := range fileIds {
+				queued[fileId] = true
+			}
+		})
+	}
+	live := final.Chunks[0].GetFileIdString()
+	for _, fileId := range written {
+		if fileId == live {
+			if queued[fileId] {
+				t.Errorf("live chunk %s was queued for deletion", fileId)
+			}
+		} else if !queued[fileId] {
+			t.Errorf("chunk %s is neither referenced by the entry nor queued for deletion", fileId)
+		}
+	}
+}
+
 type inlineAppendSlowFindStore struct {
 	*renameTestStore
 	delay time.Duration

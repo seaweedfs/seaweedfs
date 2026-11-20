@@ -525,6 +525,11 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			replyerr = fmt.Errorf("entry %s changed during append; retry the request", path)
 			return
 		}
+	} else if fs.entryLockTable != nil {
+		// CreateEntry deletes the chunks of the entry it replaces, so concurrent
+		// overwrites must not both replace the same entry.
+		pathLock := fs.entryLockTable.AcquireLock("CreateEntry", util.FullPath(path), util.ExclusiveLock)
+		defer fs.entryLockTable.ReleaseLock(util.FullPath(path), pathLock)
 	}
 
 	dbErr := fs.filer.CreateEntry(context.WithoutCancel(ctx), entry, nil, false, false, nil, skipCheckParentDirEntry(r), so.MaxFileNameLength)
