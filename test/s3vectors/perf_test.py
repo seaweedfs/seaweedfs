@@ -188,14 +188,12 @@ def test_upsert_existing(perf):
     assert_complete(list_all(s3v, args))
 
 
-def test_build_index(perf):
-    if not INDEXED:
-        pytest.skip("PERF_INDEX not set")
+def build_index(perf, index):
     cli = Path(os.environ.get("VECTOR_CLI_BINARY", HERE / "weed-vector-cli")).resolve()
     assert cli.is_file(), f"missing {cli}; run make ./weed-vector-cli"
     command = [str(cli), "--namespace", perf["cluster"]["catalog"], "--masters", perf["cluster"]["masters"],
                "--filer-signing-key", perf["cluster"]["filer_signing_key"],
-               "index", "build", f"{perf['bucket']}$vector${INDEX}"]
+               "index", "build", f"{perf['bucket']}$vector${index}"]
     if os.environ.get("PERF_PARTITIONS"):
         command += ["--partitions", os.environ["PERF_PARTITIONS"]]
     seconds, out = timed(lambda: subprocess.run(command, check=True, capture_output=True, text=True,
@@ -203,8 +201,14 @@ def test_build_index(perf):
     report = json.loads(out.stdout)
     coverage = report["coverage"]
     assert len(coverage) == 1 and coverage[0]["unindexed_rows"] == 0, coverage
-    perf["report"]["index"] = {"seconds": seconds, "segments": coverage[0]["segments"],
-                               "partitions": int(os.environ.get("PERF_PARTITIONS", "0")) or None}
+    return {"seconds": seconds, "segments": coverage[0]["segments"],
+            "partitions": int(os.environ.get("PERF_PARTITIONS", "0")) or None}
+
+
+def test_build_index(perf):
+    if not INDEXED:
+        pytest.skip("PERF_INDEX not set")
+    perf["report"]["index"] = build_index(perf, INDEX)
 
 
 def run_queries(perf, name, **extra):
