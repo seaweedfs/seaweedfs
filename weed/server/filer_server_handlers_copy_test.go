@@ -2,6 +2,10 @@ package weed_server
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -219,5 +223,40 @@ func TestRecentCopyRequestDeduplicatesByRequestID(t *testing.T) {
 	}
 	if handled {
 		t.Fatal("reused request id with different fingerprint should not be treated as handled")
+	}
+}
+
+func TestPerformStreamCopySendsSourceReadToken(t *testing.T) {
+	src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer read-tok" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		io.WriteString(w, "data")
+	}))
+	defer src.Close()
+	var written string
+	dst := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer write-tok" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		written = string(b)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer dst.Close()
+
+	fs := &FilerServer{}
+	ctx := context.Background()
+	if err := fs.performStreamCopy(ctx, src.URL+"/3,01637037d6", "read-tok", dst.URL+"/4,01637037d7", "write-tok", 4, http.DefaultClient); err != nil {
+		t.Fatalf("copy with read token: %v", err)
+	}
+	if written != "data" {
+		t.Fatalf("destination got %q, want %q", written, "data")
+	}
+	err := fs.performStreamCopy(ctx, src.URL+"/3,01637037d6", "", dst.URL+"/4,01637037d7", "write-tok", 4, http.DefaultClient)
+	if err == nil || !strings.Contains(err.Error(), "401") {
+		t.Fatalf("copy without read token: got %v, want a 401 from the source", err)
 	}
 }
