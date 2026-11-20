@@ -94,3 +94,35 @@ func TestAssignVolumeReadOnlyReturnsErrorCode(t *testing.T) {
 		t.Fatalf("AssignVolumeResponseError = %v, want ErrReadOnly", err)
 	}
 }
+
+// A create on a read-only path must come back as a coded response, like
+// AssignVolume. A gRPC error reaches clients as codes.Unknown, and they retry
+// that like a filer outage.
+func TestCreateEntryReadOnlyReturnsErrorCode(t *testing.T) {
+	fc := filer.NewFilerConf()
+	if err := fc.SetLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: "/buckets/overquota",
+		ReadOnly:       true,
+	}); err != nil {
+		t.Fatalf("set location conf: %v", err)
+	}
+
+	fs := newAssignTestServer(fc, "")
+
+	resp, err := fs.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+		Directory: "/buckets/overquota/dir",
+		Entry: &filer_pb.Entry{
+			Name:       "x",
+			Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateEntry err = %v, want a response", err)
+	}
+	if resp.ErrorCode != filer_pb.FilerError_READ_ONLY {
+		t.Fatalf("CreateEntry error_code = %v, want %v", resp.ErrorCode, filer_pb.FilerError_READ_ONLY)
+	}
+	if want := "read only: /buckets/overquota"; !strings.HasPrefix(resp.Error, want) {
+		t.Fatalf("CreateEntry error = %q, want prefix %q", resp.Error, want)
+	}
+}
