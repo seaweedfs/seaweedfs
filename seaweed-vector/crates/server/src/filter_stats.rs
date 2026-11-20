@@ -71,7 +71,6 @@ impl FilterStats {
         (now.duration_since(self.start).as_secs() / BUCKET.as_secs()) + 1
     }
 
-    /// One query of `index` that took `elapsed` and filtered on `keys`.
     /// Drops the stats of `index`, whose table was created or dropped.
     pub fn forget(&self, index: &str) {
         self.indexes.lock().unwrap().remove(index);
@@ -94,6 +93,7 @@ impl FilterStats {
         }
     }
 
+    /// One query of `index` that took `elapsed` and filtered on `keys`.
     pub fn record(&self, index: &str, keys: &BTreeMap<String, u8>, elapsed: Duration) {
         self.record_at(index, keys, elapsed, Instant::now());
     }
