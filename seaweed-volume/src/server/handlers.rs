@@ -5016,13 +5016,13 @@ fn try_gzip_data(data: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn maybe_decompress_gzip(data: &[u8]) -> Result<Vec<u8>, GunzipError> {
-    use flate2::read::GzDecoder;
+    use flate2::read::MultiGzDecoder;
     use std::io::Read;
     // Cap the output so a crafted, highly-compressible (gzip-bomb) needle cannot
     // OOM the server when decompressed on read or upload. take(limit+1) lets us
     // tell "exactly at the limit" apart from "over it", which we reject as
     // TooLarge so callers fail the request instead of silently using raw bytes.
-    let mut decoder = GzDecoder::new(data).take(MAX_EXPANSION_BYTES + 1);
+    let mut decoder = MultiGzDecoder::new(data).take(MAX_EXPANSION_BYTES + 1);
     let mut decompressed = Vec::new();
     decoder
         .read_to_end(&mut decompressed)
@@ -7433,6 +7433,28 @@ mod tests {
             assert_eq!(status, StatusCode::OK, "{path}");
             assert_eq!(body, data, "{path}");
         }
+    }
+
+    /// A needle of concatenated gzip members decodes to all of them, as Go's
+    /// gzip reader does, so a range spans the whole decoded content.
+    #[tokio::test]
+    async fn test_get_range_over_multi_member_gzip_needle() {
+        const ID: u64 = 0x6e7a_0503;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let mut gz = try_gzip_data(b"hello").unwrap();
+        gz.extend(try_gzip_data(b"world").unwrap());
+        let path = put_test_needle_with(&state, ID, &gz, |n| n.set_is_compressed());
+
+        let (status, headers, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=3-7")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"lowor");
+        assert_eq!(headers["Content-Range"], "bytes 3-7/10");
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"helloworld");
     }
 
     /// An EC needle is served from memory: its GET parses Range like any
