@@ -32,19 +32,29 @@ pub(crate) fn ready_columns(dataset: &Dataset) -> HashMap<String, String> {
         .collect()
 }
 
+/// A conjunct a key's column answers: rows whose `column` holds one of
+/// `values`.
+#[derive(Debug, Clone)]
+pub(crate) struct Indexed {
+    pub column: String,
+    pub values: Vec<String>,
+    pub expr: Expr,
+}
+
 /// `filter` with each top-level conjunct that is a string `$eq` or `$in` on
-/// a key in `ready` answered by the key's column instead, and the
-/// conjunction of those replacements.
-pub(crate) fn rewrite(filter: Expr, ready: &HashMap<String, String>) -> (Expr, Option<Expr>) {
+/// a key in `ready` answered by the key's column instead, and those
+/// replacements.
+pub(crate) fn rewrite(filter: Expr, ready: &HashMap<String, String>) -> (Expr, Vec<Indexed>) {
     if ready.is_empty() {
-        return (filter, None);
+        return (filter, Vec::new());
     }
-    let mut indexed: Option<Expr> = None;
+    let mut indexed: Vec<Indexed> = Vec::new();
     let mut rewritten: Option<Expr> = None;
     for conjunct in split_conjunction_owned(filter) {
         let replacement = string_membership(&conjunct).and_then(|(key, values)| {
-            let column = Expr::Column(Column::from_name(ready.get(&key)?));
-            Some(match values.as_slice() {
+            let name = ready.get(&key)?;
+            let column = Expr::Column(Column::from_name(name));
+            let expr = match values.as_slice() {
                 [one] => array_has(column, lit(one.as_str())),
                 _ => {
                     let values: Vec<ScalarValue> = values
@@ -54,11 +64,17 @@ pub(crate) fn rewrite(filter: Expr, ready: &HashMap<String, String>) -> (Expr, O
                     let list = ScalarValue::new_list(&values, &arrow_schema::DataType::Utf8, true);
                     array_has_any(column, Expr::Literal(ScalarValue::List(list), None))
                 }
+            };
+            Some(Indexed {
+                column: name.clone(),
+                values,
+                expr,
             })
         });
         let part = match replacement {
-            Some(expr) => {
-                indexed = Some(and(indexed, expr.clone()));
+            Some(found) => {
+                let expr = found.expr.clone();
+                indexed.push(found);
                 expr
             }
             None => conjunct,
@@ -219,6 +235,86 @@ fn json_path_key(path: &str) -> Option<String> {
 fn jsonb_text(s: &str) -> Option<String> {
     let value: OwnedJsonb = serde_json::to_string(s).ok()?.parse().ok()?;
     Some(value.to_string())
+}
+
+/// Segments searched at once when counting.
+const PARALLEL_SEGMENTS: usize = 8;
+
+/// The rows of `scope` (every fragment when None) whose column matches
+/// `indexed`, or None once there are more than `limit`. Segments are
+/// searched newest first, several at once, and counting stops as soon as
+/// the total passes the limit. Rows the index has not reached are counted
+/// by a read of the column. Deleted rows an index segment still lists
+/// count too: the total is an upper bound, which only ever sends a query
+/// to the vector index instead of an exact scan.
+pub(crate) async fn count_indexed(
+    dataset: &Dataset,
+    indexed: &Indexed,
+    scope: Option<&[u64]>,
+    limit: u64,
+) -> Result<Option<u64>> {
+    use futures::{StreamExt, TryStreamExt};
+    use lance::index::DatasetIndexInternalExt;
+    use lance_index::metrics::NoOpMetricsCollector;
+    use lance_index::scalar::{LabelListQuery, SearchResult};
+    use lance_select::RowSetOps;
+
+    let scope: Option<roaring::RoaringBitmap> =
+        scope.map(|ids| ids.iter().map(|id| *id as u32).collect());
+    let segments = metadata_index::segments(dataset, &indexed.column).await?;
+    let query = LabelListQuery::HasAnyLabel(
+        indexed
+            .values
+            .iter()
+            .map(|v| ScalarValue::Utf8(Some(v.clone())))
+            .collect(),
+    );
+    let mut searches: Vec<futures::future::BoxFuture<'_, Result<u64>>> = Vec::new();
+    for segment in segments.iter().rev() {
+        let fragments = match &scope {
+            Some(scope) => &segment.fragments & scope,
+            None => segment.fragments.clone(),
+        };
+        if fragments.is_empty() {
+            continue;
+        }
+        let uuid = segment.uuid;
+        let query = &query;
+        searches.push(Box::pin(async move {
+            let index = dataset
+                .open_scalar_index(&indexed.column, &uuid, &NoOpMetricsCollector)
+                .await?;
+            let mut found = match index.search(query, &NoOpMetricsCollector).await? {
+                SearchResult::Exact(rows) | SearchResult::AtMost(rows) => rows.true_rows(),
+                SearchResult::AtLeast(_) => anyhow::bail!("a LABEL_LIST index answered AtLeast"),
+            };
+            found.retain_fragments(fragments.iter());
+            Ok(found.len().unwrap_or(u64::MAX))
+        }));
+    }
+    let mut counts = futures::stream::iter(searches).buffered(PARALLEL_SEGMENTS);
+    let mut total = 0u64;
+    while let Some(count) = counts.try_next().await? {
+        total = total.saturating_add(count);
+        if total > limit {
+            return Ok(None);
+        }
+    }
+    let unindexed: Vec<lance_table::format::Fragment> = dataset
+        .fragments()
+        .iter()
+        .filter(|f| !segments.iter().any(|s| s.fragments.contains(f.id as u32)))
+        .filter(|f| scope.as_ref().is_none_or(|s| s.contains(f.id as u32)))
+        .cloned()
+        .collect();
+    if !unindexed.is_empty() {
+        let mut scanner = dataset.scan();
+        scanner
+            .filter_expr(indexed.expr.clone())
+            .with_fragments(unindexed);
+        total = total.saturating_add(scanner.count_rows().await?);
+    }
+    Ok((total <= limit).then_some(total))
 }
 
 /// How a filter compares a key.
@@ -450,7 +546,7 @@ mod tests {
         let indexed = crate::filter::apply(&mut scanner, filter, &ready_columns(dataset)).unwrap();
         (
             scanner.get_expr_filter().unwrap().unwrap().to_string(),
-            indexed.map(|e| e.to_string()),
+            indexed.first().map(|i| i.expr.to_string()),
         )
     }
 
@@ -594,6 +690,50 @@ mod tests {
                 ("f".to_string(), operand::BOOL),
                 ("n".to_string(), operand::NUMBER),
             ])
+        );
+    }
+
+    /// Counting walks the segments, keeps to the scope and stops once over
+    /// the limit.
+    #[tokio::test]
+    async fn counts_follow_segments_and_scope() {
+        let dir = TempDir::new().unwrap();
+        let mut dataset = dataset(&dir, 1000).await;
+        dataset.drop_index("_mk_0_idx").await.unwrap();
+        // Ten fragments of 100 rows: four segments of up to 300 rows.
+        let ids: Vec<u64> = dataset.fragments().iter().map(|f| f.id).collect();
+        metadata_index::index_fragments(&mut dataset, "_mk_0", 300, 0)
+            .await
+            .unwrap();
+        let segments = metadata_index::segments(&dataset, "_mk_0").await.unwrap();
+        assert_eq!(segments.len(), 4);
+        let ready = ready_columns(&dataset);
+        let indexed =
+            crate::filter::apply(&mut dataset.scan(), &eq("author", "\"rare\""), &ready).unwrap();
+        let rare = &indexed[0];
+        // "rare" in rows i % 10 == 0, "rare2" never matches it.
+        assert_eq!(
+            count_indexed(&dataset, rare, None, 1_000).await.unwrap(),
+            Some(100)
+        );
+        assert_eq!(count_indexed(&dataset, rare, None, 99).await.unwrap(), None);
+        assert_eq!(
+            count_indexed(&dataset, rare, Some(&ids[..2]), 1_000)
+                .await
+                .unwrap(),
+            Some(20)
+        );
+        assert_eq!(
+            count_indexed(&dataset, rare, Some(&ids[9..]), 1_000)
+                .await
+                .unwrap(),
+            Some(10)
+        );
+        assert_eq!(
+            count_indexed(&dataset, rare, Some(&[]), 1_000)
+                .await
+                .unwrap(),
+            Some(0)
         );
     }
 }
