@@ -329,3 +329,32 @@ func TestCreateEntryFsyncReachesStore(t *testing.T) {
 		}
 	}
 }
+
+// A store that keeps entries as given returns FileSize zero beside chunks; an
+// uncontended offset write on a non-owner must still commit through the owner.
+func TestHttpOffsetWriteOnNonOwnerWithUnnormalizedEntry(t *testing.T) {
+	ctx := context.Background()
+	owner, fs, store, _ := newAppendRaceFilers(t)
+	filePath := ownerPath(t, owner, fs)
+	fileName := util.FullPath(filePath).Name()
+	if err := store.renameTestStore.InsertEntry(ctx, &filer.Entry{
+		FullPath: util.FullPath(filePath),
+		Attr:     filer.Attr{Mtime: time.Unix(1, 0), Atime: time.Unix(1, 0), Crtime: time.Unix(1, 0), Mode: 0640},
+		Chunks:   []*filer_pb.FileChunk{{FileId: "3,01637037d6", Size: 4, ModifiedTsNs: 1}},
+	}); err != nil {
+		t.Fatalf("insert chunked entry: %v", err)
+	}
+
+	r := httptest.NewRequest(http.MethodPut, filePath, nil)
+	fileChunks := []*filer_pb.FileChunk{{FileId: "3,02637037d6", Offset: 4, Size: 2, ModifiedTsNs: 2}}
+	if _, saveErr, _ := fs.saveMetaData(ctx, r, fileName, "", &operation.StorageOption{}, 4, nil, fileChunks, 6, nil); saveErr != nil {
+		t.Fatalf("offset write: %v", saveErr)
+	}
+	final, err := owner.filer.FindEntry(ctx, util.FullPath(filePath))
+	if err != nil {
+		t.Fatalf("find final entry: %v", err)
+	}
+	if got := filer.TotalSize(final.GetChunks()); got != 6 {
+		t.Fatalf("entry covers %d bytes, want 6", got)
+	}
+}
