@@ -440,8 +440,11 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// determine the scheme based on HTTPS client configuration
-		scheme := util_http.GetGlobalHttpClient().GetHttpScheme()
+		// the leader serves HTTPS exactly when this master does
+		scheme := "http"
+		if util.GetViper().GetString("https.master.key") != "" {
+			scheme = "https"
+		}
 
 		targetUrl, err := url.Parse(scheme + "://" + raftServerLeader)
 		if err != nil {
