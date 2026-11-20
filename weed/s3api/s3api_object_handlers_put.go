@@ -1033,6 +1033,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	glog.V(3).Infof("putToFiler: About to create entry - dir=%s, name=%s, chunks=%d, extended keys=%d",
 		path.Dir(filePath), path.Base(filePath), len(entry.Chunks), len(entry.Extended))
 	var createErr error
+	var createCond *filer_pb.WriteCondition
 	var rollbackErr error
 	entryCreated := false
 	var owner pb.ServerAddress
@@ -1043,6 +1044,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		return s3a.checkConditionalHeaders(r, bucket, object)
 	}
 	createUnderLock := func(cond *filer_pb.WriteCondition) s3err.ErrorCode {
+		createCond = cond
 		create := func(client filer_pb.SeaweedFilerClient) error {
 			req := &filer_pb.CreateEntryRequest{
 				Directory: path.Dir(filePath),
@@ -1169,10 +1171,17 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			}
 		}
 	}
+	var lockCond *filer_pb.WriteCondition
 	if !routed {
+		// The lock is a lease, so the filer re-checks the condition under its
+		// path lock. A suspended write's condition names the latest version,
+		// which the create's own path cannot express.
+		if object != "" && condAltKey == "" && !routedAmbiguous {
+			lockCond, _ = routeWriteCondition(r, uniqueWritePath)
+		}
 		createFn := func() s3err.ErrorCode {
 			remintVersion()
-			return createUnderLock(nil)
+			return createUnderLock(lockCond)
 		}
 		if routedAmbiguous {
 			createFn = func() s3err.ErrorCode {
@@ -1200,7 +1209,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			if landed {
 				createCode = s3err.ErrNone
 			}
-			if createCode != s3err.ErrNone && absent {
+			// The filer forwards a conditional create to its ring owner, which
+			// the lookups may not reach; only a refusal proves it never committed.
+			refused := lockCond != nil && errors.Is(createErr, filer_pb.ErrPreconditionFailed)
+			reclaim := createCond == nil || createErr == nil || refused
+			if createCode != s3err.ErrNone && (refused || absent && reclaim) {
 				orphaned := chunkResult.FileChunks
 				if manifestChunks, _ := filer.SeparateManifestChunks(entry.GetChunks()); len(manifestChunks) > 0 {
 					orphaned = append(manifestChunks, orphaned...)

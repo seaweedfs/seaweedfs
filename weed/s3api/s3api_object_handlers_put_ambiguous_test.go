@@ -941,7 +941,9 @@ func TestPutToFilerRoutedRecoveryCreateStaysOnOwner(t *testing.T) {
 }
 
 // When the owner cannot accept the recovery create, the outcome is uncertain —
-// not a failover create under a different filer's lock.
+// not a failover create under a different filer's lock. The owner may have
+// forwarded the conditional create to a filer the gateway cannot look up, so
+// the chunks stay.
 func TestPutToFilerRoutedRecoveryOwnerDownIsUncertain(t *testing.T) {
 	volume := startFakeVolumeServer(t)
 	filerA := &ambiguousPutFiler{
@@ -969,8 +971,8 @@ func TestPutToFilerRoutedRecoveryOwnerDownIsUncertain(t *testing.T) {
 	if filerB.stores != 0 || len(filerB.conds) != 0 {
 		t.Fatalf("the conditional create failed over to another filer: stores=%d conds=%d", filerB.stores, len(filerB.conds))
 	}
-	if deleted := volume.deleted(); len(deleted) == 0 {
-		t.Fatal("orphaned chunks were not deleted")
+	if deleted := volume.deleted(); len(deleted) != 0 {
+		t.Fatalf("chunks of a recovery create that may have committed were deleted: %v", deleted)
 	}
 }
 
