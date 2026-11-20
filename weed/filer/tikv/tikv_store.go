@@ -428,8 +428,10 @@ func runOwnTxn(ctx context.Context, run func() (inContext bool, err error)) erro
 		wait := time.Duration(1<<attempt) * time.Millisecond
 		select {
 		case <-ctx.Done():
-			return err
 		case <-time.After(wait + rand.N(wait)):
+		}
+		if ctx.Err() != nil {
+			return err
 		}
 	}
 }
