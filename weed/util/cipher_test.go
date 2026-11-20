@@ -125,3 +125,55 @@ func runUnderFIPS140Only(t *testing.T) bool {
 	}
 	return false
 }
+
+// otherAESBlock is an AES block that is not the standard library's own
+// *aes.Block, like the one aes.NewCipher returns in a GOEXPERIMENT=boringcrypto
+// build, which cipher.NewGCMWithRandomNonce refuses.
+type otherAESBlock struct{ cipher.Block }
+
+// TestGCMFallsBackForOtherAESBlocks checks that the fallback for such blocks
+// writes and reads the same nonce || ciphertext || tag layout as
+// cipher.NewGCMWithRandomNonce, with and without additional data.
+func TestGCMFallsBackForOtherAESBlocks(t *testing.T) {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		t.Fatal(err)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cipher.NewGCMWithRandomNonce(otherAESBlock{block}); err == nil {
+		t.Fatal("cipher.NewGCMWithRandomNonce accepted a non-standard block; the fallback is never used")
+	}
+	fallback, err := newGCMWithRandomNonce(otherAESBlock{block})
+	if err != nil {
+		t.Fatal(err)
+	}
+	native, err := cipher.NewGCMWithRandomNonce(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fallback.NonceSize() != native.NonceSize() || fallback.Overhead() != native.Overhead() {
+		t.Fatalf("fallback NonceSize/Overhead %d/%d, native %d/%d",
+			fallback.NonceSize(), fallback.Overhead(), native.NonceSize(), native.Overhead())
+	}
+
+	plaintext := []byte("SeaweedFS chunk")
+	prefix := []byte("prefix")
+	for _, ad := range [][]byte{nil, []byte("additional data")} {
+		sealed := fallback.Seal(append([]byte{}, prefix...), nil, plaintext, ad)
+		if !bytes.HasPrefix(sealed, prefix) {
+			t.Fatalf("fallback Seal did not append to dst")
+		}
+		if got, err := native.Open(nil, nil, sealed[len(prefix):], ad); err != nil || !bytes.Equal(got, plaintext) {
+			t.Fatalf("native Open of fallback output: %q, %v", got, err)
+		}
+		if got, err := fallback.Open(nil, nil, native.Seal(nil, nil, plaintext, ad), ad); err != nil || !bytes.Equal(got, plaintext) {
+			t.Fatalf("fallback Open of native output: %q, %v", got, err)
+		}
+	}
+	if _, err := fallback.Open(nil, nil, make([]byte, 5), nil); err == nil {
+		t.Fatal("fallback Open accepted a ciphertext shorter than the nonce")
+	}
+}
