@@ -604,4 +604,51 @@ func TestLiveLockGenerationIsAligned(t *testing.T) {
 	if got := lock.Generation(); got != 42 {
 		t.Fatalf("generation = %d, want 42", got)
 	}
+	atomic.StoreInt64(&lock.expireAtNs, 42)
+}
+
+func newGrantingLockClient(t *testing.T) *LockClient {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, &grantingLockFiler{})
+	go grpcServer.Serve(listener)
+	t.Cleanup(grpcServer.Stop)
+
+	host, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	return NewLockClient(grpc.WithTransportCredentials(insecure.NewCredentials()), pb.ServerAddress(fmt.Sprintf("%s:0.%s", host, port)))
+}
+
+// A holder whose renewal stalled past the lease is not locked anymore, even
+// before a failed renewal clears it: the server may have granted the key to
+// someone else by then.
+func TestLiveLockIsLockedOnlyWithinLease(t *testing.T) {
+	lock := newGrantingLockClient(t).NewShortLivedLock("test-key", "test-owner")
+	if lock == nil {
+		t.Fatal("lock not granted")
+	}
+	if !lock.IsLocked() {
+		t.Fatal("a fresh grant must read as locked")
+	}
+	if left := time.Until(time.Unix(0, atomic.LoadInt64(&lock.expireAtNs))); left <= 0 || left > 5*time.Second {
+		t.Fatalf("lease left after a 5s grant = %v", left)
+	}
+
+	if err := lock.AttemptToLock(15 * time.Second); err != nil {
+		t.Fatalf("renew: %v", err)
+	}
+	if left := time.Until(time.Unix(0, atomic.LoadInt64(&lock.expireAtNs))); left <= 5*time.Second || left > 15*time.Second {
+		t.Fatalf("lease left after a 15s renewal = %v", left)
+	}
+
+	atomic.StoreInt64(&lock.expireAtNs, time.Now().Add(-time.Millisecond).UnixNano())
+	if lock.IsLocked() {
+		t.Fatal("a lock whose lease ran out must not read as locked")
+	}
 }
