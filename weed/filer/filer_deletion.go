@@ -669,7 +669,7 @@ func (f *Filer) doDeleteChunks(ctx context.Context, chunks []*filer_pb.FileChunk
 			f.queueDeletions(fsync, chunk.GetFileIdString())
 			continue
 		}
-		dataChunks, manifestResolveErr := ResolveOneChunkManifest(ctx, f.MasterClient.LookupFileId, chunk, f.MasterClient)
+		dataChunks, manifestResolveErr := ResolveOneChunkManifest(ctx, f.MasterClient.GetLookupFileIdFunction(), chunk, f.MasterClient)
 		if manifestResolveErr != nil {
 			glog.V(0).InfofCtx(ctx, "failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
 		}
