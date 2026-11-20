@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 
 use crate::pb::{
     ActivityEvent, DetectionComplete, DetectionProposals, JobCompleted, JobProgressUpdate,
-    WorkerObservations, WorkerToAdminMessage, worker_to_admin_message::Body,
+    JobState, WorkerObservations, WorkerToAdminMessage, worker_to_admin_message::Body,
 };
 
 /// Replies to one detection request.
@@ -65,7 +65,12 @@ impl DetectionSender for StreamSender {
 }
 
 impl ExecutionSender for StreamSender {
-    fn send_progress(&self, progress: JobProgressUpdate) -> Result<()> {
+    fn send_progress(&self, mut progress: JobProgressUpdate) -> Result<()> {
+        // the Go handlers always report a state; older admins read a missing
+        // one as an ended job and drop its completion
+        if progress.state == JobState::Unspecified as i32 {
+            progress.state = JobState::Running as i32;
+        }
         self.send(Body::JobProgressUpdate(progress))
     }
 
@@ -199,5 +204,37 @@ mod tests {
             })
             .expect("send");
         assert!(metered.reported_failure());
+    }
+
+    #[test]
+    fn progress_without_a_state_is_sent_as_running() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let stream = StreamSender::new("worker-1".to_string(), tx);
+        let metered = MeteredSender::new(&stream);
+
+        metered
+            .send_progress(JobProgressUpdate {
+                progress_percent: 10.0,
+                ..Default::default()
+            })
+            .expect("send");
+        metered
+            .send_progress(JobProgressUpdate {
+                state: JobState::Failed as i32,
+                ..Default::default()
+            })
+            .expect("send");
+
+        let mut states = Vec::new();
+        while let Ok(message) = rx.try_recv() {
+            let Some(Body::JobProgressUpdate(progress)) = message.body else {
+                panic!("expected a progress update");
+            };
+            states.push(progress.state);
+        }
+        assert_eq!(
+            states,
+            vec![JobState::Running as i32, JobState::Failed as i32]
+        );
     }
 }
