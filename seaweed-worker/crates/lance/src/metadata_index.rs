@@ -16,7 +16,7 @@ use arrow_array::{Array, ArrayRef, LargeBinaryArray, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
 use futures::TryStreamExt;
 use lance::Dataset;
-use lance::dataset::transaction::{Operation, TransactionBuilder};
+use lance::dataset::transaction::{Operation, TransactionBuilder, UpdateMap, UpdateMapEntry};
 use lance::dataset::write::CommitBuilder;
 use lance::dataset::{
     BatchUDF, MergeInsertBuilder, NewColumnTransform, WhenMatched, WhenNotMatched, WriteDestination,
@@ -36,6 +36,9 @@ pub const STATE_FIELD_META: &str = "weed:metadata_key_state";
 pub const MAX_KEYS: usize = 8;
 /// Field metadata naming the version a key's column add read.
 pub const READ_VERSION_FIELD_META: &str = "weed:metadata_key_read_version";
+/// Field metadata on a key's column until what its add overwrote is set
+/// again.
+pub const RESTORE_FIELD_META: &str = "weed:metadata_key_restore";
 /// Longest an engine's PutVectors may take from opening the table to
 /// committing; a write that would take longer fails instead.
 pub const WRITE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
@@ -301,9 +304,9 @@ pub async fn add_column(dataset: &mut Dataset, key: &str) -> Result<IndexedKey> 
     if let Some(existing) = keys_of(dataset).into_iter().find(|k| k.key == key) {
         return Ok(existing);
     }
-    let (column, read, read_version) = commit_column(dataset, key).await?;
+    let column = commit_column(dataset, key).await?;
     let added = dataset.version().version;
-    let state = reapply_metadata(dataset, &read, read_version, added, &column, key).await?;
+    let state = reapply_metadata(dataset, Some(added), &column, key).await?;
     Ok(IndexedKey {
         column,
         key: key.to_string(),
@@ -311,23 +314,21 @@ pub async fn add_column(dataset: &mut Dataset, key: &str) -> Result<IndexedKey> 
     })
 }
 
-/// The add_columns commit of [`add_column`]: the column, the schema it read
-/// and that schema's version.
-pub(crate) async fn commit_column(
-    dataset: &mut Dataset,
-    key: &str,
-) -> Result<(String, Schema, u64)> {
+/// The add_columns commit of [`add_column`]; returns the column.
+pub(crate) async fn commit_column(dataset: &mut Dataset, key: &str) -> Result<String> {
     let column = (0..)
         .map(|n| format!("{COLUMN_PREFIX}{n}"))
         .find(|c| dataset.schema().field(c).is_none())
         .unwrap_or_default();
-    let read = Schema::from(dataset.schema());
     let read_version = dataset.version().version;
     let mut added = field(&column, key, State::Building);
     added.metadata_mut().insert(
         READ_VERSION_FIELD_META.to_string(),
         read_version.to_string(),
     );
+    added
+        .metadata_mut()
+        .insert(RESTORE_FIELD_META.to_string(), "pending".to_string());
     let output = Arc::new(Schema::new(vec![added]));
     let schema = output.clone();
     let owned = key.to_string();
@@ -349,62 +350,129 @@ pub(crate) async fn commit_column(
             None,
         )
         .await?;
-    Ok((column, read, read_version))
+    Ok(column)
 }
 
 /// A column add commits the schema it read, so the requests and key states
-/// committed while it ran are gone from the version it made: set them again.
-/// When `key`'s own request was withdrawn meanwhile, its new column goes off.
+/// committed while it ran are gone from the version it made, `added`: set
+/// them again, in one commit that also clears the column's restore mark, so
+/// it is done once. An entry changed again since the add keeps its later
+/// value, and a column gone or holding another key since is left alone.
+/// When `key`'s own request was withdrawn meanwhile, its new column goes
+/// off. Without the add's version and the one before it, which a cleanup may
+/// have removed, only the mark is cleared. Returns the column's state.
 async fn reapply_metadata(
     dataset: &mut Dataset,
-    read: &Schema,
-    read_version: u64,
-    added: u64,
+    added: Option<u64>,
     column: &str,
     key: &str,
 ) -> Result<State> {
-    if added <= read_version + 1 {
-        return Ok(State::Building);
+    let state_of = |d: &Dataset| {
+        keys_of(d)
+            .into_iter()
+            .find(|k| k.column == column)
+            .and_then(|k| k.state)
+            .unwrap_or(State::Building)
+    };
+    let Some(own) = dataset.schema().field(column) else {
+        bail!("{column} is gone");
+    };
+    if !own.metadata.contains_key(RESTORE_FIELD_META) {
+        return Ok(state_of(dataset));
     }
-    let prior = Schema::from(dataset.checkout_version(added - 1).await?.schema());
-    let mut updates: Vec<(String, Option<String>)> = prior
-        .metadata
-        .iter()
-        .filter(|(k, v)| read.metadata.get(*k) != Some(*v))
-        .map(|(k, v)| (k.clone(), Some(v.clone())))
-        .collect();
-    updates.extend(
-        read.metadata
-            .keys()
-            .filter(|k| !prior.metadata.contains_key(*k))
-            .map(|k| (k.clone(), None)),
-    );
-    let withdrawn = updates
-        .iter()
-        .any(|(k, v)| v.is_none() && *k == format!("{REQUEST_SCHEMA_META_PREFIX}{key}"));
-    if !updates.is_empty() {
-        dataset.update_schema_metadata(updates).await?;
-    }
-    let was = indexed_keys(read);
-    for now in indexed_keys(&prior) {
-        if let Some(state) = now.state
-            && was
-                .iter()
-                .any(|k| k.column == now.column && k.state != now.state)
-        {
-            set_state(dataset, &now.column, state).await?;
+    let own = own.id;
+    let mut history = None;
+    if let Some(added) = added.filter(|v| *v > 1) {
+        let read = Schema::from(dataset.checkout_version(added).await?.schema());
+        match dataset.checkout_version(added - 1).await {
+            // The version before has no column: `added` is the add's.
+            Ok(prior) if prior.schema().field(column).is_none() => {
+                history = Some((Schema::from(prior.schema()), read));
+            }
+            Ok(_)
+            | Err(lance::Error::NotFound { .. })
+            | Err(lance::Error::DatasetNotFound { .. }) => {}
+            Err(e) => return Err(e.into()),
         }
     }
-    if withdrawn {
-        set_state(dataset, column, State::Off).await?;
-        return Ok(State::Off);
+    let now = Schema::from(dataset.schema());
+    let mut schema_updates = Vec::new();
+    let mut field_updates: HashMap<i32, Vec<UpdateMapEntry>> = HashMap::new();
+    let entry = |key: &str, value: Option<&str>| UpdateMapEntry {
+        key: key.to_string(),
+        value: value.map(str::to_string),
+    };
+    let mut withdrawn = false;
+    if let Some((prior, read)) = &history {
+        let mut names: Vec<&String> = prior.metadata.keys().chain(read.metadata.keys()).collect();
+        names.sort();
+        names.dedup();
+        for k in names {
+            let (before, wrote) = (prior.metadata.get(k), read.metadata.get(k));
+            if before == wrote || now.metadata.get(k) != wrote {
+                continue;
+            }
+            withdrawn |= before.is_none() && *k == format!("{REQUEST_SCHEMA_META_PREFIX}{key}");
+            schema_updates.push(entry(k, before.map(String::as_str)));
+        }
+        let wrote = indexed_keys(read);
+        let current = indexed_keys(&now);
+        for before in indexed_keys(prior) {
+            let same = |k: &&IndexedKey| k.column == before.column && k.key == before.key;
+            let Some(overwritten) = wrote.iter().find(same) else {
+                continue;
+            };
+            let unchanged = current
+                .iter()
+                .find(same)
+                .is_some_and(|k| k.state == overwritten.state);
+            if let (Some(state), true, true) =
+                (before.state, overwritten.state != before.state, unchanged)
+                && let Some(field) = dataset.schema().field(&before.column)
+            {
+                field_updates
+                    .entry(field.id)
+                    .or_default()
+                    .push(entry(STATE_FIELD_META, Some(state.as_str())));
+            }
+        }
     }
-    Ok(State::Building)
+    let own_updates = field_updates.entry(own).or_default();
+    own_updates.push(entry(RESTORE_FIELD_META, None));
+    if withdrawn {
+        own_updates.push(entry(STATE_FIELD_META, Some(State::Off.as_str())));
+    }
+    let map = |update_entries: Vec<UpdateMapEntry>| UpdateMap {
+        update_entries,
+        replace: false,
+    };
+    let transaction = TransactionBuilder::new(
+        dataset.version().version,
+        Operation::UpdateConfig {
+            config_updates: None,
+            table_metadata_updates: None,
+            schema_metadata_updates: (!schema_updates.is_empty()).then(|| map(schema_updates)),
+            field_metadata_updates: field_updates
+                .into_iter()
+                .map(|(id, entries)| (id, map(entries)))
+                .collect(),
+        },
+    )
+    .build();
+    *dataset = CommitBuilder::new(WriteDestination::Dataset(Arc::new(dataset.clone())))
+        .execute(transaction)
+        .await?;
+    if history.is_none() {
+        tracing::warn!(
+            "{column}: the versions around its add are gone, so what the add overwrote is not set again"
+        );
+    }
+    Ok(state_of(dataset))
 }
 
-/// The version that added `column`, the first after the version its add
-/// read, and the version read; None for a column added without the record.
-async fn added_version(dataset: &Dataset, column: &str) -> Result<Option<(Dataset, u64)>> {
+/// The earliest version kept that has `column`: the add's, unless a cleanup
+/// removed it. None for a column added without the record.
+async fn added_version(dataset: &Dataset, column: &str) -> Result<Option<Dataset>> {
     let Some(read) = dataset
         .schema()
         .field(column)
@@ -417,30 +485,33 @@ async fn added_version(dataset: &Dataset, column: &str) -> Result<Option<(Datase
         if version.version <= read {
             continue;
         }
-        let at = dataset.checkout_version(version.version).await?;
+        let Ok(at) = dataset.checkout_version(version.version).await else {
+            continue;
+        };
         if at.schema().field(column).is_some() {
-            return Ok(Some((at, read)));
+            return Ok(Some(at));
         }
     }
     Ok(None)
 }
 
-/// Sets again what the commit of `key`'s column add overwrote, for a build
+/// Sets again what the commit of `key`'s column add overwrote, for a job
 /// resumed after an add that stopped before doing so itself. Returns the
 /// key's state.
 pub async fn recover_add(dataset: &mut Dataset, key: &IndexedKey) -> Result<Option<State>> {
-    let Some((added, read_version)) = added_version(dataset, &key.column).await? else {
+    let pending = dataset
+        .schema()
+        .field(&key.column)
+        .is_some_and(|f| f.metadata.contains_key(RESTORE_FIELD_META));
+    if !pending {
         return Ok(key.state);
-    };
-    let read = Schema::from(dataset.checkout_version(read_version).await?.schema());
-    let added = added.version().version;
-    let state =
-        reapply_metadata(dataset, &read, read_version, added, &key.column, &key.key).await?;
-    // The state the add left is building; anything else came later.
-    let now = keys_of(dataset)
-        .into_iter()
-        .find(|k| k.column == key.column);
-    Ok(now.and_then(|k| k.state).or(Some(state)))
+    }
+    let added = added_version(dataset, &key.column)
+        .await?
+        .map(|at| at.version().version);
+    reapply_metadata(dataset, added, &key.column, &key.key)
+        .await
+        .map(Some)
 }
 
 /// Records `state` on `column`'s field.
@@ -719,17 +790,16 @@ pub async fn finish_after(
     grace: std::time::Duration,
 ) -> Result<u64> {
     let columns = std::slice::from_ref(key);
+    // Without the add's version, the whole grace from now.
     let added_at = added_version(dataset, &key.column)
         .await?
-        .map(|(at, _)| at.version().timestamp);
+        .map_or_else(chrono::Utc::now, |at| at.version().timestamp);
     let checked = dataset.fragments().iter().map(|f| f.id).max();
     let mut fixed = rederive(dataset, columns, None).await?;
     index_fragments(dataset, &key.column, segment_rows, 0).await?;
-    if let Some(added_at) = added_at {
-        let until = added_at + chrono::Duration::from_std(grace)?;
-        if let Ok(wait) = (until - chrono::Utc::now()).to_std() {
-            tokio::time::sleep(wait).await;
-        }
+    let until = added_at + chrono::Duration::from_std(grace)?;
+    if let Ok(wait) = (until - chrono::Utc::now()).to_std() {
+        tokio::time::sleep(wait).await;
     }
     dataset.checkout_latest().await?;
     let since: Vec<u64> = dataset
@@ -1331,6 +1401,84 @@ pub(crate) mod tests {
             assert_eq!(keys_of(&adder)[0].state, Some(State::Off));
         }
 
+        /// A key requested while another's add ran comes back once, and a
+        /// withdrawal of it after that holds when the build is resumed.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_restored_add_is_not_replayed() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let mut dataset = table(&dir, 2).await;
+            request(&mut dataset, "author").await.unwrap();
+            let mut adder = dataset.clone();
+            request(&mut dataset, "lang").await.unwrap();
+            commit_column(&mut adder, "author").await.unwrap();
+            assert_eq!(requests(&adder), Vec::<String>::new());
+            let key = keys_of(&adder).remove(0);
+            recover_add(&mut adder, &key).await.unwrap();
+            assert_eq!(requests(&adder), ["lang"]);
+            request_removal(&mut adder, "lang").await.unwrap();
+            let key = keys_of(&adder).remove(0);
+            assert_eq!(
+                recover_add(&mut adder, &key).await.unwrap(),
+                Some(State::Building)
+            );
+            assert!(requests(&adder).is_empty(), "{:?}", requests(&adder));
+        }
+
+        /// A key state the add overwrote is not set again on a column
+        /// dropped since.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_resumed_add_skips_a_column_dropped_since() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let mut dataset = table(&dir, 2).await;
+            let author = add_column(&mut dataset, "author").await.unwrap();
+            finish_after(&mut dataset, &author, 1_000, std::time::Duration::ZERO)
+                .await
+                .unwrap();
+            let mut adder = dataset.clone();
+            set_state(&mut dataset, "_mk_0", State::Off).await.unwrap();
+            commit_column(&mut adder, "genre").await.unwrap();
+            remove_column(&mut adder, "_mk_0").await.unwrap();
+            let genre = keys_of(&adder).remove(0);
+            assert_eq!(genre.key, "genre");
+            assert_eq!(
+                recover_add(&mut adder, &genre).await.unwrap(),
+                Some(State::Building)
+            );
+            assert!(adder.schema().field("_mk_0").is_none());
+        }
+
+        /// With the versions around the add cleaned up, a resumed build goes
+        /// on instead of failing on every attempt.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_resumed_add_goes_on_after_a_cleanup() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let mut dataset = table(&dir, 2).await;
+            request(&mut dataset, "author").await.unwrap();
+            let mut adder = dataset.clone();
+            request(&mut dataset, "lang").await.unwrap();
+            commit_column(&mut adder, "author").await.unwrap();
+            adder
+                .cleanup_old_versions(chrono::Duration::zero(), Some(true), None)
+                .await
+                .unwrap();
+            let key = keys_of(&adder).remove(0);
+            assert_eq!(
+                recover_add(&mut adder, &key).await.unwrap(),
+                Some(State::Building)
+            );
+            let restore = adder
+                .schema()
+                .field("_mk_0")
+                .unwrap()
+                .metadata
+                .contains_key(RESTORE_FIELD_META);
+            assert!(!restore);
+            finish_after(&mut adder, &key, 1_000, std::time::Duration::ZERO)
+                .await
+                .unwrap();
+            assert_eq!(keys_of(&adder)[0].state, Some(State::Ready));
+        }
+
         /// A write that opened the table before the add and commits while
         /// finish waits out the grace is derived again before the key is
         /// ready; without the wait it lands after, stale, on a ready key.
@@ -1342,13 +1490,23 @@ pub(crate) mod tests {
                 let stale = dataset.clone();
                 let key = add_column(&mut dataset, "author").await.unwrap();
                 let moved = |_: usize| serde_json::json!({"author": "moved"});
-                let racer = async move {
-                    tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+                if grace.is_zero() {
+                    // The control: the write commits after the key is ready.
+                    finish_after(&mut dataset, &key, 1_000, grace)
+                        .await
+                        .unwrap();
                     upsert_with(stale, 0..50, &moved).await;
-                };
-                let (finished, _) =
-                    tokio::join!(finish_after(&mut dataset, &key, 1_000, grace), racer);
-                finished.unwrap();
+                } else {
+                    // It commits 1.5s after the add, and finish looks again
+                    // only once the grace from the add has passed.
+                    let racer = async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+                        upsert_with(stale, 0..50, &moved).await;
+                    };
+                    let (finished, _) =
+                        tokio::join!(finish_after(&mut dataset, &key, 1_000, grace), racer);
+                    finished.unwrap();
+                }
                 dataset.checkout_latest().await.unwrap();
                 assert_eq!(keys_of(&dataset)[0].state, Some(State::Ready));
                 let found = dataset
@@ -1356,7 +1514,7 @@ pub(crate) mod tests {
                     .await
                     .unwrap();
                 if grace.is_zero() {
-                    assert_eq!(found, 0, "the race did not land after ready");
+                    assert_eq!(found, 0, "the write did not land after ready");
                 } else {
                     assert_eq!(found, 50, "grace {grace:?}");
                 }

@@ -382,9 +382,7 @@ fn table_root(dataset: &Dataset) -> Path {
 async fn a_multipart_upload_does_not_complete_into_a_dropped_table() {
     let dir = tempfile::TempDir::new().unwrap();
     table(&dir, 1).await;
-    let s3_like: Arc<dyn WrappingObjectStore> = Arc::new(FailHeadAfterManifest {
-        armed: Arc::new(AtomicBool::new(false)),
-    });
+    let s3_like: Arc<dyn WrappingObjectStore> = Arc::new(S3Like::default());
     let job = crate::dataset::open_guarded(&guarded_description(&dir), Some(s3_like))
         .await
         .unwrap();
@@ -402,6 +400,56 @@ async fn a_multipart_upload_does_not_complete_into_a_dropped_table() {
         "an upload completed into a dropped table"
     );
     assert!(files(dir.path()).is_empty(), "{:?}", files(dir.path()));
+}
+
+/// An upload whose last probe fails is aborted, not left with its parts.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failed_probe_aborts_an_upload() {
+    let dir = tempfile::TempDir::new().unwrap();
+    table(&dir, 1).await;
+    let s3_like = S3Like::default();
+    let (armed, aborted) = (s3_like.armed.clone(), s3_like.aborted.clone());
+    let s3_like: Arc<dyn WrappingObjectStore> = Arc::new(s3_like);
+    let job = crate::dataset::open_guarded(&guarded_description(&dir), Some(s3_like))
+        .await
+        .unwrap();
+    let store = job.object_store(None).await.unwrap().inner.clone();
+    let path = table_root(&job).child("data").child("late.lance");
+    let mut upload = store.put_multipart(&path).await.unwrap();
+    upload
+        .put_part(PutPayload::from(vec![0u8; 16]))
+        .await
+        .unwrap();
+    armed.store(true, Ordering::SeqCst);
+    assert!(upload.complete().await.is_err());
+    assert!(aborted.load(Ordering::SeqCst), "the upload was left open");
+}
+
+/// A table created again, through the version a job just wrote, between
+/// that write and its check keeps its own manifest at that path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_rollback_keeps_the_manifest_of_a_table_created_again() {
+    let dir = tempfile::TempDir::new().unwrap();
+    table(&dir, 1).await;
+    let s3_like: Arc<dyn WrappingObjectStore> = Arc::new(S3Like {
+        recreate: Some((dir.path().to_path_buf(), Arc::new(AtomicBool::new(false)))),
+        ..Default::default()
+    });
+    let mut job = crate::dataset::open_guarded(&guarded_description(&dir), Some(s3_like))
+        .await
+        .unwrap();
+    assert_eq!(job.version().version, 1);
+    assert!(
+        job.update_config([("seaweedfs.test", "job")])
+            .await
+            .is_err()
+    );
+    let again = Dataset::open(dir.path().to_str().unwrap()).await.unwrap();
+    assert_eq!(again.version().version, 2);
+    assert_eq!(
+        again.config().get("seaweedfs.test").map(String::as_str),
+        Some("again")
+    );
 }
 
 /// A cleanup that picked its paths before the drop does not delete the files
@@ -439,8 +487,9 @@ async fn a_cleanup_does_not_delete_a_table_created_again() {
 async fn a_failed_probe_does_not_take_back_a_commit() {
     let dir = tempfile::TempDir::new().unwrap();
     table(&dir, 1).await;
-    let flaky: Arc<dyn WrappingObjectStore> = Arc::new(FailHeadAfterManifest {
-        armed: Arc::new(AtomicBool::new(false)),
+    let flaky: Arc<dyn WrappingObjectStore> = Arc::new(S3Like {
+        fail_head_after_manifest: true,
+        ..Default::default()
     });
     let mut job = crate::dataset::open_guarded(&guarded_description(&dir), Some(flaky))
         .await
@@ -452,36 +501,47 @@ async fn a_failed_probe_does_not_take_back_a_commit() {
 }
 
 /// Behaves as an object store, not a file system: a multipart upload holds
-/// its parts until it completes. Fails one HEAD after a manifest is written,
-/// as a timeout would.
-#[derive(Debug)]
-struct FailHeadAfterManifest {
+/// its parts until it completes, and records an abort. Optionally fails one
+/// HEAD after a manifest is written, as a timeout would, or creates the table
+/// again, through two versions, right after the first manifest is written.
+#[derive(Debug, Default)]
+struct S3Like {
+    fail_head_after_manifest: bool,
+    /// The next HEAD fails.
     armed: Arc<AtomicBool>,
+    aborted: Arc<AtomicBool>,
+    recreate: Option<(PathBuf, Arc<AtomicBool>)>,
 }
 
-impl WrappingObjectStore for FailHeadAfterManifest {
+impl WrappingObjectStore for S3Like {
     fn wrap(&self, _prefix: &str, original: Arc<dyn ObjectStore>) -> Arc<dyn ObjectStore> {
-        Arc::new(FailingHead {
+        Arc::new(S3LikeStore {
             inner: original,
+            fail_head_after_manifest: self.fail_head_after_manifest,
             armed: self.armed.clone(),
+            aborted: self.aborted.clone(),
+            recreate: self.recreate.clone(),
         })
     }
 }
 
 #[derive(Debug)]
-struct FailingHead {
+struct S3LikeStore {
     inner: Arc<dyn ObjectStore>,
+    fail_head_after_manifest: bool,
     armed: Arc<AtomicBool>,
+    aborted: Arc<AtomicBool>,
+    recreate: Option<(PathBuf, Arc<AtomicBool>)>,
 }
 
-impl fmt::Display for FailingHead {
+impl fmt::Display for S3LikeStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FailingHead({})", self.inner)
+        write!(f, "S3Like({})", self.inner)
     }
 }
 
 #[async_trait::async_trait]
-impl ObjectStore for FailingHead {
+impl ObjectStore for S3LikeStore {
     async fn put_opts(
         &self,
         location: &Path,
@@ -490,7 +550,19 @@ impl ObjectStore for FailingHead {
     ) -> Result<PutResult> {
         let put = self.inner.put_opts(location, payload, opts).await?;
         if location.extension() == Some("manifest") {
-            self.armed.store(true, Ordering::SeqCst);
+            if self.fail_head_after_manifest {
+                self.armed.store(true, Ordering::SeqCst);
+            }
+            if let Some((dir, fired)) = &self.recreate
+                && !fired.swap(true, Ordering::SeqCst)
+            {
+                std::fs::remove_dir_all(dir).unwrap();
+                let mut again = create_empty(dir).await;
+                again
+                    .update_config([("seaweedfs.test", "again")])
+                    .await
+                    .unwrap();
+            }
         }
         Ok(put)
     }
@@ -503,12 +575,13 @@ impl ObjectStore for FailingHead {
             inner: self.inner.clone(),
             location: location.clone(),
             parts: Vec::new(),
+            aborted: self.aborted.clone(),
         }))
     }
     async fn get_opts(&self, location: &Path, options: GetOptions) -> Result<GetResult> {
         if options.head && self.armed.swap(false, Ordering::SeqCst) {
             return Err(object_store::Error::Generic {
-                store: "FailingHead",
+                store: "S3Like",
                 source: "timed out".into(),
             });
         }
@@ -550,6 +623,7 @@ struct HeldParts {
     inner: Arc<dyn ObjectStore>,
     location: Path,
     parts: Vec<Bytes>,
+    aborted: Arc<AtomicBool>,
 }
 
 #[async_trait::async_trait]
@@ -564,6 +638,21 @@ impl MultipartUpload for HeldParts {
     }
     async fn abort(&mut self) -> Result<()> {
         self.parts.clear();
+        self.aborted.store(true, Ordering::SeqCst);
         Ok(())
     }
+}
+
+/// An empty table at `dir`.
+async fn create_empty(dir: &std::path::Path) -> Dataset {
+    Dataset::write(
+        arrow_array::RecordBatchIterator::new(
+            Vec::<std::result::Result<arrow_array::RecordBatch, arrow_schema::ArrowError>>::new(),
+            Arc::new(crate::metadata_index::tests::lifecycle::base_schema()),
+        ),
+        dir.to_str().unwrap(),
+        None,
+    )
+    .await
+    .unwrap()
 }
