@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -204,9 +203,15 @@ func TestManifestRetryKeepsFsyncUpgradeInFlight(t *testing.T) {
 	}
 
 	master.available.Store(true)
-	var once sync.Once
-	upgrade := func(http.ResponseWriter) {
-		once.Do(func() { q.addOrUpdate(manifest.FileId, "durable delete", 0, manifest, true) })
+	// The first read sees the durable delete arrive; once that attempt has
+	// queued the manifest needle, the volume server no longer has it.
+	var reads atomic.Int32
+	upgrade := func(w http.ResponseWriter) {
+		if reads.Add(1) == 1 {
+			q.addOrUpdate(manifest.FileId, "durable delete", 0, manifest, true)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
 	}
 	master.onVolumeRead.Store(&upgrade)
 	f.retryManifest(context.Background(), q, ready[0])

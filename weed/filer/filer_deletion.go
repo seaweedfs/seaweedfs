@@ -697,21 +697,36 @@ func (f *Filer) doDeleteChunks(ctx context.Context, chunks []*filer_pb.FileChunk
 		}
 		// The manifest needle is the only record of its sub-chunks, so it
 		// stays until they are queued.
-		if err := f.deleteManifestChunks(ctx, chunk, fsync); err != nil {
+		fileIds, err := f.manifestFileIds(ctx, chunk)
+		if err != nil {
 			glog.WarningfCtx(ctx, "failed to resolve manifest %s, will retry: %v", chunk.GetFileIdString(), err)
 			f.manifestRetries().addOrUpdate(chunk.GetFileIdString(), err.Error(), 0, chunk, fsync)
+			continue
 		}
+		f.queueDeletions(fsync, fileIds...)
 	}
 }
 
-func (f *Filer) deleteManifestChunks(ctx context.Context, manifest *filer_pb.FileChunk, fsync bool) error {
+// manifestFileIds resolves a manifest and any nested manifests, listing each
+// sub-chunk ahead of the manifest that holds it.
+func (f *Filer) manifestFileIds(ctx context.Context, manifest *filer_pb.FileChunk) ([]string, error) {
 	dataChunks, err := ResolveOneChunkManifest(ctx, f.MasterClient.GetLookupFileIdFunction(), manifest, f.MasterClient)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	f.doDeleteChunks(ctx, dataChunks, fsync)
-	f.queueDeletions(fsync, manifest.GetFileIdString())
-	return nil
+	var fileIds []string
+	for _, chunk := range dataChunks {
+		if !chunk.IsChunkManifest {
+			fileIds = append(fileIds, chunk.GetFileIdString())
+			continue
+		}
+		nested, err := f.manifestFileIds(ctx, chunk)
+		if err != nil {
+			return nil, err
+		}
+		fileIds = append(fileIds, nested...)
+	}
+	return append(fileIds, manifest.GetFileIdString()), nil
 }
 
 func (f *Filer) manifestRetries() *DeletionRetryQueue {
@@ -744,18 +759,19 @@ func (f *Filer) processManifestRetries(ctx context.Context) {
 // cannot hold up the shared retry loop.
 var manifestRetryTimeout = 1 * time.Minute
 
-// retryManifest resolves again when a durable delete of the same manifest
-// arrived while the attempt was in flight.
+// retryManifest queues the resolved ids again, without rereading the manifest
+// it already queued, when a durable delete arrived during the attempt.
 func (f *Filer) retryManifest(ctx context.Context, q *DeletionRetryQueue, item *DeletionRetryItem) {
+	attemptCtx, cancel := context.WithTimeout(ctx, manifestRetryTimeout)
+	fileIds, err := f.manifestFileIds(attemptCtx, item.manifest)
+	cancel()
+	if err != nil {
+		q.RequeueForRetry(item, err.Error())
+		return
+	}
 	for {
 		fsync := q.fsyncOf(item)
-		attemptCtx, cancel := context.WithTimeout(ctx, manifestRetryTimeout)
-		err := f.deleteManifestChunks(attemptCtx, item.manifest, fsync)
-		cancel()
-		if err != nil {
-			q.RequeueForRetry(item, err.Error())
-			return
-		}
+		f.queueDeletions(fsync, fileIds...)
 		if q.removeUnlessFsyncChanged(item, fsync) {
 			return
 		}
