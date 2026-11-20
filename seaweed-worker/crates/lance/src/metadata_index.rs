@@ -603,7 +603,7 @@ pub async fn remove_column(dataset: &mut Dataset, column: &str) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use arrow_array::ListArray;
 
@@ -711,7 +711,7 @@ mod tests {
             ]
         );
     }
-    mod lifecycle {
+    pub(crate) mod lifecycle {
         use super::super::*;
         use arrow_array::{FixedSizeListArray, RecordBatchIterator, types::Float32Type};
         use lance::dataset::optimize::{CompactionOptions, compact_files};
@@ -727,7 +727,7 @@ mod tests {
 
         /// Rows `range` in `dataset`'s current schema, the way PutVectors
         /// writes them.
-        fn rows(schema: &Schema, range: std::ops::Range<usize>) -> RecordBatch {
+        pub(crate) fn rows(schema: &Schema, range: std::ops::Range<usize>) -> RecordBatch {
             let metas: Vec<serde_json::Value> = range.clone().map(author).collect();
             let columns: Vec<ArrayRef> = schema
                 .fields()
@@ -758,7 +758,7 @@ mod tests {
             RecordBatch::try_new(Arc::new(schema.clone()), columns).unwrap()
         }
 
-        fn base_schema() -> Schema {
+        pub(crate) fn base_schema() -> Schema {
             Schema::new(vec![
                 Field::new("key", DataType::Utf8, false),
                 Field::new(
@@ -776,7 +776,7 @@ mod tests {
         }
 
         /// Upserts rows `range` in the schema of the version `dataset` is at.
-        async fn upsert(dataset: Dataset, range: std::ops::Range<usize>) -> Dataset {
+        pub(crate) async fn upsert(dataset: Dataset, range: std::ops::Range<usize>) -> Dataset {
             let mut schema = base_schema();
             let fields: Vec<Field> = indexed_keys(&Schema::from(dataset.schema()))
                 .iter()
@@ -799,7 +799,7 @@ mod tests {
             Arc::unwrap_or_clone(dataset)
         }
 
-        async fn table(dir: &tempfile::TempDir, fragments: usize) -> Dataset {
+        pub(crate) async fn table(dir: &tempfile::TempDir, fragments: usize) -> Dataset {
             let uri = dir.path().to_str().unwrap();
             let schema = Arc::new(base_schema());
             let mut dataset = Dataset::write(

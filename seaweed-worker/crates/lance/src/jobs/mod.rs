@@ -9,6 +9,7 @@
 pub mod cleanup;
 pub mod compact;
 pub mod indices;
+pub mod metadata_index;
 pub mod purge;
 pub mod sort;
 pub mod vector_index;
@@ -62,6 +63,12 @@ pub fn handlers(
         ),
         Arc::new(
             vector_index::VectorIndexHandler::new(namespace_url.clone())
+                .with_storage(storage.clone())
+                .with_signing_key(signing_key.clone())
+                .with_metrics(metrics.clone()),
+        ),
+        Arc::new(
+            metadata_index::MetadataIndexHandler::new(namespace_url.clone())
                 .with_storage(storage.clone())
                 .with_signing_key(signing_key.clone())
                 .with_metrics(metrics.clone()),

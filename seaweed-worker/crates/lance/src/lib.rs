@@ -5,6 +5,10 @@
 //! and its old versions removed. None can run in the Go worker, because all
 //! three read and rewrite Lance files. This crate is the worker that can.
 
+// A job awaiting several Lance commits in turn needs deeper trait recursion
+// than the default to prove its future Send.
+#![recursion_limit = "256"]
+
 pub mod catalog;
 pub mod cluster;
 pub mod dataset;
