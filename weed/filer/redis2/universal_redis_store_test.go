@@ -2,6 +2,7 @@ package redis2
 
 import (
 	"context"
+	"crypto/fips140"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
@@ -367,13 +368,15 @@ func TestDeleteExpiredEntryKeepsRecreatedValue(t *testing.T) {
 }
 
 // TestScriptDigests checks that each pinned digest runScript sends with EVALSHA
-// is the SHA-1 of the script it falls back to with EVAL.
+// is the SHA-1 of the script it falls back to with EVAL. It hashes outside FIPS
+// enforcement so it also runs under GODEBUG=fips140=only.
 func TestScriptDigests(t *testing.T) {
 	for _, s := range []struct{ name, src, sha1Hex string }{
 		{"existsScript", existsScript, existsScriptSHA1},
 		{"deleteIfUnchangedScript", deleteIfUnchangedScript, deleteIfUnchangedScriptSHA1},
 	} {
-		sum := sha1.Sum([]byte(s.src))
+		var sum [sha1.Size]byte
+		fips140.WithoutEnforcement(func() { sum = sha1.Sum([]byte(s.src)) })
 		if got := hex.EncodeToString(sum[:]); got != s.sha1Hex {
 			t.Errorf("%s digest is %s, want %s", s.name, s.sha1Hex, got)
 		}
