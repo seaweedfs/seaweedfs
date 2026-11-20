@@ -218,6 +218,7 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 		// or reset that lands after it either shows up in that check or stops
 		// the provider's answer from being cached.
 		fillEpoch := vc.mapEpoch()
+		asked := vc.vidMap.learnedSoFar()
 
 		// Double-check cache for volumes that might have been populated while waiting
 		stillNeedLookup := make([]string, 0, len(needsLookup))
@@ -244,8 +245,37 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 		glog.V(2).Infof("Looking up %d volumes from provider: %v", len(stillNeedLookup), stillNeedLookup)
 
 		providerResults, err := vc.provider.LookupVolumeIds(ctx, stillNeedLookup)
-		if err != nil {
+		// A nil map means the provider got no answer. A provider that did get
+		// one can still report errors for some volumes, such as one the master
+		// does not know, and that answer replaces what was set aside.
+		if err != nil && providerResults == nil {
+			// Without an answer, the locations InvalidateCache set aside are
+			// still the best knowledge there is: one dead replica must not
+			// take the volume's other replicas out of the cache with it.
+			unresolved := 0
+			for _, vidString := range stillNeedLookup {
+				vid := vidStringToUint[vidString]
+				if vc.vidMap.reviveStale(vid) {
+					glog.V(1).Infof("volume %d: keeping its cached locations, re-lookup failed: %v", vid, err)
+				}
+				if locations, found := vc.vidMap.GetLocations(vid); found && len(locations) > 0 {
+					batchResult[vidString] = locations
+				} else {
+					unresolved++
+				}
+			}
+			if unresolved == 0 {
+				// Every volume has locations after all. Returning the error
+				// with them would make a gRPC handler drop its response.
+				return batchResult, nil
+			}
 			return batchResult, fmt.Errorf("provider lookup failed: %w", err)
+		}
+		for _, vidString := range stillNeedLookup {
+			// The provider answered, so its answer replaces what was set
+			// aside, including when it has no locations for the volume, and
+			// including what a lookup that failed meanwhile brought back.
+			vc.vidMap.dropSetAside(vidStringToUint[vidString], asked)
 		}
 
 		for vidString, locations := range providerResults {
@@ -255,10 +285,13 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 				continue
 			}
 
-			live := vc.fillLocations(uint32(vid), locations, fillEpoch)
+			live := vc.fillLocations(uint32(vid), locations, fillEpoch, asked)
 			if len(live) > 0 {
 				batchResult[vidString] = live
 			}
+		}
+		if err != nil {
+			return batchResult, fmt.Errorf("provider lookup failed: %w", err)
 		}
 
 		return batchResult, nil
@@ -446,10 +479,11 @@ func (vc *vidMapClient) untombstone(vid uint32, loc Location) {
 
 // fillLocations returns the locations of a provider answer for vid that may
 // be served, and caches them unless a reset, clear or confirmation happened
-// since epoch. Holding recentDeletesMu across the check and the add keeps a
-// concurrent removal or confirmation from being undone, and caches the
-// answer for vid whole or not at all.
-func (vc *vidMapClient) fillLocations(vid uint32, locations []Location, epoch uint64) (live []Location) {
+// since epoch, or vid has set-aside locations learned after the lookup was
+// asked, as marked by learnedSoFar. Holding recentDeletesMu across the check
+// and the add keeps a concurrent removal or confirmation from being undone,
+// and caches the answer for vid whole or not at all.
+func (vc *vidMapClient) fillLocations(vid uint32, locations []Location, epoch, asked uint64) (live []Location) {
 	vc.recentDeletesMu.Lock()
 	defer vc.recentDeletesMu.Unlock()
 	vc.expireRecentDeletes(time.Now())
@@ -458,9 +492,9 @@ func (vc *vidMapClient) fillLocations(vid uint32, locations []Location, epoch ui
 			continue
 		}
 		live = append(live, loc)
-		if vc.vidMapEpoch == epoch {
-			vc.vidMap.addLocation(vid, loc)
-		}
+	}
+	if vc.vidMapEpoch == epoch {
+		vc.vidMap.addAnswer(vid, live, asked)
 	}
 	return live
 }
@@ -476,7 +510,11 @@ func (vc *vidMapClient) confirmLocations(vid uint32, locations []Location) {
 	vc.vidMap.setLocations(vid, locations)
 }
 
-// InvalidateCache removes all cached locations for a volume ID
+// InvalidateCache sets a volume's cached locations aside, so the next lookup
+// asks the provider. An answer replaces them. If the lookup gets no answer
+// they are served again, less any location a pushed removal took out in the
+// meantime: the alternative is to fail reads of a volume whose other replicas
+// are serving.
 func (vc *vidMapClient) InvalidateCache(fileId string) {
 	parts := strings.Split(fileId, ",")
 	vidString := parts[0]
@@ -484,5 +522,5 @@ func (vc *vidMapClient) InvalidateCache(fileId string) {
 	if err != nil {
 		return
 	}
-	vc.vidMap.deleteVid(uint32(vid))
+	vc.vidMap.markStale(uint32(vid))
 }

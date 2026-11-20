@@ -73,6 +73,9 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 			result = make(map[string][]Location)
 			lookupErrors = nil
 			epoch := p.masterClient.mapEpoch()
+			// Taken with the epoch: what the master answers is not cached over
+			// locations learned and set aside while it was asked.
+			asked := p.masterClient.vidMap.learnedSoFar()
 
 			// Per-attempt timeout bounds both master resolution and the RPC
 			// so a single attempt cannot consume the entire retry budget.
@@ -127,7 +130,7 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 						}
 						locations = append(locations, loc)
 					}
-					p.masterClient.fillLocations(uint32(vid), locations, epoch)
+					p.masterClient.fillLocations(uint32(vid), locations, epoch, asked)
 
 					if len(locations) > 0 {
 						result[vidOnly] = locations
