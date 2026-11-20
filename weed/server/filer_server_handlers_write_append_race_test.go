@@ -48,18 +48,52 @@ func (s *appendRaceFindHookStore) setHook(hook func(p util.FullPath)) {
 	s.hookMu.Unlock()
 }
 
+// appendRaceSyncStore records, per path, whether each entry write was asked
+// to be durable before returning.
+type appendRaceSyncStore struct {
+	*renameTestStore
+	mu     sync.Mutex
+	synced map[util.FullPath][]bool
+}
+
+func (s *appendRaceSyncStore) record(ctx context.Context, p util.FullPath) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.synced[p] = append(s.synced[p], filer.SyncWrite(ctx))
+}
+
+func (s *appendRaceSyncStore) writes(p util.FullPath) []bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]bool(nil), s.synced[p]...)
+}
+
+func (s *appendRaceSyncStore) InsertEntry(ctx context.Context, entry *filer.Entry) error {
+	s.record(ctx, entry.FullPath)
+	return s.renameTestStore.InsertEntry(ctx, entry)
+}
+
+func (s *appendRaceSyncStore) UpdateEntry(ctx context.Context, entry *filer.Entry) error {
+	s.record(ctx, entry.FullPath)
+	return s.renameTestStore.UpdateEntry(ctx, entry)
+}
+
 // newAppendRaceFilers starts two gRPC-serving filers on one store with the same
-// two-member ring. Only the second filer's reads run the hook.
-func newAppendRaceFilers(t *testing.T) (owner, other *FilerServer, store *appendRaceFindHookStore) {
+// two-member ring. Only the second filer's reads run the hook; ownerWrites
+// records the first filer's entry writes.
+func newAppendRaceFilers(t *testing.T) (owner, other *FilerServer, store *appendRaceFindHookStore, ownerWrites *appendRaceSyncStore) {
 	t.Helper()
 	inner := newRenameTestStore()
 	inner.entries["/"] = newDirectoryEntry("/", 1)
 	store = &appendRaceFindHookStore{renameTestStore: inner}
+	ownerWrites = &appendRaceSyncStore{renameTestStore: inner, synced: map[util.FullPath][]bool{}}
 
 	newServer := func(hooked bool) (*FilerServer, net.Listener) {
 		f := newRenameTestFiler(t, inner)
 		if hooked {
 			f.Store = filer.NewFilerStoreWrapper(store)
+		} else {
+			f.Store = filer.NewFilerStoreWrapper(ownerWrites)
 		}
 		lis, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
@@ -92,7 +126,7 @@ func newAppendRaceFilers(t *testing.T) (owner, other *FilerServer, store *append
 		t.Cleanup(srv.Stop)
 		pb.InvalidateGrpcConnection(self.ToGrpcAddress())
 	}
-	return owner, other, store
+	return owner, other, store, ownerWrites
 }
 
 // ownerPath returns a file path whose writes the ring gives to owner.
@@ -133,7 +167,7 @@ func httpAppendWithConcurrentAppend(t *testing.T, atRead int) bool {
 	appendA := []byte("A-")
 	appendB := []byte("B-")
 
-	owner, fs, store := newAppendRaceFilers(t)
+	owner, fs, store, _ := newAppendRaceFilers(t)
 	filePath := ownerPath(t, owner, fs)
 	fileName := util.FullPath(filePath).Name()
 	if err := store.renameTestStore.InsertEntry(ctx, &filer.Entry{
@@ -226,7 +260,7 @@ func httpAppendWithConcurrentAppend(t *testing.T, atRead int) bool {
 // owner and lands in full.
 func TestHttpAppendOnNonOwnerCommitsThroughOwner(t *testing.T) {
 	ctx := context.Background()
-	owner, fs, store := newAppendRaceFilers(t)
+	owner, fs, store, _ := newAppendRaceFilers(t)
 	filePath := ownerPath(t, owner, fs)
 	fileName := util.FullPath(filePath).Name()
 	if err := store.renameTestStore.InsertEntry(ctx, &filer.Entry{
@@ -255,5 +289,24 @@ func TestHttpAppendOnNonOwnerCommitsThroughOwner(t *testing.T) {
 	}
 	if got := string(final.Content); got != "old-A-" {
 		t.Fatalf("entry is %q, want %q", got, "old-A-")
+	}
+}
+
+// A create that asks for fsync reaches the store as a sync write.
+func TestCreateEntryFsyncReachesStore(t *testing.T) {
+	owner, _, _, ownerWrites := newAppendRaceFilers(t)
+	for _, fsync := range []bool{false, true} {
+		p := util.FullPath(fmt.Sprintf("/fsync-%v.txt", fsync))
+		resp, err := owner.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+			Directory: "/",
+			Entry:     &filer_pb.Entry{Name: p.Name(), Attributes: &filer_pb.FuseAttributes{Mtime: 1, FileMode: 0640}},
+			Fsync:     fsync,
+		})
+		if err != nil || resp.Error != "" {
+			t.Fatalf("create %s: %v %s", p, err, resp.GetError())
+		}
+		if got := ownerWrites.writes(p); len(got) != 1 || got[0] != fsync {
+			t.Errorf("fsync=%v: the store writes asked for sync %v, want [%v]", fsync, got, fsync)
+		}
 	}
 }
