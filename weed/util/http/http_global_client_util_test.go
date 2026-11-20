@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -409,6 +410,70 @@ func TestRetriedFetchChunkDataRefreshesLocationsAfterPartialFailure(t *testing.T
 		}
 		if refreshed != 0 {
 			t.Fatalf("fullChunk=%v: refresh called %d times without a failure, want none", isFullChunk, refreshed)
+		}
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// cancelOnReadBody cancels the request's context inside the read that returns
+// the last piece of the body, after ReadUrlAsStream's check of ctx has passed.
+type cancelOnReadBody struct {
+	data   []byte
+	cancel context.CancelFunc
+}
+
+func (b *cancelOnReadBody) Read(p []byte) (int, error) {
+	b.cancel()
+	n := copy(p, b.data)
+	b.data = b.data[n:]
+	if len(b.data) == 0 {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+func (b *cancelOnReadBody) Close() error { return nil }
+
+// TestRetriedFetchChunkDataCancelledWhileTheLastPieceArrives covers a read
+// whose caller gives up as the last piece of the body arrives, as a FUSE read
+// does when a signal interrupts it. It must return the whole data or an error:
+// fewer bytes and no error reach the kernel as a short read, which it takes as
+// the end of the file. An encrypted chunk reaches the callback in one piece, so
+// there a lost piece is the whole chunk.
+func TestRetriedFetchChunkDataCancelledWhileTheLastPieceArrives(t *testing.T) {
+	payload := []byte("chunk contents")
+	cipherKey := util.GenCipherKey()
+	encrypted, err := util.Encrypt(payload, cipherKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := GetGlobalHttpClient().Client
+	saved := client.Transport
+	t.Cleanup(func() { client.Transport = saved })
+
+	for _, tc := range []struct {
+		name        string
+		body        []byte
+		cipherKey   []byte
+		isFullChunk bool
+	}{
+		{"range", payload, nil, false},
+		{"encrypted", encrypted, cipherKey, true},
+	} {
+		ctx, cancel := context.WithCancel(context.Background())
+		client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
+				Body: &cancelOnReadBody{data: tc.body, cancel: cancel}, Request: r}, nil
+		})
+
+		buffer := make([]byte, len(payload))
+		n, err := RetriedFetchChunkData(ctx, buffer, []string{"http://volume:8080/3,abc"}, tc.cipherKey, false, tc.isFullChunk, 0, "3,abc", nil)
+		cancel()
+		if err == nil && !bytes.Equal(buffer[:n], payload) {
+			t.Errorf("%s: got %q and no error, want %q or an error", tc.name, buffer[:n], payload)
 		}
 	}
 }
