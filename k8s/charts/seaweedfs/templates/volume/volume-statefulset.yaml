@@ -281,7 +281,7 @@ spec:
             httpGet:
               path: {{ $volume.readinessProbe.httpGet.path }}
               port: {{ $volume.port }}
-              scheme: {{ $volume.readinessProbe.httpGet.scheme }}
+              scheme: {{ if include "seaweedfs.volumeHttps" $ }}HTTPS{{ else }}{{ $volume.readinessProbe.httpGet.scheme }}{{ end }}
             initialDelaySeconds: {{ $volume.readinessProbe.initialDelaySeconds }}
             periodSeconds: {{ $volume.readinessProbe.periodSeconds }}
             successThreshold: {{ $volume.readinessProbe.successThreshold }}
@@ -293,7 +293,7 @@ spec:
             httpGet:
               path: {{ $volume.livenessProbe.httpGet.path }}
               port: {{ $volume.port }}
-              scheme: {{ $volume.livenessProbe.httpGet.scheme }}
+              scheme: {{ if include "seaweedfs.volumeHttps" $ }}HTTPS{{ else }}{{ $volume.livenessProbe.httpGet.scheme }}{{ end }}
             initialDelaySeconds: {{ $volume.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ $volume.livenessProbe.periodSeconds }}
             successThreshold: {{ $volume.livenessProbe.successThreshold }}
