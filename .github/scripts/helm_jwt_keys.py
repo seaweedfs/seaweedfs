@@ -146,7 +146,7 @@ def check_upgrades(helm, context):
     legacy = "seaweedfs-security-config"
     kubectl = ["kubectl", "--context", context, "-n", namespace]
     release_args = ["jk", str(CHART), "--kube-context", context, "-n", namespace]
-    # No workload is needed to exercise Helm's real ConfigMap lookup and update.
+    # No workload is needed to exercise Helm's real Secret lookup and update.
     for setting in (
         "master.enabled=false", "volume.enabled=false", "filer.enabled=false",
         "global.seaweedfs.createClusterRole=false",
@@ -158,8 +158,8 @@ def check_upgrades(helm, context):
         release_args += ["--set", setting]
 
     def stored():
-        cm = json.loads(run(*kubectl, "get", "configmap", current, "-o", "json"))
-        return keys(cm["data"]["security.toml"])
+        secret = json.loads(run(*kubectl, "get", "secret", current, "-o", "json"))
+        return keys(base64.b64decode(secret["data"]["security.toml"]).decode())
 
     def upgrade():
         run(helm, "upgrade", *release_args)
@@ -167,8 +167,8 @@ def check_upgrades(helm, context):
 
     def patch(raw):
         # Seed previous-release content without taking Helm 4's SSA ownership.
-        run(*kubectl, "patch", "configmap", current, "--type=merge", "--field-manager=helm", "-p",
-            json.dumps({"data": {"security.toml": raw}}))
+        run(*kubectl, "patch", "secret", current, "--type=merge", "--field-manager=helm", "-p",
+            json.dumps({"stringData": {"security.toml": raw}}))
 
     run(*kubectl, "create", "namespace", namespace)
     try:
@@ -193,17 +193,24 @@ def check_upgrades(helm, context):
             assert upgrade() == actual, f"{name}: subsequent upgrade changed a key"
             print(f"PASS upgrade: {name}")
 
-        # Migration from the old chart name, followed by precedence of the current name.
+        # Migration from the ConfigMaps of earlier chart versions, then precedence of the Secret.
+        configmap_raw = "\n".join(f'[{section}]\nkey = "configmap-{index}"'
+                                   for index, section in enumerate(SECTIONS))
+        run(*kubectl, "create", "configmap", current, "--from-literal=security.toml=" + configmap_raw)
+        run(*kubectl, "delete", "secret", current)
+        assert upgrade() == keys(configmap_raw), "ConfigMap keys were not preserved"
+        print("PASS upgrade: ConfigMap migration")
         legacy_raw = "\n".join(f'[{section}]\nkey = "legacy-{index}"'
                                for index, section in enumerate(SECTIONS))
-        run(*kubectl, "create", "configmap", legacy, "--from-literal=security.toml=" + legacy_raw)
         run(*kubectl, "delete", "configmap", current)
+        run(*kubectl, "create", "configmap", legacy, "--from-literal=security.toml=" + legacy_raw)
+        run(*kubectl, "delete", "secret", current)
         assert upgrade() == keys(legacy_raw), "legacy ConfigMap keys were not preserved"
         print("PASS upgrade: legacy ConfigMap migration")
         current_raw = next(fixtures())[1]
         patch(current_raw)
-        assert upgrade() == keys(current_raw), "legacy ConfigMap overrode current ConfigMap"
-        print("PASS upgrade: current ConfigMap takes precedence")
+        assert upgrade() == keys(current_raw), "legacy ConfigMap overrode the Secret"
+        print("PASS upgrade: Secret takes precedence")
 
         patch(ESCAPED_HEADER)
         try:
@@ -212,8 +219,7 @@ def check_upgrades(helm, context):
             assert "unsupported quoted section header" in error.stderr, error.stderr
         else:
             raise AssertionError("unsupported quoted header silently rotated its key")
-        assert keys(run(*kubectl, "get", "configmap", current, "-o",
-                        "jsonpath={.data.security\\.toml}"))["jwt.signing"] == "existing"
+        assert stored()["jwt.signing"] == "existing"
         print("PASS upgrade: unsupported quoted header leaves stored key untouched")
     finally:
         run(*kubectl, "delete", "namespace", namespace, "--wait=false")
