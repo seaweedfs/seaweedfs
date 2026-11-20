@@ -94,7 +94,8 @@ pub async fn open_guarded(
     let mut wrappers: Vec<Arc<dyn WrappingObjectStore>> = wrapper.into_iter().collect();
     wrappers.push(guard.clone());
     let dataset = open_at(description, Some(Arc::new(Wrappers(wrappers))), None).await?;
-    guard.arm(dataset.manifest_location().path.clone());
+    let opened = dataset.manifest_location();
+    guard.arm(opened.path.clone(), opened.e_tag.clone());
     Ok(dataset)
 }
 
