@@ -522,3 +522,44 @@ async fn queries_are_counted_by_filter_key() {
     assert_eq!(year.queries, 1);
     assert!(year.number_operand && !year.string_operand);
 }
+
+/// A PutVectors that opened the table before its key column was added and
+/// commits after: Lance rebases the write and its rows hold NULL in the new
+/// column, which the write then fills from the rows' metadata.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_write_that_raced_the_column_add_fills_the_column() {
+    let fixture = Fixture::new().await;
+    fixture
+        .put((0..300).map(|i| row(i, author(i))).collect())
+        .await;
+    let unhealed = fixture.dataset(0).await;
+    let healed = fixture.dataset(0).await;
+    fixture.index_author().await;
+    let nulls = |dataset: Dataset| async move {
+        dataset
+            .count_rows(Some(format!("{COLUMN} IS NULL")))
+            .await
+            .unwrap()
+    };
+    let rows: Vec<pb::Vector> = (250..400).map(|i| row(i, author(i))).collect();
+
+    let written = crate::service::merge_vectors(unhealed, &rows)
+        .await
+        .unwrap();
+    assert!(written.schema().field(COLUMN).is_some());
+    assert!(nulls(written).await >= 100, "the race is reproduced");
+
+    let written = crate::service::write_vectors(healed, &rows).await.unwrap();
+    assert_eq!(nulls(written.clone()).await, 0);
+    let filter = FILTERS[1].1;
+    let latest = written.version().version;
+    let v = vector_of(5);
+    assert_same(
+        &fixture
+            .query(&fixture.server, latest, filter, 400, &v)
+            .await,
+        &fixture.flat(latest, filter, 400, &v).await,
+        "bob after the race",
+    );
+    assert_eq!(fixture.flat(latest, filter, 400, &v).await.len(), 4);
+}

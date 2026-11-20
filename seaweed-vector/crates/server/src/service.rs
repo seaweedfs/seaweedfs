@@ -210,6 +210,112 @@ fn batch_of(vectors: &[pb::Vector], dimension: usize, schema: Arc<Schema>) -> Re
     RecordBatch::try_new(schema, columns).map_err(Into::into)
 }
 
+/// Upserts `vectors` by key into `dataset`, the version the request opened,
+/// then fills the indexed-key columns a concurrent column add left empty.
+pub(crate) async fn write_vectors(
+    dataset: Dataset,
+    vectors: &[pb::Vector],
+) -> Result<Dataset, Status> {
+    let written = Arc::new(Into::<arrow_schema::Schema>::into(dataset.schema()));
+    let dataset = merge_vectors(dataset, vectors).await?;
+    let keys: Vec<String> = vectors.iter().map(|v| v.key.clone()).collect();
+    heal_columns(dataset, &written, &keys)
+        .await
+        .map_err(internal)
+}
+
+/// The upsert itself, in the schema of the version `dataset` is at.
+pub(crate) async fn merge_vectors(
+    dataset: Dataset,
+    vectors: &[pb::Vector],
+) -> Result<Dataset, Status> {
+    let dimension = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN))
+        .map_err(invalid)?
+        .dimension;
+    let batch = batch_of(
+        vectors,
+        dimension,
+        Arc::new(Into::<arrow_schema::Schema>::into(dataset.schema())),
+    )
+    .map_err(invalid)?;
+    // Upsert by key in one merge commit: no window where the old rows are
+    // already deleted, and a losing writer fails the request instead of
+    // leaving duplicate keys.
+    let mut builder = MergeInsertBuilder::try_new(Arc::new(dataset), vec![KEY_COLUMN.to_string()])
+        .map_err(internal)?;
+    builder.when_matched(WhenMatched::UpdateAll);
+    builder.when_not_matched(WhenNotMatched::InsertAll);
+    let (dataset, _stats) = builder
+        .try_build()
+        .map_err(internal)?
+        .execute_batches(vec![batch])
+        .await
+        .map_err(internal)?;
+    Ok(Arc::unwrap_or_clone(dataset))
+}
+
+/// Lance rebases a write onto a column add committed after the write opened
+/// its version, and the rows it wrote then hold NULL in the new column. Fill
+/// such rows of `keys` from their stored metadata, where still NULL.
+async fn heal_columns(dataset: Dataset, written: &Schema, keys: &[String]) -> Result<Dataset> {
+    let schema: Schema = dataset.schema().into();
+    let missing: Vec<metadata_index::IndexedKey> = metadata_index::indexed_keys(&schema)
+        .into_iter()
+        .filter(|k| written.field_with_name(&k.column).is_err())
+        .collect();
+    if missing.is_empty() || keys.is_empty() {
+        return Ok(dataset);
+    }
+    let null = |prefix: &str| {
+        missing
+            .iter()
+            .map(|k| format!("{prefix}`{}` IS NULL", k.column.replace('`', "``")))
+            .collect::<Vec<_>>()
+            .join(" OR ")
+    };
+    let mut scanner = dataset.scan();
+    scanner
+        .filter(&format!("{} AND ({})", key_list(keys), null("")))?
+        .project(&[KEY_COLUMN, METADATA_COLUMN])?;
+    let rows: Vec<RecordBatch> = scanner.try_into_stream().await?.try_collect().await?;
+    let mut fields = vec![schema.field_with_name(KEY_COLUMN)?.clone()];
+    for k in &missing {
+        fields.push(schema.field_with_name(&k.column)?.clone());
+    }
+    let patch_schema = Arc::new(Schema::new(fields));
+    let mut patches = Vec::new();
+    for batch in rows.iter().filter(|b| b.num_rows() > 0) {
+        let (Some(keys), Some(metadata)) = (
+            batch.column_by_name(KEY_COLUMN),
+            batch.column_by_name(METADATA_COLUMN),
+        ) else {
+            bail!("the scan did not return keys and metadata");
+        };
+        let mut columns = vec![keys.clone()];
+        for k in &missing {
+            columns.push(metadata_index::column_from_metadata(
+                metadata.as_ref(),
+                &k.key,
+            )?);
+        }
+        patches.push(RecordBatch::try_new(patch_schema.clone(), columns)?);
+    }
+    if patches.is_empty() {
+        return Ok(dataset);
+    }
+    tracing::info!(
+        rows = patches.iter().map(|b| b.num_rows()).sum::<usize>(),
+        "filling indexed metadata key columns a concurrent column add left empty"
+    );
+    let condition = null("target.");
+    let mut builder =
+        MergeInsertBuilder::try_new(Arc::new(dataset.clone()), vec![KEY_COLUMN.to_string()])?;
+    builder.when_matched(WhenMatched::update_if(&dataset, &condition)?);
+    builder.when_not_matched(WhenNotMatched::DoNothing);
+    let (dataset, _stats) = builder.try_build()?.execute_batches(patches).await?;
+    Ok(Arc::unwrap_or_clone(dataset))
+}
+
 fn struct_to_json(s: &Struct) -> serde_json::Value {
     serde_json::Value::Object(
         s.fields
@@ -835,29 +941,7 @@ impl VectorService for VectorServer {
                 version: dataset.version().version,
             }));
         }
-        let dimension = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN))
-            .map_err(invalid)?
-            .dimension;
-        let batch = batch_of(
-            &req.vectors,
-            dimension,
-            Arc::new(Into::<arrow_schema::Schema>::into(dataset.schema())),
-        )
-        .map_err(invalid)?;
-        // Upsert by key in one merge commit: no window where the old rows are
-        // already deleted, and a losing writer fails the request instead of
-        // leaving duplicate keys.
-        let mut builder =
-            MergeInsertBuilder::try_new(Arc::new(dataset), vec![KEY_COLUMN.to_string()])
-                .map_err(internal)?;
-        builder.when_matched(WhenMatched::UpdateAll);
-        builder.when_not_matched(WhenNotMatched::InsertAll);
-        let (dataset, _stats) = builder
-            .try_build()
-            .map_err(internal)?
-            .execute_batches(vec![batch])
-            .await
-            .map_err(internal)?;
+        let dataset = write_vectors(dataset, &req.vectors).await?;
         Ok(Response::new(pb::PutVectorsResponse {
             version: dataset.version().version,
         }))
