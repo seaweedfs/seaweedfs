@@ -22,6 +22,16 @@ CHART = ROOT / "k8s/charts/seaweedfs"
 SECTIONS = ("jwt.signing", "jwt.signing.read", "jwt.filer_signing", "jwt.filer_signing.read")
 KEYS = {section: f"active-{index}" for index, section in enumerate(SECTIONS)}
 ESCAPED_HEADER = '["jw\\u0074".signing]\nkey = "existing"'
+# No workload is needed to exercise Helm's real lookup and update.
+RELEASE_SETTINGS = (
+    "master.enabled=false", "volume.enabled=false", "filer.enabled=false",
+    "global.seaweedfs.createClusterRole=false",
+    "global.seaweedfs.securityConfig.jwtSigning.volumeWrite=true",
+    "global.seaweedfs.securityConfig.jwtSigning.volumeRead=true",
+    "global.seaweedfs.securityConfig.jwtSigning.filerWrite=true",
+    "global.seaweedfs.securityConfig.jwtSigning.filerRead=true",
+)
+CONFIGMAP_CHART = ("seaweedfs", "--repo", "https://seaweedfs.github.io/seaweedfs/helm", "--version", "4.54.0")
 
 
 def run(*args):
@@ -146,20 +156,11 @@ def check_upgrades(helm, context):
     legacy = "seaweedfs-security-config"
     kubectl = ["kubectl", "--context", context, "-n", namespace]
     release_args = ["jk", str(CHART), "--kube-context", context, "-n", namespace]
-    # No workload is needed to exercise Helm's real Secret lookup and update.
-    for setting in (
-        "master.enabled=false", "volume.enabled=false", "filer.enabled=false",
-        "global.seaweedfs.createClusterRole=false",
-        "global.seaweedfs.securityConfig.jwtSigning.volumeWrite=true",
-        "global.seaweedfs.securityConfig.jwtSigning.volumeRead=true",
-        "global.seaweedfs.securityConfig.jwtSigning.filerWrite=true",
-        "global.seaweedfs.securityConfig.jwtSigning.filerRead=true",
-    ):
+    for setting in RELEASE_SETTINGS:
         release_args += ["--set", setting]
 
     def stored():
-        secret = json.loads(run(*kubectl, "get", "secret", current, "-o", "json"))
-        return keys(base64.b64decode(secret["data"]["security.toml"]).decode())
+        return secret_keys(kubectl, current)
 
     def upgrade():
         run(helm, "upgrade", *release_args)
@@ -225,6 +226,32 @@ def check_upgrades(helm, context):
         run(*kubectl, "delete", "namespace", namespace, "--wait=false")
 
 
+def secret_keys(kubectl, name):
+    secret = json.loads(run(*kubectl, "get", "secret", name, "-o", "json"))
+    return keys(base64.b64decode(secret["data"]["security.toml"]).decode())
+
+
+def check_configmap_release_upgrade(helm, context):
+    namespace = "jwt-key-migrate-" + uuid.uuid4().hex[:8]
+    name = "jk-seaweedfs-security-config"
+    kubectl = ["kubectl", "--context", context, "-n", namespace]
+    common = ["--kube-context", context, "-n", namespace]
+    for setting in RELEASE_SETTINGS:
+        common += ["--set", setting]
+    run(*kubectl, "create", "namespace", namespace)
+    try:
+        run(helm, "install", "jk", *CONFIGMAP_CHART, *common)
+        before = keys(run(*kubectl, "get", "configmap", name, "-o", "jsonpath={.data.security\\.toml}"))
+        assert set(before) == set(SECTIONS), "ConfigMap chart omitted a JWT section"
+        run(helm, "upgrade", "jk", str(CHART), *common)
+        assert secret_keys(kubectl, name) == before, "upgrade from the ConfigMap chart changed a key"
+        assert not run(*kubectl, "get", "configmap", name, "--ignore-not-found", "-o", "name").strip(), \
+            "upgrade left the ConfigMap behind"
+        print("PASS upgrade: ConfigMap chart release moves its keys to the Secret")
+    finally:
+        run(*kubectl, "delete", "namespace", namespace, "--wait=false")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--helm", default="helm")
@@ -235,6 +262,7 @@ def main():
     check_helpers(args.helm, args.reference_helm)
     if args.context:
         check_upgrades(args.helm, args.context)
+        check_configmap_release_upgrade(args.helm, args.context)
 
 
 if __name__ == "__main__":
