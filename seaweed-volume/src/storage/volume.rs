@@ -2792,6 +2792,23 @@ impl Volume {
         Ok(n.data_size as i32)
     }
 
+    /// Go's Volume.LookupNeedle: the needle map size of `id`, without reading
+    /// its record, so a needle past its TTL still counts as present.
+    pub fn lookup_needle(&self, id: NeedleId) -> Result<Option<Size>, VolumeError> {
+        let _guard = self.data_file_access_control.read_lock();
+        if let Some(e) = self.unavailable_error() {
+            return Err(e);
+        }
+        let io = self.io.read().unwrap();
+        let Some(nm) = io.nm.as_ref() else {
+            return Ok(None);
+        };
+        Ok(nm
+            .get(id)?
+            .filter(|nv| !nv.offset.is_zero())
+            .map(|nv| nv.size))
+    }
+
     /// Read needle data from .dat file at given offset.
     pub fn read_needle_data_at(
         &self,

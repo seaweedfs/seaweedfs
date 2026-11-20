@@ -3268,7 +3268,7 @@ impl VolumeServer for VolumeGrpcService {
                 let store = state.store.read().unwrap();
                 store.writable_volume(vid)
             };
-            vol.and_then(|vol| vol.write_needle(&mut n, true, false))
+            vol.and_then(|vol| write_tailed_needle(&vol, &mut n))
                 .map_err(|e| Status::internal(format!("write needle: {}", e)))?;
         }
 
@@ -5931,6 +5931,24 @@ mod copy_source {
 }
 
 use copy_source::SourceVolumeStatus;
+
+/// Go's writeTailedNeedle: a delete and an empty write both arrive as a
+/// size-0 record; it is a delete when the key already has a record here,
+/// and an empty write otherwise.
+fn write_tailed_needle(
+    vol: &crate::storage::volume::Volume,
+    n: &mut Needle,
+) -> Result<(), crate::storage::volume::VolumeError> {
+    if n.size.0 == 0 {
+        if let Some(size) = vol.lookup_needle(n.id)? {
+            if !size.is_deleted() {
+                vol.delete_needle(n, false)?;
+            }
+            return Ok(());
+        }
+    }
+    vol.write_needle(n, true, false).map(|_| ())
+}
 
 /// Deletes a VolumeCopy destination replica but keeps its remote data: its
 /// .vif may point at the same cloud-tier object the source replica references,
@@ -12020,6 +12038,47 @@ mod tests {
             .flat_map(|m| m.file_content.clone())
             .collect();
         assert_eq!(copied, dat_bytes);
+    }
+
+    /// Go's TestWriteTailedNeedleSizeZeroRecords.
+    #[tokio::test]
+    async fn write_tailed_needle_size_zero_records() {
+        use crate::storage::volume::VolumeError;
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let vol = service
+            .state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1;
+        let (live, deleted, fresh) = (NeedleId(1), NeedleId(2), NeedleId(3));
+        let record = |id: NeedleId, data: &[u8]| Needle {
+            id,
+            cookie: Cookie(7),
+            data: data.to_vec(),
+            data_size: data.len() as u32,
+            ..Needle::default()
+        };
+        write_tailed_needle(&vol, &mut record(live, b"live")).unwrap();
+        write_tailed_needle(&vol, &mut record(deleted, b"deleted")).unwrap();
+        vol.delete_needle(&mut record(deleted, b""), false).unwrap();
+        let (file_count, deleted_count) = (vol.file_count(), vol.deleted_count());
+
+        for id in [live, deleted, fresh] {
+            write_tailed_needle(&vol, &mut record(id, b"")).unwrap();
+        }
+
+        let read = |id: NeedleId| vol.read_needle(&mut record(id, b""));
+        assert!(matches!(read(live), Err(VolumeError::Deleted)));
+        assert!(matches!(read(deleted), Err(VolumeError::Deleted)));
+        assert!(matches!(read(fresh), Ok(0)));
+        assert_eq!(vol.file_count(), file_count + 1);
+        assert_eq!(vol.deleted_count(), deleted_count + 1);
+
+        write_tailed_needle(&vol, &mut record(fresh, b"")).unwrap();
+        assert!(matches!(read(fresh), Err(VolumeError::Deleted)));
     }
 
     // volume_tail_sender streams each needle in 2MB chunks with the header on
