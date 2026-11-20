@@ -2,13 +2,18 @@ package shell
 
 import (
 	"bytes"
+	"context"
+	"fmt"
+	"net/http"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"google.golang.org/grpc"
 )
 
 type sliceNeedleStream struct {
@@ -561,5 +566,55 @@ func TestMergeEdgeCaseHandling(t *testing.T) {
 		t.Logf("All %d edge cases are handled", len(edgeCases))
 	} else {
 		t.Fatalf("Only %d/%d edge cases handled", passedCount, len(edgeCases))
+	}
+}
+
+type mergeTargetClient struct {
+	volume_server_pb.VolumeServerClient
+	ops []string
+}
+
+func (c *mergeTargetClient) WriteNeedleBlob(_ context.Context, req *volume_server_pb.WriteNeedleBlobRequest, _ ...grpc.CallOption) (*volume_server_pb.WriteNeedleBlobResponse, error) {
+	c.ops = append(c.ops, fmt.Sprintf("write %d size %d", req.NeedleId, req.Size))
+	return &volume_server_pb.WriteNeedleBlobResponse{}, nil
+}
+
+func (c *mergeTargetClient) BatchDelete(_ context.Context, req *volume_server_pb.BatchDeleteRequest, _ ...grpc.CallOption) (*volume_server_pb.BatchDeleteResponse, error) {
+	resp := &volume_server_pb.BatchDeleteResponse{}
+	for _, fid := range req.FileIds {
+		c.ops = append(c.ops, fmt.Sprintf("delete %s skipCookie=%v", fid, req.SkipCookieCheck))
+		resp.Results = append(resp.Results, &volume_server_pb.DeleteResult{FileId: fid, Status: http.StatusAccepted})
+	}
+	return resp, nil
+}
+
+func TestWriteMergedNeedleSizeZeroRecords(t *testing.T) {
+	record := func(id uint64, data string) *needle.Needle {
+		return &needle.Needle{Id: types.Uint64ToNeedleId(id), Cookie: 7, Data: []byte(data), Size: types.Size(len(data))}
+	}
+	client := &mergeTargetClient{}
+	written := make(map[types.NeedleId]struct{})
+	for _, n := range []*needle.Needle{
+		record(1, "live"),
+		record(1, ""),
+		record(2, ""),
+		record(2, ""),
+		record(3, "rewritten"),
+		record(3, "again"),
+	} {
+		if err := writeMergedNeedle(client, 5, needle.GetCurrentVersion(), written, n); err != nil {
+			t.Fatalf("merge needle %d: %v", n.Id, err)
+		}
+	}
+	want := []string{
+		"write 1 size 9",
+		"delete 5,0100000000 skipCookie=true",
+		"write 2 size 0",
+		"delete 5,0200000000 skipCookie=true",
+		"write 3 size 14",
+		"write 3 size 10",
+	}
+	if !reflect.DeepEqual(client.ops, want) {
+		t.Errorf("target ops:\n got %q\nwant %q", client.ops, want)
 	}
 }
