@@ -34,7 +34,8 @@ type renameTestStore struct {
 	findErr   error         // simulates a failing entry lookup
 	strictTx  bool          // like a SQL store: calls through a committed transaction fail
 
-	kv map[string][]byte // optional KV (hard links); nil: every key is absent
+	kv        map[string][]byte // optional KV (hard links); nil: every key is absent
+	kvGetErrs int               // fail this many KvGet calls before answering
 }
 
 type renameTestTxKey struct{}
@@ -89,6 +90,10 @@ func (s *renameTestStore) KvPut(_ context.Context, key []byte, value []byte) err
 func (s *renameTestStore) KvGet(_ context.Context, key []byte) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.kvGetErrs > 0 {
+		s.kvGetErrs--
+		return nil, errors.New("kv get: transient failure")
+	}
 	if value, found := s.kv[string(key)]; found {
 		return value, nil
 	}

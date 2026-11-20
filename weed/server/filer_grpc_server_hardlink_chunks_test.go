@@ -168,6 +168,17 @@ func TestCreateEntryOverHardLinkKeepsSharedChunkItCovers(t *testing.T) {
 	checkOtherLink(t, f, replacedChunk, 1)
 }
 
+// The lookup of dst.txt fails to read the shared record, so the replaced
+// entry is the name's own row, which has no chunks.
+func TestCreateEntryOverHardLinkKeepsSharedChunkItCoversAfterFailedLookup(t *testing.T) {
+	server, f, store, _ := hardLinkChunkServer(t, 2)
+	store.kvGetErrs = 1
+	createDst(t, server, dstEntry(nil, 0, written(replacedChunk, 1), written(writtenChunk, 2)))
+
+	checkDeletions(t, f)
+	checkOtherLink(t, f, replacedChunk, 1)
+}
+
 func TestCreateEntryOverLastHardLinkDeletesChunkItCovers(t *testing.T) {
 	server, f, _, _ := hardLinkChunkServer(t, 1)
 	createDst(t, server, dstEntry(nil, 0, written(replacedChunk, 1), written(writtenChunk, 2)))
