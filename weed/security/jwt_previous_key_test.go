@@ -224,15 +224,17 @@ func TestFilerAdminKeysReadAndCacheUnderOneLock(t *testing.T) {
 	file := filepath.Join(dir, "security.toml")
 	require.NoError(t, os.WriteFile(file, []byte("[jwt.filer_signing]\nkey = \"new\"\nprevious_key = \"old\"\n"), 0o600))
 
-	filerAdminKeysMu.Lock()
 	done := make(chan [2]SigningKey, 1)
-	go func() {
-		key, previous := FilerAdminKeys()
-		done <- [2]SigningKey{key, previous}
+	func() {
+		filerAdminKeysMu.Lock()
+		defer filerAdminKeysMu.Unlock()
+		go func() {
+			key, previous := FilerAdminKeys()
+			done <- [2]SigningKey{key, previous}
+		}()
+		waitForLockWaiter(t, "security.FilerAdminKeys(")
+		require.NoError(t, os.WriteFile(file, []byte("[jwt.filer_signing]\nkey = \"new\"\n"), 0o600))
 	}()
-	waitForLockWaiter(t, "security.FilerAdminKeys(")
-	require.NoError(t, os.WriteFile(file, []byte("[jwt.filer_signing]\nkey = \"new\"\n"), 0o600))
-	filerAdminKeysMu.Unlock()
 	keys := <-done
 	require.Equal(t, "new", string(keys[0]))
 	require.Empty(t, keys[1], "a caller waiting for the lock must read the file after taking it")
