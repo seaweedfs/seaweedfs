@@ -475,6 +475,12 @@ func mergeTerminalDetailIntoTracked(tracked *TrackedJob, detail *TrackedJob) {
 	}
 	if detail.RequestID != "" {
 		tracked.RequestID = detail.RequestID
+		if detail.WorkerID != "" {
+			tracked.WorkerID = detail.WorkerID
+		}
+		if detail.Attempt > 0 {
+			tracked.Attempt = detail.Attempt
+		}
 	}
 	if detail.State != "" {
 		tracked.State = detail.State

@@ -590,29 +590,40 @@ func TestRestoredExpiryKeepsNewerAttemptDetail(t *testing.T) {
 // job list still names.
 func TestRestoreTakesFinishedRetryFromDetail(t *testing.T) {
 	t.Parallel()
-	dataDir := t.TempDir()
-	store, err := NewConfigStore(dataDir)
-	if err != nil {
-		t.Fatalf("NewConfigStore: %v", err)
-	}
-	now := time.Now().UTC()
-	const jobID = "job-retried"
-	if err := store.SaveTrackedJobs([]TrackedJob{{JobID: jobID, JobType: orphanTestJobType, RequestID: "exec-a", State: restoredTestStateRunning,
-		CreatedAt: timeToPtr(now.Add(-time.Hour)), UpdatedAt: timeToPtr(now.Add(-time.Minute))}}); err != nil {
-		t.Fatalf("SaveTrackedJobs: %v", err)
-	}
-	if err := store.SaveJobDetail(TrackedJob{JobID: jobID, JobType: orphanTestJobType, RequestID: "exec-b", State: StateSucceeded,
-		UpdatedAt: timeToPtr(now), CompletedAt: timeToPtr(now)}); err != nil {
-		t.Fatalf("SaveJobDetail: %v", err)
-	}
-	p, err := New(Options{DataDir: dataDir})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	defer p.Shutdown()
-	tracked, _ := p.GetTrackedJob(jobID)
-	if tracked == nil || tracked.State != StateSucceeded || tracked.RequestID != "exec-b" {
-		t.Fatalf("want exec-b succeeded, got %+v", tracked)
+	for _, tc := range []struct {
+		name                          string
+		trackedAttempt, detailAttempt int32
+	}{
+		{name: "by attempt", trackedAttempt: 1, detailAttempt: 2},
+		{name: "by time"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			store, err := NewConfigStore(dataDir)
+			if err != nil {
+				t.Fatalf("NewConfigStore: %v", err)
+			}
+			now := time.Now().UTC()
+			const jobID = "job-retried"
+			if err := store.SaveTrackedJobs([]TrackedJob{{JobID: jobID, JobType: orphanTestJobType, RequestID: "exec-a", WorkerID: "worker-a", State: restoredTestStateRunning, Attempt: tc.trackedAttempt,
+				CreatedAt: timeToPtr(now.Add(-time.Hour)), UpdatedAt: timeToPtr(now.Add(-time.Minute))}}); err != nil {
+				t.Fatalf("SaveTrackedJobs: %v", err)
+			}
+			if err := store.SaveJobDetail(TrackedJob{JobID: jobID, JobType: orphanTestJobType, RequestID: "exec-b", WorkerID: "worker-b", State: StateSucceeded, Attempt: tc.detailAttempt,
+				UpdatedAt: timeToPtr(now), CompletedAt: timeToPtr(now)}); err != nil {
+				t.Fatalf("SaveJobDetail: %v", err)
+			}
+			p, err := New(Options{DataDir: dataDir})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			defer p.Shutdown()
+			tracked, _ := p.GetTrackedJob(jobID)
+			if tracked == nil || tracked.State != StateSucceeded || tracked.RequestID != "exec-b" ||
+				tracked.WorkerID != "worker-b" || tracked.Attempt != tc.detailAttempt {
+				t.Fatalf("want exec-b on worker-b attempt %d succeeded, got %+v", tc.detailAttempt, tracked)
+			}
+		})
 	}
 }
 
