@@ -687,6 +687,11 @@ func (f *Filer) DeleteChunksNotRecursive(chunks []*filer_pb.FileChunk) {
 }
 
 func (f *Filer) deleteChunksIfNotNew(ctx context.Context, oldEntry, newEntry *Entry) {
+	if f.hardLinkStillHeld(ctx, oldEntry, newEntry) {
+		// newEntry replaced one name of a hard-linked file; the other names
+		// still read every chunk oldEntry has
+		return
+	}
 	var oldChunks, newChunks []*filer_pb.FileChunk
 	if oldEntry != nil {
 		oldChunks = oldEntry.GetChunks()
