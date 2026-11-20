@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -269,6 +270,8 @@ type mountRootFiler struct {
 	lookups        int
 	creates        []*filer_pb.CreateEntryRequest
 	updates        int
+	lookupErrors   []error
+	createError    error
 }
 
 func (f *mountRootFiler) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
@@ -279,6 +282,9 @@ func (f *mountRootFiler) GetDataCenter() string                   { return "" }
 
 func (f *mountRootFiler) LookupDirectoryEntry(_ context.Context, _ *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
 	f.lookups++
+	if f.lookups <= len(f.lookupErrors) && f.lookupErrors[f.lookups-1] != nil {
+		return nil, f.lookupErrors[f.lookups-1]
+	}
 	if f.entry == nil {
 		return nil, status.Error(codes.NotFound, filer_pb.ErrNotFound.Error())
 	}
@@ -289,6 +295,9 @@ func (f *mountRootFiler) CreateEntry(_ context.Context, in *filer_pb.CreateEntry
 	f.creates = append(f.creates, proto.Clone(in).(*filer_pb.CreateEntryRequest))
 	if f.beforeCreate != nil {
 		f.beforeCreate(f)
+	}
+	if f.createError != nil {
+		return nil, f.createError
 	}
 	failed := func(code filer_pb.FilerError, text string) (*filer_pb.CreateEntryResponse, error) {
 		resp := &filer_pb.CreateEntryResponse{Error: text}
@@ -322,6 +331,56 @@ func (f *mountRootFiler) UpdateEntry(_ context.Context, in *filer_pb.UpdateEntry
 	f.updates++
 	f.entry = proto.Clone(in.Entry).(*filer_pb.Entry)
 	return &filer_pb.UpdateEntryResponse{}, nil
+}
+
+func TestEnsureMountRootDirectoryReadOnlyFailures(t *testing.T) {
+	denied := status.Error(codes.PermissionDenied, "fixture read-only grant")
+	unavailable := status.Error(codes.Unavailable, "fixture lookup unavailable")
+	directory := &filer_pb.Entry{Name: "data", IsDirectory: true,
+		Attributes: &filer_pb.FuseAttributes{FileMode: uint32(os.ModeDir | 0750), Uid: 1234},
+		Extended:   map[string][]byte{"fixture": []byte("preserved")}}
+	cases := []struct {
+		name                     string
+		entry                    *filer_pb.Entry
+		lookupErrors             []error
+		createRace               bool
+		wantErr                  error
+		wantMissing              bool
+		wantLookups, wantCreates int
+	}{
+		{name: "existing read-only directory needs no write", entry: directory, wantLookups: 1},
+		{name: "missing read-only root is diagnosed", wantErr: denied, wantMissing: true, wantLookups: 2, wantCreates: 1},
+		{name: "initial lookup failure is preserved", lookupErrors: []error{unavailable}, wantErr: unavailable, wantLookups: 1},
+		{name: "failed readback preserves create error", lookupErrors: []error{nil, unavailable}, wantErr: denied, wantLookups: 2, wantCreates: 1},
+		{name: "directory created during refused create survives", createRace: true, wantLookups: 2, wantCreates: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &mountRootFiler{entry: tc.entry, lookupErrors: tc.lookupErrors, createError: denied}
+			if tc.createRace {
+				client.beforeCreate = func(f *mountRootFiler) { f.entry = proto.Clone(directory).(*filer_pb.Entry) }
+			}
+			err := ensureMountRootDirectory(context.Background(), client, "/buckets/a/data")
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("error = %v, want wrapped %v", err, tc.wantErr)
+			}
+			missing := err != nil && strings.Contains(err.Error(), "mount root /buckets/a/data does not exist and could not be created")
+			if missing != tc.wantMissing {
+				t.Fatalf("missing-root diagnostic = %v, want %v: %v", missing, tc.wantMissing, err)
+			}
+			if client.lookups != tc.wantLookups || len(client.creates) != tc.wantCreates || client.updates != 0 {
+				t.Fatalf("lookups/creates/updates = %d/%d/%d, want %d/%d/0", client.lookups, len(client.creates), client.updates, tc.wantLookups, tc.wantCreates)
+			}
+			for _, create := range client.creates {
+				if !create.OExcl || create.Directory != "/buckets/a" || create.Entry.Name != "data" || !create.Entry.IsDirectory {
+					t.Fatalf("unexpected root create contract: %v", create)
+				}
+			}
+			if (tc.entry != nil || tc.createRace) && !proto.Equal(client.entry, directory) {
+				t.Fatal("existing root attributes changed")
+			}
+		})
+	}
 }
 
 func Test_ensureMountRootDirectory(t *testing.T) {
