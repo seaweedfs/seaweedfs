@@ -1436,3 +1436,120 @@ async fn write_queue_upload_returns_same_etag_as_direct_write() {
     }
     assert_eq!(etags[1], etags[0], "unchanged upload ETag differs");
 }
+
+// ============================================================================
+// A Range over a compressed needle is answered from the decoded bytes
+// ============================================================================
+
+#[tokio::test]
+async fn range_with_accept_gzip_on_compressed_needle_serves_decoded_bytes() {
+    let (state, _tmp) = test_state();
+    let uri = "/1/03637037d6/notes.txt";
+    let plain: Vec<u8> = (0..400)
+        .flat_map(|i| format!("line {i:06}: the quick brown fox\n").into_bytes())
+        .collect();
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .body(Body::from(plain.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let read = |range: Option<&str>| {
+        let mut request = Request::builder()
+            .uri(uri)
+            .header("Accept-Encoding", "gzip");
+        if let Some(range) = range {
+            request = request.header("Range", range);
+        }
+        build_admin_router(state.clone()).oneshot(request.body(Body::empty()).unwrap())
+    };
+
+    // The whole read passes the stored gzip through, so its length is the compressed size.
+    let response = read(None).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["Content-Encoding"], "gzip");
+    let compressed_len = body_bytes(response).await.len();
+    assert!(compressed_len < plain.len() / 4);
+
+    for (start, end) in [(10, 69), (compressed_len + 10, compressed_len + 69)] {
+        let response = read(Some(&format!("bytes={start}-{end}"))).await.unwrap();
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert!(response.headers().get("Content-Encoding").is_none());
+        assert_eq!(
+            response.headers()["Content-Range"],
+            format!("bytes {start}-{end}/{}", plain.len()).as_str()
+        );
+        assert_eq!(body_bytes(response).await, &plain[start..=end]);
+    }
+}
+
+// ============================================================================
+// HEAD of a compressed needle reports the length the matching GET would send
+// ============================================================================
+
+#[tokio::test]
+async fn head_on_compressed_needle_reports_served_length() {
+    let (state, _tmp) = test_state();
+    let uri = "/1/04637037d6/notes.txt";
+    let plain: Vec<u8> = (0..400)
+        .flat_map(|i| format!("line {i:06}: the quick brown fox\n").into_bytes())
+        .collect();
+
+    let app = build_admin_router(state.clone());
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .body(Body::from(plain.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    let send = |method: &str, accept_gzip: bool, range: Option<&str>| {
+        let mut request = Request::builder().method(method).uri(uri);
+        if accept_gzip {
+            request = request.header("Accept-Encoding", "gzip");
+        }
+        if let Some(range) = range {
+            request = request.header("Range", range);
+        }
+        build_admin_router(state.clone()).oneshot(request.body(Body::empty()).unwrap())
+    };
+
+    let response = send("GET", true, None).await.unwrap();
+    let compressed_len = body_bytes(response).await.len();
+    assert!(compressed_len < plain.len() / 4);
+
+    for (accept_gzip, range, encoding, length) in [
+        (false, None, None, plain.len()),
+        (true, None, Some("gzip"), compressed_len),
+        (true, Some("bytes=0-9"), None, plain.len()),
+    ] {
+        let response = send("HEAD", accept_gzip, range).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get("Content-Encoding")
+                .map(|v| v.to_str().unwrap()),
+            encoding,
+            "accept_gzip={accept_gzip} range={range:?}"
+        );
+        assert_eq!(
+            response.headers()["Content-Length"],
+            length.to_string().as_str(),
+            "accept_gzip={accept_gzip} range={range:?}"
+        );
+    }
+}

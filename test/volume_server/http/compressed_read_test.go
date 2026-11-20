@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
@@ -93,5 +94,45 @@ func TestCompressedReadAcceptEncodingMatrix(t *testing.T) {
 	}
 	if string(identityReadBody) != string(plainPayload) {
 		t.Fatalf("identity read body mismatch: got %q want %q", string(identityReadBody), string(plainPayload))
+	}
+
+	// A range is over the decoded bytes, so it is served decoded even when gzip is accepted.
+	rangeReq := mustNewRequest(t, http.MethodGet, clusterHarness.VolumeAdminURL()+"/"+fid)
+	rangeReq.Header.Set("Accept-Encoding", "gzip")
+	rangeReq.Header.Set("Range", "bytes=40-79")
+	rangeResp := framework.DoRequest(t, client, rangeReq)
+	rangeBody := framework.ReadAllAndClose(t, rangeResp)
+	if rangeResp.StatusCode != http.StatusPartialContent {
+		t.Fatalf("gzip-accepted range read expected 206, got %d", rangeResp.StatusCode)
+	}
+	if rangeResp.Header.Get("Content-Encoding") != "" {
+		t.Fatalf("gzip-accepted range read expected no Content-Encoding header, got %q", rangeResp.Header.Get("Content-Encoding"))
+	}
+	if string(rangeBody) != string(plainPayload[40:80]) {
+		t.Fatalf("gzip-accepted range read body mismatch: got %q want %q", string(rangeBody), string(plainPayload[40:80]))
+	}
+
+	// HEAD reports the length the matching GET would send.
+	for _, tc := range []struct {
+		acceptEncoding, rangeHeader, wantEncoding string
+		wantLength                                int
+	}{
+		{"identity", "", "", len(plainPayload)},
+		{"gzip", "", "gzip", len(compressedPayload)},
+		{"gzip", "bytes=40-79", "", len(plainPayload)},
+	} {
+		headReq := mustNewRequest(t, http.MethodHead, clusterHarness.VolumeAdminURL()+"/"+fid)
+		headReq.Header.Set("Accept-Encoding", tc.acceptEncoding)
+		if tc.rangeHeader != "" {
+			headReq.Header.Set("Range", tc.rangeHeader)
+		}
+		headResp := framework.DoRequest(t, client, headReq)
+		_ = framework.ReadAllAndClose(t, headResp)
+		if headResp.Header.Get("Content-Encoding") != tc.wantEncoding {
+			t.Fatalf("HEAD %+v: Content-Encoding %q, want %q", tc, headResp.Header.Get("Content-Encoding"), tc.wantEncoding)
+		}
+		if headResp.Header.Get("Content-Length") != strconv.Itoa(tc.wantLength) {
+			t.Fatalf("HEAD %+v: Content-Length %q, want %d", tc, headResp.Header.Get("Content-Length"), tc.wantLength)
+		}
 	}
 }

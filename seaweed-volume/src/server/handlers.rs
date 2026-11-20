@@ -165,8 +165,10 @@ impl SourceReadRequest {
     fn served_from_source(&self, n: &Needle) -> bool {
         if self.is_head {
             // HEAD is meta-only unless the payload is needed to expand a
-            // manifest or to answer an image transform's length.
-            return !self.has_image_ops && !(n.is_chunk_manifest() && !self.bypass_cm);
+            // manifest or to answer a decoded or transformed length.
+            return !self.has_image_ops
+                && !n.is_compressed()
+                && !(n.is_chunk_manifest() && !self.bypass_cm);
         }
         self.direct(n) && (self.has_range || n.data_size > STREAMING_THRESHOLD)
     }
@@ -1342,6 +1344,7 @@ async fn get_or_head_handler_inner(
         &query,
         &ext,
         request_kind.has_image_ops,
+        request_kind.has_range,
         &mut response_headers,
     ) {
         ControlFlow::Continue(data) => data,
@@ -1643,8 +1646,8 @@ async fn read_volume_needle(
 
     let can_stream =
         can_direct_source_read && n.data_size > STREAMING_THRESHOLD && !has_range && !is_head;
-    // HEAD is meta-only when served_from_source loaded no payload. A chunk
-    // manifest without cm=false is read in full so expansion can run.
+    // HEAD is meta-only when served_from_source loaded no payload. A compressed
+    // needle, or a chunk manifest without cm=false, is read in full.
     let can_handle_head_from_meta = stream_info.is_some() && is_head;
     let can_handle_range_from_source = can_direct_source_read && has_range;
 
@@ -2039,6 +2042,7 @@ fn buffered_payload(
     query: &ReadQueryParams,
     ext: &str,
     needs_image_ops: bool,
+    has_range: bool,
     response_headers: &mut HeaderMap,
 ) -> ControlFlow<Response, Vec<u8>> {
     // Handle compressed data: if needle is compressed, either pass through or decompress
@@ -2067,7 +2071,9 @@ fn buffered_payload(
                 .get(header::ACCEPT_ENCODING)
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("");
-            if accept_encoding.contains("gzip")
+            // A range is over the decoded bytes, so only a whole read passes gzip through.
+            if !has_range
+                && accept_encoding.contains("gzip")
                 && data.len() >= 2
                 && data[0] == 0x1f
                 && data[1] == 0x8b
@@ -5010,13 +5016,13 @@ fn try_gzip_data(data: &[u8]) -> Option<Vec<u8>> {
 }
 
 fn maybe_decompress_gzip(data: &[u8]) -> Result<Vec<u8>, GunzipError> {
-    use flate2::read::GzDecoder;
+    use flate2::read::MultiGzDecoder;
     use std::io::Read;
     // Cap the output so a crafted, highly-compressible (gzip-bomb) needle cannot
     // OOM the server when decompressed on read or upload. take(limit+1) lets us
     // tell "exactly at the limit" apart from "over it", which we reject as
     // TooLarge so callers fail the request instead of silently using raw bytes.
-    let mut decoder = GzDecoder::new(data).take(MAX_EXPANSION_BYTES + 1);
+    let mut decoder = MultiGzDecoder::new(data).take(MAX_EXPANSION_BYTES + 1);
     let mut decompressed = Vec::new();
     decoder
         .read_to_end(&mut decompressed)
@@ -7427,6 +7433,28 @@ mod tests {
             assert_eq!(status, StatusCode::OK, "{path}");
             assert_eq!(body, data, "{path}");
         }
+    }
+
+    /// A needle of concatenated gzip members decodes to all of them, as Go's
+    /// gzip reader does, so a range spans the whole decoded content.
+    #[tokio::test]
+    async fn test_get_range_over_multi_member_gzip_needle() {
+        const ID: u64 = 0x6e7a_0503;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let mut gz = try_gzip_data(b"hello").unwrap();
+        gz.extend(try_gzip_data(b"world").unwrap());
+        let path = put_test_needle_with(&state, ID, &gz, |n| n.set_is_compressed());
+
+        let (status, headers, body) =
+            send_read(&state, Method::GET, &path, Some(b"bytes=3-7")).await;
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, b"lowor");
+        assert_eq!(headers["Content-Range"], "bytes 3-7/10");
+
+        let (status, _, body) = send_read(&state, Method::GET, &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, b"helloworld");
     }
 
     /// An EC needle is served from memory: its GET parses Range like any
