@@ -360,9 +360,9 @@ jobs:
           def docs(manifest):
               return [d for d in yaml.safe_load_all(manifest) if d]
 
-          def configmap(manifest, name):
+          def security_config(manifest, name):
               for d in docs(manifest):
-                  if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == name:
+                  if d.get("kind") == "Secret" and d["metadata"]["name"] == name:
                       return d
               return None
 
@@ -387,13 +387,13 @@ jobs:
           # security-related; preserve that so this PR is non-breaking on
           # existing installs.
           out = render({})
-          if configmap(out, "test-seaweedfs-security-config") is not None:
-              failed.append("defaults: security ConfigMap should not render")
+          if security_config(out, "test-seaweedfs-security-config") is not None:
+              failed.append("defaults: security Secret should not render")
           else:
-              print("defaults: no security-config ConfigMap (unchanged)")
+              print("defaults: no security-config Secret (unchanged)")
 
           # Case 2: filerWrite=true alone is the documented opt-in for
-          # the Admin UI Users tab. Configmap must render with
+          # the Admin UI Users tab. The Secret must render with
           # [jwt.filer_signing] and NO [grpc.*] sections (cert paths
           # only exist with mTLS).
           out = render({
@@ -403,11 +403,11 @@ jobs:
               # refuses to bind without authentication.
               "admin.secret.adminPassword": "ci-admin-password",
           })
-          cm = configmap(out, "test-seaweedfs-security-config")
+          cm = security_config(out, "test-seaweedfs-security-config")
           if cm is None:
-              failed.append("filerWrite=true: security ConfigMap missing")
+              failed.append("filerWrite=true: security Secret missing")
           else:
-              toml = cm["data"]["security.toml"]
+              toml = cm["stringData"]["security.toml"]
               if "[jwt.filer_signing]" not in toml:
                   failed.append("filerWrite=true: security.toml missing [jwt.filer_signing]")
               if "[grpc" in toml:
@@ -415,7 +415,7 @@ jobs:
               if "[jwt.filer_signing]" in toml and "[grpc" not in toml:
                   print("filerWrite=true: security.toml has [jwt.filer_signing], no [grpc.*]")
 
-          # Case 3: filer + admin pods must MOUNT the security ConfigMap
+          # Case 3: filer + admin pods must MOUNT the security Secret
           # under filerWrite=true so the JWT key reaches both processes.
           # Cert volumes must NOT be present (no mTLS).
           for wl in ("test-seaweedfs-filer", "test-seaweedfs-admin"):
@@ -435,11 +435,11 @@ jobs:
           # with both [jwt.signing] and [grpc.*]. Guards against the
           # decoupling change accidentally regressing the mTLS path.
           out = render({"global.seaweedfs.enableSecurity": "true"})
-          cm = configmap(out, "test-seaweedfs-security-config")
+          cm = security_config(out, "test-seaweedfs-security-config")
           if cm is None:
-              failed.append("enableSecurity=true: security ConfigMap missing")
+              failed.append("enableSecurity=true: security Secret missing")
           else:
-              toml = cm["data"]["security.toml"]
+              toml = cm["stringData"]["security.toml"]
               missing = [s for s in ("[jwt.signing]", "[grpc.master]") if s not in toml]
               if missing:
                   failed.append(f"enableSecurity=true: security.toml missing {missing}")
@@ -456,8 +456,8 @@ jobs:
               except subprocess.CalledProcessError as e:
                   failed.append(f"{null_path}=null: render failed: {e.output[:200] if e.output else e}")
                   continue
-              if configmap(out, "test-seaweedfs-security-config") is not None:
-                  failed.append(f"{null_path}=null: should not render configmap")
+              if security_config(out, "test-seaweedfs-security-config") is not None:
+                  failed.append(f"{null_path}=null: should not render the security Secret")
               else:
                   print(f"{null_path}=null: render tolerates explicit null")
 
@@ -561,16 +561,16 @@ jobs:
               mount = next((m for m in pod["containers"][0].get("volumeMounts", []) if m["name"] == "security-config"), None)
               # The file has to land on one of weed's config search paths, so
               # the target matters as much as the volume itself - and a volume
-              # of that name backed by anything but the chart's ConfigMap
+              # of that name backed by anything but the chart's Secret
               # leaves `weed shell` without the signing key just the same.
               target = ("/etc/seaweedfs/security.toml", "security.toml")
-              configmap = "test-seaweedfs-security-config"
+              secret = "test-seaweedfs-security-config"
               if vol is None or mount is None:
                   failed.append("filerWrite=true: bucket hook does not mount security-config (s3.configure would fail)")
               elif (mount.get("mountPath"), mount.get("subPath")) != target:
                   failed.append(f"filerWrite=true: bucket hook mounts security-config as {mount}")
-              elif vol.get("configMap", {}).get("name") != configmap:
-                  failed.append(f"filerWrite=true: security-config is not backed by the {configmap} ConfigMap: {vol}")
+              elif vol.get("secret", {}).get("secretName") != secret:
+                  failed.append(f"filerWrite=true: security-config is not backed by the {secret} Secret: {vol}")
               else:
                   print("filerWrite=true: bucket hook mounts security-config at /etc/seaweedfs/security.toml")
 
@@ -2076,7 +2076,7 @@ jobs:
               "--set", "admin.enabled=true", "--set", "admin.secret.adminPassword=ci",
               "--set", "cosi.enabled=true", "--set", "networkPolicy.enabled=true",
               "--set", "volumes.dc2.replicas=1",
-              # render the security ConfigMap without its generated jwt key
+              # render the security Secret without its generated jwt key
               "--set", "global.seaweedfs.enableSecurity=true",
               "--set", "global.seaweedfs.securityConfig.jwtSigning.volumeWrite=false",
           ]

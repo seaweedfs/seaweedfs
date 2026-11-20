@@ -1,7 +1,7 @@
 {{- include "seaweedfs.compat" . -}}
 {{- if include "seaweedfs.securityConfigEnabled" . }}
 apiVersion: v1
-kind: ConfigMap
+kind: Secret
 metadata:
   name: {{ include "seaweedfs.fullname" . }}-security-config
   namespace: {{ include "seaweedfs.namespace" . | quote }}
@@ -11,7 +11,8 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     {{- with include "seaweedfs.commonLabels" $ }}{{ . | nindent 4 }}{{ end }}
-data:
+type: Opaque
+stringData:
   {{- $fullname := include "seaweedfs.fullname" . }}
   {{- $securityConfigName := printf "%s-security-config" $fullname }}
   {{- $existing := lookup "v1" "ConfigMap" (include "seaweedfs.namespace" .) $securityConfigName }}
@@ -19,7 +20,11 @@ data:
   {{- $legacyName := printf "%s-%s" (include "seaweedfs.name" .) "security-config" }}
   {{- $existing = lookup "v1" "ConfigMap" (include "seaweedfs.namespace" .) $legacyName }}
   {{- end }}
-  {{- $existingToml := dig "data" "security.toml" "" $existing }}
+  {{- $ownConfigMap := eq (dig "metadata" "annotations" "meta.helm.sh/release-name" "" $existing) .Release.Name }}
+  {{- if and $ownConfigMap (or (and .Values.master.enabled (gt (int .Values.master.updatePartition) 0)) (and .Values.filer.enabled (gt (int .Values.filer.updatePartition) 0))) }}
+  {{- fail "this upgrade moves security.toml from a ConfigMap to a Secret and removes the ConfigMap; run it with master.updatePartition=0 and filer.updatePartition=0 so no pod is left on the old template" }}
+  {{- end }}
+  {{- $existingToml := dig "data" "security.toml" "" (lookup "v1" "Secret" (include "seaweedfs.namespace" .) $securityConfigName) | b64dec | default (dig "data" "security.toml" "" $existing) }}
   {{- $securityConfigValues := .Values.global.seaweedfs.securityConfig | default dict }}
   {{- $jwtSigning := $securityConfigValues.jwtSigning | default dict }}
   {{- $expiresAfterSeconds := $jwtSigning.expiresAfterSeconds | default dict }}
@@ -30,7 +35,7 @@ data:
     # the jwt signing key is read by master and volume server
     # the jwt defaults to expire after 10 seconds
     [jwt.signing]
-    key = {{ include "seaweedfs.existingTomlKey" (list "jwt.signing" $existingToml) | default (randAlphaNum 10 | b64enc | quote) }}
+    key = {{ include "seaweedfs.existingTomlKey" (list "jwt.signing" $existingToml) | default (randAlphaNum 64 | quote) }}
     {{- if gt (int $expiresAfterSeconds.volumeWrite) 0 }}
     expires_after_seconds = {{ int $expiresAfterSeconds.volumeWrite }}
     {{- end }}
@@ -42,7 +47,7 @@ data:
     # - the Volume server validates the JWT on reading
     # the jwt defaults to expire after 60 seconds
     [jwt.signing.read]
-    key = {{ include "seaweedfs.existingTomlKey" (list "jwt.signing.read" $existingToml) | default (randAlphaNum 10 | b64enc | quote) }}
+    key = {{ include "seaweedfs.existingTomlKey" (list "jwt.signing.read" $existingToml) | default (randAlphaNum 64 | quote) }}
     {{- if gt (int $expiresAfterSeconds.volumeRead) 0 }}
     expires_after_seconds = {{ int $expiresAfterSeconds.volumeRead }}
     {{- end }}
@@ -54,7 +59,7 @@ data:
     # - the Filer server validates the JWT on writing
     # the jwt defaults to expire after 10 seconds
     [jwt.filer_signing]
-    key = {{ include "seaweedfs.existingTomlKey" (list "jwt.filer_signing" $existingToml) | default (randAlphaNum 10 | b64enc | quote) }}
+    key = {{ include "seaweedfs.existingTomlKey" (list "jwt.filer_signing" $existingToml) | default (randAlphaNum 64 | quote) }}
     {{- if gt (int $expiresAfterSeconds.filerWrite) 0 }}
     expires_after_seconds = {{ int $expiresAfterSeconds.filerWrite }}
     {{- end }}
@@ -66,7 +71,7 @@ data:
     # - the Filer server validates the JWT on reading
     # the jwt defaults to expire after 60 seconds
     [jwt.filer_signing.read]
-    key = {{ include "seaweedfs.existingTomlKey" (list "jwt.filer_signing.read" $existingToml) | default (randAlphaNum 10 | b64enc | quote) }}
+    key = {{ include "seaweedfs.existingTomlKey" (list "jwt.filer_signing.read" $existingToml) | default (randAlphaNum 64 | quote) }}
     {{- if gt (int $expiresAfterSeconds.filerRead) 0 }}
     expires_after_seconds = {{ int $expiresAfterSeconds.filerRead }}
     {{- end }}
