@@ -853,7 +853,7 @@ func groupDigits(n float64) string {
 
 func nonFilterableJSON(index *s3vectors.Index) string {
 	keys := []string{}
-	if index.MetadataConfiguration != nil {
+	if index.MetadataConfiguration != nil && index.MetadataConfiguration.NonFilterableMetadataKeys != nil {
 		keys = index.MetadataConfiguration.NonFilterableMetadataKeys
 	}
 	b, _ := json.Marshal(keys)
