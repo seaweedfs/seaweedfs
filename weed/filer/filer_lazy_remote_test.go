@@ -340,8 +340,11 @@ func newTestFiler(t *testing.T, store *stubFilerStore, rs *FilerRemoteStorage) *
 
 // registerStubMaker registers a stub RemoteStorageClientMaker for the given
 // type string and returns a cleanup function that restores the previous maker.
+// Both empty the client cache, so a rerun with the same configuration builds
+// a client from this stub instead of reusing the previous run's.
 func registerStubMaker(t *testing.T, storageType string, client remote_storage.RemoteStorageClient) func() {
 	t.Helper()
+	remote_storage.ResetRemoteStorageClients()
 	prev := remote_storage.RemoteStorageClientMakers[storageType]
 	remote_storage.RemoteStorageClientMakers[storageType] = &stubClientMaker{client: client}
 	return func() {
@@ -350,6 +353,7 @@ func registerStubMaker(t *testing.T, storageType string, client remote_storage.R
 		} else {
 			delete(remote_storage.RemoteStorageClientMakers, storageType)
 		}
+		remote_storage.ResetRemoteStorageClients()
 	}
 }
 
