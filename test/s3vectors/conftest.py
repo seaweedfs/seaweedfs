@@ -247,12 +247,12 @@ def run_cluster(param, tmp_path_factory, identities):
     with contextlib.ExitStack() as stack:
         with contextlib.ExitStack() as reservations:
             ports = []
-            for _ in range(15):
+            for _ in range(16):
                 sock = reservations.enter_context(socket.socket())
                 sock.bind(("127.0.0.1", 0))
                 ports.append(sock.getsockname()[1])
         (master, master_grpc, vol, vol_grpc, filer, filer_grpc, s3, s3_grpc, lance, vector, engine1, engine2,
-         admin, admin_grpc, vector_metrics) = ports
+         admin, admin_grpc, vector_metrics, volume_metrics) = ports
         master_addr = f"127.0.0.1:{master}.{master_grpc}"
         filer_addr = f"127.0.0.1:{filer}.{filer_grpc}"
 
@@ -298,7 +298,7 @@ def run_cluster(param, tmp_path_factory, identities):
         start("volume", prefix + [f"{flag}{key}={value}" for key, value in {
             "master": master_addr, "ip": "127.0.0.1", "ip.bind": "127.0.0.1",
             "port": vol, "port.grpc": vol_grpc, "dir": directory / "volume",
-            "max": 64, "preStopSeconds": 0,
+            "max": 64, "preStopSeconds": 0, "metricsPort": volume_metrics,
         }.items()])
         wait_for(lambda: listening(vol_grpc), processes, "volume not ready")
         # VECTOR_ENCRYPT_VOLUMES=1 turns on the filer's volume encryption, which
@@ -388,6 +388,7 @@ def run_cluster(param, tmp_path_factory, identities):
         yield {"endpoint": endpoint, "mode": mode, "processes": processes, "directory": directory, "filer": filer,
                "masters": master_addr, "filer_signing_key": filer_signing_key,
                "vector_metrics": f"http://127.0.0.1:{vector_metrics}", "restart_engine": restart_engine,
+               "volume_metrics": f"http://127.0.0.1:{volume_metrics}",
                "catalog": f"http://127.0.0.1:{lance}", "admin": admin_url, "env": process_env()}
 
 
