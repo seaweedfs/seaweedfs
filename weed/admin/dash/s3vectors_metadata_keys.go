@@ -245,7 +245,7 @@ func (s *AdminServer) dispatchMetadataIndexJob(bucket, index, key, action string
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
 		defer cancel()
-		if _, err := s.ExecutePluginJob(ctx, job, s.buildDefaultPluginClusterContext(), 1); err != nil {
+		if _, err := s.plugin.ExecuteJob(ctx, job, s.buildDefaultPluginClusterContext(), 1); err != nil {
 			glog.Warningf("%s for %s/%s key %s: %v", metadataIndexJobType, bucket, index, key, err)
 		}
 	}()
