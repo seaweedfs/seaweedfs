@@ -331,30 +331,49 @@ func TestCreateEntryFsyncReachesStore(t *testing.T) {
 }
 
 // A store that keeps entries as given returns FileSize zero beside chunks; an
-// uncontended offset write on a non-owner must still commit through the owner.
-func TestHttpOffsetWriteOnNonOwnerWithUnnormalizedEntry(t *testing.T) {
-	ctx := context.Background()
-	owner, fs, store, _ := newAppendRaceFilers(t)
-	filePath := ownerPath(t, owner, fs)
-	fileName := util.FullPath(filePath).Name()
-	if err := store.renameTestStore.InsertEntry(ctx, &filer.Entry{
-		FullPath: util.FullPath(filePath),
-		Attr:     filer.Attr{Mtime: time.Unix(1, 0), Atime: time.Unix(1, 0), Crtime: time.Unix(1, 0), Mode: 0640},
-		Chunks:   []*filer_pb.FileChunk{{FileId: "3,01637037d6", Size: 4, ModifiedTsNs: 1}},
-	}); err != nil {
-		t.Fatalf("insert chunked entry: %v", err)
-	}
+// uncontended append or offset write on a non-owner must still commit through
+// the owner and land after the existing bytes.
+func TestHttpWriteOnNonOwnerWithUnnormalizedEntry(t *testing.T) {
+	for _, tc := range []struct {
+		name, query string
+		offset      int64
+	}{
+		{"offset write", "", 4},
+		{"append", "?op=append", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			owner, fs, store, _ := newAppendRaceFilers(t)
+			filePath := ownerPath(t, owner, fs)
+			fileName := util.FullPath(filePath).Name()
+			if err := store.renameTestStore.InsertEntry(ctx, &filer.Entry{
+				FullPath: util.FullPath(filePath),
+				Attr:     filer.Attr{Mtime: time.Unix(1, 0), Atime: time.Unix(1, 0), Crtime: time.Unix(1, 0), Mode: 0640},
+				Chunks:   []*filer_pb.FileChunk{{FileId: "3,01637037d6", Size: 4, ModifiedTsNs: 1}},
+			}); err != nil {
+				t.Fatalf("insert chunked entry: %v", err)
+			}
 
-	r := httptest.NewRequest(http.MethodPut, filePath, nil)
-	fileChunks := []*filer_pb.FileChunk{{FileId: "3,02637037d6", Offset: 4, Size: 2, ModifiedTsNs: 2}}
-	if _, saveErr, _ := fs.saveMetaData(ctx, r, fileName, "", &operation.StorageOption{}, 4, nil, fileChunks, 6, nil); saveErr != nil {
-		t.Fatalf("offset write: %v", saveErr)
-	}
-	final, err := owner.filer.FindEntry(ctx, util.FullPath(filePath))
-	if err != nil {
-		t.Fatalf("find final entry: %v", err)
-	}
-	if got := filer.TotalSize(final.GetChunks()); got != 6 {
-		t.Fatalf("entry covers %d bytes, want 6", got)
+			r := httptest.NewRequest(http.MethodPut, filePath+tc.query, nil)
+			fileChunks := []*filer_pb.FileChunk{{FileId: "3,02637037d6", Offset: tc.offset, Size: 2, ModifiedTsNs: 2}}
+			if _, saveErr, _ := fs.saveMetaData(ctx, r, fileName, "", &operation.StorageOption{}, 4, nil, fileChunks, tc.offset+2, nil); saveErr != nil {
+				t.Fatalf("write: %v", saveErr)
+			}
+			final, err := owner.filer.FindEntry(ctx, util.FullPath(filePath))
+			if err != nil {
+				t.Fatalf("find final entry: %v", err)
+			}
+			if got := filer.TotalSize(final.GetChunks()); got != 6 {
+				t.Fatalf("entry covers %d bytes, want 6", got)
+			}
+			for _, chunk := range final.GetChunks() {
+				if chunk.FileId == "3,02637037d6" && chunk.Offset != 4 {
+					t.Fatalf("new chunk starts at %d, want 4", chunk.Offset)
+				}
+			}
+			if final.FileSize != 6 {
+				t.Fatalf("entry size is %d, want 6", final.FileSize)
+			}
+		})
 	}
 }
