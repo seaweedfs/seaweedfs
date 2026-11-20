@@ -327,11 +327,11 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	if v.GetString("guard.white_list") != "" {
 		glog.Warningf("filer: guard.white_list is configured but the IP whitelist feature is currently disabled. See https://github.com/seaweedfs/seaweedfs/issues/7094")
 	}
-	fs.filerGuard = security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
+	fs.filerGuard = security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec, "", "")
 	basicAuth, basicAuthFile := loadBasicAuth(nil, "")
 	fs.basicAuth.Store(basicAuth)
 	fs.basicAuthFile = basicAuthFile
-	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec)
+	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec, "", "")
 
 	fs.checkWithMaster()
 
@@ -795,6 +795,8 @@ func (fs *FilerServer) Reload() {
 		v.GetInt("jwt.filer_signing.expires_after_seconds"),
 		v.GetString("jwt.filer_signing.read.key"),
 		v.GetInt("jwt.filer_signing.read.expires_after_seconds"),
+		"",
+		"",
 	)
 	fs.basicAuth.Store(basicAuth)
 	fs.volumeGuard.UpdateSigningKeys(
@@ -802,6 +804,8 @@ func (fs *FilerServer) Reload() {
 		v.GetInt("jwt.signing.expires_after_seconds"),
 		v.GetString("jwt.signing.read.key"),
 		v.GetInt("jwt.signing.read.expires_after_seconds"),
+		"",
+		"",
 	)
 	util_http.ReloadJwtSigningReadConfig()
 }

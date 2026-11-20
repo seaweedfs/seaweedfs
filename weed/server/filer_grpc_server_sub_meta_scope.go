@@ -19,6 +19,7 @@ func metadataSubscriptionScope(ctx context.Context, method string) (*security.Me
 	return security.CheckGrpcMetadataSubscription(ctx,
 		security.SigningKey(v.GetString("jwt.filer_signing.subscribe.key")),
 		security.SigningKey(v.GetString("jwt.filer_signing.key")),
+		nil,
 		method)
 }
 

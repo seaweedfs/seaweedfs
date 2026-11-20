@@ -234,7 +234,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		ms.telemetryCollector.StartPeriodicCollection(24 * time.Hour)
 	}
 
-	ms.guard = security.NewGuard(append(ms.option.WhiteList, whiteList...), signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
+	ms.guard = security.NewGuard(append(ms.option.WhiteList, whiteList...), signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec, "", "")
 
 	handleStaticResources2(r)
 	r.HandleFunc("/healthz", requestIDMiddleware(ms.healthzHandler)).Methods(http.MethodGet, http.MethodHead)
@@ -731,6 +731,8 @@ func (ms *MasterServer) Reload() {
 		v.GetInt("jwt.signing.expires_after_seconds"),
 		v.GetString("jwt.signing.read.key"),
 		v.GetInt("jwt.signing.read.expires_after_seconds"),
+		"",
+		"",
 	)
 }
 

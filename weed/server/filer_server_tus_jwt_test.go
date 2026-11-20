@@ -47,7 +47,7 @@ func newTusTestServer(t *testing.T, sessions map[string]string) (*FilerServer, *
 	store := newRenameTestStore()
 	fs := &FilerServer{
 		filer:          newRenameTestFiler(t, store),
-		filerGuard:     security.NewGuard(nil, tusTestWriteKey, 0, tusTestReadKey, 0),
+		filerGuard:     security.NewGuard(nil, tusTestWriteKey, 0, tusTestReadKey, 0, "", ""),
 		option:         &FilerOption{TusBasePath: "/.tus", TusMaxSize: TusDefaultMaxSize},
 		entryLockTable: util.NewLockTable[util.FullPath](),
 	}
@@ -75,7 +75,7 @@ func seedTusSession(t *testing.T, fs *FilerServer, store *renameTestStore, sessi
 
 func TestFilerServer_checkJwtAuthorization(t *testing.T) {
 	fs := &FilerServer{
-		filerGuard: security.NewGuard(nil, tusTestWriteKey, 0, tusTestReadKey, 0),
+		filerGuard: security.NewGuard(nil, tusTestWriteKey, 0, tusTestReadKey, 0, "", ""),
 		option:     &FilerOption{TusBasePath: "/.tus"},
 	}
 	victim := []string{"/buckets/secret/victim.bin"}

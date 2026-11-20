@@ -15,17 +15,18 @@ import (
 
 // CheckGrpcAdminPeer authenticates the peer of an admin-plane gRPC handler:
 // a client certificate verified by the server's TLS config, or a Bearer token
-// signed by signingKey (jwt.filer_signing.key). With no key configured remote
+// signed by signingKey (jwt.filer_signing.key) or one of previousKeys
+// (jwt.filer_signing.previous_key). With no key configured remote
 // callers cannot be told apart, so only local clients (unix socket, loopback,
 // or an address assigned to this host) are allowed.
-func CheckGrpcAdminPeer(ctx context.Context, signingKey SigningKey) error {
+func CheckGrpcAdminPeer(ctx context.Context, signingKey SigningKey, previousKeys ...SigningKey) error {
 	if isMtlsVerifiedPeer(ctx) {
 		return nil
 	}
 	if len(signingKey) == 0 {
 		return CheckLocalGrpcPeer(ctx)
 	}
-	return CheckGrpcAdminToken(ctx, signingKey)
+	return CheckGrpcAdminToken(ctx, signingKey, previousKeys...)
 }
 
 // maxGrpcAdminAuthValues bounds the JWT parses one request can trigger; a
@@ -34,9 +35,9 @@ const maxGrpcAdminAuthValues = 4
 
 // CheckGrpcAdminToken accepts the call when one of the first
 // maxGrpcAdminAuthValues authorization values is a Bearer admin token signed
-// by signingKey, so a fresh token still counts when the caller's context also
-// forwards an older one.
-func CheckGrpcAdminToken(ctx context.Context, signingKey SigningKey) error {
+// by signingKey or one of previousKeys, so a fresh token still counts when the
+// caller's context also forwards an older one.
+func CheckGrpcAdminToken(ctx context.Context, signingKey SigningKey, previousKeys ...SigningKey) error {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return status.Error(codes.Unauthenticated, "missing metadata")
@@ -54,7 +55,7 @@ func CheckGrpcAdminToken(ctx context.Context, signingKey SigningKey) error {
 		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
 			continue
 		}
-		if IsFilerAdminToken(signingKey, EncodedJwt(parts[1])) {
+		if IsFilerAdminToken(signingKey, EncodedJwt(parts[1]), previousKeys...) {
 			return nil
 		}
 		err = status.Error(codes.Unauthenticated, "invalid admin token")
@@ -63,13 +64,13 @@ func CheckGrpcAdminToken(ctx context.Context, signingKey SigningKey) error {
 }
 
 // IsFilerAdminToken reports whether token is an admin token signed by
-// signingKey. An STS session token, or a filer token scoped to paths or
-// methods, signed with the same key does not count.
-func IsFilerAdminToken(signingKey SigningKey, token EncodedJwt) bool {
+// signingKey or one of previousKeys. An STS session token, or a filer token
+// scoped to paths or methods, signed with the same key does not count.
+func IsFilerAdminToken(signingKey SigningKey, token EncodedJwt, previousKeys ...SigningKey) bool {
 	if len(signingKey) == 0 || token == "" {
 		return false
 	}
-	parsed, err := DecodeJwt(signingKey, token, &SeaweedFilerAdminClaims{})
+	parsed, err := DecodeJwt(signingKey, token, &SeaweedFilerAdminClaims{}, previousKeys...)
 	if err != nil || parsed == nil || !parsed.Valid {
 		return false
 	}

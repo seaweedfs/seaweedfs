@@ -65,7 +65,7 @@ func TestCheckGrpcMetadataSubscription(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			scope, err := CheckGrpcMetadataSubscription(tt.ctx, tt.subKey, adminKey, tt.method)
+			scope, err := CheckGrpcMetadataSubscription(tt.ctx, tt.subKey, adminKey, nil, tt.method)
 			if status.Code(err) != tt.wantCode {
 				t.Fatalf("code = %v (%v), want %v", status.Code(err), err, tt.wantCode)
 			}
@@ -133,7 +133,7 @@ func TestWithMetadataSubscriptionCredentials(t *testing.T) {
 	v.Set("jwt.filer_signing.subscribe.key", "subscribe-key")
 	md, _ := metadata.FromOutgoingContext(WithMetadataSubscriptionCredentials(context.Background(), nil))
 	in := metadata.NewIncomingContext(context.Background(), md)
-	scope, err := CheckGrpcMetadataSubscription(in, SigningKey("subscribe-key"), SigningKey("admin-key"), MethodSubscribeLocalMetadata)
+	scope, err := CheckGrpcMetadataSubscription(in, SigningKey("subscribe-key"), SigningKey("admin-key"), nil, MethodSubscribeLocalMetadata)
 	if err != nil || scope != nil {
 		t.Fatalf("scope=%v err=%v, want unrestricted", scope, err)
 	}
@@ -145,7 +145,7 @@ func TestWithMetadataSubscriptionCredentials(t *testing.T) {
 	if len(md.Get("authorization")) != 1 {
 		t.Fatalf("want only the per-cluster token, got %v", md.Get("authorization"))
 	}
-	scope, err = CheckGrpcMetadataSubscription(metadata.NewIncomingContext(context.Background(), md), SigningKey("subscribe-b"), clusterKey, MethodSubscribeMetadata)
+	scope, err = CheckGrpcMetadataSubscription(metadata.NewIncomingContext(context.Background(), md), SigningKey("subscribe-b"), clusterKey, nil, MethodSubscribeMetadata)
 	if err != nil || scope != nil {
 		t.Fatalf("per-cluster token: scope=%v err=%v, want unrestricted", scope, err)
 	}

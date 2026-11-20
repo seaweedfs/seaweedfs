@@ -20,7 +20,7 @@ const testS3IamCacheSigningKey = "s3-iam-cache-test-key-do-not-use-in-prod"
 func newTestS3IamCacheServer(t *testing.T, signingKey string) *S3ApiServer {
 	t.Helper()
 	s3a := newTestS3ApiServerWithMemoryIAM(t, nil)
-	s3a.filerGuard = security.NewGuard(nil, signingKey, 10, "", 60)
+	s3a.filerGuard = security.NewGuard(nil, signingKey, 10, "", 60, "", "")
 	return s3a
 }
 

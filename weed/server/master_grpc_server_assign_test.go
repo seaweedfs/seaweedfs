@@ -37,7 +37,7 @@ func newLeaderMaster() *MasterServer {
 	return &MasterServer{
 		Topo:                    topo,
 		option:                  &MasterOption{},
-		guard:                   security.NewGuard(nil, "", 0, "", 0),
+		guard:                   security.NewGuard(nil, "", 0, "", 0, "", ""),
 		volumeGrowthRequestChan: make(chan *topology.VolumeGrowRequest, 1<<6),
 	}
 }

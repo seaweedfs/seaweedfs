@@ -82,7 +82,7 @@ func TestProxyReadDropsCallerJwtQueryParam(t *testing.T) {
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		t.Run(method, func(t *testing.T) {
 			volume := newProxyTestVolume(t)
-			fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
+			fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10, "", "")}
 
 			r := httptest.NewRequest(method,
 				"http://filer:8888/?proxyChunkId="+proxyTestFileId+"&jwt=caller-supplied&readDeleted=true", nil)
@@ -123,7 +123,7 @@ func TestProxyReadDropsCallerJwtQueryParam(t *testing.T) {
 // behind one the volume server cannot validate.
 func TestProxyWriteDropsCallerJwtQueryParam(t *testing.T) {
 	volume := newProxyTestVolume(t)
-	fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
+	fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10, "", "")}
 
 	r := httptest.NewRequest(http.MethodPost,
 		"http://filer:8888/?proxyChunkId="+proxyTestFileId+"&jwt=filer-credential", nil)
@@ -155,7 +155,7 @@ func TestProxyMintsNothingWithoutKey(t *testing.T) {
 		{"write with only a read key", true, "", proxyTestReadKey},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, tc.writeKey, 10, tc.readKey, 10)}
+			fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, tc.writeKey, 10, tc.readKey, 10, "", "")}
 
 			if jwt := fs.maybeGetVolumeJwtAuthorizationToken(proxyTestFileId, tc.isWrite); jwt != "" {
 				t.Fatalf("minted %q with no key configured for that access level", jwt)
@@ -166,14 +166,14 @@ func TestProxyMintsNothingWithoutKey(t *testing.T) {
 
 // A configured read key still yields a read token, and it stays read-only.
 func TestProxyReadTokenIsReadOnly(t *testing.T) {
-	fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
+	fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10, "", "")}
 
 	jwt := fs.maybeGetVolumeReadJwtAuthorizationToken(proxyTestFileId)
 	if jwt == "" {
 		t.Fatal("no read token minted despite a configured read key")
 	}
 
-	vs := &VolumeServer{guard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
+	vs := &VolumeServer{guard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10, "", "")}
 
 	read := httptest.NewRequest(http.MethodGet, "http://volume:8080/"+proxyTestFileId, nil)
 	read.Header.Set("Authorization", security.BearerPrefix+jwt)
@@ -193,12 +193,12 @@ func TestProxyReadTokenIsReadOnly(t *testing.T) {
 // filer credential the caller was authorized with. POST is the method every
 // in-tree proxied uploader actually sends, so it leads the table.
 func TestProxyWriteCarriesMintedWriteToken(t *testing.T) {
-	vs := &VolumeServer{guard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
+	vs := &VolumeServer{guard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10, "", "")}
 
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 		t.Run(method, func(t *testing.T) {
 			volume := newProxyTestVolume(t)
-			fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
+			fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10, "", "")}
 
 			r := httptest.NewRequest(method, "http://filer:8888/?proxyChunkId="+proxyTestFileId, nil)
 			r.Header.Set("Authorization", security.BearerPrefix+"filer-credential")
@@ -223,7 +223,7 @@ func TestProxyWriteCarriesMintedWriteToken(t *testing.T) {
 // whatever the caller sent, not be appended alongside it.
 func TestProxyReadReplacesCallerCredential(t *testing.T) {
 	volume := newProxyTestVolume(t)
-	fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
+	fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10, "", "")}
 
 	r := httptest.NewRequest(http.MethodGet, "http://filer:8888/?proxyChunkId="+proxyTestFileId, nil)
 	r.Header.Set("Authorization", security.BearerPrefix+"caller-supplied-token")
@@ -235,7 +235,7 @@ func TestProxyReadReplacesCallerCredential(t *testing.T) {
 		t.Fatal("caller's token reached the volume server instead of the minted one")
 	}
 
-	vs := &VolumeServer{guard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
+	vs := &VolumeServer{guard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10, "", "")}
 	check := httptest.NewRequest(http.MethodGet, "http://volume:8080/"+proxyTestFileId, nil)
 	check.Header.Set("Authorization", seen)
 	if !vs.maybeCheckJwtAuthorization(check, proxyTestVid, proxyTestFid, false) {
@@ -250,7 +250,7 @@ func TestProxyDropsCallerCredentialWhenNothingMinted(t *testing.T) {
 	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodDelete} {
 		t.Run(method, func(t *testing.T) {
 			volume := newProxyTestVolume(t)
-			fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, "", 10, "", 10)}
+			fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, "", 10, "", 10, "", "")}
 
 			r := httptest.NewRequest(method, "http://filer:8888/?proxyChunkId="+proxyTestFileId, nil)
 			r.Header.Set("Authorization", security.BearerPrefix+"filer-credential")
@@ -283,7 +283,7 @@ func TestProxyWriteBypassesReadSemaphore(t *testing.T) {
 		}
 	}()
 
-	fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, "", 10)}
+	fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, "", 10, "", "")}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -308,13 +308,13 @@ func TestProxyWriteBypassesReadSemaphore(t *testing.T) {
 func TestProxyReadTokenMatchesDeltaFid(t *testing.T) {
 	const deltaFileId = proxyTestFileId + "_1"
 
-	fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
+	fs := &FilerServer{volumeGuard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10, "", "")}
 	jwt := fs.maybeGetVolumeReadJwtAuthorizationToken(deltaFileId)
 	if jwt == "" {
 		t.Fatal("no read token minted for a delta fid")
 	}
 
-	vs := &VolumeServer{guard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10)}
+	vs := &VolumeServer{guard: security.NewGuard([]string{}, proxyTestWriteKey, 10, proxyTestReadKey, 10, "", "")}
 	r := httptest.NewRequest(http.MethodGet, "http://volume:8080/"+deltaFileId, nil)
 	r.Header.Set("Authorization", security.BearerPrefix+jwt)
 	if !vs.maybeCheckJwtAuthorization(r, proxyTestVid, proxyTestFid+"_1", false) {
@@ -395,7 +395,7 @@ func TestFilerHandlerGatesChunkProxy(t *testing.T) {
 	signingKey := "secret"
 	fs := &FilerServer{
 		option:     &FilerOption{},
-		filerGuard: security.NewGuard(nil, signingKey, 0, signingKey, 0),
+		filerGuard: security.NewGuard(nil, signingKey, 0, signingKey, 0, "", ""),
 	}
 
 	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPut, http.MethodPost, http.MethodDelete} {
@@ -421,7 +421,7 @@ func TestFilerHandlerProxiesChunkForAuthorizedCaller(t *testing.T) {
 	signingKey := "secret"
 	fs := &FilerServer{
 		option:     &FilerOption{},
-		filerGuard: security.NewGuard(nil, signingKey, 0, signingKey, 0),
+		filerGuard: security.NewGuard(nil, signingKey, 0, signingKey, 0, "", ""),
 	}
 	token := security.GenJwtForFilerServer(security.SigningKey(signingKey), 60)
 

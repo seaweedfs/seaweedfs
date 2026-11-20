@@ -22,7 +22,7 @@ func TestListDirectoryWriteControlsFollowPort(t *testing.T) {
 	fs := &FilerServer{
 		filer:      newRenameTestFiler(t, store),
 		option:     &FilerOption{ExposeDirectoryData: true, DirListingLimit: 100, ShowUIDirectoryDelete: true},
-		filerGuard: security.NewGuard(nil, "", 0, "", 0),
+		filerGuard: security.NewGuard(nil, "", 0, "", 0, "", ""),
 	}
 
 	writeControls := []string{

@@ -59,7 +59,7 @@ func expiryVolume(t *testing.T, key security.SigningKey) *VolumeServer {
 	t.Helper()
 	s := newTierTestStore(t, t.TempDir())
 	require.NoError(t, s.AddVolume(1, "", storage.NeedleMapInMemory, "000", "", 0, needle.Version3, 0, types.HardDriveType, 0))
-	return &VolumeServer{store: s, guard: security.NewGuard(nil, string(key), 10, "", 0), fileSizeLimitBytes: 4 << 20}
+	return &VolumeServer{store: s, guard: security.NewGuard(nil, string(key), 10, "", 0, "", ""), fileSizeLimitBytes: 4 << 20}
 }
 
 func expirySignedToken(t *testing.T, key security.SigningKey, fid string, expires time.Time) string {
@@ -215,7 +215,7 @@ func TestVolumeJwtExpiryRefusalBoundary(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			vs := expiryVolume(t, key)
 			if tc.noKey {
-				vs.guard = security.NewGuard(nil, "", 0, "", 0)
+				vs.guard = security.NewGuard(nil, "", 0, "", 0, "", "")
 			}
 			plain := []byte("boundary content")
 			var body bytes.Buffer
@@ -311,7 +311,7 @@ func TestVolumeJwtExpiryProxyForwarding(t *testing.T) {
 		vs.PostHandler(w, r)
 	}))
 	defer volume.Close()
-	fs := &FilerServer{filerGuard: security.NewGuard(nil, string(filerKey), 3600, "", 0), volumeGuard: security.NewGuard(nil, string(volumeKey), 10, "", 0)}
+	fs := &FilerServer{filerGuard: security.NewGuard(nil, string(filerKey), 3600, "", 0, "", ""), volumeGuard: security.NewGuard(nil, string(volumeKey), 10, "", 0, "", "")}
 	fid := "1,0000000100001234"
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Exercise the same real caller verifier as filerHandler, then its actual

@@ -166,7 +166,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	vs.store.SetVolumeLoadGuard(vs.volumeLoadGuard)
 	vs.store.MasterFn = vs.getCurrentMaster
 	vs.store.SetSyncBatchOption(syncBatch)
-	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
+	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec, "", "")
 
 	handleStaticResources(adminMux)
 	adminMux.HandleFunc("/status", requestIDMiddleware(vs.statusHandler))
@@ -225,6 +225,8 @@ func (vs *VolumeServer) Reload() {
 		v.GetInt("jwt.signing.expires_after_seconds"),
 		v.GetString("jwt.signing.read.key"),
 		v.GetInt("jwt.signing.read.expires_after_seconds"),
+		"",
+		"",
 	)
 }
 

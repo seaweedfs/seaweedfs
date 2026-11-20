@@ -443,7 +443,7 @@ func TestGetOrHeadHandlerDoesNotReproxyAProxiedRequest(t *testing.T) {
 	}))
 	remoteAddress := strings.TrimPrefix(peer.URL, "http://")
 	vs := newProxyTestVolumeServer(t, volumeID, []*master_pb.Location{{Url: remoteAddress}}, nil)
-	vs.guard = security.NewGuard(nil, "", 0, "", 0)
+	vs.guard = security.NewGuard(nil, "", 0, "", 0, "", "")
 
 	w := httptest.NewRecorder()
 	vs.GetOrHeadHandler(w, httptest.NewRequest(http.MethodGet, "/"+volumeID+",01637037d6?proxied=true", nil))
@@ -490,7 +490,7 @@ func TestGetOrHeadHandlerRangeOnCompressedNeedleServesDecodedBytes(t *testing.T)
 	if _, err := store.WriteVolumeNeedle(1, n, true, false); err != nil {
 		t.Fatalf("write needle: %v", err)
 	}
-	vs := &VolumeServer{store: store, ReadMode: "local", guard: security.NewGuard(nil, "", 0, "", 0)}
+	vs := &VolumeServer{store: store, ReadMode: "local", guard: security.NewGuard(nil, "", 0, "", 0, "", "")}
 
 	serve := func(method, rangeHeader string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "/1,0100001234", nil)

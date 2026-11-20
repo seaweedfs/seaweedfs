@@ -28,7 +28,7 @@ func ctxFromHost(host string) context.Context {
 func TestRaftMembershipRPCs_RejectUnwhitelisted(t *testing.T) {
 	ms := &MasterServer{
 		Topo:  topology.NewTopology("test", nil, 0, 0, false),
-		guard: security.NewGuard([]string{"127.0.0.1"}, "", 0, "", 0),
+		guard: security.NewGuard([]string{"127.0.0.1"}, "", 0, "", 0, "", ""),
 	}
 	ctx := ctxFromHost("10.13.37.66")
 
@@ -55,7 +55,7 @@ func TestRaftMembershipRPCs_RejectUnwhitelisted(t *testing.T) {
 func TestRaftMembershipRPCs_AllowWhitelisted(t *testing.T) {
 	ms := &MasterServer{
 		Topo:  topology.NewTopology("test", nil, 0, 0, false),
-		guard: security.NewGuard([]string{"10.13.37.66"}, "", 0, "", 0),
+		guard: security.NewGuard([]string{"10.13.37.66"}, "", 0, "", 0, "", ""),
 	}
 	ctx := ctxFromHost("10.13.37.66")
 
@@ -73,7 +73,7 @@ func TestRaftMembershipRPCs_AllowWhitelisted(t *testing.T) {
 func TestRaftMembershipRPCs_NoWhitelistFailsOpen(t *testing.T) {
 	ms := &MasterServer{
 		Topo:  topology.NewTopology("test", nil, 0, 0, false),
-		guard: security.NewGuard(nil, "", 0, "", 0),
+		guard: security.NewGuard(nil, "", 0, "", 0, "", ""),
 	}
 	ctx := ctxFromHost("10.13.37.66")
 

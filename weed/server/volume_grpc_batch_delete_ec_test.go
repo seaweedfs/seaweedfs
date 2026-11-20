@@ -76,7 +76,7 @@ func TestBatchDelete_AlreadyDeletedEcNeedleIsNotAnError(t *testing.T) {
 
 	vs := &VolumeServer{
 		store: ecVolumeWithDeletedNeedle(t, vid, needleId),
-		guard: security.NewGuard(nil, "", 0, "", 0),
+		guard: security.NewGuard(nil, "", 0, "", 0, "", ""),
 	}
 
 	ctx := peer.NewContext(context.Background(), &peer.Peer{
@@ -114,7 +114,7 @@ func TestDeleteHandler_AlreadyDeletedEcNeedleIsNotAWriteFailure(t *testing.T) {
 
 	vs := &VolumeServer{
 		store: ecVolumeWithDeletedNeedle(t, vid, needleId),
-		guard: security.NewGuard(nil, "", 0, "", 0),
+		guard: security.NewGuard(nil, "", 0, "", 0, "", ""),
 	}
 
 	before := testutil.ToFloat64(stats.VolumeServerFileWriteFailures)
