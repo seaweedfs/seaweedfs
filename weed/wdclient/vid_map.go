@@ -409,17 +409,71 @@ func (vc *vidMap) deleteLocationFromMap(vid2Locations map[uint32]*locationsEntry
 }
 
 func (vc *vidMap) deleteVid(vid uint32) {
+	vc.takeVid(vid)
+}
+
+// takenVid is what takeVid removed for a volume: its regular and EC entries,
+// either of which may be nil.
+type takenVid struct {
+	regular *locationsEntry
+	ec      *locationsEntry
+}
+
+func (t takenVid) empty() bool {
+	return t.regular == nil && t.ec == nil
+}
+
+// takeVid removes vid like deleteVid and returns the removed entries, so that
+// restoreVid can put them back if nothing newer is learned in the meantime.
+func (vc *vidMap) takeVid(vid uint32) (taken takenVid) {
 	vc.Lock()
 	defer vc.Unlock()
 
 	if entry, found := vc.vid2Locations[vid]; found {
 		vc.releaseEntry(entry)
 		delete(vc.vid2Locations, vid)
+		taken.regular = entry
 	}
 	if entry, found := vc.ecVid2Locations[vid]; found {
 		vc.releaseEntry(entry)
 		delete(vc.ecVid2Locations, vid)
+		taken.ec = entry
 	}
+	return taken
+}
+
+// restoreVid puts back entries takeVid removed. It does nothing once vid has
+// been learned again, since anything learned since is newer, and it skips an
+// entry that a reset in the meantime would have expired. Entries keep the
+// generation they were learned in.
+func (vc *vidMap) restoreVid(vid uint32, taken takenVid) (restored bool) {
+	vc.Lock()
+	defer vc.Unlock()
+
+	if _, found := vc.vid2Locations[vid]; found {
+		return false
+	}
+	if _, found := vc.ecVid2Locations[vid]; found {
+		return false
+	}
+	var oldest uint64
+	if vc.generation > vc.retainGenerations {
+		oldest = vc.generation - vc.retainGenerations
+	}
+	for _, put := range []struct {
+		vid2Locations map[uint32]*locationsEntry
+		entry         *locationsEntry
+	}{{vc.vid2Locations, taken.regular}, {vc.ecVid2Locations, taken.ec}} {
+		if put.entry == nil || len(put.entry.locations) == 0 || put.entry.generation < oldest {
+			continue
+		}
+		put.vid2Locations[vid] = put.entry
+		for _, loc := range put.entry.locations {
+			vc.incrementServerRef(locationServerKey(loc))
+		}
+		restored = true
+	}
+	return restored
 }
 
 // clear drops every location, keeping no history to fall back to.
