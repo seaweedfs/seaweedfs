@@ -9,6 +9,7 @@ import (
 	"time"
 
 	jwt "github.com/golang-jwt/jwt/v5"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"
 )
@@ -124,4 +125,27 @@ func TestReloadSigningKeysPreviousKeys(t *testing.T) {
 	require.NoError(t, os.Remove(filepath.Join(dir, "security.toml")))
 	g.ReloadSigningKeys("jwt.signing")
 	requirePrevious("old", "old-read")
+}
+
+func TestReloadSigningKeysTakesSwappedPairFromOneRead(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("HOME", dir)
+	v := util.GetViper()
+	v.Set("jwt.signing.key", "new")
+	t.Cleanup(func() { v.Set("jwt.signing.key", "") })
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "security.toml"),
+		[]byte("[jwt.signing]\nkey = \"old\"\nprevious_key = \"new\"\n"), 0o600))
+
+	g := NewGuard(nil, "new", 10, "", 60, "old", "")
+	g.ReloadSigningKeys("jwt.signing")
+	key, previous := g.VerificationKeys(true)
+	require.Equal(t, "old", string(key))
+	require.Equal(t, "new", string(previous))
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "security.toml"), []byte("[jwt.signing]\n"), 0o600))
+	g.ReloadSigningKeys("jwt.signing")
+	key, previous = g.VerificationKeys(true)
+	require.Equal(t, "new", string(key), "a key the file no longer sets keeps its merged value")
+	require.Empty(t, previous)
 }

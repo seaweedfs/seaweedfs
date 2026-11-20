@@ -187,23 +187,35 @@ func (g *Guard) UpdateSigningKeys(signingKey string, expiresAfterSec int, readSi
 
 // ReloadSigningKeys applies the [section] keys after util.LoadConfiguration
 // merged security.toml again. The merge keeps a key the file no longer sets,
-// so previous keys are read from the file anew: a removed one stops
-// verifying. A file that cannot be read keeps the previous keys in effect.
+// so the keys are read from the file anew: a removed previous key stops
+// verifying, and a swapped pair comes from one read. A file that cannot be
+// read keeps the previous keys in effect.
 func (g *Guard) ReloadSigningKeys(section string) {
 	v := util.GetViper()
 	st := g.state.Load()
+	signingKey, readSigningKey := v.GetString(section+".key"), v.GetString(section+".read.key")
 	previousKey, previousReadKey := string(st.previousSigningKey), string(st.previousReadSigningKey)
 	if fresh, used := util.ReadConfiguration("security", ""); used != "" {
+		signingKey, readSigningKey = freshKey(fresh, section+".key"), freshKey(fresh, section+".read.key")
 		previousKey, previousReadKey = fresh.GetString(section+".previous_key"), fresh.GetString(section+".read.previous_key")
 	}
 	g.UpdateSigningKeys(
-		v.GetString(section+".key"),
+		signingKey,
 		v.GetInt(section+".expires_after_seconds"),
-		v.GetString(section+".read.key"),
+		readSigningKey,
 		v.GetInt(section+".read.expires_after_seconds"),
 		previousKey,
 		previousReadKey,
 	)
+}
+
+// freshKey returns name as the fresh read sets it, else its merged value, so
+// removing a current key from the file does not turn verification off.
+func freshKey(fresh *util.ViperProxy, name string) string {
+	if fresh.IsSet(name) {
+		return fresh.GetString(name)
+	}
+	return util.GetViper().GetString(name)
 }
 
 func (g *Guard) UpdateWhiteList(whiteList []string) {
