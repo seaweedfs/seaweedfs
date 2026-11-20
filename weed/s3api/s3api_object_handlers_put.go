@@ -1169,11 +1169,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			}
 		}
 	}
+	var lockCond *filer_pb.WriteCondition
 	if !routed {
 		// The lock is a lease, so the filer re-checks the condition under its
 		// path lock. A suspended write's condition names the latest version,
 		// which the create's own path cannot express.
-		var lockCond *filer_pb.WriteCondition
 		if object != "" && condAltKey == "" {
 			lockCond, _ = routeWriteCondition(r, uniqueWritePath)
 		}
@@ -1207,7 +1207,10 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			if landed {
 				createCode = s3err.ErrNone
 			}
-			if createCode != s3err.ErrNone && absent {
+			// The filer forwards a conditional create to its ring owner, which
+			// the lookups may not reach; only a refusal proves it never committed.
+			reclaim := lockCond == nil || createErr == nil || errors.Is(createErr, filer_pb.ErrPreconditionFailed)
+			if createCode != s3err.ErrNone && absent && reclaim {
 				orphaned := chunkResult.FileChunks
 				if manifestChunks, _ := filer.SeparateManifestChunks(entry.GetChunks()); len(manifestChunks) > 0 {
 					orphaned = append(manifestChunks, orphaned...)
