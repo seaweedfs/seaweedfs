@@ -740,12 +740,19 @@ func (f *Filer) processManifestRetries(ctx context.Context) {
 	}
 }
 
+// manifestRetryTimeout bounds one manifest read so a stalled volume server
+// cannot hold up the shared retry loop.
+var manifestRetryTimeout = 1 * time.Minute
+
 // retryManifest resolves again when a durable delete of the same manifest
 // arrived while the attempt was in flight.
 func (f *Filer) retryManifest(ctx context.Context, q *DeletionRetryQueue, item *DeletionRetryItem) {
 	for {
 		fsync := q.fsyncOf(item)
-		if err := f.deleteManifestChunks(ctx, item.manifest, fsync); err != nil {
+		attemptCtx, cancel := context.WithTimeout(ctx, manifestRetryTimeout)
+		err := f.deleteManifestChunks(attemptCtx, item.manifest, fsync)
+		cancel()
+		if err != nil {
 			q.RequeueForRetry(item, err.Error())
 			return
 		}

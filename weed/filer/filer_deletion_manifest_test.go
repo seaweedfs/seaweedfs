@@ -30,7 +30,7 @@ import (
 type flakyLookupMaster struct {
 	lookupOnlyMaster
 	available    atomic.Bool
-	onVolumeRead atomic.Pointer[func()]
+	onVolumeRead atomic.Pointer[func(http.ResponseWriter)]
 }
 
 func (m *flakyLookupMaster) LookupVolume(ctx context.Context, req *master_pb.LookupVolumeRequest) (*master_pb.LookupVolumeResponse, error) {
@@ -56,7 +56,7 @@ func newManifestDeletionFiler(t *testing.T, subChunks []*filer_pb.FileChunk) (*F
 	master := &flakyLookupMaster{}
 	volume := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if hook := master.onVolumeRead.Load(); hook != nil {
-			(*hook)()
+			(*hook)(w)
 		}
 		_, _ = w.Write(manifestBytes)
 	}))
@@ -205,7 +205,7 @@ func TestManifestRetryKeepsFsyncUpgradeInFlight(t *testing.T) {
 
 	master.available.Store(true)
 	var once sync.Once
-	upgrade := func() {
+	upgrade := func(http.ResponseWriter) {
 		once.Do(func() { q.addOrUpdate(manifest.FileId, "durable delete", 0, manifest, true) })
 	}
 	master.onVolumeRead.Store(&upgrade)
@@ -215,5 +215,42 @@ func TestManifestRetryKeepsFsyncUpgradeInFlight(t *testing.T) {
 	}
 	if q.Size() != 0 || len(q.itemIndex) != 0 {
 		t.Fatalf("manifest retry queue still holds %d items", len(q.itemIndex))
+	}
+}
+
+func TestManifestRetryStalledReadIsBounded(t *testing.T) {
+	f, master := newManifestDeletionFiler(t, []*filer_pb.FileChunk{{FileId: "4,02637037d6", Size: 8}})
+	manifest := &filer_pb.FileChunk{FileId: "3,01637037d6", Size: 8, IsChunkManifest: true}
+
+	f.doDeleteChunks(context.Background(), []*filer_pb.FileChunk{manifest}, false)
+	master.available.Store(true)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	stall := func(w http.ResponseWriter) {
+		w.Header().Set("Content-Length", "64")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-release
+	}
+	master.onVolumeRead.Store(&stall)
+
+	defer func(old time.Duration) { manifestRetryTimeout = old }(manifestRetryTimeout)
+	manifestRetryTimeout = 200 * time.Millisecond
+	makeManifestRetryDue(f, 1)
+	done := make(chan struct{})
+	go func() {
+		f.processManifestRetries(context.Background())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("a stalled manifest read held up the retry loop")
+	}
+	if got := queuedDeletions(f); len(got) != 0 {
+		t.Fatalf("queued %v after a stalled manifest read", got)
+	}
+	if f.manifestRetries().Size() != 1 {
+		t.Fatalf("manifest retry queue size %d, want the manifest requeued", f.manifestRetries().Size())
 	}
 }
