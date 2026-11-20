@@ -73,11 +73,17 @@ pub async fn pending(
             Some(State::Off) => Action::Remove,
             Some(State::Ready) => {
                 let segments = metadata_index::segments(dataset, &key.column).await?;
-                let unindexed: u64 = metadata_index::unindexed(dataset, &segments)
-                    .iter()
-                    .map(|(_, rows)| rows)
-                    .sum();
-                if unindexed == 0 || unindexed < min_unindexed_rows {
+                let pending = metadata_index::unindexed(dataset, &segments);
+                let unindexed: u64 = pending.iter().map(|(_, rows)| rows).sum();
+                if unindexed == 0 {
+                    continue;
+                }
+                // Rows a write left NULL (one that raced the key's add and
+                // stopped before fixing them) wait for no threshold: queries
+                // through the key miss them until they are derived again.
+                if unindexed < min_unindexed_rows
+                    && !has_nulls(dataset, &key.column, &pending).await?
+                {
                     continue;
                 }
                 Action::Maintain
@@ -87,6 +93,27 @@ pub async fn pending(
         out.push((key.key, action));
     }
     Ok(out)
+}
+
+/// Whether `fragments` hold a row whose `column` is NULL.
+async fn has_nulls(
+    dataset: &lance::Dataset,
+    column: &str,
+    fragments: &[(u32, u64)],
+) -> Result<bool> {
+    let ids: Vec<u64> = fragments.iter().map(|(id, _)| *id as u64).collect();
+    let mut scanner = dataset.scan();
+    scanner
+        .filter(&format!("`{}` IS NULL", column.replace('`', "``")))?
+        .with_fragments(
+            dataset
+                .fragments()
+                .iter()
+                .filter(|f| ids.contains(&f.id))
+                .cloned()
+                .collect(),
+        );
+    Ok(scanner.count_rows().await? > 0)
 }
 
 /// Carries out `action` on `key`, as the table now records it; an action the
@@ -496,6 +523,20 @@ mod tests {
             .await
             .unwrap();
         assert!(pending(&dataset, 0).await.unwrap().is_empty());
+
+        // A raced write that left NULL rows is maintained at once.
+        let stale = dataset.clone();
+        let mut dataset =
+            crate::metadata_index::tests::lifecycle::upsert_with_null_columns(stale, 4_500..4_520)
+                .await;
+        assert_eq!(
+            pending(&dataset, 1_000_000).await.unwrap(),
+            [("author".to_string(), Action::Maintain)]
+        );
+        run(&mut dataset, "author", Action::Maintain, 1_000, 1_000_000)
+            .await
+            .unwrap();
+        assert!(pending(&dataset, 1_000_000).await.unwrap().is_empty());
         let noop = run(&mut dataset, "author", Action::Remove, 1_000, 0)
             .await
             .unwrap();
