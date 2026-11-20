@@ -20,6 +20,11 @@ service VectorService {
   // How this engine's queries of an index filtered on each metadata key
   // over the last hour.
   rpc FilterStats(FilterStatsRequest) returns (FilterStatsResponse);
+  // The index's indexed metadata keys, as its Lance table records them.
+  rpc MetadataKeys(MetadataKeysRequest) returns (MetadataKeysResponse);
+  // Ask for a metadata key to be indexed, or no longer: the table records
+  // the request and the maintenance worker carries it out.
+  rpc UpdateMetadataKey(UpdateMetadataKeyRequest) returns (MetadataKeysResponse);
 }
 
 enum DistanceMetric {
@@ -166,4 +171,32 @@ message FilterStatsResponse {
   // Keys of this index not counted because the engine tracks a bounded
   // number of them.
   bool truncated = 3;
+}
+
+message MetadataKeysRequest {
+  Table table = 1;
+}
+
+message MetadataKey {
+  string key = 1;
+  // requested, building, ready or off.
+  string state = 2;
+  // The hidden column holding the key; empty while requested.
+  string column = 3;
+  // Rows the key's scalar index covers, of the table's rows.
+  uint64 indexed_rows = 4;
+  uint64 rows = 5;
+  uint64 index_bytes = 6;
+  uint32 segments = 7;
+}
+
+message MetadataKeysResponse {
+  repeated MetadataKey keys = 1;
+  uint64 version = 2;
+}
+
+message UpdateMetadataKeyRequest {
+  Table table = 1;
+  string key = 2;
+  bool remove = 3;
 }

@@ -78,6 +78,24 @@ impl VectorService for ObservedService {
         }
         result
     }
+    async fn metadata_keys(
+        &self,
+        request: Request<pb::MetadataKeysRequest>,
+    ) -> Result<Response<pb::MetadataKeysResponse>, Status> {
+        let mut in_flight = self.metrics.start("MetadataKeys");
+        let result = self.inner.metadata_keys(request).await;
+        in_flight.complete(result.as_ref().err().map(|e| e.code()));
+        result
+    }
+    async fn update_metadata_key(
+        &self,
+        request: Request<pb::UpdateMetadataKeyRequest>,
+    ) -> Result<Response<pb::MetadataKeysResponse>, Status> {
+        let mut in_flight = self.metrics.start("UpdateMetadataKey");
+        let result = self.inner.update_metadata_key(request).await;
+        in_flight.complete(result.as_ref().err().map(|e| e.code()));
+        result
+    }
     async fn filter_stats(
         &self,
         request: Request<pb::FilterStatsRequest>,

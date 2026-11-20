@@ -328,6 +328,40 @@ pub(crate) async fn heal_columns(
     bail!("writes kept replacing the rows while their indexed key columns were derived")
 }
 
+/// The indexed metadata keys `dataset` records, requested ones first.
+async fn metadata_keys(dataset: &Dataset) -> Result<pb::MetadataKeysResponse> {
+    let rows: u64 = dataset
+        .fragments()
+        .iter()
+        .map(|f| f.num_rows().unwrap_or(0) as u64)
+        .sum();
+    let mut keys: Vec<pb::MetadataKey> = metadata_index::requests(dataset)
+        .into_iter()
+        .map(|key| pb::MetadataKey {
+            key,
+            state: "requested".to_string(),
+            rows,
+            ..Default::default()
+        })
+        .collect();
+    for key in metadata_index::keys_of(dataset) {
+        let segments = metadata_index::segments(dataset, &key.column).await?;
+        keys.push(pb::MetadataKey {
+            state: key.state.map_or("unknown", |s| s.as_str()).to_string(),
+            indexed_rows: segments.iter().map(|s| s.rows).sum(),
+            index_bytes: segments.iter().map(|s| s.bytes).sum(),
+            segments: segments.len() as u32,
+            rows,
+            key: key.key,
+            column: key.column,
+        });
+    }
+    Ok(pb::MetadataKeysResponse {
+        keys,
+        version: dataset.version().version,
+    })
+}
+
 fn struct_to_json(s: &Struct) -> serde_json::Value {
     serde_json::Value::Object(
         s.fields
@@ -1189,6 +1223,40 @@ impl VectorService for VectorServer {
         self.filter_stats
             .record(&table.id.join("/"), &filter_keys, started.elapsed());
         Ok(Response::new(pb::QueryVectorsResponse { vectors }))
+    }
+
+    async fn metadata_keys(
+        &self,
+        request: Request<pb::MetadataKeysRequest>,
+    ) -> Result<Response<pb::MetadataKeysResponse>, Status> {
+        let table = request
+            .into_inner()
+            .table
+            .ok_or_else(|| Status::invalid_argument("missing table"))?;
+        let dataset = self.open_to_read(&table).await?;
+        Ok(Response::new(
+            metadata_keys(&dataset).await.map_err(internal)?,
+        ))
+    }
+
+    async fn update_metadata_key(
+        &self,
+        request: Request<pb::UpdateMetadataKeyRequest>,
+    ) -> Result<Response<pb::MetadataKeysResponse>, Status> {
+        let req = request.into_inner();
+        let table = req
+            .table
+            .ok_or_else(|| Status::invalid_argument("missing table"))?;
+        let mut dataset = self.open(&table).await?;
+        let updated = if req.remove {
+            metadata_index::request_removal(&mut dataset, &req.key).await
+        } else {
+            metadata_index::request(&mut dataset, &req.key).await
+        };
+        updated.map_err(|e| Status::failed_precondition(format!("{e:#}")))?;
+        Ok(Response::new(
+            metadata_keys(&dataset).await.map_err(internal)?,
+        ))
     }
 
     async fn filter_stats(

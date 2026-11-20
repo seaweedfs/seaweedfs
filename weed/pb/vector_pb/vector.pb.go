@@ -1271,6 +1271,257 @@ func (x *FilterStatsResponse) GetTruncated() bool {
 	return false
 }
 
+type MetadataKeysRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Table         *Table                 `protobuf:"bytes,1,opt,name=table,proto3" json:"table,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MetadataKeysRequest) Reset() {
+	*x = MetadataKeysRequest{}
+	mi := &file_vector_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetadataKeysRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetadataKeysRequest) ProtoMessage() {}
+
+func (x *MetadataKeysRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_vector_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetadataKeysRequest.ProtoReflect.Descriptor instead.
+func (*MetadataKeysRequest) Descriptor() ([]byte, []int) {
+	return file_vector_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *MetadataKeysRequest) GetTable() *Table {
+	if x != nil {
+		return x.Table
+	}
+	return nil
+}
+
+type MetadataKey struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Key   string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	// requested, building, ready or off.
+	State string `protobuf:"bytes,2,opt,name=state,proto3" json:"state,omitempty"`
+	// The hidden column holding the key; empty while requested.
+	Column string `protobuf:"bytes,3,opt,name=column,proto3" json:"column,omitempty"`
+	// Rows the key's scalar index covers, of the table's rows.
+	IndexedRows   uint64 `protobuf:"varint,4,opt,name=indexed_rows,json=indexedRows,proto3" json:"indexed_rows,omitempty"`
+	Rows          uint64 `protobuf:"varint,5,opt,name=rows,proto3" json:"rows,omitempty"`
+	IndexBytes    uint64 `protobuf:"varint,6,opt,name=index_bytes,json=indexBytes,proto3" json:"index_bytes,omitempty"`
+	Segments      uint32 `protobuf:"varint,7,opt,name=segments,proto3" json:"segments,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MetadataKey) Reset() {
+	*x = MetadataKey{}
+	mi := &file_vector_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetadataKey) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetadataKey) ProtoMessage() {}
+
+func (x *MetadataKey) ProtoReflect() protoreflect.Message {
+	mi := &file_vector_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetadataKey.ProtoReflect.Descriptor instead.
+func (*MetadataKey) Descriptor() ([]byte, []int) {
+	return file_vector_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *MetadataKey) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *MetadataKey) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *MetadataKey) GetColumn() string {
+	if x != nil {
+		return x.Column
+	}
+	return ""
+}
+
+func (x *MetadataKey) GetIndexedRows() uint64 {
+	if x != nil {
+		return x.IndexedRows
+	}
+	return 0
+}
+
+func (x *MetadataKey) GetRows() uint64 {
+	if x != nil {
+		return x.Rows
+	}
+	return 0
+}
+
+func (x *MetadataKey) GetIndexBytes() uint64 {
+	if x != nil {
+		return x.IndexBytes
+	}
+	return 0
+}
+
+func (x *MetadataKey) GetSegments() uint32 {
+	if x != nil {
+		return x.Segments
+	}
+	return 0
+}
+
+type MetadataKeysResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Keys          []*MetadataKey         `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
+	Version       uint64                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MetadataKeysResponse) Reset() {
+	*x = MetadataKeysResponse{}
+	mi := &file_vector_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MetadataKeysResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MetadataKeysResponse) ProtoMessage() {}
+
+func (x *MetadataKeysResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_vector_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MetadataKeysResponse.ProtoReflect.Descriptor instead.
+func (*MetadataKeysResponse) Descriptor() ([]byte, []int) {
+	return file_vector_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *MetadataKeysResponse) GetKeys() []*MetadataKey {
+	if x != nil {
+		return x.Keys
+	}
+	return nil
+}
+
+func (x *MetadataKeysResponse) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+type UpdateMetadataKeyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Table         *Table                 `protobuf:"bytes,1,opt,name=table,proto3" json:"table,omitempty"`
+	Key           string                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
+	Remove        bool                   `protobuf:"varint,3,opt,name=remove,proto3" json:"remove,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateMetadataKeyRequest) Reset() {
+	*x = UpdateMetadataKeyRequest{}
+	mi := &file_vector_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateMetadataKeyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateMetadataKeyRequest) ProtoMessage() {}
+
+func (x *UpdateMetadataKeyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_vector_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateMetadataKeyRequest.ProtoReflect.Descriptor instead.
+func (*UpdateMetadataKeyRequest) Descriptor() ([]byte, []int) {
+	return file_vector_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *UpdateMetadataKeyRequest) GetTable() *Table {
+	if x != nil {
+		return x.Table
+	}
+	return nil
+}
+
+func (x *UpdateMetadataKeyRequest) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *UpdateMetadataKeyRequest) GetRemove() bool {
+	if x != nil {
+		return x.Remove
+	}
+	return false
+}
+
 var File_vector_proto protoreflect.FileDescriptor
 
 const file_vector_proto_rawDesc = "" +
@@ -1360,13 +1611,31 @@ const file_vector_proto_rawDesc = "" +
 	"\x13FilterStatsResponse\x12-\n" +
 	"\x04keys\x18\x01 \x03(\v2\x19.vector_pb.FilterKeyStatsR\x04keys\x12%\n" +
 	"\x0ewindow_seconds\x18\x02 \x01(\rR\rwindowSeconds\x12\x1c\n" +
-	"\ttruncated\x18\x03 \x01(\bR\ttruncated*V\n" +
+	"\ttruncated\x18\x03 \x01(\bR\ttruncated\"=\n" +
+	"\x13MetadataKeysRequest\x12&\n" +
+	"\x05table\x18\x01 \x01(\v2\x10.vector_pb.TableR\x05table\"\xc1\x01\n" +
+	"\vMetadataKey\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05state\x18\x02 \x01(\tR\x05state\x12\x16\n" +
+	"\x06column\x18\x03 \x01(\tR\x06column\x12!\n" +
+	"\findexed_rows\x18\x04 \x01(\x04R\vindexedRows\x12\x12\n" +
+	"\x04rows\x18\x05 \x01(\x04R\x04rows\x12\x1f\n" +
+	"\vindex_bytes\x18\x06 \x01(\x04R\n" +
+	"indexBytes\x12\x1a\n" +
+	"\bsegments\x18\a \x01(\rR\bsegments\"\\\n" +
+	"\x14MetadataKeysResponse\x12*\n" +
+	"\x04keys\x18\x01 \x03(\v2\x16.vector_pb.MetadataKeyR\x04keys\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\x04R\aversion\"l\n" +
+	"\x18UpdateMetadataKeyRequest\x12&\n" +
+	"\x05table\x18\x01 \x01(\v2\x10.vector_pb.TableR\x05table\x12\x10\n" +
+	"\x03key\x18\x02 \x01(\tR\x03key\x12\x16\n" +
+	"\x06remove\x18\x03 \x01(\bR\x06remove*V\n" +
 	"\x0eDistanceMetric\x12\x1f\n" +
 	"\x1bDISTANCE_METRIC_UNSPECIFIED\x10\x00\x12\x06\n" +
 	"\x02L2\x10\x01\x12\n" +
 	"\n" +
 	"\x06COSINE\x10\x02\x12\x0f\n" +
-	"\vDOT_PRODUCT\x10\x032\xfc\x04\n" +
+	"\vDOT_PRODUCT\x10\x032\xa8\x06\n" +
 	"\rVectorService\x12L\n" +
 	"\vCreateIndex\x12\x1d.vector_pb.CreateIndexRequest\x1a\x1e.vector_pb.CreateIndexResponse\x12F\n" +
 	"\tDropIndex\x12\x1b.vector_pb.DropIndexRequest\x1a\x1c.vector_pb.DropIndexResponse\x12I\n" +
@@ -1377,7 +1646,9 @@ const file_vector_proto_rawDesc = "" +
 	"\rDeleteVectors\x12\x1f.vector_pb.DeleteVectorsRequest\x1a .vector_pb.DeleteVectorsResponse\x12L\n" +
 	"\vListVectors\x12\x1d.vector_pb.ListVectorsRequest\x1a\x1e.vector_pb.ListVectorsResponse\x12O\n" +
 	"\fQueryVectors\x12\x1e.vector_pb.QueryVectorsRequest\x1a\x1f.vector_pb.QueryVectorsResponse\x12L\n" +
-	"\vFilterStats\x12\x1d.vector_pb.FilterStatsRequest\x1a\x1e.vector_pb.FilterStatsResponseB2Z0github.com/seaweedfs/seaweedfs/weed/pb/vector_pbb\x06proto3"
+	"\vFilterStats\x12\x1d.vector_pb.FilterStatsRequest\x1a\x1e.vector_pb.FilterStatsResponse\x12O\n" +
+	"\fMetadataKeys\x12\x1e.vector_pb.MetadataKeysRequest\x1a\x1f.vector_pb.MetadataKeysResponse\x12Y\n" +
+	"\x11UpdateMetadataKey\x12#.vector_pb.UpdateMetadataKeyRequest\x1a\x1f.vector_pb.MetadataKeysResponseB2Z0github.com/seaweedfs/seaweedfs/weed/pb/vector_pbb\x06proto3"
 
 var (
 	file_vector_proto_rawDescOnce sync.Once
@@ -1392,36 +1663,40 @@ func file_vector_proto_rawDescGZIP() []byte {
 }
 
 var file_vector_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_vector_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_vector_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_vector_proto_goTypes = []any{
-	(DistanceMetric)(0),           // 0: vector_pb.DistanceMetric
-	(*Table)(nil),                 // 1: vector_pb.Table
-	(*CreateIndexRequest)(nil),    // 2: vector_pb.CreateIndexRequest
-	(*CreateIndexResponse)(nil),   // 3: vector_pb.CreateIndexResponse
-	(*DropIndexRequest)(nil),      // 4: vector_pb.DropIndexRequest
-	(*DropIndexResponse)(nil),     // 5: vector_pb.DropIndexResponse
-	(*Vector)(nil),                // 6: vector_pb.Vector
-	(*PutVectorsRequest)(nil),     // 7: vector_pb.PutVectorsRequest
-	(*PutVectorsResponse)(nil),    // 8: vector_pb.PutVectorsResponse
-	(*GetVectorsRequest)(nil),     // 9: vector_pb.GetVectorsRequest
-	(*GetVectorsResponse)(nil),    // 10: vector_pb.GetVectorsResponse
-	(*DeleteVectorsRequest)(nil),  // 11: vector_pb.DeleteVectorsRequest
-	(*DeleteVectorsResponse)(nil), // 12: vector_pb.DeleteVectorsResponse
-	(*ListVectorsRequest)(nil),    // 13: vector_pb.ListVectorsRequest
-	(*ListVectorsResponse)(nil),   // 14: vector_pb.ListVectorsResponse
-	(*QueryVectorsRequest)(nil),   // 15: vector_pb.QueryVectorsRequest
-	(*QueryResult)(nil),           // 16: vector_pb.QueryResult
-	(*QueryVectorsResponse)(nil),  // 17: vector_pb.QueryVectorsResponse
-	(*FilterStatsRequest)(nil),    // 18: vector_pb.FilterStatsRequest
-	(*FilterKeyStats)(nil),        // 19: vector_pb.FilterKeyStats
-	(*FilterStatsResponse)(nil),   // 20: vector_pb.FilterStatsResponse
-	(*structpb.Struct)(nil),       // 21: google.protobuf.Struct
+	(DistanceMetric)(0),              // 0: vector_pb.DistanceMetric
+	(*Table)(nil),                    // 1: vector_pb.Table
+	(*CreateIndexRequest)(nil),       // 2: vector_pb.CreateIndexRequest
+	(*CreateIndexResponse)(nil),      // 3: vector_pb.CreateIndexResponse
+	(*DropIndexRequest)(nil),         // 4: vector_pb.DropIndexRequest
+	(*DropIndexResponse)(nil),        // 5: vector_pb.DropIndexResponse
+	(*Vector)(nil),                   // 6: vector_pb.Vector
+	(*PutVectorsRequest)(nil),        // 7: vector_pb.PutVectorsRequest
+	(*PutVectorsResponse)(nil),       // 8: vector_pb.PutVectorsResponse
+	(*GetVectorsRequest)(nil),        // 9: vector_pb.GetVectorsRequest
+	(*GetVectorsResponse)(nil),       // 10: vector_pb.GetVectorsResponse
+	(*DeleteVectorsRequest)(nil),     // 11: vector_pb.DeleteVectorsRequest
+	(*DeleteVectorsResponse)(nil),    // 12: vector_pb.DeleteVectorsResponse
+	(*ListVectorsRequest)(nil),       // 13: vector_pb.ListVectorsRequest
+	(*ListVectorsResponse)(nil),      // 14: vector_pb.ListVectorsResponse
+	(*QueryVectorsRequest)(nil),      // 15: vector_pb.QueryVectorsRequest
+	(*QueryResult)(nil),              // 16: vector_pb.QueryResult
+	(*QueryVectorsResponse)(nil),     // 17: vector_pb.QueryVectorsResponse
+	(*FilterStatsRequest)(nil),       // 18: vector_pb.FilterStatsRequest
+	(*FilterKeyStats)(nil),           // 19: vector_pb.FilterKeyStats
+	(*FilterStatsResponse)(nil),      // 20: vector_pb.FilterStatsResponse
+	(*MetadataKeysRequest)(nil),      // 21: vector_pb.MetadataKeysRequest
+	(*MetadataKey)(nil),              // 22: vector_pb.MetadataKey
+	(*MetadataKeysResponse)(nil),     // 23: vector_pb.MetadataKeysResponse
+	(*UpdateMetadataKeyRequest)(nil), // 24: vector_pb.UpdateMetadataKeyRequest
+	(*structpb.Struct)(nil),          // 25: google.protobuf.Struct
 }
 var file_vector_proto_depIdxs = []int32{
 	1,  // 0: vector_pb.CreateIndexRequest.table:type_name -> vector_pb.Table
 	0,  // 1: vector_pb.CreateIndexRequest.distance_metric:type_name -> vector_pb.DistanceMetric
 	1,  // 2: vector_pb.DropIndexRequest.table:type_name -> vector_pb.Table
-	21, // 3: vector_pb.Vector.metadata:type_name -> google.protobuf.Struct
+	25, // 3: vector_pb.Vector.metadata:type_name -> google.protobuf.Struct
 	1,  // 4: vector_pb.PutVectorsRequest.table:type_name -> vector_pb.Table
 	6,  // 5: vector_pb.PutVectorsRequest.vectors:type_name -> vector_pb.Vector
 	1,  // 6: vector_pb.GetVectorsRequest.table:type_name -> vector_pb.Table
@@ -1430,31 +1705,38 @@ var file_vector_proto_depIdxs = []int32{
 	1,  // 9: vector_pb.ListVectorsRequest.table:type_name -> vector_pb.Table
 	6,  // 10: vector_pb.ListVectorsResponse.vectors:type_name -> vector_pb.Vector
 	1,  // 11: vector_pb.QueryVectorsRequest.table:type_name -> vector_pb.Table
-	21, // 12: vector_pb.QueryResult.metadata:type_name -> google.protobuf.Struct
+	25, // 12: vector_pb.QueryResult.metadata:type_name -> google.protobuf.Struct
 	16, // 13: vector_pb.QueryVectorsResponse.vectors:type_name -> vector_pb.QueryResult
 	1,  // 14: vector_pb.FilterStatsRequest.table:type_name -> vector_pb.Table
 	19, // 15: vector_pb.FilterStatsResponse.keys:type_name -> vector_pb.FilterKeyStats
-	2,  // 16: vector_pb.VectorService.CreateIndex:input_type -> vector_pb.CreateIndexRequest
-	4,  // 17: vector_pb.VectorService.DropIndex:input_type -> vector_pb.DropIndexRequest
-	7,  // 18: vector_pb.VectorService.PutVectors:input_type -> vector_pb.PutVectorsRequest
-	9,  // 19: vector_pb.VectorService.GetVectors:input_type -> vector_pb.GetVectorsRequest
-	11, // 20: vector_pb.VectorService.DeleteVectors:input_type -> vector_pb.DeleteVectorsRequest
-	13, // 21: vector_pb.VectorService.ListVectors:input_type -> vector_pb.ListVectorsRequest
-	15, // 22: vector_pb.VectorService.QueryVectors:input_type -> vector_pb.QueryVectorsRequest
-	18, // 23: vector_pb.VectorService.FilterStats:input_type -> vector_pb.FilterStatsRequest
-	3,  // 24: vector_pb.VectorService.CreateIndex:output_type -> vector_pb.CreateIndexResponse
-	5,  // 25: vector_pb.VectorService.DropIndex:output_type -> vector_pb.DropIndexResponse
-	8,  // 26: vector_pb.VectorService.PutVectors:output_type -> vector_pb.PutVectorsResponse
-	10, // 27: vector_pb.VectorService.GetVectors:output_type -> vector_pb.GetVectorsResponse
-	12, // 28: vector_pb.VectorService.DeleteVectors:output_type -> vector_pb.DeleteVectorsResponse
-	14, // 29: vector_pb.VectorService.ListVectors:output_type -> vector_pb.ListVectorsResponse
-	17, // 30: vector_pb.VectorService.QueryVectors:output_type -> vector_pb.QueryVectorsResponse
-	20, // 31: vector_pb.VectorService.FilterStats:output_type -> vector_pb.FilterStatsResponse
-	24, // [24:32] is the sub-list for method output_type
-	16, // [16:24] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	1,  // 16: vector_pb.MetadataKeysRequest.table:type_name -> vector_pb.Table
+	22, // 17: vector_pb.MetadataKeysResponse.keys:type_name -> vector_pb.MetadataKey
+	1,  // 18: vector_pb.UpdateMetadataKeyRequest.table:type_name -> vector_pb.Table
+	2,  // 19: vector_pb.VectorService.CreateIndex:input_type -> vector_pb.CreateIndexRequest
+	4,  // 20: vector_pb.VectorService.DropIndex:input_type -> vector_pb.DropIndexRequest
+	7,  // 21: vector_pb.VectorService.PutVectors:input_type -> vector_pb.PutVectorsRequest
+	9,  // 22: vector_pb.VectorService.GetVectors:input_type -> vector_pb.GetVectorsRequest
+	11, // 23: vector_pb.VectorService.DeleteVectors:input_type -> vector_pb.DeleteVectorsRequest
+	13, // 24: vector_pb.VectorService.ListVectors:input_type -> vector_pb.ListVectorsRequest
+	15, // 25: vector_pb.VectorService.QueryVectors:input_type -> vector_pb.QueryVectorsRequest
+	18, // 26: vector_pb.VectorService.FilterStats:input_type -> vector_pb.FilterStatsRequest
+	21, // 27: vector_pb.VectorService.MetadataKeys:input_type -> vector_pb.MetadataKeysRequest
+	24, // 28: vector_pb.VectorService.UpdateMetadataKey:input_type -> vector_pb.UpdateMetadataKeyRequest
+	3,  // 29: vector_pb.VectorService.CreateIndex:output_type -> vector_pb.CreateIndexResponse
+	5,  // 30: vector_pb.VectorService.DropIndex:output_type -> vector_pb.DropIndexResponse
+	8,  // 31: vector_pb.VectorService.PutVectors:output_type -> vector_pb.PutVectorsResponse
+	10, // 32: vector_pb.VectorService.GetVectors:output_type -> vector_pb.GetVectorsResponse
+	12, // 33: vector_pb.VectorService.DeleteVectors:output_type -> vector_pb.DeleteVectorsResponse
+	14, // 34: vector_pb.VectorService.ListVectors:output_type -> vector_pb.ListVectorsResponse
+	17, // 35: vector_pb.VectorService.QueryVectors:output_type -> vector_pb.QueryVectorsResponse
+	20, // 36: vector_pb.VectorService.FilterStats:output_type -> vector_pb.FilterStatsResponse
+	23, // 37: vector_pb.VectorService.MetadataKeys:output_type -> vector_pb.MetadataKeysResponse
+	23, // 38: vector_pb.VectorService.UpdateMetadataKey:output_type -> vector_pb.MetadataKeysResponse
+	29, // [29:39] is the sub-list for method output_type
+	19, // [19:29] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_vector_proto_init() }
@@ -1468,7 +1750,7 @@ func file_vector_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_vector_proto_rawDesc), len(file_vector_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   20,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

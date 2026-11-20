@@ -625,3 +625,68 @@ async fn a_write_that_raced_the_column_add_derives_its_updated_rows() {
     got.sort_by_key(|v| v.key[1..].parse::<usize>().unwrap());
     assert_eq!(got, rows("bob"));
 }
+
+/// Operators ask through the engine; the table records the request and,
+/// once the worker has done its part, the key's state, coverage and size.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn keys_are_requested_and_listed_through_the_engine() {
+    let fixture = Fixture::new().await;
+    fixture
+        .put((0..600).map(|i| row(i, author(i))).collect())
+        .await;
+    let update = |key: &str, remove: bool| {
+        fixture
+            .server
+            .update_metadata_key(Request::new(pb::UpdateMetadataKeyRequest {
+                table: Some(fixture.table.clone()),
+                key: key.to_string(),
+                remove,
+            }))
+    };
+    let listed = update("author", false).await.unwrap().into_inner();
+    assert_eq!(listed.keys.len(), 1);
+    assert_eq!(listed.keys[0].state, "requested");
+    assert_eq!(listed.keys[0].rows, 600);
+    let again = update("author", false).await.unwrap_err();
+    assert_eq!(again.code(), tonic::Code::FailedPrecondition);
+
+    let mut dataset = fixture.dataset(0).await;
+    let key = metadata_index::add_column(&mut dataset, "author")
+        .await
+        .unwrap();
+    metadata_index::finish(&mut dataset, &key, 1_000_000)
+        .await
+        .unwrap();
+    let listed = fixture
+        .server
+        .metadata_keys(Request::new(pb::MetadataKeysRequest {
+            table: Some(fixture.table.clone()),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let author = &listed.keys[0];
+    assert_eq!(
+        (
+            author.key.as_str(),
+            author.state.as_str(),
+            author.column.as_str()
+        ),
+        ("author", "ready", "_mk_0")
+    );
+    assert_eq!(
+        (author.indexed_rows, author.rows, author.segments),
+        (600, 600, 1)
+    );
+    assert!(author.index_bytes > 0);
+
+    // Off at once: the next query reads the JSON again.
+    let listed = update("author", true).await.unwrap().into_inner();
+    assert_eq!(listed.keys[0].state, "off");
+    let dataset = fixture.dataset(0).await;
+    assert_eq!(metadata_index::keys_of(&dataset)[0].state, Some(State::Off));
+    assert_eq!(
+        update("nobody", true).await.unwrap_err().code(),
+        tonic::Code::FailedPrecondition
+    );
+}
