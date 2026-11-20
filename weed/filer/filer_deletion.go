@@ -70,6 +70,8 @@ type DeletionRetryItem struct {
 	ledgerEpoch uint64 // pendingDeletions epoch when the item was queued; expiry forgets only a matching epoch
 	heapIndex   int    // index in the heap (for heap.Interface)
 	inFlight    bool   // true when item is being processed, prevents duplicate additions
+	manifest    *filer_pb.FileChunk
+	fsync       bool
 }
 
 // retryHeap implements heap.Interface for DeletionRetryItem
@@ -166,6 +168,10 @@ func calculateBackoff(retryCount int) time.Duration {
 // AddOrUpdate adds a new failed deletion or updates an existing one
 // Time complexity: O(log N) for insertion/update
 func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string, ledgerEpoch uint64) {
+	q.addOrUpdate(fileId, errorMsg, ledgerEpoch, nil, false)
+}
+
+func (q *DeletionRetryQueue) addOrUpdate(fileId string, errorMsg string, ledgerEpoch uint64, manifest *filer_pb.FileChunk, fsync bool) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
@@ -175,6 +181,7 @@ func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string, ledgerE
 		// The existing retry schedule should proceed.
 		// RetryCount is only incremented in RequeueForRetry when an actual retry is performed.
 		item.LastError = errorMsg
+		item.fsync = item.fsync || fsync
 		// Keep the recorded epoch while the item is in flight: an expiry or
 		// permanent outcome from that attempt must forget only the record it
 		// started with, not a newer enqueue for the same id. This also keeps
@@ -199,6 +206,8 @@ func (q *DeletionRetryQueue) AddOrUpdate(fileId string, errorMsg string, ledgerE
 		LastError:   errorMsg,
 		ledgerEpoch: ledgerEpoch,
 		inFlight:    false,
+		manifest:    manifest,
+		fsync:       fsync,
 	}
 	heap.Push(&q.heap, item)
 	q.itemIndex[fileId] = item
@@ -271,6 +280,22 @@ func (q *DeletionRetryQueue) Remove(item *DeletionRetryItem) {
 
 	// Item was already removed from heap by GetReadyItems, just remove from index
 	delete(q.itemIndex, item.FileId)
+}
+
+func (q *DeletionRetryQueue) fsyncOf(item *DeletionRetryItem) bool {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	return item.fsync
+}
+
+func (q *DeletionRetryQueue) removeUnlessFsyncChanged(item *DeletionRetryItem, fsync bool) bool {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	if item.fsync != fsync {
+		return false
+	}
+	delete(q.itemIndex, item.FileId)
+	return true
 }
 
 // Size returns the current size of the retry queue
@@ -556,6 +581,12 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 
 	ticker := time.NewTicker(DeletionRetryPollInterval)
 	defer ticker.Stop()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		<-f.deletionQuit
+		cancel()
+	}()
 
 	for {
 		select {
@@ -587,6 +618,7 @@ func (f *Filer) loopProcessingDeletionRetry(lookupFunc func([]string) (map[strin
 			if totalProcessed > 0 {
 				glog.V(1).Infof("retried deletion of %d files", totalProcessed)
 			}
+			f.processManifestRetries(ctx)
 		}
 	}
 }
@@ -669,14 +701,90 @@ func (f *Filer) doDeleteChunks(ctx context.Context, chunks []*filer_pb.FileChunk
 			f.queueDeletions(fsync, chunk.GetFileIdString())
 			continue
 		}
-		dataChunks, manifestResolveErr := ResolveOneChunkManifest(ctx, f.MasterClient.LookupFileId, chunk, f.MasterClient)
-		if manifestResolveErr != nil {
-			glog.V(0).InfofCtx(ctx, "failed to resolve manifest %s: %v", chunk.FileId, manifestResolveErr)
+		// The manifest needle is the only record of its sub-chunks, so it
+		// stays until they are queued.
+		fileIds, err := f.manifestFileIds(ctx, chunk)
+		if err != nil {
+			glog.WarningfCtx(ctx, "failed to resolve manifest %s, will retry: %v", chunk.GetFileIdString(), err)
+			f.manifestRetries().addOrUpdate(chunk.GetFileIdString(), err.Error(), 0, chunk, fsync)
+			continue
 		}
-		for _, dChunk := range dataChunks {
-			f.queueDeletions(fsync, dChunk.GetFileIdString())
+		f.queueDeletions(fsync, fileIds...)
+	}
+}
+
+// manifestFileIds resolves a manifest and any nested manifests, listing each
+// sub-chunk ahead of the manifest that holds it.
+func (f *Filer) manifestFileIds(ctx context.Context, manifest *filer_pb.FileChunk) ([]string, error) {
+	dataChunks, err := ResolveOneChunkManifest(ctx, f.MasterClient.GetLookupFileIdFunction(), manifest, f.MasterClient)
+	if err != nil {
+		return nil, err
+	}
+	var fileIds []string
+	for _, chunk := range dataChunks {
+		if !chunk.IsChunkManifest {
+			fileIds = append(fileIds, chunk.GetFileIdString())
+			continue
 		}
-		f.queueDeletions(fsync, chunk.GetFileIdString())
+		nested, err := f.manifestFileIds(ctx, chunk)
+		if err != nil {
+			return nil, err
+		}
+		fileIds = append(fileIds, nested...)
+	}
+	return append(fileIds, manifest.GetFileIdString()), nil
+}
+
+func (f *Filer) manifestRetries() *DeletionRetryQueue {
+	f.manifestRetryOnce.Do(func() {
+		f.manifestRetryQueue = NewDeletionRetryQueue()
+	})
+	return f.manifestRetryQueue
+}
+
+// processManifestRetries resolves manifests that failed to resolve on delete.
+// One that never resolves within MaxRetryAttempts is deleted alone, leaving
+// its sub-chunks to volume.fsck. A pass stops after manifestRetryTimeout and
+// leaves the rest queued, so the shared retry loop gets its turn.
+func (f *Filer) processManifestRetries(ctx context.Context) {
+	q := f.manifestRetries()
+	passCtx, cancel := context.WithTimeout(ctx, manifestRetryTimeout)
+	defer cancel()
+	for passCtx.Err() == nil {
+		ready, expired := q.GetReadyItems(1)
+		for _, item := range expired {
+			f.queueDeletions(item.fsync, item.FileId)
+		}
+		if len(ready) == 0 {
+			if len(expired) == 0 {
+				return
+			}
+			continue
+		}
+		f.retryManifest(ctx, q, ready[0])
+	}
+}
+
+// manifestRetryTimeout bounds one manifest read so a stalled volume server
+// cannot hold up the shared retry loop.
+var manifestRetryTimeout = 1 * time.Minute
+
+// retryManifest queues the resolved ids again, without rereading the manifest
+// it already queued, when a durable delete arrived during the attempt.
+func (f *Filer) retryManifest(ctx context.Context, q *DeletionRetryQueue, item *DeletionRetryItem) {
+	attemptCtx, cancel := context.WithTimeout(ctx, manifestRetryTimeout)
+	fileIds, err := f.manifestFileIds(attemptCtx, item.manifest)
+	cancel()
+	if err != nil {
+		q.RequeueForRetry(item, err.Error())
+		return
+	}
+	for {
+		fsync := q.fsyncOf(item)
+		f.queueDeletions(fsync, fileIds...)
+		if q.removeUnlessFsyncChanged(item, fsync) {
+			return
+		}
 	}
 }
 

@@ -89,6 +89,8 @@ type Filer struct {
 	DeletionRetryQueue            *DeletionRetryQueue
 	EmptyFolderCleaner            *empty_folder_cleanup.EmptyFolderCleaner
 	EmptyFolderCleanupDelay       time.Duration
+	manifestRetryOnce             sync.Once
+	manifestRetryQueue            *DeletionRetryQueue
 	persistedLogCache             *persistedLogCache
 	metaLogInflight               metaLogInflight
 	remoteTombstones              *remoteDeletionTombstones
