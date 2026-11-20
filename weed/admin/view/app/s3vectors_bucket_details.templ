@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3vectors"
 )
 
 templ S3VectorsBucketDetails(data dash.S3VectorsBucketData) {
@@ -103,6 +104,9 @@ templ S3VectorsBucketDetails(data dash.S3VectorsBucketData) {
 			</div>
 		</div>
 	</div>
+	for _, panel := range data.Panels {
+		@S3VectorsIndexPanel(panel)
+	}
 	<div class="card shadow mb-4">
 		<div class="card-header py-3">
 			<h6 class="m-0 font-weight-bold text-primary">
@@ -138,6 +142,30 @@ templ S3VectorsBucketDetails(data dash.S3VectorsBucketData) {
 			</div>
 		</div>
 	</div>
+	<div class="modal fade" id="indexS3VectorsMetadataKeyModal" tabindex="-1" aria-labelledby="indexS3VectorsMetadataKeyModalLabel" aria-hidden="true">
+		<div class="modal-dialog">
+			<div class="modal-content">
+				<div class="modal-header">
+					<h5 class="modal-title" id="indexS3VectorsMetadataKeyModalLabel">
+						<i class="bi bi-tags me-2"></i>Index a metadata key of <span id="indexS3VectorsMetadataKeyIndex"></span>
+					</h5>
+					<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+				</div>
+				<div class="modal-body">
+					<label for="indexS3VectorsMetadataKeyName" class="form-label">Metadata key</label>
+					<input type="text" class="form-control" id="indexS3VectorsMetadataKeyName" autocomplete="off"/>
+					<div class="form-text">Filters comparing this key with strings ($eq, $in) read its index instead of every row's metadata. Results do not change.</div>
+					<div class="text-danger small mt-2" id="indexS3VectorsMetadataKeyError"></div>
+				</div>
+				<div class="modal-footer">
+					<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+					<button type="button" class="btn btn-primary" id="indexS3VectorsMetadataKeyBtn">
+						<i class="bi bi-plus-lg me-1"></i>Index
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
 	<div id="s3vectorsBucketDetails" data-bucket-name={ data.Bucket.Name }></div>
 	<script>
 		document.addEventListener('DOMContentLoaded', function () {
@@ -149,6 +177,65 @@ templ S3VectorsBucketDetails(data dash.S3VectorsBucketData) {
 					modalEl.dataset.indexName = this.dataset.indexName || '';
 					document.getElementById('deleteS3VectorsIndexName').textContent = this.dataset.indexName || '';
 					modal.show();
+				});
+			});
+			async function updateMetadataKey(index, key, remove) {
+				const url = remove
+					? '/api/s3vectors/metadata-keys?bucket=' + encodeURIComponent(bucket) + '&index=' + encodeURIComponent(index) + '&key=' + encodeURIComponent(key)
+					: '/api/s3vectors/metadata-keys';
+				const options = { method: remove ? 'DELETE' : 'POST', headers: s3tWriteHeaders() };
+				if (!remove) {
+					options.headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers);
+					options.body = JSON.stringify({ bucket: bucket, index: index, key: key });
+				}
+				const response = await fetch(s3tBasePath(url), options);
+				const data = await response.json();
+				if (!response.ok) {
+					throw new Error(data.error || 'request failed');
+				}
+				return data;
+			}
+			const keyModalEl = document.getElementById('indexS3VectorsMetadataKeyModal');
+			const keyModal = new bootstrap.Modal(keyModalEl);
+			const keyInput = document.getElementById('indexS3VectorsMetadataKeyName');
+			const keyError = document.getElementById('indexS3VectorsMetadataKeyError');
+			document.querySelectorAll('.s3vectors-index-key-btn').forEach(button => {
+				button.addEventListener('click', function () {
+					keyModalEl.dataset.indexName = this.dataset.indexName || '';
+					keyModalEl.dataset.nonFilterable = this.dataset.nonFilterable || '[]';
+					document.getElementById('indexS3VectorsMetadataKeyIndex').textContent = this.dataset.indexName || '';
+					keyInput.value = this.dataset.key || '';
+					keyError.textContent = '';
+					keyModal.show();
+				});
+			});
+			document.getElementById('indexS3VectorsMetadataKeyBtn').addEventListener('click', async function () {
+				const index = keyModalEl.dataset.indexName;
+				const key = keyInput.value.trim();
+				if (!key) {
+					keyError.textContent = 'Enter a metadata key.';
+					return;
+				}
+				if (JSON.parse(keyModalEl.dataset.nonFilterable || '[]').includes(key)) {
+					keyError.textContent = key + ' is a non-filterable key of this index and cannot be indexed.';
+					return;
+				}
+				try {
+					await updateMetadataKey(index, key, false);
+					location.reload();
+				} catch (error) {
+					keyError.textContent = error.message;
+				}
+			});
+			document.querySelectorAll('.s3vectors-remove-key-btn').forEach(button => {
+				button.addEventListener('click', async function () {
+					if (!confirm((this.dataset.action || 'Remove') + ' the index of metadata key ' + this.dataset.key + '?')) return;
+					try {
+						await updateMetadataKey(this.dataset.indexName, this.dataset.key, true);
+						location.reload();
+					} catch (error) {
+						alert(error.message);
+					}
 				});
 			});
 			document.getElementById('deleteS3VectorsIndexBtn').addEventListener('click', async function () {
@@ -168,6 +255,141 @@ templ S3VectorsBucketDetails(data dash.S3VectorsBucketData) {
 			});
 		});
 	</script>
+}
+
+templ S3VectorsIndexPanel(panel dash.S3VectorsIndexPanel) {
+	<div class="card shadow mb-4 s3vectors-index-panel" data-index-name={ panel.Index.IndexName }>
+		<div class="card-header py-3">
+			<h6 class="m-0 font-weight-bold text-primary">
+				<i class="bi bi-diagram-3 me-2"></i>Index: { panel.Index.IndexName }
+			</h6>
+			<div class="small text-muted mt-1">
+				{ fmt.Sprintf("Dimension %d", panel.Index.Dimension) } · { panel.Index.DistanceMetric } · { groupDigits(float64(panel.Vectors)) } vectors · Vector index:
+				if panel.VectorIndex != "" {
+					{ panel.VectorIndex }
+				} else {
+					none (exact scan)
+				}
+			</div>
+		</div>
+		<div class="card-body">
+			if panel.Error != "" {
+				<div class="alert alert-warning py-2 small">{ panel.Error }</div>
+			}
+			<div class="d-flex justify-content-between align-items-center mb-2">
+				<strong>Metadata indexes</strong>
+				<button type="button" class="btn btn-outline-primary btn-sm s3vectors-index-key-btn" data-index-name={ panel.Index.IndexName } data-non-filterable={ nonFilterableJSON(panel.Index) }>
+					<i class="bi bi-plus-lg me-1"></i>Index a key
+				</button>
+			</div>
+			<div class="table-responsive">
+				<table class="table table-sm table-hover mb-3">
+					<thead>
+						<tr>
+							<th>Key</th>
+							<th>State</th>
+							<th>Coverage</th>
+							<th>Filtered queries/h</th>
+							<th>Size</th>
+							<th></th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, key := range panel.Keys {
+							<tr>
+								<td><code>{ key.Key }</code></td>
+								<td>{ keyState(key.State) }</td>
+								<td>
+									if key.State == "requested" {
+										—
+									} else {
+										{ fmt.Sprintf("%.0f%%", key.Coverage) }
+									}
+								</td>
+								<td>{ groupDigits(key.QueriesPerHour) }</td>
+								<td>
+									if key.IndexBytes > 0 {
+										{ fmt.Sprintf("%.1f MiB", float64(key.IndexBytes)/(1<<20)) }
+									} else {
+										—
+									}
+								</td>
+								<td>
+									if key.State == "ready" {
+										<button type="button" class="btn btn-link btn-sm p-0 text-danger s3vectors-remove-key-btn" data-index-name={ panel.Index.IndexName } data-key={ key.Key } data-action="Remove">Remove</button>
+									} else if key.State == "requested" || key.State == "building" {
+										<button type="button" class="btn btn-link btn-sm p-0 s3vectors-remove-key-btn" data-index-name={ panel.Index.IndexName } data-key={ key.Key } data-action="Cancel">Cancel</button>
+									}
+								</td>
+							</tr>
+						}
+						if len(panel.Keys) == 0 {
+							<tr>
+								<td colspan="6" class="text-center text-muted">No indexed metadata keys.</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+			<strong>Frequently filtered, not indexed</strong>
+			if panel.StatsError != "" {
+				<div class="text-muted small">{ panel.StatsError }</div>
+			}
+			if len(panel.Frequent) == 0 {
+				<div class="text-muted small mt-1">No filtered queries in the last hour on keys without an index.</div>
+			}
+			<ul class="list-unstyled mt-1 mb-0">
+				for _, key := range panel.Frequent {
+					<li class="d-flex align-items-center py-1">
+						<code class="me-3">{ key.Key }</code>
+						<span class="me-3">{ groupDigits(key.QueriesPerHour) } queries/h</span>
+						<span class="me-3 text-muted">{ fmt.Sprintf("avg %.0f ms", key.AvgMs) }</span>
+						if key.Numeric {
+							<span class="text-muted small">(numeric: phase 2)</span>
+						} else {
+							<button type="button" class="btn btn-outline-primary btn-sm ms-auto s3vectors-index-key-btn" data-index-name={ panel.Index.IndexName } data-key={ key.Key } data-non-filterable={ nonFilterableJSON(panel.Index) }>Index</button>
+						}
+					</li>
+				}
+			</ul>
+		</div>
+	</div>
+}
+
+func keyState(state string) string {
+	switch state {
+	case "requested":
+		return "Requested"
+	case "building":
+		return "Building"
+	case "ready":
+		return "Ready"
+	case "off":
+		return "Removing"
+	}
+	return state
+}
+
+// groupDigits renders n rounded, with thousands separators.
+func groupDigits(n float64) string {
+	digits := fmt.Sprintf("%.0f", n)
+	var out []byte
+	for i := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, digits[i])
+	}
+	return string(out)
+}
+
+func nonFilterableJSON(index *s3vectors.Index) string {
+	keys := []string{}
+	if index.MetadataConfiguration != nil {
+		keys = index.MetadataConfiguration.NonFilterableMetadataKeys
+	}
+	b, _ := json.Marshal(keys)
+	return string(b)
 }
 
 const maxIndentedJSONDepth = 32

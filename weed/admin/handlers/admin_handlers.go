@@ -264,6 +264,7 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	s3VectorsApi.Handle("/buckets", wrapWrite(h.adminServer.DeleteS3VectorsBucket)).Methods(http.MethodDelete)
 	s3VectorsApi.HandleFunc("/indexes", h.adminServer.GetS3VectorsBucketAPI).Methods(http.MethodGet)
 	s3VectorsApi.Handle("/indexes", wrapWrite(h.adminServer.DeleteS3VectorsIndex)).Methods(http.MethodDelete)
+	s3VectorsApi.Handle("/metadata-keys", wrapWrite(h.adminServer.UpdateS3VectorsMetadataKeyAPI)).Methods(http.MethodPost, http.MethodDelete)
 
 	filesApi := api.PathPrefix("/files").Subrouter()
 	filesApi.Handle("/delete", wrapWrite(h.fileBrowserHandlers.DeleteFile)).Methods(http.MethodDelete)
