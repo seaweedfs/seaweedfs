@@ -51,6 +51,13 @@ func (wfs *WFS) withFilerClient(ctx context.Context, streamingMode bool, callWai
 
 			if err != nil {
 				// glog.V(0).Infof("WithFilerClient %d %v: %v", x, filerGrpcAddress, err)
+				// A verdict is the filer's answer, and another filer would give
+				// the same one. Stop here, so that a later filer's transport
+				// error cannot replace it and turn it into a retry.
+				if filer_pb.IsFilerVerdict(err) {
+					atomic.StoreInt32(&wfs.option.filerIndex, i)
+					return err
+				}
 			} else {
 				atomic.StoreInt32(&wfs.option.filerIndex, i)
 				return nil
