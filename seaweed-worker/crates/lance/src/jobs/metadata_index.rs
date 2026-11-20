@@ -523,6 +523,58 @@ mod tests {
         assert_eq!(metadata_index::requests(&adder), ["lang"]);
     }
 
+    /// A key that went ready on an empty table builds its first segment
+    /// once rows arrive, below the threshold.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_key_ready_without_a_segment_is_maintained_at_once() {
+        use crate::metadata_index::tests::lifecycle::{table, upsert};
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut dataset = table(&dir, 1).await;
+        dataset.delete("true").await.unwrap();
+        metadata_index::request(&mut dataset, "author")
+            .await
+            .unwrap();
+        run(
+            &mut dataset,
+            "author",
+            Action::Add,
+            1_000,
+            0,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            metadata_index::keys_of(&dataset)[0].state,
+            Some(State::Ready)
+        );
+        assert!(pending(&dataset, 1_000_000).await.unwrap().is_empty());
+
+        let mut dataset = upsert(dataset, 0..100).await;
+        assert_eq!(
+            pending(&dataset, 1_000_000).await.unwrap(),
+            [("author".to_string(), Action::Maintain)]
+        );
+        run(
+            &mut dataset,
+            "author",
+            Action::Maintain,
+            1_000,
+            1_000_000,
+            std::time::Duration::ZERO,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            metadata_index::segments(&dataset, "_mk_0")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(pending(&dataset, 1_000_000).await.unwrap().is_empty());
+    }
+
     /// What the table asks for is what a job does, and a job the table no
     /// longer asks for does nothing.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
