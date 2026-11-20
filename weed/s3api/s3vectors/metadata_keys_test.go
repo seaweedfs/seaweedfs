@@ -60,3 +60,14 @@ func TestMetadataKeyIndexable(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMetadataKeysWithoutAnEngine(t *testing.T) {
+	s := &Server{}
+	if s.hasEngine() {
+		t.Fatal("a server without a client has an engine")
+	}
+	s.vectors = &describedClient{}
+	if s.hasEngine() {
+		t.Fatal("a describe wrapper around no client has an engine")
+	}
+}

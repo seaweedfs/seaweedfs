@@ -24,6 +24,9 @@ func (s *Server) MetadataKeys(ctx context.Context, bucket, index string) (*vecto
 	if _, err := s.trustedIndex(ctx, bucket, index); err != nil {
 		return nil, err
 	}
+	if !s.hasEngine() {
+		return nil, errNoEngine
+	}
 	return s.vectors.MetadataKeys(ctx, &vector_pb.MetadataKeysRequest{Table: tableID(bucket, index)})
 }
 
@@ -34,6 +37,9 @@ func (s *Server) UpdateMetadataKey(ctx context.Context, bucket, index, key strin
 	idx, err := s.trustedIndex(ctx, bucket, index)
 	if err != nil {
 		return nil, err
+	}
+	if !s.hasEngine() {
+		return nil, errNoEngine
 	}
 	if !remove {
 		if err := metadataKeyIndexable(idx, key); err != nil {
@@ -48,6 +54,17 @@ func (s *Server) UpdateMetadataKey(ctx context.Context, bucket, index, key strin
 		Key:    key,
 		Remove: remove,
 	})
+}
+
+var errNoEngine = fmt.Errorf("no vector engine is configured")
+
+// hasEngine reports whether calls can reach an engine client.
+func (s *Server) hasEngine() bool {
+	backend := s.vectors
+	if described, ok := backend.(*describedClient); ok {
+		backend = described.VectorServiceClient
+	}
+	return backend != nil
 }
 
 func (s *Server) trustedIndex(ctx context.Context, bucket, index string) (*Index, error) {
