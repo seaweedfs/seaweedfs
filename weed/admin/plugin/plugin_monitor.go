@@ -466,9 +466,12 @@ func mergeTerminalDetailIntoTracked(tracked *TrackedJob, detail *TrackedJob) {
 	if !isActiveTrackedJobState(tracked.State) {
 		return
 	}
-	// the detail is written as each attempt changes while the job list is
-	// saved periodically, so the detail names the latest attempt
-	if detail.RequestID != "" {
+	if detail.RequestID != "" && tracked.RequestID != "" && detail.RequestID != tracked.RequestID {
+		// the two files can name different attempts either way round: the
+		// job list is saved periodically, and a detail write can fail
+		if !detailIsNewerAttempt(tracked, detail) {
+			return
+		}
 		tracked.RequestID = detail.RequestID
 	}
 	if detail.State != "" {
@@ -498,6 +501,19 @@ func mergeTerminalDetailIntoTracked(tracked *TrackedJob, detail *TrackedJob) {
 	if tracked.UpdatedAt == nil && tracked.CompletedAt != nil {
 		tracked.UpdatedAt = tracked.CompletedAt
 	}
+}
+
+// detailIsNewerAttempt reports whether detail describes a later attempt than
+// tracked: the higher attempt number, else the later update.
+func detailIsNewerAttempt(tracked *TrackedJob, detail *TrackedJob) bool {
+	if tracked.Attempt > 0 && detail.Attempt > 0 && tracked.Attempt != detail.Attempt {
+		return detail.Attempt > tracked.Attempt
+	}
+	detailAt := jobLastUpdated(detail)
+	if detail.CompletedAt != nil && detail.CompletedAt.After(detailAt) {
+		detailAt = *detail.CompletedAt
+	}
+	return detailAt.After(jobLastUpdated(tracked))
 }
 
 func (r *Plugin) ListTrackedJobs(jobType string, state string, limit int) []TrackedJob {

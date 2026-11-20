@@ -615,3 +615,43 @@ func TestRestoreTakesFinishedRetryFromDetail(t *testing.T) {
 		t.Fatalf("want exec-b succeeded, got %+v", tracked)
 	}
 }
+
+// A detail still holding an older finished attempt, after the newer retry's
+// detail write failed, does not hide the retry the job list names.
+func TestRestoreKeepsNewerRetryOverOlderDetail(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name                          string
+		trackedAttempt, detailAttempt int32
+	}{
+		{name: "by attempt", trackedAttempt: 2, detailAttempt: 1},
+		{name: "by time"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			store, err := NewConfigStore(dataDir)
+			if err != nil {
+				t.Fatalf("NewConfigStore: %v", err)
+			}
+			now := time.Now().UTC()
+			const jobID = "job-retry-running"
+			if err := store.SaveTrackedJobs([]TrackedJob{{JobID: jobID, JobType: orphanTestJobType, RequestID: "exec-b", State: restoredTestStateRunning, Attempt: tc.trackedAttempt,
+				CreatedAt: timeToPtr(now.Add(-time.Hour)), UpdatedAt: timeToPtr(now)}}); err != nil {
+				t.Fatalf("SaveTrackedJobs: %v", err)
+			}
+			if err := store.SaveJobDetail(TrackedJob{JobID: jobID, JobType: orphanTestJobType, RequestID: "exec-a", State: StateFailed, Attempt: tc.detailAttempt,
+				UpdatedAt: timeToPtr(now.Add(-time.Minute)), CompletedAt: timeToPtr(now.Add(-time.Minute))}); err != nil {
+				t.Fatalf("SaveJobDetail: %v", err)
+			}
+			p, err := New(Options{DataDir: dataDir})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			defer p.Shutdown()
+			tracked, _ := p.GetTrackedJob(jobID)
+			if tracked == nil || tracked.State != restoredTestStateRunning || tracked.RequestID != "exec-b" {
+				t.Fatalf("want exec-b running, got %+v", tracked)
+			}
+		})
+	}
+}
