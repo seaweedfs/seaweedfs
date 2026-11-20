@@ -8,10 +8,18 @@
 # living in this file: prefix the key with WEED_, upper-case it, and replace
 # "." with "_". This is the recommended way to inject the secrets in here from
 # a Kubernetes Secret (env valueFrom.secretKeyRef) rather than a ConfigMap.
-# The JWT signing keys map to:
-#   WEED_JWT_SIGNING_KEY, WEED_JWT_SIGNING_READ_KEY              (master <-> volume)
-#   WEED_JWT_FILER_SIGNING_KEY, WEED_JWT_FILER_SIGNING_READ_KEY  (s3/clients <-> filer)
-#   WEED_JWT_FILER_SIGNING_SUBSCRIBE_KEY                         (filer metadata subscriptions)
+# The JWT signing keys map to these env vars. When each component gets its own
+# set, give it every key it signs or verifies with:
+#   WEED_JWT_SIGNING_KEY                  master, volume, filer, weed shell
+#   WEED_JWT_SIGNING_READ_KEY             master, volume, and every process that
+#                                         reads chunks from volume servers: filer,
+#                                         s3, mount, webdav, sftp, filer.sync,
+#                                         filer.backup, workers, admin, weed shell
+#   WEED_JWT_FILER_SIGNING_KEY            filer, s3, admin and workers (admin IAM and
+#                                         worker gRPC calls), and clients of the filer
+#                                         HTTP API
+#   WEED_JWT_FILER_SIGNING_READ_KEY       filer, s3, and clients of the filer HTTP API
+#   WEED_JWT_FILER_SIGNING_SUBSCRIBE_KEY  filer metadata subscriptions
 # A set env var wins over the file, so the file can stay empty (or absent).
 
 # comma separated origins allowed to make requests to the filer and s3 gateway.
@@ -19,8 +27,10 @@
 [cors.allowed_origins]
 values = "*"
 
-# this jwt signing key is read by master and volume server, and it is used for write operations:
+# this jwt signing key is used for write operations on volume servers:
 # - the Master server generates the JWT, which can be used to write a certain file on a volume server
+# - the Filer generates it for the chunk writes it proxies to volume servers,
+#   and weed shell for fs.merge_volumes and fs.distribute_chunks
 # - the Volume server validates the JWT on writing
 # the jwt defaults to expire after 10 seconds.
 [jwt.signing]
@@ -55,10 +65,12 @@ enabled = true
 user = ""
 password = ""
 
-# this jwt signing key is read by master and volume server, and it is used for read operations:
+# this jwt signing key is used for read operations on volume servers:
 # - the Master server generates the JWT, which can be used to read a certain file on a volume server
+# - every process that reads chunks straight from volume servers generates its
+#   own: filer, s3, mount, webdav, sftp, filer.sync, filer.backup, workers,
+#   admin and weed shell. Without the key, their reads fail with "wrong jwt".
 # - the Volume server validates the JWT on reading
-# NOTE: jwt for read is only supported with master+volume setup. Filer does not support this mode.
 [jwt.signing.read]
 key = ""
 expires_after_seconds = 10           # seconds
