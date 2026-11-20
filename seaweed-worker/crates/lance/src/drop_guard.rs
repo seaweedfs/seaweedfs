@@ -8,9 +8,10 @@
 
 use std::fmt;
 use std::ops::Range;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
+use futures::StreamExt;
 use futures::stream::BoxStream;
 use lance::io::WrappingObjectStore;
 use object_store::path::Path;
@@ -19,12 +20,21 @@ use object_store::{
     ObjectStoreExt, PutMultipartOptions, PutOptions, PutPayload, PutResult, RenameOptions, Result,
 };
 
-/// Fails every write once the manifest of the version the job opened is
-/// gone. Armed with that manifest's path after the open; until then it lets
-/// everything through.
+/// Fails every write once the manifest it watches is gone: the one of the
+/// version the job opened, then the newest the job committed. Armed after the
+/// open; until then it lets everything through. When the job itself deletes
+/// the watched manifest, removing old versions as a purge does, it watches
+/// the newest manifest left instead.
 #[derive(Debug, Default)]
 pub struct DropGuard {
-    manifest: Arc<OnceLock<Path>>,
+    watched: Arc<Mutex<Watched>>,
+}
+
+#[derive(Debug, Default)]
+struct Watched {
+    manifest: Option<Path>,
+    /// The job deleted the watched manifest itself.
+    deleted: bool,
 }
 
 impl DropGuard {
@@ -34,7 +44,7 @@ impl DropGuard {
 
     /// Watch `manifest`, the opened version's.
     pub fn arm(&self, manifest: Path) {
-        let _ = self.manifest.set(manifest);
+        self.watched.lock().unwrap().manifest = Some(manifest);
     }
 }
 
@@ -42,7 +52,7 @@ impl WrappingObjectStore for DropGuard {
     fn wrap(&self, _prefix: &str, original: Arc<dyn ObjectStore>) -> Arc<dyn ObjectStore> {
         Arc::new(Guarded {
             inner: original,
-            manifest: self.manifest.clone(),
+            watched: self.watched.clone(),
         })
     }
 }
@@ -50,15 +60,25 @@ impl WrappingObjectStore for DropGuard {
 #[derive(Debug)]
 struct Guarded {
     inner: Arc<dyn ObjectStore>,
-    manifest: Arc<OnceLock<Path>>,
+    watched: Arc<Mutex<Watched>>,
 }
 
 impl Guarded {
     async fn check(&self, location: &Path) -> Result<()> {
-        let Some(manifest) = self.manifest.get() else {
+        let (manifest, deleted) = {
+            let watched = self.watched.lock().unwrap();
+            (watched.manifest.clone(), watched.deleted)
+        };
+        let Some(mut manifest) = manifest else {
             return Ok(());
         };
-        match self.inner.head(manifest).await {
+        if deleted {
+            manifest = self.newest_manifest(&manifest).await?.unwrap_or(manifest);
+            let mut watched = self.watched.lock().unwrap();
+            watched.manifest = Some(manifest.clone());
+            watched.deleted = false;
+        }
+        match self.inner.head(&manifest).await {
             Ok(_) => Ok(()),
             Err(object_store::Error::NotFound { .. }) => Err(object_store::Error::Generic {
                 store: "DropGuard",
@@ -74,6 +94,33 @@ impl Guarded {
 
 fn is_manifest(location: &Path) -> bool {
     location.extension() == Some("manifest")
+}
+
+impl Guarded {
+    /// The most recently written manifest beside `manifest`.
+    async fn newest_manifest(&self, manifest: &Path) -> Result<Option<Path>> {
+        let dir: Path = manifest
+            .parts()
+            .take(manifest.parts().count() - 1)
+            .collect();
+        let listed = self.inner.list_with_delimiter(Some(&dir)).await?;
+        Ok(listed
+            .objects
+            .into_iter()
+            .filter(|o| is_manifest(&o.location))
+            .max_by_key(|o| o.last_modified)
+            .map(|o| o.location))
+    }
+
+    fn committed(&self, location: &Path) {
+        if is_manifest(location) {
+            let mut watched = self.watched.lock().unwrap();
+            if watched.manifest.is_some() {
+                watched.manifest = Some(location.clone());
+                watched.deleted = false;
+            }
+        }
+    }
 }
 
 impl fmt::Display for Guarded {
@@ -101,6 +148,7 @@ impl ObjectStore for Guarded {
             let _ = self.inner.delete(location).await;
             return Err(dropped);
         }
+        self.committed(location);
         Ok(put)
     }
 
@@ -125,6 +173,17 @@ impl ObjectStore for Guarded {
         &self,
         locations: BoxStream<'static, Result<Path>>,
     ) -> BoxStream<'static, Result<Path>> {
+        let watched = self.watched.clone();
+        let locations = locations
+            .inspect(move |location| {
+                if let Ok(location) = location {
+                    let mut watched = watched.lock().unwrap();
+                    if watched.manifest.as_ref() == Some(location) {
+                        watched.deleted = true;
+                    }
+                }
+            })
+            .boxed();
         self.inner.delete_stream(locations)
     }
 
