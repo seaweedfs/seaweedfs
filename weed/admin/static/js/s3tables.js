@@ -850,6 +850,7 @@ function initS3TablesTableSelection() {
         refresh();
     });
     boxes.forEach(box => box.addEventListener('change', refresh));
+    document.getElementById('deleteS3TablesSelectedConfirm').disabled = false;
     s3tablesSelectedDeleteModal = new bootstrap.Modal(document.getElementById('deleteS3TablesSelectedModal'));
     deleteSelected.addEventListener('click', () => {
         const names = selectedS3TablesTableNames();
