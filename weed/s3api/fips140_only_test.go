@@ -1,0 +1,201 @@
+package s3api
+
+import (
+	"bytes"
+	"crypto/md5"
+	"encoding/base64"
+	"net/http"
+	"net/url"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+)
+
+// setFIPS140Enforced overrides fips140Enforced for the duration of the test.
+func setFIPS140Enforced(t *testing.T, enforced bool) {
+	t.Helper()
+	saved := fips140Enforced
+	fips140Enforced = func() bool { return enforced }
+	t.Cleanup(func() { fips140Enforced = saved })
+}
+
+func signedV2Request(t *testing.T, cred *Credential) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, "http://example.com/bucket/object", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+	req.Header.Set("Authorization", signatureV2(cred, req.Method, req.URL.EscapedPath(), req.URL.Query().Encode(), req.Header))
+	return req
+}
+
+func presignedV2Request(t *testing.T, cred *Credential) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, "http://example.com/bucket/object", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	query := req.URL.Query()
+	query.Set("AWSAccessKeyId", cred.AccessKey)
+	query.Set("Expires", expires)
+	query.Set("Signature", preSignatureV2(cred, req.Method, req.URL.EscapedPath(), query.Encode(), req.Header, expires))
+	req.URL.RawQuery = query.Encode()
+	return req
+}
+
+func policyV2Form(cred *Credential) http.Header {
+	policy := base64.StdEncoding.EncodeToString([]byte(`{"expiration":"2099-01-01T00:00:00Z","conditions":[]}`))
+	form := http.Header{}
+	form.Set("AWSAccessKeyId", cred.AccessKey)
+	form.Set("Policy", policy)
+	form.Set("Signature", calculateSignatureV2(policy, cred.SecretKey))
+	return form
+}
+
+func TestFIPS140OnlySigV2(t *testing.T) {
+	iam := setupTestIAMForV2Auth()
+	cred := &Credential{AccessKey: "AKIAIOSFODNN7EXAMPLE", SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}
+	signed := signedV2Request(t, cred)
+	presigned := presignedV2Request(t, cred)
+	form := policyV2Form(cred)
+
+	for _, enforced := range []bool{false, true} {
+		t.Run("enforced="+strconv.FormatBool(enforced), func(t *testing.T) {
+			setFIPS140Enforced(t, enforced)
+			want := s3err.ErrNone
+			if enforced {
+				want = s3err.ErrSignatureVersionNotSupported
+			}
+			if _, code := iam.isReqAuthenticatedV2(signed); code != want {
+				t.Errorf("header SigV2: got %v, want %v", code, want)
+			}
+			if _, code := iam.isReqAuthenticatedV2(presigned); code != want {
+				t.Errorf("presigned SigV2: got %v, want %v", code, want)
+			}
+			if _, code := iam.doesPolicySignatureV2Match(t.Context(), form); code != want {
+				t.Errorf("POST policy SigV2: got %v, want %v", code, want)
+			}
+		})
+	}
+}
+
+func TestFIPS140OnlySSEC(t *testing.T) {
+	key := bytes.Repeat([]byte{0x42}, SSECustomerKeySize)
+	keyMD5 := md5.Sum(key)
+	keyB64 := base64.StdEncoding.EncodeToString(key)
+	keyMD5B64 := base64.StdEncoding.EncodeToString(keyMD5[:])
+
+	ssecHeaders := http.Header{}
+	ssecHeaders.Set(s3_constants.AmzServerSideEncryptionCustomerAlgorithm, "AES256")
+	ssecHeaders.Set(s3_constants.AmzServerSideEncryptionCustomerKey, keyB64)
+	ssecHeaders.Set(s3_constants.AmzServerSideEncryptionCustomerKeyMD5, keyMD5B64)
+
+	copySourceHeaders := http.Header{}
+	copySourceHeaders.Set(s3_constants.AmzCopySourceServerSideEncryptionCustomerAlgorithm, "AES256")
+	copySourceHeaders.Set(s3_constants.AmzCopySourceServerSideEncryptionCustomerKey, keyB64)
+	copySourceHeaders.Set(s3_constants.AmzCopySourceServerSideEncryptionCustomerKeyMD5, keyMD5B64)
+
+	sses3Headers := http.Header{}
+	sses3Headers.Set(s3_constants.AmzServerSideEncryption, s3_constants.SSEAlgorithmAES256)
+
+	t.Run("enforced", func(t *testing.T) {
+		setFIPS140Enforced(t, true)
+		if _, err := ParseSSECHeaders(&http.Request{Header: ssecHeaders}); MapSSECErrorToS3Error(err) != s3err.ErrNotImplemented {
+			t.Errorf("ParseSSECHeaders: got %v, want NotImplemented", err)
+		}
+		if _, err := ParseSSECCopySourceHeaders(&http.Request{Header: copySourceHeaders}); MapSSECErrorToS3Error(err) != s3err.ErrNotImplemented {
+			t.Errorf("ParseSSECCopySourceHeaders: got %v, want NotImplemented", err)
+		}
+		if k, err := ParseSSECHeaders(&http.Request{Header: http.Header{}}); k != nil || err != nil {
+			t.Errorf("no SSE-C headers: got %v, %v, want nil, nil", k, err)
+		}
+		for name, h := range map[string]http.Header{"SSE-C": ssecHeaders, "copy source SSE-C": copySourceHeaders} {
+			if code := ValidateRequestEncryption(h); code != s3err.ErrNotImplemented {
+				t.Errorf("ValidateRequestEncryption(%s): got %v, want NotImplemented", name, code)
+			}
+		}
+		if code := ValidateRequestEncryption(sses3Headers); code != s3err.ErrNone {
+			t.Errorf("ValidateRequestEncryption(SSE-S3): got %v, want ErrNone", code)
+		}
+	})
+
+	t.Run("not enforced", func(t *testing.T) {
+		setFIPS140Enforced(t, false)
+		k, err := ParseSSECHeaders(&http.Request{Header: ssecHeaders})
+		if err != nil || k == nil || !bytes.Equal(k.Key, key) {
+			t.Errorf("ParseSSECHeaders: got %v, %v, want the parsed key", k, err)
+		}
+		for name, h := range map[string]http.Header{"SSE-C": ssecHeaders, "copy source SSE-C": copySourceHeaders, "SSE-S3": sses3Headers} {
+			if code := ValidateRequestEncryption(h); code != s3err.ErrNone {
+				t.Errorf("ValidateRequestEncryption(%s): got %v, want ErrNone", name, code)
+			}
+		}
+	})
+}
+
+func TestFIPS140OnlySHA1Checksum(t *testing.T) {
+	sha1Requests := map[string]func(r *http.Request){
+		"value header":         func(r *http.Request) { r.Header.Set(s3_constants.AmzChecksumSHA1, "2jmj7l5rSw0yVb/vlWAYkK/YBwk=") },
+		"sdk algorithm header": func(r *http.Request) { r.Header.Set(s3_constants.AmzSdkChecksumAlgorithm, "SHA1") },
+		"algorithm header":     func(r *http.Request) { r.Header.Set(s3_constants.AmzChecksumAlgorithm, "sha1") },
+		"trailer":              func(r *http.Request) { r.Header.Set(s3_constants.AmzTrailer, "x-amz-checksum-sha1") },
+		"presigned query": func(r *http.Request) {
+			r.URL.RawQuery = url.Values{s3_constants.AmzSdkChecksumAlgorithm: {"SHA1"}}.Encode()
+		},
+	}
+	newRequest := func(setup func(r *http.Request)) *http.Request {
+		r, _ := http.NewRequest(http.MethodPut, "http://example.com/bucket/object", nil)
+		setup(r)
+		return r
+	}
+
+	t.Run("enforced", func(t *testing.T) {
+		setFIPS140Enforced(t, true)
+		for name, setup := range sha1Requests {
+			if alg, _, code := detectRequestedChecksumAlgorithm(newRequest(setup)); alg != ChecksumAlgorithmNone || code != s3err.ErrNotImplemented {
+				t.Errorf("%s: got %v, %v, want None, NotImplemented", name, alg, code)
+			}
+		}
+		sha256 := newRequest(func(r *http.Request) { r.Header.Set(s3_constants.AmzSdkChecksumAlgorithm, "SHA256") })
+		if alg, _, code := detectRequestedChecksumAlgorithm(sha256); alg != ChecksumAlgorithmSHA256 || code != s3err.ErrNone {
+			t.Errorf("SHA256: got %v, %v, want SHA256, ErrNone", alg, code)
+		}
+	})
+
+	t.Run("not enforced", func(t *testing.T) {
+		setFIPS140Enforced(t, false)
+		for name, setup := range sha1Requests {
+			if alg, header, code := detectRequestedChecksumAlgorithm(newRequest(setup)); alg != ChecksumAlgorithmSHA1 || header != s3_constants.AmzChecksumSHA1 || code != s3err.ErrNone {
+				t.Errorf("%s: got %v, %q, %v, want SHA1, %q, ErrNone", name, alg, header, code, s3_constants.AmzChecksumSHA1)
+			}
+		}
+	})
+}
+
+func TestFIPS140OnlySHA1ChunkedTrailer(t *testing.T) {
+	newRequest := func() *http.Request {
+		r, _ := http.NewRequest(http.MethodPut, "/test-bucket/test-object", bytes.NewReader(nil))
+		r.Header.Set("x-amz-content-sha256", "STREAMING-UNSIGNED-PAYLOAD-TRAILER")
+		r.Header.Set("x-amz-trailer", "x-amz-checksum-sha1")
+		return r
+	}
+	iam := setupTestIAM()
+
+	for _, enforced := range []bool{false, true} {
+		t.Run("enforced="+strconv.FormatBool(enforced), func(t *testing.T) {
+			setFIPS140Enforced(t, enforced)
+			want := s3err.ErrNone
+			if enforced {
+				want = s3err.ErrNotImplemented
+			}
+			if _, code := iam.newChunkedReader(newRequest()); code != want {
+				t.Errorf("got %v, want %v", code, want)
+			}
+		})
+	}
+}
