@@ -144,6 +144,25 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 	return -1, ErrorNotFound
 }
 
+// LookupNeedle returns the needle map size of id without reading its record,
+// so a needle past its TTL still counts as present.
+func (v *Volume) LookupNeedle(id NeedleId) (size Size, found bool, err error) {
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
+
+	if err := v.UnavailableError(); err != nil {
+		return 0, false, err
+	}
+	if v.nm == nil {
+		return 0, false, nil
+	}
+	nv, ok := v.nm.Get(id)
+	if !ok || nv.Offset.IsZero() {
+		return 0, false, nil
+	}
+	return nv.Size, true, nil
+}
+
 // NoteMetaOnlySuccess records a request that ended at the metadata read
 // (e.g. a HEAD or a cookie mismatch), so its success may reset the streak —
 // unlike a meta read that precedes a payload read.

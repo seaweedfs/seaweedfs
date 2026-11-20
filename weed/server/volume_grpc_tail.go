@@ -2,7 +2,6 @@ package weed_server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -121,15 +120,15 @@ func (vs *VolumeServer) VolumeTailReceiver(ctx context.Context, req *volume_serv
 // write both arrive as a size-0 record; it is a delete when the key already
 // has a record here, and an empty write otherwise.
 func writeTailedNeedle(store *storage.Store, vid needle.VolumeId, n *needle.Needle) error {
-	if n.Size == 0 {
-		_, err := store.ReadVolumeNeedle(vid, &needle.Needle{Id: n.Id}, deleteReadOption(), nil)
-		switch {
-		case err == nil:
-			_, err = store.DeleteVolumeNeedle(vid, n, false)
+	if v := store.GetVolume(vid); v != nil && n.Size == 0 {
+		size, found, err := v.LookupNeedle(n.Id)
+		if err != nil {
 			return err
-		case errors.Is(err, storage.ErrorDeleted):
-			return nil
-		case !errors.Is(err, storage.ErrorNotFound):
+		}
+		if found {
+			if !size.IsDeleted() {
+				_, err = store.DeleteVolumeNeedle(vid, n, false)
+			}
 			return err
 		}
 	}
