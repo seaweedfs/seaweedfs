@@ -262,6 +262,16 @@ message CreateEntryRequest {
     // Set on a create a filer forwarded to the entry's ring owner, so the owner
     // applies it locally instead of forwarding again. Clients leave it unset.
     bool is_moved = 8;
+    // chunk_auth maps a chunk's file id to the assignment token AssignVolume
+    // returned with it (assign_auth). A scoped filer token may store a chunk
+    // only with its assignment token, or when the chunk is already stored at
+    // the target path. Unscoped clients leave it empty.
+    map<string, string> chunk_auth = 9;
+    // link_source is the full path of the entry whose hard link this create
+    // adds a name for. A scoped filer token may reuse an existing hard-link
+    // id only by naming its source, which must be stored with that id at a
+    // path the token may write.
+    string link_source = 10;
 }
 
 // WriteCondition is the precondition the filer evaluates against the existing
@@ -494,6 +504,7 @@ message UpdateEntryRequest {
     // key's writes to this entry's owner filer for the check to be authoritative.
     WriteCondition condition = 6;
     bool is_moved = 7;             // set on a forwarded request so the owner applies it locally
+    map<string, string> chunk_auth = 8; // see CreateEntryRequest.chunk_auth
 }
 message UpdateEntryResponse {
     SubscribeMetadataResponse metadata_event = 1;
@@ -517,6 +528,7 @@ message AppendToEntryRequest {
     string directory = 1;
     string entry_name = 2;
     repeated FileChunk chunks = 3;
+    map<string, string> chunk_auth = 4; // see CreateEntryRequest.chunk_auth
 }
 message AppendToEntryResponse {
 }
@@ -600,6 +612,11 @@ message AssignVolumeResponse {
     // error_code classifies error for callers that must branch on it; error
     // keeps the human-readable text for clients that predate the field.
     FilerError error_code = 12;
+    // assign_auth is returned to a scoped filer token: a token signed by the
+    // filer that proves file_id was assigned to this token's holder. The
+    // client sends it back in chunk_auth when it stores the chunk. Any filer
+    // sharing the signing key verifies it; none remembers it.
+    string assign_auth = 13;
 }
 
 message LookupVolumeRequest {

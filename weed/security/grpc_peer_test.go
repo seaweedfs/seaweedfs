@@ -38,12 +38,12 @@ func TestCheckGrpcAdminPeer(t *testing.T) {
 		wantCode   codes.Code
 	}{
 		"no peer info, no key":          {context.Background(), nil, codes.Unauthenticated},
-		"loopback, no key":             {peerCtx(loopback), nil, codes.OK},
-		"remote, no key":               {peerCtx(remote), nil, codes.Unauthenticated},
-		"remote + valid token":         {bearerCtx(remote, key), key, codes.OK},
+		"loopback, no key":              {peerCtx(loopback), nil, codes.OK},
+		"remote, no key":                {peerCtx(remote), nil, codes.Unauthenticated},
+		"remote + valid token":          {bearerCtx(remote, key), key, codes.OK},
 		"remote + no metadata, key set": {peerCtx(remote), key, codes.Unauthenticated},
-		"remote + bad token":           {metadata.NewIncomingContext(peerCtx(remote), metadata.Pairs("authorization", "Bearer wrong")), key, codes.Unauthenticated},
-		"unix socket, no key":          {peerCtx(&net.UnixAddr{Name: "/tmp/s.sock"}), nil, codes.OK},
+		"remote + bad token":            {metadata.NewIncomingContext(peerCtx(remote), metadata.Pairs("authorization", "Bearer wrong")), key, codes.Unauthenticated},
+		"unix socket, no key":           {peerCtx(&net.UnixAddr{Name: "/tmp/s.sock"}), nil, codes.OK},
 		"mtls verified peer": {peer.NewContext(context.Background(), &peer.Peer{
 			Addr:     remote,
 			AuthInfo: credentials.TLSInfo{State: tls.ConnectionState{VerifiedChains: [][]*x509.Certificate{{}}}},
@@ -97,26 +97,29 @@ func TestCheckGrpcAdminToken(t *testing.T) {
 	}
 	pathScoped := scoped(SeaweedFilerClaims{AllowedPrefixes: []string{"/tenants/t1"}})
 	methodScoped := scoped(SeaweedFilerClaims{AllowedMethods: []string{"GET"}})
+	readOnlyScoped := scoped(SeaweedFilerClaims{ReadPrefixes: []string{"/tenants/t1"}})
 	unscoped := scoped(SeaweedFilerClaims{})
 
 	for name, tc := range map[string]struct {
 		values  []string
 		wantErr string
 	}{
-		"stale then fresh":    {[]string{stale, fresh}, ""},
-		"fresh then garbage":  {[]string{fresh, "garbage"}, ""},
-		"expired then fresh":  {[]string{"Bearer " + expired, fresh}, ""},
-		"only expired":        {[]string{"Bearer " + expired}, "invalid admin token"},
-		"only stale":          {[]string{stale}, "invalid admin token"},
-		"same-key session":    {[]string{"Bearer " + session}, "invalid admin token"},
-		"path-scoped":         {[]string{pathScoped}, "invalid admin token"},
-		"method-scoped":       {[]string{methodScoped}, "invalid admin token"},
-		"scoped then fresh":   {[]string{pathScoped, fresh}, ""},
-		"unscoped filer":      {[]string{unscoped}, ""},
-		"basic then stale":    {[]string{"Basic dXNlcjpwYXNz", stale}, "invalid admin token"},
-		"no bearer value":     {[]string{"Basic dXNlcjpwYXNz", "garbage"}, "authorization header must use Bearer scheme"},
-		"lowercase scheme ok": {[]string{"bearer " + fresh[len("Bearer "):]}, ""},
-		"fresh past the cap":  {append(slices.Repeat([]string{stale}, maxGrpcAdminAuthValues), fresh), "invalid admin token"},
+		"stale then fresh":     {[]string{stale, fresh}, ""},
+		"fresh then garbage":   {[]string{fresh, "garbage"}, ""},
+		"expired then fresh":   {[]string{"Bearer " + expired, fresh}, ""},
+		"only expired":         {[]string{"Bearer " + expired}, "invalid admin token"},
+		"only stale":           {[]string{stale}, "invalid admin token"},
+		"same-key session":     {[]string{"Bearer " + session}, "invalid admin token"},
+		"path-scoped":          {[]string{pathScoped}, "invalid admin token"},
+		"method-scoped":        {[]string{methodScoped}, "invalid admin token"},
+		"read-only-scoped":     {[]string{readOnlyScoped}, "invalid admin token"},
+		"read-only then fresh": {[]string{readOnlyScoped, fresh}, ""},
+		"scoped then fresh":    {[]string{pathScoped, fresh}, ""},
+		"unscoped filer":       {[]string{unscoped}, ""},
+		"basic then stale":     {[]string{"Basic dXNlcjpwYXNz", stale}, "invalid admin token"},
+		"no bearer value":      {[]string{"Basic dXNlcjpwYXNz", "garbage"}, "authorization header must use Bearer scheme"},
+		"lowercase scheme ok":  {[]string{"bearer " + fresh[len("Bearer "):]}, ""},
+		"fresh past the cap":   {append(slices.Repeat([]string{stale}, maxGrpcAdminAuthValues), fresh), "invalid admin token"},
 	} {
 		ctx := metadata.NewIncomingContext(context.Background(), metadata.MD{"authorization": tc.values})
 		err := CheckGrpcAdminToken(ctx, key)

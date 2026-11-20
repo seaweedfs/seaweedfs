@@ -360,15 +360,21 @@ func (fs *FilerServer) writeUnauthorized(w http.ResponseWriter, r *http.Request)
 // prefix-restricted token must name at least one resource path; an empty list
 // fails closed, so a caller that cannot resolve its target never falls open.
 func authorizeFilerJwtPaths(r *http.Request, claims *security.SeaweedFilerClaims, scopedPaths []string) bool {
-	if claims == nil || len(claims.AllowedPrefixes) == 0 {
+	if !claims.IsScoped() {
 		return true
 	}
 	if len(scopedPaths) == 0 {
 		glog.V(1).Infof("jwt resource path missing from %s", r.RemoteAddr)
 		return false
 	}
+	// read_prefixes cover reads only; a write (or the source of a copy/move,
+	// which the write may delete) must be within allowed_prefixes.
+	prefixes := claims.AllowedPrefixes
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		prefixes = append(append([]string{}, prefixes...), claims.ReadPrefixes...)
+	}
 	for _, p := range scopedPaths {
-		if !anyComponentPrefixMatches(claims.AllowedPrefixes, p) {
+		if !anyComponentPrefixMatches(prefixes, p) {
 			glog.V(1).Infof("jwt path not allowed from %s: %v", r.RemoteAddr, p)
 			return false
 		}
