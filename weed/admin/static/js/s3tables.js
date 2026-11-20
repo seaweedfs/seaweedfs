@@ -11,6 +11,7 @@ function s3tBasePath(path) {
 let s3tablesBucketDeleteModal = null;
 let s3tablesBucketPolicyModal = null;
 let s3tablesTableDeleteModal = null;
+let s3tablesSelectedDeleteModal = null;
 let s3tablesTablePolicyModal = null;
 let s3tablesTagsModal = null;
 let icebergTableDeleteModal = null;
@@ -839,13 +840,17 @@ function initS3TablesTableSelection() {
         selectAll.checked = boxes.length > 0 && selected === boxes.length;
         selectAll.indeterminate = selected > 0 && selected < boxes.length;
     };
+    // Browsers restore checkbox state on reload, which would keep a
+    // selection pointing at whatever rows now sit in the deleted ones' places.
+    boxes.forEach(box => { box.checked = false; });
+    selectAll.checked = false;
     selectAll.disabled = boxes.length === 0;
     selectAll.addEventListener('change', () => {
         boxes.forEach(box => { box.checked = selectAll.checked; });
         refresh();
     });
     boxes.forEach(box => box.addEventListener('change', refresh));
-    const modal = new bootstrap.Modal(document.getElementById('deleteS3TablesSelectedModal'));
+    s3tablesSelectedDeleteModal = new bootstrap.Modal(document.getElementById('deleteS3TablesSelectedModal'));
     deleteSelected.addEventListener('click', () => {
         const names = selectedS3TablesTableNames();
         if (names.length === 0) return;
@@ -856,7 +861,7 @@ function initS3TablesTableSelection() {
             item.textContent = name;
             return item;
         }));
-        modal.show();
+        s3tablesSelectedDeleteModal.show();
     });
     refresh();
 }
@@ -884,12 +889,19 @@ async function deleteSelectedS3TablesTables() {
             failures.push(`${name}: ${error.message}`);
         }
     }
+    s3tablesSelectedDeleteModal.hide();
     if (failures.length > 0) {
-        alert(`Deleted ${names.length - failures.length} of ${names.length} tables. Failed:\n${failures.join('\n')}`);
+        alert(`Deleted ${names.length - failures.length} of ${names.length} tables. Failed: ${failures.join('; ')}`);
     } else {
         alert(`Deleted ${names.length} tables`);
     }
-    location.reload();
+    // alert() is a non-blocking modal here; reload once it is closed.
+    const alertModal = document.getElementById('globalAlertModal');
+    if (alertModal) {
+        alertModal.addEventListener('hidden.bs.modal', () => location.reload(), { once: true });
+    } else {
+        location.reload();
+    }
 }
 
 async function deleteIcebergTable() {
