@@ -1225,9 +1225,8 @@ impl VectorService for VectorServer {
             });
         }
         let index = table.id.join("/");
-        self.filter_stats.follow(&index, table_id(&dataset));
         self.filter_stats
-            .record(&index, &filter_keys, started.elapsed());
+            .record(&index, table_id(&dataset), &filter_keys, started.elapsed());
         Ok(Response::new(pb::QueryVectorsResponse { vectors }))
     }
 
