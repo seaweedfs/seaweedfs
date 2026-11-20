@@ -244,7 +244,10 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 		glog.V(2).Infof("Looking up %d volumes from provider: %v", len(stillNeedLookup), stillNeedLookup)
 
 		providerResults, err := vc.provider.LookupVolumeIds(ctx, stillNeedLookup)
-		if err != nil {
+		// A nil map means the provider got no answer. A provider that did get
+		// one can still report errors for some volumes, such as one the master
+		// does not know, and that answer replaces what was set aside.
+		if err != nil && providerResults == nil {
 			// Without an answer, the locations InvalidateCache set aside are
 			// still the best knowledge there is: one dead replica must not
 			// take the volume's other replicas out of the cache with it.
@@ -285,6 +288,9 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 			if len(live) > 0 {
 				batchResult[vidString] = live
 			}
+		}
+		if err != nil {
+			return batchResult, fmt.Errorf("provider lookup failed: %w", err)
 		}
 
 		return batchResult, nil

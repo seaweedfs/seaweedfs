@@ -434,3 +434,28 @@ func TestStaleEntryLifecycle(t *testing.T) {
 		}
 	})
 }
+
+// The master answers a batch with an error for each volume it does not know,
+// next to the locations of the volumes it does. That is an answer: a volume it
+// does not know must not get what was set aside back, and a volume it does
+// know is served from the answer.
+func TestRelookupAnswerWithVolumeErrorsIsBelieved(t *testing.T) {
+	provider := &stubProvider{answer: func(call int) (map[string][]Location, error) {
+		return map[string][]Location{"6": {{Url: "new:8080"}}}, errors.New("master volume lookup errors: volume 5: volume id 5 not found")
+	}}
+	vc := newVidMapClient(provider, "", DefaultVidMapCacheSize)
+	vc.addLocation(5, Location{Url: "gone:8080"})
+	vc.addLocation(6, Location{Url: "old:8080"})
+	vc.InvalidateCache("5,0102")
+	vc.InvalidateCache("6,0102")
+
+	locations, err := vc.LookupVolumeIdsWithFallback(context.Background(), []string{"5", "6"})
+	if err == nil {
+		t.Fatal("volume 5 is not known to the master, want an error")
+	}
+	if len(locations["5"]) != 0 || len(sortedUrls(locations["6"])) != 1 || locations["6"][0].Url != "new:8080" {
+		t.Fatalf("locations %v, want volume 6 at new:8080 only", locations)
+	}
+	requireLocations(t, vc, 5)
+	requireLocations(t, vc, 6, "new:8080")
+}
