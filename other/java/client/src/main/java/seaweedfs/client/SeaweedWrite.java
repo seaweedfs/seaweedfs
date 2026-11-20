@@ -156,11 +156,14 @@ public class SeaweedWrite {
 
             entry.clearChunks();
             entry.addAllChunks(chunks);
-            filerClient.getBlockingStub().createEntry(
+            FilerProto.CreateEntryResponse response = filerClient.getBlockingStub().createEntry(
                     FilerProto.CreateEntryRequest.newBuilder()
                             .setDirectory(parentDirectory)
                             .setEntry(entry)
                             .build());
+            if (!Strings.isNullOrEmpty(response.getError())) {
+                throw new IOException(response.getError());
+            }
         }
     }
 
