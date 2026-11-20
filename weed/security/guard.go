@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 var (
@@ -182,6 +183,27 @@ func (g *Guard) UpdateSigningKeys(signingKey string, expiresAfterSec int, readSi
 	next.previousReadSigningKey = SigningKey(previousReadSigningKey)
 	next.isWriteActive = !next.isEmptyWhiteList || len(next.signingKey) != 0
 	g.state.Store(&next)
+}
+
+// ReloadSigningKeys applies the [section] keys after util.LoadConfiguration
+// merged security.toml again. The merge keeps a key the file no longer sets,
+// so previous keys are read from the file anew: a removed one stops
+// verifying. A file that cannot be read keeps the previous keys in effect.
+func (g *Guard) ReloadSigningKeys(section string) {
+	v := util.GetViper()
+	st := g.state.Load()
+	previousKey, previousReadKey := string(st.previousSigningKey), string(st.previousReadSigningKey)
+	if fresh, used := util.ReadConfiguration("security", ""); used != "" {
+		previousKey, previousReadKey = fresh.GetString(section+".previous_key"), fresh.GetString(section+".read.previous_key")
+	}
+	g.UpdateSigningKeys(
+		v.GetString(section+".key"),
+		v.GetInt(section+".expires_after_seconds"),
+		v.GetString(section+".read.key"),
+		v.GetInt(section+".read.expires_after_seconds"),
+		previousKey,
+		previousReadKey,
+	)
 }
 
 func (g *Guard) UpdateWhiteList(whiteList []string) {

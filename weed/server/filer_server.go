@@ -788,12 +788,6 @@ func (fs *FilerServer) Reload() {
 
 	util.LoadConfiguration("security", false)
 	v := util.GetViper()
-	// LoadConfiguration merges, so read previous keys fresh: a removed one must stop verifying.
-	// A file that cannot be read keeps the keys in effect.
-	fresh, used := util.ReadConfiguration("security", "")
-	if used == "" {
-		fresh = v
-	}
 	// Turn the new credential on before the old one goes off, so a switch
 	// between Basic Auth and JWT never leaves a window with neither.
 	basicAuth, basicAuthFile := loadBasicAuth(fs.basicAuth.Load(), fs.basicAuthFile)
@@ -801,14 +795,7 @@ func (fs *FilerServer) Reload() {
 	if basicAuth != nil {
 		fs.basicAuth.Store(basicAuth)
 	}
-	fs.filerGuard.UpdateSigningKeys(
-		v.GetString("jwt.filer_signing.key"),
-		v.GetInt("jwt.filer_signing.expires_after_seconds"),
-		v.GetString("jwt.filer_signing.read.key"),
-		v.GetInt("jwt.filer_signing.read.expires_after_seconds"),
-		fresh.GetString("jwt.filer_signing.previous_key"),
-		fresh.GetString("jwt.filer_signing.read.previous_key"),
-	)
+	fs.filerGuard.ReloadSigningKeys("jwt.filer_signing")
 	fs.basicAuth.Store(basicAuth)
 	fs.volumeGuard.UpdateSigningKeys(
 		v.GetString("jwt.signing.key"),

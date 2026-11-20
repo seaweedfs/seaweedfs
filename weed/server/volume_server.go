@@ -219,21 +219,8 @@ func (vs *VolumeServer) Reload() {
 
 	util.LoadConfiguration("security", false)
 	v := util.GetViper()
-	// LoadConfiguration merges, so read previous keys fresh: a removed one must stop verifying.
-	// A file that cannot be read keeps the keys in effect.
-	fresh, used := util.ReadConfiguration("security", "")
-	if used == "" {
-		fresh = v
-	}
 	vs.guard.UpdateWhiteList(append(vs.whiteList, util.StringSplit(v.GetString("guard.white_list"), ",")...))
-	vs.guard.UpdateSigningKeys(
-		v.GetString("jwt.signing.key"),
-		v.GetInt("jwt.signing.expires_after_seconds"),
-		v.GetString("jwt.signing.read.key"),
-		v.GetInt("jwt.signing.read.expires_after_seconds"),
-		fresh.GetString("jwt.signing.previous_key"),
-		fresh.GetString("jwt.signing.read.previous_key"),
-	)
+	vs.guard.ReloadSigningKeys("jwt.signing")
 }
 
 // Returns whether a volume server is in maintenance (i.e. read-only) mode.

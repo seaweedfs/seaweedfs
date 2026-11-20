@@ -3,6 +3,8 @@ package security
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -87,4 +89,39 @@ func TestCheckGrpcAdminTokenAcceptsPreviousKey(t *testing.T) {
 	scope, err := CheckGrpcMetadataSubscription(ctx, SigningKey("subscribe-key"), current, previous, MethodSubscribeMetadata)
 	require.NoError(t, err)
 	require.Nil(t, scope)
+}
+
+func TestReloadSigningKeysPreviousKeys(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("HOME", dir)
+	g := NewGuard(nil, "", 10, "", 60, "", "")
+	writeSecurity := func(content string) {
+		t.Helper()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "security.toml"), []byte(content), 0o600))
+	}
+	requirePrevious := func(want, wantRead string) {
+		t.Helper()
+		_, previous := g.VerificationKeys(true)
+		_, previousRead := g.VerificationKeys(false)
+		require.Equal(t, want, string(previous))
+		require.Equal(t, wantRead, string(previousRead))
+	}
+
+	writeSecurity("[jwt.signing]\nprevious_key = \"old\"\n[jwt.signing.read]\nprevious_key = \"old-read\"\n")
+	g.ReloadSigningKeys("jwt.signing")
+	requirePrevious("old", "old-read")
+
+	writeSecurity("[jwt.signing]\n")
+	g.ReloadSigningKeys("jwt.signing")
+	requirePrevious("", "")
+
+	writeSecurity("[jwt.signing]\nprevious_key = \"old\"\n[jwt.signing.read]\nprevious_key = \"old-read\"\n")
+	g.ReloadSigningKeys("jwt.signing")
+	writeSecurity("[jwt.signing\nprevious_key = \n")
+	g.ReloadSigningKeys("jwt.signing")
+	requirePrevious("old", "old-read")
+	require.NoError(t, os.Remove(filepath.Join(dir, "security.toml")))
+	g.ReloadSigningKeys("jwt.signing")
+	requirePrevious("old", "old-read")
 }
