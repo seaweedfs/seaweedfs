@@ -340,7 +340,7 @@ async fn run(
     store.set_volume_load_guard(volume_copies_in_flight.clone());
 
     // Build shared state
-    let guard = Guard::new(
+    let mut guard = Guard::new(
         &config.white_list,
         SigningKey(config.jwt_signing_key.clone()),
         config.jwt_signing_expires_seconds,
@@ -358,6 +358,8 @@ async fn run(
 
     let security_file = config.security_file.clone();
     let cli_white_list = config.white_list.clone();
+    guard.previous_signing_key = SigningKey(config.jwt_previous_signing_key.clone());
+    guard.previous_read_signing_key = SigningKey(config.jwt_previous_read_signing_key.clone());
 
     let state = Arc::new(VolumeServerState {
         store: RwLock::new(store),
@@ -631,6 +633,8 @@ async fn run(
                         sec.jwt_signing_expires,
                         SigningKey(sec.jwt_read_signing_key),
                         sec.jwt_read_signing_expires,
+                        SigningKey(sec.jwt_previous_signing_key),
+                        SigningKey(sec.jwt_previous_read_signing_key),
                     );
                 }
 

@@ -2808,7 +2808,12 @@ pub async fn post_handler(
             Err(_) => Some(
                 is_multipart_form_data(&headers)
                     && token.as_deref().is_some_and(|token| {
-                        crate::security::is_expired_volume_jwt(&guard.signing_key, token, &file_id)
+                        crate::security::is_expired_volume_jwt(
+                            &guard.signing_key,
+                            token,
+                            &file_id,
+                            &[&guard.previous_signing_key],
+                        )
                     }),
             ),
         }

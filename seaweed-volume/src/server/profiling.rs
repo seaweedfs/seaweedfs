@@ -156,6 +156,8 @@ mod tests {
             ui_enabled: false,
             jwt_signing_key: vec![],
             jwt_signing_expires_seconds: 0,
+            jwt_previous_signing_key: vec![],
+            jwt_previous_read_signing_key: vec![],
             jwt_read_signing_key: vec![],
             jwt_read_signing_expires_seconds: 0,
             https_cert_file: String::new(),
