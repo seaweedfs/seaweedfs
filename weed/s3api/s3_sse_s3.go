@@ -16,6 +16,7 @@ import (
 	mathrand "math/rand"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -374,10 +375,7 @@ func (km *SSES3KeyManager) wrapKEK(kek []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	wrapped := make([]byte, 0, len(kekWrappedV2Magic)+len(salt)+len(sealed))
-	wrapped = append(wrapped, kekWrappedV2Magic...)
-	wrapped = append(wrapped, salt...)
-	wrapped = append(wrapped, sealed...)
+	wrapped := slices.Concat(kekWrappedV2Magic, salt, sealed)
 	return []byte(base64.StdEncoding.EncodeToString(wrapped)), nil
 }
 
@@ -723,9 +721,7 @@ func (km *SSES3KeyManager) decryptKeyWithSuperKey(encryptedDEK, nonce []byte) ([
 		return nil, fmt.Errorf("invalid nonce size: expected %d, got %d", gcmNonceSize, len(nonce))
 	}
 
-	sealed := make([]byte, 0, len(nonce)+len(encryptedDEK))
-	sealed = append(append(sealed, nonce...), encryptedDEK...)
-	dek, err := util.Decrypt(sealed, km.superKey)
+	dek, err := util.Decrypt(slices.Concat(nonce, encryptedDEK), km.superKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt DEK: %w", err)
 	}
