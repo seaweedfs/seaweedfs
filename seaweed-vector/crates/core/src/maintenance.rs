@@ -312,6 +312,7 @@ mod tests {
             nprobes: None,
             index_segments: None,
             fragments: None,
+            exact_match_limit: None,
         };
         let mut ids: Vec<u64> = query::flat(&pinned, &resolved, &q)
             .await
@@ -734,6 +735,7 @@ mod tests {
             nprobes: None,
             index_segments: None,
             fragments: None,
+            exact_match_limit: None,
         };
         assert!(query::flat(&dataset, &resolved, &q).await.is_err());
     }

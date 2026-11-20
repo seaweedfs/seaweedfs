@@ -104,6 +104,7 @@ mod tests {
             nprobes: None,
             index_segments: None,
             fragments: None,
+            exact_match_limit: None,
         }
     }
 

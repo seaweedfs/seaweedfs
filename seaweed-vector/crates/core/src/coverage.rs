@@ -139,6 +139,7 @@ mod tests {
                 nprobes: Some(4),
                 index_segments: None,
                 fragments: None,
+                exact_match_limit: None,
             },
         )
         .await
@@ -167,6 +168,7 @@ mod tests {
             nprobes: Some(4),
             index_segments: None,
             fragments: None,
+            exact_match_limit: None,
         };
         let filtered = ann(&dataset, &table, &query).await.unwrap();
         let exact = flat(&dataset, &table, &query).await.unwrap();
@@ -204,6 +206,7 @@ mod tests {
                 nprobes: None,
                 index_segments: None,
                 fragments: None,
+                exact_match_limit: None,
             },
         )
         .await

@@ -223,11 +223,14 @@ fn jsonb_text(s: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::{self, Query};
+    use crate::table::VectorTable;
     use arrow_array::{FixedSizeListArray, RecordBatch, RecordBatchIterator, StringArray};
     use arrow_schema::{DataType, Field, Schema};
     use lance::index::DatasetIndexExt;
     use lance_index::IndexType;
     use lance_index::scalar::{BuiltinIndexType, ScalarIndexParams};
+    use lance_linalg::distance::DistanceType;
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -399,6 +402,62 @@ mod tests {
             let (expr, indexed) = rewritten(&dataset, &filter);
             assert_eq!(indexed.as_deref(), want, "{filter}");
             assert_eq!(expr.contains("json_"), want.is_none() || filter.contains(" AND "), "{filter}: {expr}");
+        }
+    }
+
+    /// The planner scores few matches exactly and leaves many to the vector
+    /// index, per scope.
+    #[tokio::test]
+    async fn few_indexed_matches_are_scored_exactly() {
+        let dir = TempDir::new().unwrap();
+        let dataset = dataset(&dir, 1000).await;
+        let table = VectorTable::resolve(&dataset, None, None).unwrap();
+        let query = |filter: &str, fragments: Option<Vec<u64>>| Query {
+            vector: vec![1.0, 2.0, 3.0, 4.0],
+            k: 10,
+            filter: Some(filter.to_string()),
+            postfilter: false,
+            distance: DistanceType::L2,
+            nprobes: None,
+            index_segments: None,
+            fragments,
+            exact_match_limit: None,
+        };
+        let rare = eq("author", "\"rare\"");
+        let many = eq("author", "\"many\"");
+        let few = |q: Query| {
+            let (dataset, table) = (&dataset, &table);
+            async move {
+                query::few_indexed_matches(dataset, table, &q)
+                    .await
+                    .unwrap()
+            }
+        };
+        // 100 and 900 matches, and 90 in the first two fragments.
+        assert!(few(query(&rare, None)).await);
+        assert!(!few(query(&many, None)).await);
+        let first = Some(vec![0, 1]);
+        assert!(few(query(&many, first.clone())).await);
+        assert!(
+            !few(Query {
+                exact_match_limit: Some(0),
+                ..query(&rare, None)
+            })
+            .await
+        );
+        // A JSON-only filter is not counted.
+        assert!(!few(query("json_exists(`metadata`, '$[\"n\"]')", None)).await);
+        for (filter, fragments) in [(&rare, None), (&many, first)] {
+            let q = query(filter, fragments);
+            let exact = query::flat(&dataset, &table, &q).await.unwrap();
+            let got = query::ann(&dataset, &table, &q).await.unwrap();
+            assert_eq!(got.len(), 10);
+            for (g, e) in got.iter().zip(&exact) {
+                assert!(
+                    (g.distance - e.distance).abs() < 1e-4,
+                    "{got:?} vs {exact:?}"
+                );
+            }
         }
     }
 

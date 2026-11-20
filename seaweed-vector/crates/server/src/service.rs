@@ -245,7 +245,7 @@ fn json_to_value(v: serde_json::Value) -> Value {
     Value { kind: Some(kind) }
 }
 
-fn json_to_struct(map: serde_json::Map<String, serde_json::Value>) -> Struct {
+pub(crate) fn json_to_struct(map: serde_json::Map<String, serde_json::Value>) -> Struct {
     Struct {
         fields: map
             .into_iter()
@@ -543,6 +543,7 @@ pub struct VectorServer {
     lance_cache_bytes: (usize, usize),
     leases: SharedLeases,
     nprobes: Option<usize>,
+    exact_match_limit: Option<usize>,
     /// URI schemes a table's location may have.
     schemes: &'static [&'static str],
 }
@@ -566,6 +567,7 @@ impl VectorServer {
             handles: moka::sync::Cache::new(MAX_HANDLES),
             leases: SharedLeases::default(),
             nprobes: None,
+            exact_match_limit: None,
             schemes: &["s3"],
         }
     }
@@ -580,6 +582,13 @@ impl VectorServer {
     /// Partitions every query probes, instead of the index's own default.
     pub fn with_nprobes(mut self, nprobes: Option<usize>) -> Self {
         self.nprobes = nprobes;
+        self
+    }
+
+    /// Matches of a filter's indexed metadata keys scored exactly instead of
+    /// searched through the vector index, at most; None keeps the default.
+    pub fn with_exact_match_limit(mut self, limit: Option<usize>) -> Self {
+        self.exact_match_limit = limit;
         self
     }
 
@@ -996,6 +1005,7 @@ impl VectorService for VectorServer {
             nprobes: self.nprobes,
             index_segments: None,
             fragments: None,
+            exact_match_limit: self.exact_match_limit,
         };
         let hits = query::ann(&dataset, &resolved, &query)
             .await

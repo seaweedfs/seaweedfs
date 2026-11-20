@@ -309,6 +309,7 @@ async fn main() -> Result<()> {
                 nprobes,
                 index_segments: None,
                 fragments: None,
+                exact_match_limit: None,
             };
             let hits = if flat {
                 query::flat(&dataset, &vector_table, &query).await?
