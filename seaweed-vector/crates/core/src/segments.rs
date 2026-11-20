@@ -139,6 +139,7 @@ mod tests {
             nprobes: None,
             index_segments: None,
             fragments: None,
+            exact_match_limit: None,
         };
         let want: Vec<(u64, u32)> = query::ann(&dataset, &resolved, &base)
             .await
@@ -239,6 +240,7 @@ mod tests {
             nprobes: None,
             index_segments: None,
             fragments: Some(vec![u64::MAX]),
+            exact_match_limit: None,
         };
         assert!(
             query::ann(&dataset, &resolved, &q)

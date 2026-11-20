@@ -11,6 +11,7 @@ pub mod dataset;
 pub mod direct_read;
 pub mod grpc_tls;
 pub mod jobs;
+pub mod metadata_index;
 pub mod metrics;
 pub mod preview;
 pub mod security;

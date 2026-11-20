@@ -19,7 +19,9 @@ use weed_lance_worker::catalog::TableDescription;
 use weed_lance_worker::dataset;
 use weed_lance_worker::direct_read::{DirectReads, Wrappers};
 use weed_lance_worker::jobs::vector_index::is_vector_table;
+use weed_lance_worker::metadata_index;
 use weed_vector_core::index;
+use weed_vector_core::indexed_filter;
 use weed_vector_core::maintenance::SharedLeases;
 use weed_vector_core::query::{self, Query};
 use weed_vector_core::table::VectorTable;
@@ -167,14 +169,13 @@ fn batch_of(vectors: &[pb::Vector], dimension: usize, schema: Arc<Schema>) -> Re
     };
     let vectors_array =
         FixedSizeListArray::try_new(item_field.clone(), dimension as i32, values, None)?;
-    let metas = vectors
+    let json: Vec<Option<serde_json::Value>> = vectors
         .iter()
-        .map(|v| {
-            v.metadata
-                .as_ref()
-                .map(|m| serde_json::to_string(&struct_to_json(m)))
-                .transpose()
-        })
+        .map(|v| v.metadata.as_ref().map(struct_to_json))
+        .collect();
+    let metas = json
+        .iter()
+        .map(|m| m.as_ref().map(serde_json::to_string).transpose())
         .collect::<Result<Vec<_>, _>>()?;
     // The stored column is lance's jsonb (LargeBinary) once the field carries
     // the arrow.json extension; encode the strings, else keep the Utf8 batch.
@@ -187,11 +188,144 @@ fn batch_of(vectors: &[pb::Vector], dimension: usize, schema: Arc<Schema>) -> Re
         }
         _ => Arc::new(StringArray::from(metas)),
     };
-    RecordBatch::try_new(
-        schema,
-        vec![Arc::new(keys), Arc::new(vectors_array), metadata_array],
+    let (keys, vectors_array): (ArrayRef, ArrayRef) = (Arc::new(keys), Arc::new(vectors_array));
+    // An indexed metadata key's column is derived from the row's metadata,
+    // whatever the key's state.
+    let columns = schema
+        .fields()
+        .iter()
+        .map(|field| match field.name().as_str() {
+            KEY_COLUMN => Ok(keys.clone()),
+            VECTOR_COLUMN => Ok(vectors_array.clone()),
+            METADATA_COLUMN => Ok(metadata_array.clone()),
+            name => match metadata_index::indexed_key(field) {
+                Some(indexed) => Ok(metadata_index::column_from_json(
+                    json.iter().map(Option::as_ref),
+                    &indexed.key,
+                )),
+                None => bail!("the table has a column {name} that PutVectors cannot fill"),
+            },
+        })
+        .collect::<Result<Vec<_>>>()?;
+    RecordBatch::try_new(schema, columns).map_err(Into::into)
+}
+
+/// Upserts `vectors` by key into `dataset`, the version the request opened,
+/// then fills the indexed-key columns a concurrent column add left empty.
+pub(crate) async fn write_vectors(
+    dataset: Dataset,
+    vectors: &[pb::Vector],
+) -> Result<Dataset, Status> {
+    let written = Arc::new(Into::<arrow_schema::Schema>::into(dataset.schema()));
+    let dataset = merge_vectors(dataset, vectors).await?;
+    let keys: Vec<String> = vectors.iter().map(|v| v.key.clone()).collect();
+    heal_columns(dataset, &written, &keys)
+        .await
+        .map_err(internal)
+}
+
+/// The upsert itself, in the schema of the version `dataset` is at.
+pub(crate) async fn merge_vectors(
+    dataset: Dataset,
+    vectors: &[pb::Vector],
+) -> Result<Dataset, Status> {
+    let dimension = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN))
+        .map_err(invalid)?
+        .dimension;
+    let batch = batch_of(
+        vectors,
+        dimension,
+        Arc::new(Into::<arrow_schema::Schema>::into(dataset.schema())),
     )
-    .map_err(Into::into)
+    .map_err(invalid)?;
+    // Upsert by key in one merge commit: no window where the old rows are
+    // already deleted, and a losing writer fails the request instead of
+    // leaving duplicate keys.
+    let mut builder = MergeInsertBuilder::try_new(Arc::new(dataset), vec![KEY_COLUMN.to_string()])
+        .map_err(internal)?;
+    builder.when_matched(WhenMatched::UpdateAll);
+    builder.when_not_matched(WhenNotMatched::InsertAll);
+    let (dataset, _stats) = builder
+        .try_build()
+        .map_err(internal)?
+        .execute_batches(vec![batch])
+        .await
+        .map_err(internal)?;
+    Ok(Arc::unwrap_or_clone(dataset))
+}
+
+/// Attempts [`heal_columns`] makes against writes committing meanwhile.
+const HEAL_ATTEMPTS: usize = 10;
+
+/// Lance rebases a write onto a column add committed after the write opened
+/// its version: the rows it inserted hold NULL in the new column and the
+/// rows it updated keep the value derived from their old metadata. Derive
+/// such columns again for the rows of `keys` from their stored metadata.
+pub(crate) async fn heal_columns(
+    mut dataset: Dataset,
+    written: &Schema,
+    keys: &[String],
+) -> Result<Dataset> {
+    for _ in 0..HEAL_ATTEMPTS {
+        let schema: Schema = dataset.schema().into();
+        let missing: Vec<metadata_index::IndexedKey> = metadata_index::indexed_keys(&schema)
+            .into_iter()
+            .filter(|k| written.field_with_name(&k.column).is_err())
+            .collect();
+        if missing.is_empty() || keys.is_empty() {
+            return Ok(dataset);
+        }
+        let mut scanner = dataset.scan();
+        scanner
+            .filter(&key_list(keys))?
+            .project(&[KEY_COLUMN, METADATA_COLUMN])?;
+        let rows: Vec<RecordBatch> = scanner.try_into_stream().await?.try_collect().await?;
+        let mut fields = vec![schema.field_with_name(KEY_COLUMN)?.clone()];
+        for k in &missing {
+            fields.push(schema.field_with_name(&k.column)?.clone());
+        }
+        let patch_schema = Arc::new(Schema::new(fields));
+        let mut patches = Vec::new();
+        for batch in rows.iter().filter(|b| b.num_rows() > 0) {
+            let (Some(keys), Some(metadata)) = (
+                batch.column_by_name(KEY_COLUMN),
+                batch.column_by_name(METADATA_COLUMN),
+            ) else {
+                bail!("the scan did not return keys and metadata");
+            };
+            let mut columns = vec![keys.clone()];
+            for k in &missing {
+                columns.push(metadata_index::column_from_metadata(
+                    metadata.as_ref(),
+                    &k.key,
+                )?);
+            }
+            patches.push(RecordBatch::try_new(patch_schema.clone(), columns)?);
+        }
+        if patches.is_empty() {
+            return Ok(dataset);
+        }
+        // Lance's own retry would join these values onto rows a later write
+        // replaced; derive them again from the version that write left.
+        let mut builder =
+            MergeInsertBuilder::try_new(Arc::new(dataset.clone()), vec![KEY_COLUMN.to_string()])?;
+        builder
+            .when_matched(WhenMatched::UpdateAll)
+            .when_not_matched(WhenNotMatched::DoNothing)
+            .conflict_retries(0);
+        match builder.try_build()?.execute_batches(patches).await {
+            Ok((healed, _stats)) => {
+                tracing::info!(
+                    rows = rows.iter().map(|b| b.num_rows()).sum::<usize>(),
+                    "derived indexed metadata key columns a concurrent column add left stale"
+                );
+                return Ok(Arc::unwrap_or_clone(healed));
+            }
+            Err(lance::Error::TooMuchWriteContention { .. }) => dataset.checkout_latest().await?,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    bail!("writes kept replacing the rows while their indexed key columns were derived")
 }
 
 fn struct_to_json(s: &Struct) -> serde_json::Value {
@@ -230,7 +364,7 @@ fn json_to_value(v: serde_json::Value) -> Value {
     Value { kind: Some(kind) }
 }
 
-fn json_to_struct(map: serde_json::Map<String, serde_json::Value>) -> Struct {
+pub(crate) fn json_to_struct(map: serde_json::Map<String, serde_json::Value>) -> Struct {
     Struct {
         fields: map
             .into_iter()
@@ -528,6 +662,8 @@ pub struct VectorServer {
     lance_cache_bytes: (usize, usize),
     leases: SharedLeases,
     nprobes: Option<usize>,
+    exact_match_limit: Option<usize>,
+    filter_stats: crate::filter_stats::FilterStats,
     /// URI schemes a table's location may have.
     schemes: &'static [&'static str],
 }
@@ -551,6 +687,8 @@ impl VectorServer {
             handles: moka::sync::Cache::new(MAX_HANDLES),
             leases: SharedLeases::default(),
             nprobes: None,
+            exact_match_limit: None,
+            filter_stats: Default::default(),
             schemes: &["s3"],
         }
     }
@@ -565,6 +703,13 @@ impl VectorServer {
     /// Partitions every query probes, instead of the index's own default.
     pub fn with_nprobes(mut self, nprobes: Option<usize>) -> Self {
         self.nprobes = nprobes;
+        self
+    }
+
+    /// Matches of a filter's indexed metadata keys scored exactly instead of
+    /// searched through the vector index, at most; None keeps the default.
+    pub fn with_exact_match_limit(mut self, limit: Option<usize>) -> Self {
+        self.exact_match_limit = limit;
         self
     }
 
@@ -808,29 +953,7 @@ impl VectorService for VectorServer {
                 version: dataset.version().version,
             }));
         }
-        let dimension = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN))
-            .map_err(invalid)?
-            .dimension;
-        let batch = batch_of(
-            &req.vectors,
-            dimension,
-            Arc::new(Into::<arrow_schema::Schema>::into(dataset.schema())),
-        )
-        .map_err(invalid)?;
-        // Upsert by key in one merge commit: no window where the old rows are
-        // already deleted, and a losing writer fails the request instead of
-        // leaving duplicate keys.
-        let mut builder =
-            MergeInsertBuilder::try_new(Arc::new(dataset), vec![KEY_COLUMN.to_string()])
-                .map_err(internal)?;
-        builder.when_matched(WhenMatched::UpdateAll);
-        builder.when_not_matched(WhenNotMatched::InsertAll);
-        let (dataset, _stats) = builder
-            .try_build()
-            .map_err(internal)?
-            .execute_batches(vec![batch])
-            .await
-            .map_err(internal)?;
+        let dataset = write_vectors(dataset, &req.vectors).await?;
         Ok(Response::new(pb::PutVectorsResponse {
             version: dataset.version().version,
         }))
@@ -948,6 +1071,7 @@ impl VectorService for VectorServer {
         &self,
         request: Request<pb::QueryVectorsRequest>,
     ) -> Result<Response<pb::QueryVectorsResponse>, Status> {
+        let started = std::time::Instant::now();
         let req = request.into_inner();
         let table = req
             .table
@@ -957,6 +1081,11 @@ impl VectorService for VectorServer {
         // while this query runs against it.
         let _lease = self.leases.try_pin(&dataset).await.map_err(internal)?;
         let resolved = VectorTable::resolve(&dataset, None, Some(KEY_COLUMN)).map_err(invalid)?;
+        let filter_keys = if req.filter.is_empty() {
+            Default::default()
+        } else {
+            indexed_filter::filter_keys(&dataset, &req.filter).unwrap_or_default()
+        };
         if req.query_vector.len() != resolved.dimension {
             return Err(Status::invalid_argument(format!(
                 "query vector carries {} floats, the index dimension is {}",
@@ -981,6 +1110,7 @@ impl VectorService for VectorServer {
             nprobes: self.nprobes,
             index_segments: None,
             fragments: None,
+            exact_match_limit: self.exact_match_limit,
         };
         let hits = query::ann(&dataset, &resolved, &query)
             .await
@@ -1056,7 +1186,22 @@ impl VectorService for VectorServer {
                 data: data_map.remove(&hit.key).unwrap_or_default(),
             });
         }
+        self.filter_stats
+            .record(&table.id.join("/"), &filter_keys, started.elapsed());
         Ok(Response::new(pb::QueryVectorsResponse { vectors }))
+    }
+
+    async fn filter_stats(
+        &self,
+        request: Request<pb::FilterStatsRequest>,
+    ) -> Result<Response<pb::FilterStatsResponse>, Status> {
+        let table = request
+            .into_inner()
+            .table
+            .ok_or_else(|| Status::invalid_argument("missing table"))?;
+        Ok(Response::new(
+            self.filter_stats.snapshot(&table.id.join("/")),
+        ))
     }
 }
 

@@ -1,5 +1,12 @@
 //! The VectorService gRPC server the S3 gateway talks to.
 
+// PutVectors awaits two Lance merge_insert futures; proving the handler
+// future Send takes deeper trait recursion than the default.
+#![recursion_limit = "256"]
+
+pub mod filter_stats;
+#[cfg(test)]
+mod indexed_keys_tests;
 pub mod metrics;
 pub mod observed;
 pub mod read_cache;

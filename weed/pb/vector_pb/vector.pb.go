@@ -1077,6 +1077,200 @@ func (x *QueryVectorsResponse) GetVectors() []*QueryResult {
 	return nil
 }
 
+type FilterStatsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Only the id is read.
+	Table         *Table `protobuf:"bytes,1,opt,name=table,proto3" json:"table,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilterStatsRequest) Reset() {
+	*x = FilterStatsRequest{}
+	mi := &file_vector_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilterStatsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilterStatsRequest) ProtoMessage() {}
+
+func (x *FilterStatsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_vector_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilterStatsRequest.ProtoReflect.Descriptor instead.
+func (*FilterStatsRequest) Descriptor() ([]byte, []int) {
+	return file_vector_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *FilterStatsRequest) GetTable() *Table {
+	if x != nil {
+		return x.Table
+	}
+	return nil
+}
+
+type FilterKeyStats struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Key     string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Queries uint64                 `protobuf:"varint,2,opt,name=queries,proto3" json:"queries,omitempty"`
+	// Their total latency.
+	Seconds float64 `protobuf:"fixed64,3,opt,name=seconds,proto3" json:"seconds,omitempty"`
+	// The operand types the key was compared with.
+	StringOperand bool `protobuf:"varint,4,opt,name=string_operand,json=stringOperand,proto3" json:"string_operand,omitempty"`
+	NumberOperand bool `protobuf:"varint,5,opt,name=number_operand,json=numberOperand,proto3" json:"number_operand,omitempty"`
+	BoolOperand   bool `protobuf:"varint,6,opt,name=bool_operand,json=boolOperand,proto3" json:"bool_operand,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilterKeyStats) Reset() {
+	*x = FilterKeyStats{}
+	mi := &file_vector_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilterKeyStats) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilterKeyStats) ProtoMessage() {}
+
+func (x *FilterKeyStats) ProtoReflect() protoreflect.Message {
+	mi := &file_vector_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilterKeyStats.ProtoReflect.Descriptor instead.
+func (*FilterKeyStats) Descriptor() ([]byte, []int) {
+	return file_vector_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *FilterKeyStats) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *FilterKeyStats) GetQueries() uint64 {
+	if x != nil {
+		return x.Queries
+	}
+	return 0
+}
+
+func (x *FilterKeyStats) GetSeconds() float64 {
+	if x != nil {
+		return x.Seconds
+	}
+	return 0
+}
+
+func (x *FilterKeyStats) GetStringOperand() bool {
+	if x != nil {
+		return x.StringOperand
+	}
+	return false
+}
+
+func (x *FilterKeyStats) GetNumberOperand() bool {
+	if x != nil {
+		return x.NumberOperand
+	}
+	return false
+}
+
+func (x *FilterKeyStats) GetBoolOperand() bool {
+	if x != nil {
+		return x.BoolOperand
+	}
+	return false
+}
+
+type FilterStatsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Keys  []*FilterKeyStats      `protobuf:"bytes,1,rep,name=keys,proto3" json:"keys,omitempty"`
+	// The stats cover at most this long, less when the engine started later.
+	WindowSeconds uint32 `protobuf:"varint,2,opt,name=window_seconds,json=windowSeconds,proto3" json:"window_seconds,omitempty"`
+	// Keys of this index not counted because the engine tracks a bounded
+	// number of them.
+	Truncated     bool `protobuf:"varint,3,opt,name=truncated,proto3" json:"truncated,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FilterStatsResponse) Reset() {
+	*x = FilterStatsResponse{}
+	mi := &file_vector_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FilterStatsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FilterStatsResponse) ProtoMessage() {}
+
+func (x *FilterStatsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_vector_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FilterStatsResponse.ProtoReflect.Descriptor instead.
+func (*FilterStatsResponse) Descriptor() ([]byte, []int) {
+	return file_vector_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *FilterStatsResponse) GetKeys() []*FilterKeyStats {
+	if x != nil {
+		return x.Keys
+	}
+	return nil
+}
+
+func (x *FilterStatsResponse) GetWindowSeconds() uint32 {
+	if x != nil {
+		return x.WindowSeconds
+	}
+	return 0
+}
+
+func (x *FilterStatsResponse) GetTruncated() bool {
+	if x != nil {
+		return x.Truncated
+	}
+	return false
+}
+
 var File_vector_proto protoreflect.FileDescriptor
 
 const file_vector_proto_rawDesc = "" +
@@ -1153,13 +1347,26 @@ const file_vector_proto_rawDesc = "" +
 	"\bmetadata\x18\x03 \x01(\v2\x17.google.protobuf.StructR\bmetadata\x12\x12\n" +
 	"\x04data\x18\x04 \x03(\x02R\x04data\"H\n" +
 	"\x14QueryVectorsResponse\x120\n" +
-	"\avectors\x18\x01 \x03(\v2\x16.vector_pb.QueryResultR\avectors*V\n" +
+	"\avectors\x18\x01 \x03(\v2\x16.vector_pb.QueryResultR\avectors\"<\n" +
+	"\x12FilterStatsRequest\x12&\n" +
+	"\x05table\x18\x01 \x01(\v2\x10.vector_pb.TableR\x05table\"\xc7\x01\n" +
+	"\x0eFilterKeyStats\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x18\n" +
+	"\aqueries\x18\x02 \x01(\x04R\aqueries\x12\x18\n" +
+	"\aseconds\x18\x03 \x01(\x01R\aseconds\x12%\n" +
+	"\x0estring_operand\x18\x04 \x01(\bR\rstringOperand\x12%\n" +
+	"\x0enumber_operand\x18\x05 \x01(\bR\rnumberOperand\x12!\n" +
+	"\fbool_operand\x18\x06 \x01(\bR\vboolOperand\"\x89\x01\n" +
+	"\x13FilterStatsResponse\x12-\n" +
+	"\x04keys\x18\x01 \x03(\v2\x19.vector_pb.FilterKeyStatsR\x04keys\x12%\n" +
+	"\x0ewindow_seconds\x18\x02 \x01(\rR\rwindowSeconds\x12\x1c\n" +
+	"\ttruncated\x18\x03 \x01(\bR\ttruncated*V\n" +
 	"\x0eDistanceMetric\x12\x1f\n" +
 	"\x1bDISTANCE_METRIC_UNSPECIFIED\x10\x00\x12\x06\n" +
 	"\x02L2\x10\x01\x12\n" +
 	"\n" +
 	"\x06COSINE\x10\x02\x12\x0f\n" +
-	"\vDOT_PRODUCT\x10\x032\xae\x04\n" +
+	"\vDOT_PRODUCT\x10\x032\xfc\x04\n" +
 	"\rVectorService\x12L\n" +
 	"\vCreateIndex\x12\x1d.vector_pb.CreateIndexRequest\x1a\x1e.vector_pb.CreateIndexResponse\x12F\n" +
 	"\tDropIndex\x12\x1b.vector_pb.DropIndexRequest\x1a\x1c.vector_pb.DropIndexResponse\x12I\n" +
@@ -1169,7 +1376,8 @@ const file_vector_proto_rawDesc = "" +
 	"GetVectors\x12\x1c.vector_pb.GetVectorsRequest\x1a\x1d.vector_pb.GetVectorsResponse\x12R\n" +
 	"\rDeleteVectors\x12\x1f.vector_pb.DeleteVectorsRequest\x1a .vector_pb.DeleteVectorsResponse\x12L\n" +
 	"\vListVectors\x12\x1d.vector_pb.ListVectorsRequest\x1a\x1e.vector_pb.ListVectorsResponse\x12O\n" +
-	"\fQueryVectors\x12\x1e.vector_pb.QueryVectorsRequest\x1a\x1f.vector_pb.QueryVectorsResponseB2Z0github.com/seaweedfs/seaweedfs/weed/pb/vector_pbb\x06proto3"
+	"\fQueryVectors\x12\x1e.vector_pb.QueryVectorsRequest\x1a\x1f.vector_pb.QueryVectorsResponse\x12L\n" +
+	"\vFilterStats\x12\x1d.vector_pb.FilterStatsRequest\x1a\x1e.vector_pb.FilterStatsResponseB2Z0github.com/seaweedfs/seaweedfs/weed/pb/vector_pbb\x06proto3"
 
 var (
 	file_vector_proto_rawDescOnce sync.Once
@@ -1184,7 +1392,7 @@ func file_vector_proto_rawDescGZIP() []byte {
 }
 
 var file_vector_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_vector_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_vector_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_vector_proto_goTypes = []any{
 	(DistanceMetric)(0),           // 0: vector_pb.DistanceMetric
 	(*Table)(nil),                 // 1: vector_pb.Table
@@ -1204,13 +1412,16 @@ var file_vector_proto_goTypes = []any{
 	(*QueryVectorsRequest)(nil),   // 15: vector_pb.QueryVectorsRequest
 	(*QueryResult)(nil),           // 16: vector_pb.QueryResult
 	(*QueryVectorsResponse)(nil),  // 17: vector_pb.QueryVectorsResponse
-	(*structpb.Struct)(nil),       // 18: google.protobuf.Struct
+	(*FilterStatsRequest)(nil),    // 18: vector_pb.FilterStatsRequest
+	(*FilterKeyStats)(nil),        // 19: vector_pb.FilterKeyStats
+	(*FilterStatsResponse)(nil),   // 20: vector_pb.FilterStatsResponse
+	(*structpb.Struct)(nil),       // 21: google.protobuf.Struct
 }
 var file_vector_proto_depIdxs = []int32{
 	1,  // 0: vector_pb.CreateIndexRequest.table:type_name -> vector_pb.Table
 	0,  // 1: vector_pb.CreateIndexRequest.distance_metric:type_name -> vector_pb.DistanceMetric
 	1,  // 2: vector_pb.DropIndexRequest.table:type_name -> vector_pb.Table
-	18, // 3: vector_pb.Vector.metadata:type_name -> google.protobuf.Struct
+	21, // 3: vector_pb.Vector.metadata:type_name -> google.protobuf.Struct
 	1,  // 4: vector_pb.PutVectorsRequest.table:type_name -> vector_pb.Table
 	6,  // 5: vector_pb.PutVectorsRequest.vectors:type_name -> vector_pb.Vector
 	1,  // 6: vector_pb.GetVectorsRequest.table:type_name -> vector_pb.Table
@@ -1219,27 +1430,31 @@ var file_vector_proto_depIdxs = []int32{
 	1,  // 9: vector_pb.ListVectorsRequest.table:type_name -> vector_pb.Table
 	6,  // 10: vector_pb.ListVectorsResponse.vectors:type_name -> vector_pb.Vector
 	1,  // 11: vector_pb.QueryVectorsRequest.table:type_name -> vector_pb.Table
-	18, // 12: vector_pb.QueryResult.metadata:type_name -> google.protobuf.Struct
+	21, // 12: vector_pb.QueryResult.metadata:type_name -> google.protobuf.Struct
 	16, // 13: vector_pb.QueryVectorsResponse.vectors:type_name -> vector_pb.QueryResult
-	2,  // 14: vector_pb.VectorService.CreateIndex:input_type -> vector_pb.CreateIndexRequest
-	4,  // 15: vector_pb.VectorService.DropIndex:input_type -> vector_pb.DropIndexRequest
-	7,  // 16: vector_pb.VectorService.PutVectors:input_type -> vector_pb.PutVectorsRequest
-	9,  // 17: vector_pb.VectorService.GetVectors:input_type -> vector_pb.GetVectorsRequest
-	11, // 18: vector_pb.VectorService.DeleteVectors:input_type -> vector_pb.DeleteVectorsRequest
-	13, // 19: vector_pb.VectorService.ListVectors:input_type -> vector_pb.ListVectorsRequest
-	15, // 20: vector_pb.VectorService.QueryVectors:input_type -> vector_pb.QueryVectorsRequest
-	3,  // 21: vector_pb.VectorService.CreateIndex:output_type -> vector_pb.CreateIndexResponse
-	5,  // 22: vector_pb.VectorService.DropIndex:output_type -> vector_pb.DropIndexResponse
-	8,  // 23: vector_pb.VectorService.PutVectors:output_type -> vector_pb.PutVectorsResponse
-	10, // 24: vector_pb.VectorService.GetVectors:output_type -> vector_pb.GetVectorsResponse
-	12, // 25: vector_pb.VectorService.DeleteVectors:output_type -> vector_pb.DeleteVectorsResponse
-	14, // 26: vector_pb.VectorService.ListVectors:output_type -> vector_pb.ListVectorsResponse
-	17, // 27: vector_pb.VectorService.QueryVectors:output_type -> vector_pb.QueryVectorsResponse
-	21, // [21:28] is the sub-list for method output_type
-	14, // [14:21] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	1,  // 14: vector_pb.FilterStatsRequest.table:type_name -> vector_pb.Table
+	19, // 15: vector_pb.FilterStatsResponse.keys:type_name -> vector_pb.FilterKeyStats
+	2,  // 16: vector_pb.VectorService.CreateIndex:input_type -> vector_pb.CreateIndexRequest
+	4,  // 17: vector_pb.VectorService.DropIndex:input_type -> vector_pb.DropIndexRequest
+	7,  // 18: vector_pb.VectorService.PutVectors:input_type -> vector_pb.PutVectorsRequest
+	9,  // 19: vector_pb.VectorService.GetVectors:input_type -> vector_pb.GetVectorsRequest
+	11, // 20: vector_pb.VectorService.DeleteVectors:input_type -> vector_pb.DeleteVectorsRequest
+	13, // 21: vector_pb.VectorService.ListVectors:input_type -> vector_pb.ListVectorsRequest
+	15, // 22: vector_pb.VectorService.QueryVectors:input_type -> vector_pb.QueryVectorsRequest
+	18, // 23: vector_pb.VectorService.FilterStats:input_type -> vector_pb.FilterStatsRequest
+	3,  // 24: vector_pb.VectorService.CreateIndex:output_type -> vector_pb.CreateIndexResponse
+	5,  // 25: vector_pb.VectorService.DropIndex:output_type -> vector_pb.DropIndexResponse
+	8,  // 26: vector_pb.VectorService.PutVectors:output_type -> vector_pb.PutVectorsResponse
+	10, // 27: vector_pb.VectorService.GetVectors:output_type -> vector_pb.GetVectorsResponse
+	12, // 28: vector_pb.VectorService.DeleteVectors:output_type -> vector_pb.DeleteVectorsResponse
+	14, // 29: vector_pb.VectorService.ListVectors:output_type -> vector_pb.ListVectorsResponse
+	17, // 30: vector_pb.VectorService.QueryVectors:output_type -> vector_pb.QueryVectorsResponse
+	20, // 31: vector_pb.VectorService.FilterStats:output_type -> vector_pb.FilterStatsResponse
+	24, // [24:32] is the sub-list for method output_type
+	16, // [16:24] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_vector_proto_init() }
@@ -1253,7 +1468,7 @@ func file_vector_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_vector_proto_rawDesc), len(file_vector_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   17,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

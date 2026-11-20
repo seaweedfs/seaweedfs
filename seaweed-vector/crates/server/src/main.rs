@@ -52,6 +52,11 @@ struct Args {
     /// tenth of the index's partitions, at least 8; more under a filter.
     #[arg(long, env = "WEED_VECTOR_NPROBES")]
     nprobes: Option<std::num::NonZeroUsize>,
+    /// A filtered query whose indexed metadata keys match at most this many
+    /// rows scores them exactly instead of searching the vector index; 0
+    /// never does.
+    #[arg(long, env = "WEED_VECTOR_EXACT_MATCH_LIMIT", default_value_t = weed_vector_core::query::DEFAULT_EXACT_MATCH_LIMIT)]
+    exact_match_limit: usize,
     /// The cluster's security.toml: [grpc.vector] for this server,
     /// [grpc.client] for the masters and filers, https.client for volume
     /// servers under HTTPS, jwt.signing.read.key for signed volume reads,
@@ -170,6 +175,7 @@ async fn main() -> Result<()> {
         .then(|| ReadCache::new(args.read_cache_mb << 20).with_metrics(metrics.clone()));
     let mut service = VectorServer::new()
         .with_nprobes(args.nprobes.map(std::num::NonZeroUsize::get))
+        .with_exact_match_limit(Some(args.exact_match_limit))
         .with_lance_caches(args.index_cache_mb << 20, args.metadata_cache_mb << 20)
         .with_storage(reads);
     if let Some(cache) = &cache {

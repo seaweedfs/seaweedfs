@@ -39,7 +39,14 @@ pub struct Query {
     /// a worker the unindexed-fragment sweep. Listed ids that no longer exist
     /// scan nothing.
     pub fragments: Option<Vec<u64>>,
+    /// Score the matches exactly instead of searching the vector index when
+    /// the filter's indexed metadata keys match at most this many rows of the
+    /// scope; 0 never does. None takes [`DEFAULT_EXACT_MATCH_LIMIT`].
+    pub exact_match_limit: Option<usize>,
 }
+
+/// Up to this many matches of an indexed metadata key are scored exactly.
+pub const DEFAULT_EXACT_MATCH_LIMIT: usize = 256;
 
 /// One row of a top-K answer.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -63,7 +70,14 @@ pub async fn flat(dataset: &Dataset, table: &VectorTable, query: &Query) -> Resu
 /// A prefiltered search sees only the probed partitions: it can come back
 /// short of k, or with unscored rows (infinite distance) when at most k rows
 /// match. Either way it is answered again by an exact scan of the same scope.
+///
+/// When the filter's indexed metadata keys match few rows of that scope,
+/// they are scored exactly to begin with. The decision is per scope, so
+/// exact answers of several scopes merge into the exact answer.
 pub async fn ann(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<Vec<Hit>> {
+    if few_indexed_matches(dataset, table, query).await? {
+        return exact_in_scope(dataset, table, query).await;
+    }
     let (scanner, indexed) = scanner(dataset, table, query, true).await?;
     let hits = run(scanner, table).await?;
     if indexed
@@ -79,7 +93,17 @@ pub async fn ann(dataset: &Dataset, table: &VectorTable, query: &Query) -> Resul
 /// [`flat`] over what [`ann`] searches for `query`: the listed fragments plus
 /// the live coverage of the listed index segments, or the whole table.
 async fn exact_in_scope(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<Vec<Hit>> {
-    let fragments = match &query.index_segments {
+    let exact = Query {
+        index_segments: None,
+        fragments: scope(dataset, table, query).await?,
+        ..query.clone()
+    };
+    run(scanner(dataset, table, &exact, false).await?.0, table).await
+}
+
+/// The fragments [`ann`] searches for `query`, or None for the whole table.
+async fn scope(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<Option<Vec<u64>>> {
+    Ok(match &query.index_segments {
         Some(segments) if !segments.is_empty() => {
             let mut ids = query.fragments.clone().unwrap_or_default();
             ids.extend(
@@ -88,13 +112,51 @@ async fn exact_in_scope(dataset: &Dataset, table: &VectorTable, query: &Query) -
             Some(ids)
         }
         _ => query.fragments.clone(),
+    })
+}
+
+/// Whether the rows of [`ann`]'s scope matching the filter's indexed
+/// metadata keys, counted through their scalar indexes, are at most the
+/// query's limit. Only a search through the vector index asks.
+pub(crate) async fn few_indexed_matches(
+    dataset: &Dataset,
+    table: &VectorTable,
+    query: &Query,
+) -> Result<bool> {
+    let limit = query.exact_match_limit.unwrap_or(DEFAULT_EXACT_MATCH_LIMIT);
+    let Some(filter) = &query.filter else {
+        return Ok(false);
     };
-    let exact = Query {
-        index_segments: None,
-        fragments,
-        ..query.clone()
+    if limit == 0 || query.postfilter || query.index_segments.as_ref().is_some_and(|s| s.is_empty())
+    {
+        return Ok(false);
+    }
+    let ready = crate::indexed_filter::ready_columns(dataset);
+    if ready.is_empty()
+        || crate::index::index_names(dataset, &table.vector_column)
+            .await?
+            .is_empty()
+    {
+        return Ok(false);
+    }
+    let Some(indexed) = crate::filter::apply(&mut dataset.scan(), filter, &ready)? else {
+        return Ok(false);
     };
-    run(scanner(dataset, table, &exact, false).await?.0, table).await
+    let mut counter = dataset.scan();
+    counter.filter_expr(indexed);
+    if let Some(ids) = scope(dataset, table, query).await? {
+        counter.with_fragments(
+            dataset
+                .fragments()
+                .iter()
+                .filter(|f| ids.contains(&f.id))
+                .cloned()
+                .collect(),
+        );
+    }
+    let matches = counter.count_rows().await?;
+    tracing::debug!(matches, limit, "indexed metadata filter");
+    Ok(matches <= limit as u64)
 }
 
 /// Fetch rows by key, projected to `columns` (all of them when None).
@@ -151,7 +213,8 @@ async fn scanner(
         .use_index(use_index)
         .with_row_id();
     if let Some(filter) = &query.filter {
-        crate::filter::apply(&mut scanner, filter)?;
+        let ready = crate::indexed_filter::ready_columns(dataset);
+        crate::filter::apply(&mut scanner, filter, &ready)?;
         scanner.prefilter(!query.postfilter);
     }
     // An explicitly empty segment list searches no index, so there is
@@ -300,6 +363,7 @@ mod tests {
             nprobes: None,
             index_segments: None,
             fragments: None,
+            exact_match_limit: None,
         };
         let hits = flat(&dataset, &table, &query).await.unwrap();
         assert_eq!(hits.len(), 2);
@@ -341,6 +405,7 @@ mod tests {
                 nprobes: None,
                 index_segments: None,
                 fragments: None,
+                exact_match_limit: None,
             },
         )
         .await
@@ -420,6 +485,7 @@ mod tests {
                     nprobes: None,
                     index_segments: None,
                     fragments: None,
+                    exact_match_limit: None,
                 },
             )
             .await
@@ -523,6 +589,7 @@ mod tests {
             nprobes: None,
             index_segments: None,
             fragments: None,
+            exact_match_limit: None,
         };
         assert!(flat(&dataset, &table, &query).await.is_err());
     }
@@ -546,6 +613,7 @@ mod tests {
             nprobes: None,
             index_segments: None,
             fragments: None,
+            exact_match_limit: None,
         };
         let indexed = ann(&dataset, &table, &query).await.unwrap();
         let exact = flat(&dataset, &table, &query).await.unwrap();
@@ -572,6 +640,7 @@ mod tests {
             nprobes: Some(4),
             index_segments: None,
             fragments: None,
+            exact_match_limit: None,
         };
         assert!(!scanner(&dataset, &table, &query, true).await.unwrap().1);
         crate::index::build(

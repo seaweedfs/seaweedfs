@@ -10,6 +10,10 @@ use tonic_health::{ServingStatus, server::HealthReporter};
 
 use crate::read_cache::ReadCache;
 
+/// The gRPC health service an engine reports serving when its writes derive
+/// the indexed metadata key columns.
+pub const METADATA_COLUMNS_CAPABILITY: &str = "weed.vector.capability.metadata_columns";
+
 #[derive(Clone)]
 pub struct Metrics {
     pub registry: Registry,
@@ -119,6 +123,11 @@ impl Metrics {
             health.set_service_status("", status).await;
             health
                 .set_service_status("vector_pb.VectorService", status)
+                .await;
+            // A capability, not readiness: the admin refuses to index a
+            // metadata key while an engine without it could write the table.
+            health
+                .set_service_status(METADATA_COLUMNS_CAPABILITY, ServingStatus::Serving)
                 .await;
         }
     }

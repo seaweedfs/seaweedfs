@@ -44,6 +44,7 @@ fn query_for(vector: Vec<f32>, k: usize) -> Query {
         nprobes: Some(4),
         index_segments: None,
         fragments: None,
+        exact_match_limit: None,
     }
 }
 
