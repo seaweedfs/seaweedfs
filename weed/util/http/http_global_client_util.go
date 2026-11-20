@@ -683,14 +683,6 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 				urlString = url.PathEscape(urlString)
 			}
 			shouldRetry, err = ReadUrlAsStream(ctx, AppendQueryParameter(urlString, "readDeleted", "true"), string(jwt), cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
-				// Check for context cancellation during data processing
-				select {
-				case <-ctx.Done():
-					// Stop processing data when context is cancelled
-					return
-				default:
-				}
-
 				if n < len(buffer) {
 					x := copy(buffer[n:], data)
 					n += x
