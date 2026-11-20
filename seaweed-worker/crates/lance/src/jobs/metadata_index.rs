@@ -147,6 +147,15 @@ pub async fn run(
             ))
         }
         (Action::Add, Some(column)) if column.state == Some(State::Building) => {
+            // An add that stopped before setting again what its commit
+            // overwrote leaves that to the build resuming it.
+            let state = metadata_index::recover_add(dataset, &column).await?;
+            if state != Some(State::Building) {
+                return Ok(format!(
+                    "{key} is {} after its add was recovered",
+                    state.map_or("unknown", State::as_str)
+                ));
+            }
             let filled = metadata_index::finish(dataset, &column, segment_rows).await?;
             Ok(format!(
                 "{key} indexed in {} ({filled} rows a racing write left derived again)",

@@ -34,6 +34,8 @@ pub const KEY_FIELD_META: &str = "weed:metadata_key";
 pub const STATE_FIELD_META: &str = "weed:metadata_key_state";
 /// Indexed keys an index may have.
 pub const MAX_KEYS: usize = 8;
+/// Field metadata naming the version a key's column add read.
+pub const READ_VERSION_FIELD_META: &str = "weed:metadata_key_read_version";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -292,15 +294,36 @@ pub async fn add_column(dataset: &mut Dataset, key: &str) -> Result<IndexedKey> 
     if let Some(existing) = keys_of(dataset).into_iter().find(|k| k.key == key) {
         return Ok(existing);
     }
+    let (column, read, read_version) = commit_column(dataset, key).await?;
+    let added = dataset.version().version;
+    let state = reapply_metadata(dataset, &read, read_version, added, &column, key).await?;
+    Ok(IndexedKey {
+        column,
+        key: key.to_string(),
+        state: Some(state),
+    })
+}
+
+/// The add_columns commit of [`add_column`]: the column, the schema it read
+/// and that schema's version.
+pub(crate) async fn commit_column(
+    dataset: &mut Dataset,
+    key: &str,
+) -> Result<(String, Schema, u64)> {
     let column = (0..)
         .map(|n| format!("{COLUMN_PREFIX}{n}"))
         .find(|c| dataset.schema().field(c).is_none())
         .unwrap_or_default();
-    let output = Arc::new(Schema::new(vec![field(&column, key, State::Building)]));
-    let schema = output.clone();
-    let owned = key.to_string();
     let read = Schema::from(dataset.schema());
     let read_version = dataset.version().version;
+    let mut added = field(&column, key, State::Building);
+    added.metadata_mut().insert(
+        READ_VERSION_FIELD_META.to_string(),
+        read_version.to_string(),
+    );
+    let output = Arc::new(Schema::new(vec![added]));
+    let schema = output.clone();
+    let owned = key.to_string();
     dataset
         .add_columns(
             NewColumnTransform::BatchUDF(BatchUDF {
@@ -319,12 +342,7 @@ pub async fn add_column(dataset: &mut Dataset, key: &str) -> Result<IndexedKey> 
             None,
         )
         .await?;
-    let state = reapply_metadata(dataset, &read, read_version, &column, key).await?;
-    Ok(IndexedKey {
-        column,
-        key: key.to_string(),
-        state: Some(state),
-    })
+    Ok((column, read, read_version))
 }
 
 /// A column add commits the schema it read, so the requests and key states
@@ -334,10 +352,10 @@ async fn reapply_metadata(
     dataset: &mut Dataset,
     read: &Schema,
     read_version: u64,
+    added: u64,
     column: &str,
     key: &str,
 ) -> Result<State> {
-    let added = dataset.version().version;
     if added <= read_version + 1 {
         return Ok(State::Building);
     }
@@ -375,6 +393,47 @@ async fn reapply_metadata(
         return Ok(State::Off);
     }
     Ok(State::Building)
+}
+
+/// The version that added `column`, the first after the version its add
+/// read, and the version read; None for a column added without the record.
+async fn added_version(dataset: &Dataset, column: &str) -> Result<Option<(Dataset, u64)>> {
+    let Some(read) = dataset
+        .schema()
+        .field(column)
+        .and_then(|f| f.metadata.get(READ_VERSION_FIELD_META))
+        .and_then(|v| v.parse::<u64>().ok())
+    else {
+        return Ok(None);
+    };
+    for version in dataset.versions().await? {
+        if version.version <= read {
+            continue;
+        }
+        let at = dataset.checkout_version(version.version).await?;
+        if at.schema().field(column).is_some() {
+            return Ok(Some((at, read)));
+        }
+    }
+    Ok(None)
+}
+
+/// Sets again what the commit of `key`'s column add overwrote, for a build
+/// resumed after an add that stopped before doing so itself. Returns the
+/// key's state.
+pub async fn recover_add(dataset: &mut Dataset, key: &IndexedKey) -> Result<Option<State>> {
+    let Some((added, read_version)) = added_version(dataset, &key.column).await? else {
+        return Ok(key.state);
+    };
+    let read = Schema::from(dataset.checkout_version(read_version).await?.schema());
+    let added = added.version().version;
+    let state =
+        reapply_metadata(dataset, &read, read_version, added, &key.column, &key.key).await?;
+    // The state the add left is building; anything else came later.
+    let now = keys_of(dataset)
+        .into_iter()
+        .find(|k| k.column == key.column);
+    Ok(now.and_then(|k| k.state).or(Some(state)))
 }
 
 /// Records `state` on `column`'s field.
@@ -1211,6 +1270,32 @@ pub(crate) mod tests {
             set_state(&mut dataset, "_mk_0", State::Off).await.unwrap();
             remove_column(&mut dataset, "_mk_0").await.unwrap();
             assert!(requests(&dataset).is_empty());
+        }
+
+        /// An add that stopped after its commit overwrote a withdrawal of its
+        /// request leaves the build that resumes it to set the withdrawal
+        /// again: the key goes off, not ready.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn a_resumed_add_keeps_a_withdrawal_its_commit_overwrote() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let mut dataset = table(&dir, 2).await;
+            request(&mut dataset, "author").await.unwrap();
+            let mut adder = dataset.clone();
+            request_removal(&mut dataset, "author").await.unwrap();
+            commit_column(&mut adder, "author").await.unwrap();
+            let entry = format!("{REQUEST_SCHEMA_META_PREFIX}author");
+            assert!(
+                adder.schema().metadata.contains_key(&entry),
+                "the add's commit did not overwrite the withdrawal"
+            );
+            let key = keys_of(&adder).remove(0);
+            assert_eq!(key.state, Some(State::Building));
+            assert_eq!(
+                recover_add(&mut adder, &key).await.unwrap(),
+                Some(State::Off)
+            );
+            assert!(!adder.schema().metadata.contains_key(&entry));
+            assert_eq!(keys_of(&adder)[0].state, Some(State::Off));
         }
     }
 }
