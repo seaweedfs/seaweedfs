@@ -22,6 +22,9 @@ stringData:
   {{- $legacyName := printf "%s-%s" (include "seaweedfs.name" .) "security-config" }}
   {{- $existing = lookup "v1" "ConfigMap" (include "seaweedfs.namespace" .) $legacyName }}
   {{- end }}
+  {{- if and $existing (or (and .Values.master.enabled (gt (int .Values.master.updatePartition) 0)) (and .Values.filer.enabled (gt (int .Values.filer.updatePartition) 0))) }}
+  {{- fail "this upgrade moves security.toml from a ConfigMap to a Secret and removes the ConfigMap; run it with master.updatePartition=0 and filer.updatePartition=0 so no pod is left on the old template" }}
+  {{- end }}
   {{- $existingToml = dig "data" "security.toml" "" $existing }}
   {{- end }}
   {{- $securityConfigValues := .Values.global.seaweedfs.securityConfig | default dict }}

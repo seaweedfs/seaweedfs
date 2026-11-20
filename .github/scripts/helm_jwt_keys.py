@@ -243,6 +243,14 @@ def check_configmap_release_upgrade(helm, context):
         run(helm, "install", "jk", *CONFIGMAP_CHART, *common)
         before = keys(run(*kubectl, "get", "configmap", name, "-o", "jsonpath={.data.security\\.toml}"))
         assert set(before) == set(SECTIONS), "ConfigMap chart omitted a JWT section"
+        try:
+            run(helm, "upgrade", "jk", str(CHART), *common,
+                "--set", "master.enabled=true", "--set", "master.updatePartition=1")
+        except subprocess.CalledProcessError as error:
+            assert "updatePartition=0" in error.stderr, error.stderr
+        else:
+            raise AssertionError("partitioned upgrade removed the ConfigMap")
+        print("PASS upgrade: partitioned upgrade from the ConfigMap chart is refused")
         run(helm, "upgrade", "jk", str(CHART), *common)
         assert secret_keys(kubectl, name) == before, "upgrade from the ConfigMap chart changed a key"
         assert not run(*kubectl, "get", "configmap", name, "--ignore-not-found", "-o", "name").strip(), \
