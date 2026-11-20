@@ -67,7 +67,9 @@ type filterKeyTotal struct {
 // engine, and its filter stats from every registered engine.
 func (s *AdminServer) s3VectorsIndexPanel(ctx context.Context, bucket string, index *s3vectors.Index, engines []VectorNode) S3VectorsIndexPanel {
 	panel := S3VectorsIndexPanel{Index: index, Keys: []S3VectorsMetadataKeyRow{}, Frequent: []S3VectorsFilterKeyRow{}}
-	keys, err := s.s3VectorsServer.MetadataKeys(ctx, bucket, index.IndexName)
+	keysCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	keys, err := s.s3VectorsServer.MetadataKeys(keysCtx, bucket, index.IndexName)
 	if err != nil {
 		panel.Error = err.Error()
 	}
