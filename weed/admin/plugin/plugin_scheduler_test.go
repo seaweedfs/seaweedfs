@@ -1759,3 +1759,80 @@ func TestCapacityReasonNamesUnitemizedSlots(t *testing.T) {
 		t.Fatalf("outlook = (%v, %q), want (false, %q)", wait, reason, want)
 	}
 }
+
+// A job type given up for capacity detects again soon: a daily job whose
+// worker was briefly full must not wait a whole interval for its next run.
+func TestCapacityGiveUpBringsNextDetectionForward(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const workerID = "worker-a"
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: workerID,
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "admin_script", CanExecute: true, MaxExecutionConcurrency: 1},
+		},
+	})
+	pluginSvc.registry.UpdateHeartbeat(workerID, &plugin_pb.WorkerHeartbeat{
+		WorkerId: workerID, ExecutionSlotsUsed: 1, ExecutionSlotsTotal: 1,
+		RunningWork: []*plugin_pb.RunningWork{{
+			WorkId: "lc-1", Kind: plugin_pb.WorkKind_WORK_KIND_EXECUTION, JobType: "s3_lifecycle",
+		}},
+	})
+	// the detection that produced the proposals set the next one a day out
+	daily := time.Now().UTC().Add(24 * time.Hour)
+	pluginSvc.schedulerMu.Lock()
+	pluginSvc.nextDetectionAt["admin_script"] = daily
+	pluginSvc.schedulerMu.Unlock()
+
+	window, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	policy := schedulerPolicy{
+		ExecutionConcurrency:   1,
+		PerWorkerConcurrency:   1,
+		ExecutionTimeout:       time.Second,
+		ExecutorReserveBackoff: time.Millisecond,
+		OrphanRehomeGrace:      time.Second,
+	}
+	proposals := []*plugin_pb.JobProposal{{ProposalId: "p1", JobType: "admin_script", DedupeKey: "k1"}}
+	if _, _, canceled := pluginSvc.dispatchScheduledProposals(window, "admin_script", proposals, &plugin_pb.ClusterContext{}, policy); canceled != 1 {
+		t.Fatalf("canceled = %d, want 1", canceled)
+	}
+
+	pluginSvc.schedulerMu.Lock()
+	next := pluginSvc.nextDetectionAt["admin_script"]
+	pluginSvc.schedulerMu.Unlock()
+	if latest := time.Now().UTC().Add(capacityGiveUpRedetectDelay); next.After(latest) {
+		t.Fatalf("next detection %v is after %v: a given-up job type waits its whole interval", next, latest)
+	}
+}
+
+// Bringing a detection forward never pushes back one already due sooner.
+func TestBringDetectionForwardKeepsAnEarlierDetection(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	soon := time.Now().UTC().Add(time.Minute)
+	pluginSvc.schedulerMu.Lock()
+	pluginSvc.nextDetectionAt["vacuum"] = soon
+	pluginSvc.schedulerMu.Unlock()
+
+	pluginSvc.bringDetectionForward("vacuum", capacityGiveUpRedetectDelay)
+
+	pluginSvc.schedulerMu.Lock()
+	next := pluginSvc.nextDetectionAt["vacuum"]
+	pluginSvc.schedulerMu.Unlock()
+	if !next.Equal(soon) {
+		t.Fatalf("next detection moved from %v to %v", soon, next)
+	}
+}
