@@ -34,6 +34,9 @@ struct KeyStats {
 
 #[derive(Default)]
 struct IndexStats {
+    /// The table the stats were counted on: an index dropped and created
+    /// again under its name is another table.
+    table: String,
     keys: HashMap<String, KeyStats>,
     /// The last bucket a key was left uncounted in.
     truncated: Option<u64>,
@@ -69,6 +72,28 @@ impl FilterStats {
     }
 
     /// One query of `index` that took `elapsed` and filtered on `keys`.
+    /// Drops the stats of `index`, whose table was created or dropped.
+    pub fn forget(&self, index: &str) {
+        self.indexes.lock().unwrap().remove(index);
+    }
+
+    /// Notes that `index` is now `table`, dropping stats counted on another.
+    pub fn follow(&self, index: &str, table: &str) {
+        let mut indexes = self.indexes.lock().unwrap();
+        let Some(stats) = indexes.get_mut(index) else {
+            return;
+        };
+        if stats.table.is_empty() {
+            stats.table = table.to_string();
+        } else if stats.table != table {
+            *stats = IndexStats {
+                table: table.to_string(),
+                last: stats.last,
+                ..Default::default()
+            };
+        }
+    }
+
     pub fn record(&self, index: &str, keys: &BTreeMap<String, u8>, elapsed: Duration) {
         self.record_at(index, keys, elapsed, Instant::now());
     }
@@ -286,5 +311,23 @@ mod tests {
             "the later bucket's uncounted key is in the window"
         );
         assert_eq!(stats.indexes.lock().unwrap()["b/i"].last, 2);
+    }
+
+    #[test]
+    fn stats_follow_the_table_behind_an_index_name() {
+        let stats = FilterStats::new();
+        let t0 = stats.start;
+        let author = keys(&[("author", operand::STRING)]);
+        stats.follow("b/i", "t1");
+        stats.record_at("b/i", &author, Duration::ZERO, t0);
+        stats.follow("b/i", "t1");
+        stats.record_at("b/i", &author, Duration::ZERO, t0);
+        assert_eq!(stats.snapshot_at("b/i", t0).keys[0].queries, 2);
+        stats.follow("b/i", "t2");
+        assert!(stats.snapshot_at("b/i", t0).keys.is_empty());
+        stats.record_at("b/i", &author, Duration::ZERO, t0);
+        assert_eq!(stats.snapshot_at("b/i", t0).keys[0].queries, 1);
+        stats.forget("b/i");
+        assert!(stats.snapshot_at("b/i", t0).keys.is_empty());
     }
 }

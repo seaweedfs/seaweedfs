@@ -919,7 +919,10 @@ impl VectorService for VectorServer {
         )
         .await;
         let dataset = match dataset {
-            Ok(dataset) => dataset,
+            Ok(dataset) => {
+                self.filter_stats.forget(&table.id.join("/"));
+                dataset
+            }
             Err(error) => match self.open(&table).await {
                 Ok(existing)
                     if matches_index_schema(
@@ -970,6 +973,7 @@ impl VectorService for VectorServer {
                 store.remove_dir_all(path).await.map_err(internal)?;
             }
         }
+        self.filter_stats.forget(&table.id.join("/"));
         Ok(Response::new(pb::DropIndexResponse {}))
     }
 
@@ -1220,8 +1224,10 @@ impl VectorService for VectorServer {
                 data: data_map.remove(&hit.key).unwrap_or_default(),
             });
         }
+        let index = table.id.join("/");
+        self.filter_stats.follow(&index, table_id(&dataset));
         self.filter_stats
-            .record(&table.id.join("/"), &filter_keys, started.elapsed());
+            .record(&index, &filter_keys, started.elapsed());
         Ok(Response::new(pb::QueryVectorsResponse { vectors }))
     }
 
