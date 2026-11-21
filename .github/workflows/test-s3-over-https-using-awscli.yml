@@ -56,8 +56,12 @@ jobs:
 
       - name: Setup Caddy
         run: |
-          curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=amd64" -o caddy
-          chmod +x caddy
+          CADDY_VERSION=2.11.9
+          base="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}"
+          curl -fsSLO "${base}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLO "${base}/caddy_${CADDY_VERSION}_checksums.txt"
+          grep " caddy_${CADDY_VERSION}_linux_amd64.tar.gz$" "caddy_${CADDY_VERSION}_checksums.txt" | sha512sum -c -
+          tar -xzf "caddy_${CADDY_VERSION}_linux_amd64.tar.gz" caddy
           ./caddy version
           echo "{
             auto_https disable_redirects
