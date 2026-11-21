@@ -890,6 +890,43 @@ func TestReplayDirectoryDeleteKeepsSharedHardLinkChunks(t *testing.T) {
 	}
 }
 
+// A swept name deleted at the same time through another filer: both read its
+// two links, both take one off, and the record goes while /keep/b.txt still
+// holds the file. The count the sweep read still shows /keep/b.txt.
+func TestReplayDirectoryDeleteRacingADeleteOfTheSameNameKeepsChunks(t *testing.T) {
+	store := newStubFilerStore()
+	f := newReplayTestFiler(store)
+	f.FilerConf = NewFilerConf()
+	f.FileIdDeletionQueue = util.NewUnboundedQueue()
+	ctx := context.Background()
+
+	for _, dir := range []util.FullPath{"/d", "/keep"} {
+		if err := store.InsertEntry(ctx, &Entry{FullPath: dir, Attr: Attr{Mode: os.ModeDir}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id := linkedFile(t, store, "/d/a.txt", "/keep/b.txt")
+	onRecordReadAfterDelete(store, id, "/d/a.txt", func() {
+		setLinkCount(t, store, id, 1)
+	})
+
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:     &filer_pb.Entry{Name: "d", IsDirectory: true},
+			DeleteChunks: true,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+	if err := f.Replay(event); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	store.kvGetHook = nil
+	if got := f.pendingDeletionCount(); got != 0 {
+		t.Fatalf("pending deletions = %d, want 0 while /keep/b.txt still reads the chunks", got)
+	}
+}
+
 // A replayed directory delete must mirror the origin's remote cleanup: entries
 // the lagging peer alone still holds lose their remote objects too, and record
 // tombstones so lazy remote fetches cannot resurrect them.
