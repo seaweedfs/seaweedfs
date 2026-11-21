@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/wdclient"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 // readPersistedLedger pulls the persisted ledger payload straight from the store
@@ -633,8 +634,17 @@ func TestDeletionLedgerVolumeGoneConfirmed(t *testing.T) {
 	if !pending() {
 		t.Fatalf("answers within a few seconds dropped the deletion; want kept until VolumeGoneGrace")
 	}
-	// the answers have held for longer than the grace: dropped from the ledger
+	// held for longer than the grace, but over too few answers: kept
+	f.processRetryBatch([]*DeletionRetryItem{item}, unavailable)
+	f.processRetryBatch([]*DeletionRetryItem{item}, gone)
 	item.goneSince = time.Now().Add(-VolumeGoneGrace - time.Minute)
+	for i := 1; i < VolumeGoneMinAnswers-1; i++ {
+		f.processRetryBatch([]*DeletionRetryItem{item}, gone)
+	}
+	if !pending() {
+		t.Fatalf("%d answers over the grace dropped the deletion; want kept until %d", item.goneSeen, VolumeGoneMinAnswers)
+	}
+	// enough answers over the grace: dropped from the ledger
 	f.processRetryBatch([]*DeletionRetryItem{item}, gone)
 	if pending() {
 		t.Fatalf("volume unknown to the master for %v: the deletion is still pending", VolumeGoneGrace)
