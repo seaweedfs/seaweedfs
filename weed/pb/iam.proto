@@ -202,6 +202,15 @@ message Identity {
     repeated string policy_names = 7;
     bool is_static = 8;  // Loaded from static config file (read-only, not editable via API)
     repeated UserTag tags = 9;
+    repeated CertificateMatch certificates = 10;  // client certificates the S3 gateway verified that authenticate as this identity
+}
+
+// CertificateMatch matches a verified client certificate when every field set
+// equals the certificate's value; a match with no field set matches nothing.
+message CertificateMatch {
+    string uri_san = 1;
+    string dns_san = 2;
+    string subject_cn = 3;
 }
 
 message UserTag {

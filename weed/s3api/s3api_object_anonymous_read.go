@@ -28,7 +28,7 @@ func isAnonymousObjectRead(r *http.Request) bool {
 // their normal authentication path; no-auth development mode is unchanged.
 func (s3a *S3ApiServer) deferAnonymousObjectRead(r *http.Request, action Action, bucket, object string) (*http.Request, bool) {
 	if s3a.iam == nil || !s3a.iam.isEnabled() || action != s3_constants.ACTION_READ ||
-		getRequestAuthType(r) != authTypeAnonymous || object == "" || object == "/" ||
+		!s3a.iam.isAnonymousRequest(r) || object == "" || object == "/" ||
 		(r.Method != http.MethodGet && r.Method != http.MethodHead) || isSOSAPIObject(strings.TrimPrefix(object, "/")) {
 		return r, false
 	}

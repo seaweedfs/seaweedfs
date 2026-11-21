@@ -18,7 +18,7 @@ func (store *PostgresStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 
 	config := &iam_pb.S3ApiConfiguration{}
 
-	rows, err := store.db.QueryContext(ctx, "SELECT username, email, account_data, actions, policy_names FROM users")
+	rows, err := store.db.QueryContext(ctx, "SELECT username, email, account_data, actions, policy_names, certificates FROM users")
 	if err != nil {
 		glog.Errorf("credential postgres: LoadConfiguration query failed: %v", err)
 		return nil, fmt.Errorf("failed to query users: %w", err)
@@ -27,9 +27,9 @@ func (store *PostgresStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 
 	for rows.Next() {
 		var username, email string
-		var accountDataJSON, actionsJSON, policyNamesJSON []byte
+		var accountDataJSON, actionsJSON, policyNamesJSON, certificatesJSON []byte
 
-		if err := rows.Scan(&username, &email, &accountDataJSON, &actionsJSON, &policyNamesJSON); err != nil {
+		if err := rows.Scan(&username, &email, &accountDataJSON, &actionsJSON, &policyNamesJSON, &certificatesJSON); err != nil {
 			glog.Errorf("credential postgres: LoadConfiguration scan failed: %v", err)
 			return nil, fmt.Errorf("failed to scan user row: %w", err)
 		}
@@ -53,6 +53,12 @@ func (store *PostgresStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 		if len(policyNamesJSON) > 0 {
 			if err := json.Unmarshal(policyNamesJSON, &identity.PolicyNames); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal policy names for user %s: %v", username, err)
+			}
+		}
+
+		if len(certificatesJSON) > 0 {
+			if err := json.Unmarshal(certificatesJSON, &identity.Certificates); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal certificates for user %s: %v", username, err)
 			}
 		}
 
@@ -158,17 +164,26 @@ func (store *PostgresStore) SaveConfiguration(ctx context.Context, config *iam_p
 			}
 		}
 
+		var certificatesJSON []byte
+		if identity.Certificates != nil {
+			certificatesJSON, err = json.Marshal(identity.Certificates)
+			if err != nil {
+				return fmt.Errorf("failed to marshal certificates for user %s: %v", identity.Name, err)
+			}
+		}
+
 		// Upsert user — preserves the row (and its CASCADE dependents) if it already exists
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO users (username, email, account_data, actions, policy_names)
-			 VALUES ($1, $2, $3, $4, $5)
+			`INSERT INTO users (username, email, account_data, actions, policy_names, certificates)
+			 VALUES ($1, $2, $3, $4, $5, $6)
 			 ON CONFLICT (username) DO UPDATE SET
 				email = EXCLUDED.email,
 				account_data = EXCLUDED.account_data,
 				actions = EXCLUDED.actions,
 				policy_names = EXCLUDED.policy_names,
+				certificates = EXCLUDED.certificates,
 				updated_at = CURRENT_TIMESTAMP`,
-			identity.Name, "", jsonbParam(accountDataJSON), jsonbParam(actionsJSON), jsonbParam(policyNamesJSON))
+			identity.Name, "", jsonbParam(accountDataJSON), jsonbParam(actionsJSON), jsonbParam(policyNamesJSON), jsonbParam(certificatesJSON))
 		if err != nil {
 			return fmt.Errorf("failed to upsert user %s: %v", identity.Name, err)
 		}
@@ -298,9 +313,17 @@ func (store *PostgresStore) CreateUser(ctx context.Context, identity *iam_pb.Ide
 		}
 	}
 
+	var certificatesJSON []byte
+	if identity.Certificates != nil {
+		certificatesJSON, err = json.Marshal(identity.Certificates)
+		if err != nil {
+			return fmt.Errorf("failed to marshal certificates: %w", err)
+		}
+	}
+
 	_, err = tx.ExecContext(ctx,
-		"INSERT INTO users (username, email, account_data, actions, policy_names) VALUES ($1, $2, $3, $4, $5)",
-		identity.Name, "", jsonbParam(accountDataJSON), jsonbParam(actionsJSON), jsonbParam(policyNamesJSON))
+		"INSERT INTO users (username, email, account_data, actions, policy_names, certificates) VALUES ($1, $2, $3, $4, $5, $6)",
+		identity.Name, "", jsonbParam(accountDataJSON), jsonbParam(actionsJSON), jsonbParam(policyNamesJSON), jsonbParam(certificatesJSON))
 	if err != nil {
 		glog.Errorf("credential postgres: CreateUser insert failed user=%s: %v", identity.Name, err)
 		return fmt.Errorf("failed to insert user: %w", err)
@@ -331,11 +354,11 @@ func (store *PostgresStore) GetUser(ctx context.Context, username string) (*iam_
 	}
 
 	var email string
-	var accountDataJSON, actionsJSON, policyNamesJSON []byte
+	var accountDataJSON, actionsJSON, policyNamesJSON, certificatesJSON []byte
 
 	err := store.db.QueryRowContext(ctx,
-		"SELECT email, account_data, actions, policy_names FROM users WHERE username = $1",
-		username).Scan(&email, &accountDataJSON, &actionsJSON, &policyNamesJSON)
+		"SELECT email, account_data, actions, policy_names, certificates FROM users WHERE username = $1",
+		username).Scan(&email, &accountDataJSON, &actionsJSON, &policyNamesJSON, &certificatesJSON)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			glog.V(2).Infof("credential postgres: GetUser user=%s not found", username)
@@ -364,6 +387,12 @@ func (store *PostgresStore) GetUser(ctx context.Context, username string) (*iam_
 	if len(policyNamesJSON) > 0 {
 		if err := json.Unmarshal(policyNamesJSON, &identity.PolicyNames); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal policy names: %w", err)
+		}
+	}
+
+	if len(certificatesJSON) > 0 {
+		if err := json.Unmarshal(certificatesJSON, &identity.Certificates); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal certificates: %w", err)
 		}
 	}
 
@@ -435,9 +464,17 @@ func (store *PostgresStore) UpdateUser(ctx context.Context, username string, ide
 		}
 	}
 
+	var certificatesJSON []byte
+	if identity.Certificates != nil {
+		certificatesJSON, err = json.Marshal(identity.Certificates)
+		if err != nil {
+			return fmt.Errorf("failed to marshal certificates: %w", err)
+		}
+	}
+
 	_, err = tx.ExecContext(ctx,
-		"UPDATE users SET email = $2, account_data = $3, actions = $4, policy_names = $5, updated_at = CURRENT_TIMESTAMP WHERE username = $1",
-		username, "", jsonbParam(accountDataJSON), jsonbParam(actionsJSON), jsonbParam(policyNamesJSON))
+		"UPDATE users SET email = $2, account_data = $3, actions = $4, policy_names = $5, certificates = $6, updated_at = CURRENT_TIMESTAMP WHERE username = $1",
+		username, "", jsonbParam(accountDataJSON), jsonbParam(actionsJSON), jsonbParam(policyNamesJSON), jsonbParam(certificatesJSON))
 	if err != nil {
 		glog.Errorf("credential postgres: UpdateUser failed user=%s: %v", username, err)
 		return fmt.Errorf("failed to update user: %w", err)
@@ -535,8 +572,8 @@ func (store *PostgresStore) RenameUser(ctx context.Context, oldName, newName str
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO users (username, email, account_data, actions, policy_names, created_at, updated_at)
-		 SELECT $1, email, account_data, actions, policy_names, created_at, CURRENT_TIMESTAMP
+		`INSERT INTO users (username, email, account_data, actions, policy_names, certificates, created_at, updated_at)
+		 SELECT $1, email, account_data, actions, policy_names, certificates, created_at, CURRENT_TIMESTAMP
 		 FROM users WHERE username = $2`,
 		newName, oldName); err != nil {
 		return fmt.Errorf("failed to insert renamed user %s: %w", newName, err)

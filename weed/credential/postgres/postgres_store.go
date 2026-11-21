@@ -131,6 +131,7 @@ func (store *PostgresStore) createTables() error {
 			account_data JSONB,
 			actions JSONB,
 			policy_names JSONB DEFAULT '[]',
+			certificates JSONB DEFAULT '[]',
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
@@ -139,6 +140,10 @@ func (store *PostgresStore) createTables() error {
 
 	addPolicyNamesColumn := `
 		ALTER TABLE users ADD COLUMN IF NOT EXISTS policy_names JSONB DEFAULT '[]';
+	`
+
+	addCertificatesColumn := `
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS certificates JSONB DEFAULT '[]';
 	`
 
 	credentialsTable := `
@@ -214,6 +219,10 @@ func (store *PostgresStore) createTables() error {
 
 	if _, err := store.db.Exec(addPolicyNamesColumn); err != nil {
 		return fmt.Errorf("failed to add policy_names column: %w", err)
+	}
+
+	if _, err := store.db.Exec(addCertificatesColumn); err != nil {
+		return fmt.Errorf("failed to add certificates column: %w", err)
 	}
 
 	if _, err := store.db.Exec(credentialsTable); err != nil {

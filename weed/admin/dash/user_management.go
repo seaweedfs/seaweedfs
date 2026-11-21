@@ -98,11 +98,12 @@ func (s *AdminServer) UpdateObjectStoreUser(username string, req UpdateUserReque
 
 	// Create updated identity
 	updatedIdentity := &iam_pb.Identity{
-		Name:        identity.Name,
-		Account:     identity.Account,
-		Credentials: identity.Credentials,
-		Actions:     identity.Actions,
-		PolicyNames: identity.PolicyNames,
+		Name:         identity.Name,
+		Account:      identity.Account,
+		Credentials:  identity.Credentials,
+		Actions:      identity.Actions,
+		PolicyNames:  identity.PolicyNames,
+		Certificates: identity.Certificates,
 	}
 
 	// Update actions if provided
@@ -421,11 +422,12 @@ func (s *AdminServer) UpdateUserPolicies(username string, actions []string) erro
 
 	// Create updated identity with new actions
 	updatedIdentity := &iam_pb.Identity{
-		Name:        identity.Name,
-		Account:     identity.Account,
-		Credentials: identity.Credentials,
-		Actions:     actions,
-		PolicyNames: identity.PolicyNames,
+		Name:         identity.Name,
+		Account:      identity.Account,
+		Credentials:  identity.Credentials,
+		Actions:      actions,
+		PolicyNames:  identity.PolicyNames,
+		Certificates: identity.Certificates,
 	}
 
 	// Update user using credential manager
