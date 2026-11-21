@@ -171,7 +171,8 @@ func (k *copyKeepAlive) writeSuccess(setHeaders func(), response interface{}) {
 }
 
 // writeError answers errorCode: with its own status while nothing is sent,
-// else as the <Error> document closing the 200 already sent.
+// else as the <Error> document closing the 200 already sent, which the audit
+// log records as the 200 the client got, with the error code.
 func (k *copyKeepAlive) writeError(errorCode s3err.ErrorCode) {
 	k.writeErrorHeaders(errorCode, nil)
 }
@@ -187,5 +188,5 @@ func (k *copyKeepAlive) writeErrorHeaders(errorCode s3err.ErrorCode, setHeaders 
 		return
 	}
 	k.write(s3err.EncodeXMLBody(s3err.ErrorResponseFor(k.r, errorCode)))
-	s3err.PostLog(k.r, s3err.GetAPIError(errorCode).HTTPStatusCode, errorCode)
+	s3err.PostLog(k.r, http.StatusOK, errorCode)
 }
