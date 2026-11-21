@@ -480,7 +480,9 @@ func TestCopyObjectKeepAliveStreamsWhileCopying(t *testing.T) {
 	defer srv.Close()
 	defer releaseOnce.Do(func() { close(release) })
 
-	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/"+keepAliveDst+"/"+keepAliveObject, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPut, srv.URL+"/"+keepAliveDst+"/"+keepAliveObject, nil)
 	req.Header.Set("X-Amz-Copy-Source", "/"+keepAliveSrc+"/"+keepAliveObject)
 	start := time.Now()
 	resp, err := srv.Client().Do(req)
