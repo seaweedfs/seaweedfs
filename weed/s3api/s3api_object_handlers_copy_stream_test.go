@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -209,6 +210,61 @@ func TestDownloadChunkDataFallsBackToNextReplica(t *testing.T) {
 			}
 			if !tc.wantErr && !bytes.Equal(data, payload) {
 				t.Fatalf("downloaded %d bytes that differ from the %d-byte chunk", len(data), len(payload))
+			}
+		})
+	}
+}
+
+// An encrypted chunk is copied as ciphertext, so a replica whose needle is
+// cut short or diverged must be skipped rather than stored as the copy.
+func TestDownloadChunkDataSkipsUndecryptableReplica(t *testing.T) {
+	util_http.InitGlobalHttpClient()
+	plaintext := bytes.Repeat([]byte("secret chunk"), 512)
+	key := util.GenCipherKey()
+	ciphertext, err := util.Encrypt(plaintext, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := util.Encrypt(plaintext, util.GenCipherKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	serve := func(data []byte) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(data))
+		}))
+	}
+	healthy := serve(ciphertext)
+	defer healthy.Close()
+	short := serve(ciphertext[:len(ciphertext)-7])
+	defer short.Close()
+	diverged := serve(foreign)
+	defer diverged.Close()
+
+	s3a := &S3ApiServer{}
+	for _, tc := range []struct {
+		name    string
+		sources []string
+		wantErr string
+	}{
+		{"first replica serves a shorter needle", []string{short.URL, healthy.URL}, ""},
+		{"first replica serves a diverged needle", []string{diverged.URL, healthy.URL}, ""},
+		{"only replica serves a shorter needle", []string{short.URL}, "do not decrypt"},
+		{"no replica decrypts", []string{diverged.URL, short.URL}, "do not decrypt"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := s3a.downloadChunkData(tc.sources, "1,test", 0, int64(len(plaintext)), key)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("download error=%v, want it to mention %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("download: %v", err)
+			}
+			if !bytes.Equal(data, ciphertext) {
+				t.Fatalf("downloaded %d bytes that differ from the %d-byte ciphertext", len(data), len(ciphertext))
 			}
 		})
 	}
