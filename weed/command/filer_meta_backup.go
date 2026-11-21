@@ -227,7 +227,7 @@ func (metaBackup *FilerMetaBackupOptions) traverseMetadata() (err error) {
 		limiter = rate.NewLimiter(rate.Limit(*metaBackup.entriesPerSecond), *metaBackup.entriesPerSecond)
 	}
 	lastSaved := time.Now()
-	return filer_pb.TraverseDfs(ctx, metaBackup, util.FullPath(*metaBackup.filerDirectory), util.FullPath(resumeAfter), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
+	return filer_pb.TraverseDfs(ctx, metaBackup, util.FullPath(*metaBackup.filerDirectory), metaBackup.resumeOutsideSkipped(util.FullPath(resumeAfter)), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 		if err := limiter.Wait(ctx); err != nil {
 			return err
 		}
@@ -253,6 +253,21 @@ func (metaBackup *FilerMetaBackupOptions) traverseMetadata() (err error) {
 			glog.Warningf("save metadata walk progress: %v", err)
 		}
 	})
+}
+
+// resumeOutsideSkipped moves a saved walk position out of a directory the path
+// filter leaves out, which an earlier walk may have entered, so the resumed
+// walk does not list it.
+func (metaBackup *FilerMetaBackupOptions) resumeOutsideSkipped(resumeAfter util.FullPath) util.FullPath {
+	dir := util.FullPath("/")
+	parts := resumeAfter.Split()
+	for _, name := range parts[:max(len(parts)-1, 0)] {
+		dir = dir.Child(name)
+		if !metaBackup.pathFilter.ShouldWalk(string(dir)) {
+			return dir
+		}
+	}
+	return resumeAfter
 }
 
 var (

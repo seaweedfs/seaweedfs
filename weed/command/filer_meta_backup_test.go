@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type kvOnlyStore struct {
@@ -165,5 +166,22 @@ func TestCopyMetadataResumesOnlyItsOwnWalk(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestResumeOutsideSkipped(t *testing.T) {
+	backup := &FilerMetaBackupOptions{pathFilter: util.NewPathPrefixFilter("/aaa/ccc/keep", "/aaa/ccc,/aaa/temp", nil)}
+	for resumeAfter, want := range map[util.FullPath]util.FullPath{
+		"":                       "",
+		"/aaa/temp/x/y":          "/aaa/temp",
+		"/aaa/temp":              "/aaa/temp",
+		"/aaa/ccc/other/file":    "/aaa/ccc/other",
+		"/aaa/ccc/keep/sub/file": "/aaa/ccc/keep/sub/file",
+		"/aaa/bbb/file":          "/aaa/bbb",
+		"/aaa/ccc/file-in-ccc":   "/aaa/ccc/file-in-ccc",
+	} {
+		if got := backup.resumeOutsideSkipped(resumeAfter); got != want {
+			t.Errorf("resumeOutsideSkipped(%q) = %q, want %q", resumeAfter, got, want)
+		}
 	}
 }
