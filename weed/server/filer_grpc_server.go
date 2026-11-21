@@ -231,7 +231,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 			return ownerResp, nil
 		}
 	} else if req.IsMoved && routed {
-		if err := fs.checkMovedMarker(ctx, req.IsMoved, fs.writeOwner(entryRouteKey(util.NewFullPath(req.Directory, req.Entry.Name)))); err != nil {
+		if err := fs.checkForwardedWrite(ctx, entryRouteKey(util.NewFullPath(req.Directory, req.Entry.Name))); err != nil {
 			return &filer_pb.CreateEntryResponse{}, err
 		}
 	}
@@ -347,10 +347,12 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 	// Route-by-key: if this filer is not the ring owner of route_key, forward the
 	// whole transaction to the owner so its per-path lock is the single
 	// serialization point — even when the caller's ring view was stale. is_moved
-	// bounds this to one hop: a forwarded transaction is applied locally, so two
-	// filers that disagree on the owner during a ring change cannot loop.
-	if req.RouteKey != "" {
-		if err := fs.checkMovedMarker(ctx, req.IsMoved, fs.writeOwner(req.RouteKey)); err != nil {
+	// bounds this to one hop: a forwarded transaction is applied only by the
+	// owner in this filer's ring, and refused with a status the sender retries.
+	if req.RouteKey != "" && req.IsMoved {
+		if err := fs.checkForwardedWrite(ctx, req.RouteKey); isNotWriteOwner(err) {
+			return &filer_pb.ObjectTransactionResponse{}, err
+		} else if err != nil {
 			return &filer_pb.ObjectTransactionResponse{Error: err.Error()}, nil
 		}
 	}
@@ -954,7 +956,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 			return ownerResp, nil
 		}
 	} else if req.IsMoved && routed {
-		if err := fs.checkMovedMarker(ctx, req.IsMoved, fs.writeOwner(entryRouteKey(util.FullPath(fullpath)))); err != nil {
+		if err := fs.checkForwardedWrite(ctx, entryRouteKey(util.FullPath(fullpath))); err != nil {
 			return &filer_pb.UpdateEntryResponse{}, err
 		}
 	}
@@ -1205,7 +1207,7 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 				return ownerResp, nil
 			}
 		} else {
-			if err := fs.checkMovedMarker(ctx, req.IsMoved, fs.writeOwner(entryRouteKey(fullpath))); err != nil {
+			if err := fs.checkForwardedWrite(ctx, entryRouteKey(fullpath)); err != nil {
 				return &filer_pb.DeleteEntryResponse{}, err
 			}
 		}
