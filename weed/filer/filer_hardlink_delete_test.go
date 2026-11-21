@@ -243,8 +243,22 @@ func TestDeleteEntryTwiceAtOnceKeepsChunks(t *testing.T) {
 	require.Equal(t, 0, f.pendingDeletionCount(), "chunks deleted while /d/b still reads them")
 }
 
-// A recursive delete whose children the store refuses to delete leaves their
-// links as they were; run again, it takes each child's link off once.
+// onRecordReadAfterDelete runs f once, when the store reads id's record after
+// name is gone from it: the delete that removed name has come to take its link
+// off.
+func onRecordReadAfterDelete(store *stubFilerStore, id HardLinkId, name util.FullPath, f func()) {
+	done := false
+	store.kvGetHook = func(key []byte) {
+		if _, kept := store.entries[string(name)]; string(key) == string(id) && !kept && !done {
+			done = true
+			f()
+		}
+	}
+}
+
+// A recursive delete takes a hard-linked child as a single delete takes it.
+// Refused by the store, the name stays with its link; run again, the delete
+// takes the link off once, and the chunks stay with /d/b.
 func TestRecursiveDeleteRefusedByStoreKeepsHardLinkCount(t *testing.T) {
 	store := newStubFilerStore()
 	f := newTestFiler(t, store, NewFilerRemoteStorage())
@@ -252,12 +266,71 @@ func TestRecursiveDeleteRefusedByStoreKeepsHardLinkCount(t *testing.T) {
 	store.entries["/d/sub"] = &Entry{FullPath: "/d/sub", Attr: Attr{Mode: os.ModeDir | 0o755}}
 	id := linkedFile(t, store, "/d/sub/a", "/d/b")
 
-	store.deleteFolderErr = storeRefusal
+	store.deleteErrByPath["/d/sub/a"] = storeRefusal
 	require.ErrorContains(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}), "write conflict")
 	require.Equal(t, int32(2), linkCount(t, store, id), "the refused delete took a link off")
 
-	store.deleteFolderErr = nil
+	delete(store.deleteErrByPath, "/d/sub/a")
 	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}))
 	require.Equal(t, int32(1), linkCount(t, store, id))
+	require.Equal(t, 0, f.pendingDeletionCount(), "chunks deleted while /d/b still reads them")
+}
+
+// The folder's other children are refused after its hard-linked child went:
+// that child's link is off already, so once /d/b goes too the chunks go with
+// it. A store that deletes a folder's children in batches can fail after some
+// of them; a hard-linked name is never among those.
+func TestRecursiveDeleteFailingAfterItsLinkedChildTookItsLinkOff(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+	store.entries["/d/sub"] = &Entry{FullPath: "/d/sub", Attr: Attr{Mode: os.ModeDir | 0o755}}
+	store.entries["/d/sub/c"] = &Entry{FullPath: "/d/sub/c", Attr: Attr{Mode: 0o644}}
+	id := linkedFile(t, store, "/d/sub/a", "/d/b")
+
+	store.deleteFolderErr = storeRefusal
+	require.ErrorContains(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}), "write conflict")
+	require.Equal(t, int32(1), linkCount(t, store, id))
+
+	store.deleteFolderErr = nil
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/b", false, false, true, false, nil, time.Time{}))
+	require.Equal(t, int32(0), linkCount(t, store, id))
+	require.Equal(t, 1, f.pendingDeletionCount())
+}
+
+// Every name of the file is in the deleted tree, in two folders: the second
+// name takes the last link off, and the chunks go once.
+func TestRecursiveDeleteOfEveryNameDeletesChunksOnce(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+	for _, dir := range []util.FullPath{"/d/sub", "/d/sub/x", "/d/sub/y"} {
+		store.entries[string(dir)] = &Entry{FullPath: dir, Attr: Attr{Mode: os.ModeDir | 0o755}}
+	}
+	id := linkedFile(t, store, "/d/sub/x/a", "/d/sub/y/b")
+
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}))
+	require.Equal(t, int32(0), linkCount(t, store, id))
+	require.Equal(t, 1, f.pendingDeletionCount())
+}
+
+// Two filers delete /d/sub at once, and both read the count of /d/sub/a
+// before either took its link off: both take it off, and the record goes
+// while /d/b still holds the file. The count each delete read still shows
+// /d/b, and the chunks stay.
+func TestRecursiveDeletesAtOnceKeepChunksOfANameOutside(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+	store.entries["/d/sub"] = &Entry{FullPath: "/d/sub", Attr: Attr{Mode: os.ModeDir | 0o755}}
+	id := linkedFile(t, store, "/d/sub/a", "/d/b")
+	onRecordReadAfterDelete(store, id, "/d/sub/a", func() {
+		// the other delete of /d/sub takes the link of /d/sub/a off first
+		setLinkCount(t, store, id, 1)
+	})
+
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}))
+	store.kvGetHook = nil
 	require.Equal(t, 0, f.pendingDeletionCount(), "chunks deleted while /d/b still reads them")
 }

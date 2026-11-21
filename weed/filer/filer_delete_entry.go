@@ -115,7 +115,6 @@ func deleteEventEntry(ctx context.Context, entry *Entry) *Entry {
 }
 
 type OnChunksFunc func([]*filer_pb.FileChunk) error
-type OnHardLinkIdsFunc func([]HardLinkId) error
 
 func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32, notModifiedAfter time.Time) (err error) {
 	if p == "/" {
@@ -144,14 +143,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	dropsCollection := isDeleteCollection && collectionName != ""
 	if entry.IsDirectory() {
 		// delete the folder children, not including the folder itself
-		err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !dropsCollection, isDeleteCollection && (dropsCollection || !shouldDeleteChunks), isFromOtherCluster, signatures, func(hardLinkIds []HardLinkId) error {
-			// A case not handled:
-			// what if the chunk is in a different collection?
-			if shouldDeleteChunks {
-				f.maybeDeleteHardLinks(ctx, hardLinkIds)
-			}
-			return nil
-		})
+		err = f.doBatchDeleteFolderMetaAndData(ctx, entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks && !dropsCollection, isDeleteCollection && (dropsCollection || !shouldDeleteChunks), isFromOtherCluster, signatures)
 		if err != nil {
 			glog.V(2).InfofCtx(ctx, "delete directory %s: %v", p, err)
 			if errors.Is(err, ErrNonEmptyFolder) {
@@ -191,7 +183,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	return nil
 }
 
-func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isDeletingBucket, isFromOtherCluster bool, signatures []int32, onHardLinkIdsFn OnHardLinkIdsFunc) (err error) {
+func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isDeletingBucket, isFromOtherCluster bool, signatures []int32) (err error) {
 
 	var dirTombstoneTs int64
 	if isRecursive && !keepsRemoteObject(ctx) {
@@ -204,13 +196,6 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 
 	//collect all the chunks of this layer and delete them together at the end
 	var chunksToDelete, fsyncChunksToDelete []*filer_pb.FileChunk
-	// hard-linked files of this layer: their links are dropped once the
-	// store has deleted their names, as for a single delete (dropLink)
-	type linkedFile struct {
-		entry  *Entry
-		chunks *[]*filer_pb.FileChunk
-	}
-	var linkedFiles []linkedFile
 	lastFileName := ""
 	includeLastFile := false
 	listedChildren := !isDeletingBucket || !f.Store.CanDropWholeBucket()
@@ -237,7 +222,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 				}
 				if sub.IsDirectory() {
 					subIsDeletingBucket := f.IsBucket(sub)
-					err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, subIsDeletingBucket, isFromOtherCluster, nil, onHardLinkIdsFn)
+					err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, subIsDeletingBucket, isFromOtherCluster, nil)
 				} else {
 					if !isFromOtherCluster && !keepsRemoteObject(ctx) {
 						if _, remoteErr := f.maybeDeleteFromRemote(ctx, sub); remoteErr != nil {
@@ -256,8 +241,9 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 						subChunksToDelete = &fsyncChunksToDelete
 					}
 					if len(sub.HardLinkId) != 0 {
-						// hard link chunk data are deleted separately
-						linkedFiles = append(linkedFiles, linkedFile{sub, subChunksToDelete})
+						// it goes now, the way a single delete takes it;
+						// DeleteFolderChildren below takes the other children
+						err = f.deleteLinkedName(ctx, sub, shouldDeleteChunks, subChunksToDelete)
 					} else {
 						if shouldDeleteChunks {
 							*subChunksToDelete = append(*subChunksToDelete, sub.GetChunks()...)
@@ -282,15 +268,6 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 	if isRecursive || !listedChildren {
 		if storeDeletionErr := f.Store.DeleteFolderChildren(ctx, entry.FullPath); storeDeletionErr != nil {
 			return fmt.Errorf("filer store delete: %w", storeDeletionErr)
-		}
-	}
-
-	for _, linked := range linkedFiles {
-		if err := onHardLinkIdsFn([]HardLinkId{linked.entry.HardLinkId}); err != nil && !ignoreRecursiveError {
-			return err
-		}
-		if shouldDeleteChunks && f.hardLinkIsOrphaned(ctx, linked.entry.HardLinkId) {
-			*linked.chunks = append(*linked.chunks, linked.entry.GetChunks()...)
 		}
 	}
 
@@ -428,19 +405,35 @@ func (f *Filer) DoDeleteCollection(ctx context.Context, collectionName string) (
 
 }
 
-func (f *Filer) maybeDeleteHardLinks(ctx context.Context, hardLinkIds []HardLinkId) {
-	for _, hardLinkId := range hardLinkIds {
-		if err := f.Store.DeleteHardLink(ctx, hardLinkId); err != nil {
-			glog.ErrorfCtx(ctx, "delete hard link id %d : %v", hardLinkId, err)
-		}
-	}
-}
-
 // hardLinkIsOrphaned reports whether the shared inode record for hardLinkId
 // is gone, meaning the removed link was the last owner of its chunks.
 func (f *Filer) hardLinkIsOrphaned(ctx context.Context, hardLinkId HardLinkId) bool {
 	_, err := f.Store.KvGet(ctx, hardLinkId)
 	return errors.Is(err, ErrKvNotFound)
+}
+
+// deleteLinkedName deletes sub, a hard-linked name a recursive delete has
+// listed, the way a single delete does: the store deletes the name, its link
+// is dropped after that (dropLink), and its file's chunks are queued only when
+// that was the file's last link (lastLinkDropped). Left to DeleteFolderChildren,
+// the name would go without its link dropped, and a store that deletes in
+// batches and fails part way would leave the names it did delete counted.
+func (f *Filer) deleteLinkedName(ctx context.Context, sub *Entry, shouldDeleteChunks bool, chunksToDelete *[]*filer_pb.FileChunk) error {
+	// the count listed with sub may be a page old
+	entry, err := f.Store.FindEntry(ctx, sub.FullPath)
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := f.Store.DeleteOneEntry(ctx, entry); err != nil {
+		return err
+	}
+	if shouldDeleteChunks && (len(entry.HardLinkId) == 0 || f.lastLinkDropped(ctx, entry)) {
+		*chunksToDelete = append(*chunksToDelete, entry.GetChunks()...)
+	}
+	return nil
 }
 
 // lastLinkDropped reports whether deleting entry, a hard-linked name the
