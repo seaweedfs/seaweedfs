@@ -68,7 +68,7 @@ func TestDownloadChunkData_AllocationBound(t *testing.T) {
 
 	// Warm up the global HTTP client and any package-level pools so they
 	// don't show up in the measured allocation window.
-	if _, err := s3a.downloadChunkData(srv.URL, "1,0", 0, int64(chunkSize), nil); err != nil {
+	if _, err := s3a.downloadChunkData([]string{srv.URL}, "1,0", 0, int64(chunkSize), nil); err != nil {
 		t.Fatalf("warm-up downloadChunkData: %v", err)
 	}
 
@@ -76,7 +76,7 @@ func TestDownloadChunkData_AllocationBound(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 
-	data, err := s3a.downloadChunkData(srv.URL, "1,0", 0, int64(chunkSize), nil)
+	data, err := s3a.downloadChunkData([]string{srv.URL}, "1,0", 0, int64(chunkSize), nil)
 	if err != nil {
 		t.Fatalf("downloadChunkData: %v", err)
 	}
