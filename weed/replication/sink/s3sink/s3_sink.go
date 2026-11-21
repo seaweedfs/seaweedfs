@@ -1,6 +1,7 @@
 package S3Sink
 
 import (
+	"crypto/fips140"
 	"encoding/base64"
 	"fmt"
 	"mime"
@@ -221,7 +222,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 	if entry.Attributes.Mime != "" {
 		uploadInput.ContentType = aws.String(entry.Attributes.Mime)
 	}
-	if len(entry.Attributes.Md5) > 0 {
+	if len(entry.Attributes.Md5) > 0 && !fips140.Enforced() {
 		uploadInput.ContentMD5 = aws.String(base64.StdEncoding.EncodeToString([]byte(entry.Attributes.Md5)))
 	}
 	_, err = uploader.Upload(&uploadInput)
