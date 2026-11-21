@@ -328,8 +328,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	// The metadata-only self-copy moves no data and is never kept alive; it
 	// decides on the filled entry, so a remote-only source it may take is
-	// filled first, as it always was.
-	if remoteOnly && replacesSource && (replaceMeta || replaceTagging || changesStorageClass) {
+	// filled first, as it always was. So is one with source conditions, whose
+	// 412 or 400 reads the filled entry and keeps its own status.
+	if remoteOnly && (hasCopySourceConditions(r.Header) || replacesSource && (replaceMeta || replaceTagging || changesStorageClass)) {
 		cachedEntry, errCode := s3a.fillCopySource(r, entry, srcBucket, srcObject, srcVersionId, "CopyObjectHandler")
 		if errCode != s3err.ErrNone {
 			w.Header().Set("Retry-After", "5")
@@ -1180,8 +1181,18 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	// A remote-only source is filled after the keep-alive is armed: on a cell
 	// whose disk is a cache that fill is the slow part of the copy. Its
 	// manifests and source conditions are resolved on the filled entry, as
-	// they always were; everything else is checked first.
+	// they always were; everything else is checked first. Source conditions
+	// keep their own status, so with them the fill comes first.
 	remoteOnly := entry.IsInRemoteOnly()
+	if remoteOnly && hasCopySourceConditions(r.Header) {
+		cachedEntry, errCode := s3a.fillCopySource(r, entry, srcBucket, srcObject, srcVersionId, "CopyObjectPartHandler")
+		if errCode != s3err.ErrNone {
+			w.Header().Set("Retry-After", "5")
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
+		entry, remoteOnly = cachedEntry, false
+	}
 	if !remoteOnly {
 		// per-chunk part-copy needs a flat source; resolved manifests stay with the source
 		if _, err := s3a.flattenManifestChunks(r.Context(), entry); err != nil {
@@ -1983,6 +1994,12 @@ var copySourceConditionalHeaders = sourceConditionalHeaderNames{
 	ifNoneMatch:       s3_constants.AmzCopySourceIfNoneMatch,
 	ifModifiedSince:   s3_constants.AmzCopySourceIfModifiedSince,
 	ifUnmodifiedSince: s3_constants.AmzCopySourceIfUnmodifiedSince,
+}
+
+func hasCopySourceConditions(h http.Header) bool {
+	names := copySourceConditionalHeaders
+	return h.Get(names.ifMatch) != "" || h.Get(names.ifNoneMatch) != "" ||
+		h.Get(names.ifModifiedSince) != "" || h.Get(names.ifUnmodifiedSince) != ""
 }
 
 // validateConditionalCopyHeaders validates the conditional copy headers against the source entry

@@ -406,3 +406,34 @@ func TestCopyObjectPartRangeOnRemoteOnlySourceUsesRemoteSize(t *testing.T) {
 		t.Fatalf("status = %d, copies %d, body %q; want the range copied", rr.Code, calls.Load(), rr.Body.String())
 	}
 }
+
+// A failing source condition on a remote-only source keeps its 412 however
+// long the fill takes: the fill it reads runs before the keep-alive arms.
+func TestCopyKeepAliveRemoteSourceConditionKeeps412(t *testing.T) {
+	for _, part := range []bool{false, true} {
+		s3a, filer, calls := keepAliveCopyServer(t, 20*time.Millisecond, "", func() error { return nil })
+		key := "/buckets/" + keepAliveSrc + "/" + keepAliveObject
+		filled := filer.entries[key]
+		remote := &filer_pb.RemoteEntry{RemoteSize: 4, RemoteETag: "r", RemoteMtime: 1}
+		filled.RemoteEntry = remote
+		filer.entries[key] = &filer_pb.Entry{Name: keepAliveObject, Attributes: filled.Attributes, RemoteEntry: remote}
+		copyRemoteFill = func(*S3ApiServer, context.Context, *filer_pb.Entry, string, string, string) *filer_pb.Entry {
+			time.Sleep(150 * time.Millisecond)
+			return filled
+		}
+		req := copyObjectRequest("/" + keepAliveSrc + "/" + keepAliveObject)
+		if part {
+			req = partCopyRequest(s3a, filer, nil)
+		}
+		req.Header.Set(s3_constants.AmzCopySourceIfMatch, `"not-the-etag"`)
+		rr := httptest.NewRecorder()
+		if part {
+			s3a.CopyObjectPartHandler(rr, req)
+		} else {
+			s3a.CopyObjectHandler(rr, req)
+		}
+		if rr.Code != http.StatusPreconditionFailed || calls.Load() != 0 {
+			t.Fatalf("part=%v: status = %d, copies %d, body %q; want 412 and no copy", part, rr.Code, calls.Load(), rr.Body.String())
+		}
+	}
+}
