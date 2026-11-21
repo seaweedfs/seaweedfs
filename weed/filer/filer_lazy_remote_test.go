@@ -42,6 +42,8 @@ type stubFilerStore struct {
 	kvDeleteErr     error
 	kvGetHook       func(key []byte)
 	deleteErrByPath map[string]error
+	updateErr       error
+	deleteFolderErr error
 }
 
 func newStubFilerStore() *stubFilerStore {
@@ -102,6 +104,9 @@ func (s *stubFilerStore) KvDelete(_ context.Context, key []byte) error {
 func (s *stubFilerStore) DeleteFolderChildren(_ context.Context, dirPath util.FullPath) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.deleteFolderErr != nil {
+		return s.deleteFolderErr
+	}
 	prefix := string(dirPath) + "/"
 	for k := range s.entries {
 		if strings.HasPrefix(k, prefix) {
@@ -192,6 +197,9 @@ func (s *stubFilerStore) InsertEntry(_ context.Context, entry *Entry) error {
 func (s *stubFilerStore) UpdateEntry(_ context.Context, entry *Entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.updateErr != nil {
+		return s.updateErr
+	}
 	s.entries[string(entry.FullPath)] = entry
 	return nil
 }
@@ -206,7 +214,7 @@ func (s *stubFilerStore) FindEntry(_ context.Context, p util.FullPath) (*Entry, 
 		return nil, err
 	}
 	if e, ok := s.entries[string(p)]; ok {
-		return e, nil
+		return e.ShallowClone(), nil
 	}
 	return nil, filer_pb.ErrNotFound
 }

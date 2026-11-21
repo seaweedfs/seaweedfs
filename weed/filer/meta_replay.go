@@ -322,11 +322,15 @@ func (f *Filer) deleteSweptChild(ctx context.Context, sub *Entry, message *filer
 		return false, fmt.Errorf("delete %s: %w", sub.FullPath, derr)
 	}
 	// chunks of a hard-linked child belong to the shared inode record; free
-	// them only once that record is gone. A directory entry can still carry
-	// chunks of its own — an S3 child promotes an existing file to a
-	// directory without dropping them — so the entry's chunks are keyed to
-	// its own path whatever it is.
-	if message.DeleteChunks && len(sub.GetChunks()) > 0 && (len(sub.HardLinkId) == 0 || f.hardLinkIsOrphaned(ctx, sub.HardLinkId)) {
+	// them only once its last link went, judged by the count read under the
+	// lock. A directory entry can still carry chunks of its own — an S3 child
+	// promotes an existing file to a directory without dropping them — so the
+	// entry's chunks are keyed to its own path whatever it is.
+	linked := sub
+	if current != nil && string(current.HardLinkId) == string(sub.HardLinkId) {
+		linked = current
+	}
+	if message.DeleteChunks && len(sub.GetChunks()) > 0 && (len(sub.HardLinkId) == 0 || f.lastLinkDropped(ctx, linked)) {
 		sweep.add(sub.FullPath, sub.GetChunks())
 		if sweep.count >= folderSweepChunkBatch {
 			sweep.flush(ctx, f)
