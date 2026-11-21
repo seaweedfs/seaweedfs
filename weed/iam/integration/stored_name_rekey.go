@@ -7,8 +7,12 @@ import (
 	"io"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // storedNameRekey moves records to the name this process derives for their
@@ -52,30 +56,70 @@ func (r *storedNameRekey) run(ctx context.Context, client filer_pb.SeaweedFilerC
 		return err
 	}
 	for _, entry := range misnamed {
-		name := r.name(r.keyOf(entry.Content))
-		resp, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
-			Directory: r.dir,
-			Entry: &filer_pb.Entry{
-				Name:       name,
-				Attributes: entry.Attributes,
-				Content:    entry.Content,
-			},
-			Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}}},
-		})
-		if !isEntryWriteConflict(resp, err) {
-			if err != nil {
-				return fmt.Errorf("create %s: %w", name, err)
-			}
-			if resp.Error != "" {
-				return fmt.Errorf("create %s: %s", name, resp.Error)
-			}
+		if err := r.move(ctx, client, entry); err != nil {
+			return err
 		}
-		if err := filer_pb.DoRemove(ctx, client, r.dir, entry.Name, true, false, false, false, nil); err != nil {
-			return fmt.Errorf("remove %s: %w", entry.Name, err)
-		}
+	}
+	return nil
+}
+
+// move renames entry if it is unchanged, under the lock the stores' conditional
+// writes of the new name take, so a record another process already moved and
+// then deleted is not written back. A record already under the new name wins.
+func (r *storedNameRekey) move(ctx context.Context, client filer_pb.SeaweedFilerClient, listed *filer_pb.Entry) error {
+	found, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: r.dir, Name: listed.Name})
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("lookup %s: %w", listed.Name, err)
+	}
+	entry := found.Entry
+	name := r.name(r.keyOf(entry.Content))
+	if name == entry.Name {
+		return nil
+	}
+	remove := &filer_pb.ObjectMutation{Type: filer_pb.ObjectMutation_DELETE, Directory: r.dir, Name: entry.Name, IsDeleteData: true}
+	put := &filer_pb.ObjectMutation{
+		Type:      filer_pb.ObjectMutation_PUT,
+		Directory: r.dir,
+		Entry:     &filer_pb.Entry{Name: name, Attributes: entry.Attributes, Content: entry.Content},
+		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}}},
+	}
+	resp, err := r.transact(ctx, client, name, entry, put, remove)
+	if err == nil && resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED && resp.FailedMutation != nil && *resp.FailedMutation == 0 {
+		resp, err = r.transact(ctx, client, name, entry, remove)
+	}
+	if err != nil {
+		return fmt.Errorf("rename %s to %s: %w", entry.Name, name, err)
+	}
+	switch {
+	case resp.ErrorCode == filer_pb.FilerError_PRECONDITION_FAILED:
+		glog.V(1).Infof("%s/%s changed before its rename to %s; leaving it", r.dir, entry.Name, name)
+	case resp.Error != "":
+		return fmt.Errorf("rename %s to %s: %s", entry.Name, name, resp.Error)
+	default:
 		glog.V(0).Infof("renamed %s/%s to %s", r.dir, entry.Name, name)
 	}
 	return nil
+}
+
+func (r *storedNameRekey) transact(ctx context.Context, client filer_pb.SeaweedFilerClient, name string, source *filer_pb.Entry, mutations ...*filer_pb.ObjectMutation) (*filer_pb.ObjectTransactionResponse, error) {
+	target := r.dir + "/" + name
+	resp, err := client.ObjectTransaction(ctx, &filer_pb.ObjectTransactionRequest{
+		LockKey:      target,
+		RequestId:    uuid.NewString(),
+		RouteKey:     s3_constants.ObjectWriteRouteKeyPrefix + target,
+		ConditionKey: r.dir + "/" + source.Name,
+		Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+			Kind: filer_pb.WriteCondition_IF_ENTRY_EQUAL, ExpectedEntry: source,
+		}}},
+		Mutations: mutations,
+	})
+	if status.Code(err) == codes.FailedPrecondition {
+		return &filer_pb.ObjectTransactionResponse{ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED}, nil
+	}
+	return resp, err
 }
 
 func listStoredEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, dir string, fn func(*filer_pb.Entry)) error {
