@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
@@ -44,17 +45,55 @@ func (fs *FilerServer) writeOwner(key string) pb.ServerAddress {
 // already committed — and an owner unreachable from here may be partitioned
 // rather than down, still serving the key to everyone else. The ring hands the
 // key on when the cooling-off window closes, so the outage is bounded.
+//
+// An owner that refuses the forward as not its own applied nothing: the two
+// rings disagree. They converge once a ring update reaches the lagging filer or
+// a cooling-off window closes, so the forward is re-routed by this filer's ring
+// until shortly after its latest window ends, then the refusal surfaces. It
+// also surfaces once this filer's ring names itself: a caller may have checked
+// the entry before routing, and that check is stale after the wait.
 func (fs *FilerServer) forwardToWriteOwner(ctx context.Context, key string, send func(owner pb.ServerAddress) error) (handled bool, err error) {
-	owner := fs.writeOwner(key)
-	if owner == "" {
-		return false, nil
-	}
-	if err := send(owner); err != nil {
+	var firstRefusal time.Time
+	for wait := notWriteOwnerRetryWait; ; wait = min(2*wait, 10*notWriteOwnerRetryWait) {
+		owner := fs.writeOwner(key)
+		if owner == "" {
+			return err != nil, err
+		}
+		if err = send(owner); err == nil {
+			return true, nil
+		}
 		glog.V(1).InfofCtx(ctx, "route %s to owner %s: %v", key, owner, err)
-		return true, err
+		if !isNotWriteOwner(err) {
+			return true, err
+		}
+		if firstRefusal.IsZero() {
+			firstRefusal = time.Now()
+		}
+		deadline := firstRefusal.Add(notWriteOwnerRetrySlack)
+		if end := fs.filer.Dlm.LockRing.PriorOwnerWindowEnd().Add(notWriteOwnerRetrySlack); end.After(deadline) {
+			deadline = end
+		}
+		if limit := firstRefusal.Add(notWriteOwnerRetryLimit); deadline.After(limit) {
+			deadline = limit
+		}
+		if time.Now().Add(wait).After(deadline) {
+			return true, err
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return true, err
+		case <-timer.C:
+		}
 	}
-	return true, nil
 }
+
+var (
+	notWriteOwnerRetryWait  = 50 * time.Millisecond
+	notWriteOwnerRetrySlack = time.Second
+	notWriteOwnerRetryLimit = 15 * time.Second
+)
 
 // entryRouteKey is the ring key for an entry's writes. It shares the S3
 // gateway's namespace so an object's ObjectTransaction and its CreateEntry
@@ -177,4 +216,47 @@ func (fs *FilerServer) checkMovedMarker(ctx context.Context, isMoved bool, owner
 		return nil
 	}
 	return status.Errorf(codes.PermissionDenied, "is_moved not sent by a ring member; the key's owner is %s", owner)
+}
+
+// notWriteOwnerReason marks a forwarded write refused by a filer whose own ring
+// names another write owner for the key.
+const notWriteOwnerReason = "NOT_WRITE_OWNER"
+
+// checkForwardedWrite admits a routed write that arrived with is_moved only on
+// the key's write owner in this filer's own ring. While two rings disagree, a
+// forward applied here would be checked under a second filer's lock, and
+// re-forwarding it could cycle, so it is refused. The refusal is Unavailable
+// with a NOT_WRITE_OWNER reason, telling the sender nothing was applied.
+func (fs *FilerServer) checkForwardedWrite(ctx context.Context, key string) error {
+	owner := fs.writeOwner(key)
+	if err := fs.checkMovedMarker(ctx, true, owner); err != nil {
+		return err
+	}
+	if owner == "" {
+		return nil
+	}
+	return notWriteOwnerError(key, owner)
+}
+
+func notWriteOwnerError(key string, owner pb.ServerAddress) error {
+	st := status.Newf(codes.Unavailable, "not the write owner of %s: %s is", key, owner)
+	withReason, err := st.WithDetails(&errdetails.ErrorInfo{Reason: notWriteOwnerReason, Domain: "seaweedfs"})
+	if err != nil {
+		return st.Err()
+	}
+	return withReason.Err()
+}
+
+// isNotWriteOwner reports whether err is checkForwardedWrite's refusal.
+func isNotWriteOwner(err error) bool {
+	st, ok := util.ServerStatus(err)
+	if !ok || st.Code() != codes.Unavailable {
+		return false
+	}
+	for _, d := range st.Details() {
+		if info, ok := d.(*errdetails.ErrorInfo); ok && info.GetReason() == notWriteOwnerReason {
+			return true
+		}
+	}
+	return false
 }

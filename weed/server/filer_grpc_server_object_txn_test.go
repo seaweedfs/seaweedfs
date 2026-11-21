@@ -856,12 +856,11 @@ func TestObjectTransactionRouteKeyOwnerAppliesLocally(t *testing.T) {
 	}
 }
 
-// A forwarded transaction (is_moved over a ring member's connection) applies
-// locally even when the ring names a different owner: is_moved bounds
-// forwarding to a single hop, so two filers that disagree on the owner during
-// a ring change cannot loop. Without the marker this would attempt to dial
-// the bogus owner instead of applying.
-func TestObjectTransactionIsMovedSkipsForward(t *testing.T) {
+// A forwarded transaction (is_moved over a ring member's connection) on a
+// filer whose ring names a different owner is refused, neither applied under
+// this filer's lock nor forwarded again, so two filers that disagree on the
+// owner during a ring change can neither both apply it nor loop.
+func TestObjectTransactionIsMovedRefusedByNonOwner(t *testing.T) {
 	self := pb.ServerAddress("localhost:1")
 	other := pb.ServerAddress("localhost:2")
 	fs, store := newTxnTestServer(t, map[string]*filer.Entry{
@@ -869,7 +868,7 @@ func TestObjectTransactionIsMovedSkipsForward(t *testing.T) {
 	})
 	withRing(fs, self, other) // ring owner is "other", not self
 
-	resp, err := fs.ObjectTransaction(ringPeerCtx(), &filer_pb.ObjectTransactionRequest{
+	_, err := fs.ObjectTransaction(ringPeerCtx(), &filer_pb.ObjectTransactionRequest{
 		LockKey:  "/buckets/b/obj",
 		RouteKey: "s3.object.write:/buckets/b/obj",
 		IsMoved:  true,
@@ -878,18 +877,16 @@ func TestObjectTransactionIsMovedSkipsForward(t *testing.T) {
 			SetExtended: map[string][]byte{"X-Amz-Meta-k": []byte("v")},
 		}},
 	})
-	if err != nil || resp.Error != "" {
-		t.Fatalf("txn failed: err=%v resp=%q", err, resp.Error)
+	if !isNotWriteOwner(err) {
+		t.Fatalf("a forwarded txn on a non-owner must be refused as not the write owner, got err=%v", err)
 	}
-	if string(store.entries["/buckets/b/obj"].Extended["X-Amz-Meta-k"]) != "v" {
-		t.Errorf("forwarded txn should apply locally: %v", store.entries["/buckets/b/obj"].Extended)
+	if _, set := store.entries["/buckets/b/obj"].Extended["X-Amz-Meta-k"]; set {
+		t.Errorf("a refused txn must not apply: %v", store.entries["/buckets/b/obj"].Extended)
 	}
 }
 
 // End-to-end forward hop: a non-owner filer dials the ring owner and the owner
-// applies the transaction. The owner's own ring points back at the (bogus)
-// sender, so it would re-forward and fail to dial unless is_moved is set on the
-// forwarded request — making this also assert that one-hop bound over the wire.
+// applies the transaction.
 func TestObjectTransactionForwardsToOwner(t *testing.T) {
 	owner, ownerStore := newTxnTestServer(t, map[string]*filer.Entry{
 		"/buckets/b/obj": {FullPath: "/buckets/b/obj", Attr: filer.Attr{Inode: 1, Mode: 0644}},
@@ -905,9 +902,7 @@ func TestObjectTransactionForwardsToOwner(t *testing.T) {
 	ownerAddr := pb.NewServerAddressWithGrpcPort(lis.Addr().String(), port)
 	sender := pb.ServerAddress("127.0.0.1:1") // bogus: nothing listens here
 
-	// owner's ring points back at the sender; only is_moved keeps it from
-	// re-forwarding to (and failing to dial) that bogus address.
-	withRing(owner, ownerAddr, sender)
+	withRing(owner, ownerAddr, ownerAddr)
 	owner.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
 
 	srv := grpc.NewServer()
