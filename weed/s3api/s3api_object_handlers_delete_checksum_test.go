@@ -319,6 +319,15 @@ func TestDeleteObjectsChecksumInvalidHeaders(t *testing.T) {
 				req.Header.Add("Content-Md5", v)
 			},
 		},
+		{
+			name:     "non_canonical_md5_padding_auth",
+			wantCode: "InvalidDigest",
+			prepare: func(req *http.Request, _ []byte) {
+				// Decodes to 16 bytes, but re-encoding yields a different
+				// string, so the signed value is not canonical base64.
+				req.Header.Set("Content-Md5", "AAAAAAAAAAAAAAAAAAAAAB==")
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -549,6 +558,20 @@ func TestDeleteObjectsChecksumIAMDisabled(t *testing.T) {
 		require.False(t, env.exists(key))
 	})
 
+	t.Run("malformed_query_escape", func(t *testing.T) {
+		key := "noiam-malformed-query.txt"
+		env.seed(key)
+		body := deleteObjectsBody(key)
+		req := newDeleteChecksumRequest(t, "http://127.0.0.1:9000/warehouse?delete&x-amz-checksum-crc32=%ZZ", body)
+		req = mux.SetURLVars(req, map[string]string{"bucket": "warehouse"})
+		rec := httptest.NewRecorder()
+		env.handler(rec, req)
+
+		require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "<Code>InvalidRequest</Code>")
+		require.True(t, env.exists(key), "object must survive a malformed query escape")
+	})
+
 	t.Run("oversized_body", func(t *testing.T) {
 		key := "noiam-oversized.txt"
 		env.seed(key)
@@ -627,5 +650,111 @@ func TestDeleteObjectsChecksumQueryParams(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 		require.Contains(t, rec.Body.String(), "<Code>InvalidRequest</Code>")
 		require.True(t, env.exists(victimKey), "victim object must survive header-over-query smuggling")
+	})
+}
+
+// TestDeleteObjectsChecksumPresignedQuery covers DeleteObjects against a
+// presigned URL, where AWS SDK presigners hoist x-amz-checksum-* into the
+// query string that the signature covers.
+func TestDeleteObjectsChecksumPresignedQuery(t *testing.T) {
+	env := newDeleteChecksumTestEnv(t, true)
+
+	presignedDeleteURL := func(checksum string) string {
+		q := url.Values{}
+		q.Set("delete", "")
+		q.Set(s3_constants.AmzSdkChecksumAlgorithm, "CRC32")
+		q.Set(s3_constants.AmzChecksumCRC32, checksum)
+		return "http://127.0.0.1:9000/warehouse?" + q.Encode()
+	}
+
+	newPresigned := func(t *testing.T, urlStr string, body []byte) *http.Request {
+		t.Helper()
+		req := newDeleteChecksumRequest(t, urlStr, body)
+		req.Header.Del("X-Amz-Content-Sha256")
+		require.NoError(t, preSignV4(env.s3a.iam, req, "access_key_1", "secret_key_1", 600))
+		return mux.SetURLVars(req, map[string]string{"bucket": "warehouse"})
+	}
+
+	serve := func(req *http.Request) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		env.handler(rec, req)
+		return rec
+	}
+
+	t.Run("valid_query_checksum", func(t *testing.T) {
+		key := "presigned-valid.txt"
+		env.seed(key)
+		body := deleteObjectsBody(key)
+		req := newPresigned(t, presignedDeleteURL(computeChecksumBase64(ChecksumAlgorithmCRC32, body)), body)
+
+		rec := serve(req)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.False(t, env.exists(key), "object must be deleted on a valid presigned checksum")
+	})
+
+	t.Run("body_swapped_against_signed_query_checksum", func(t *testing.T) {
+		origKey := "presigned-orig.txt"
+		victimKey := "presigned-victim.txt"
+		env.seed(origKey)
+		env.seed(victimKey)
+		origBody := deleteObjectsBody(origKey)
+		swappedBody := deleteObjectsBody(victimKey)
+		req := newPresigned(t, presignedDeleteURL(computeChecksumBase64(ChecksumAlgorithmCRC32, origBody)), swappedBody)
+
+		rec := serve(req)
+		require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "<Code>BadDigest</Code>")
+		require.True(t, env.exists(victimKey), "victim object must survive a body swapped against the signed query checksum")
+	})
+
+	t.Run("query_checksum_edited_after_signing", func(t *testing.T) {
+		key := "presigned-edited.txt"
+		env.seed(key)
+		body := deleteObjectsBody(key)
+		req := newPresigned(t, presignedDeleteURL(computeChecksumBase64(ChecksumAlgorithmCRC32, body)), body)
+
+		q := req.URL.Query()
+		q.Set(s3_constants.AmzChecksumCRC32, computeChecksumBase64(ChecksumAlgorithmCRC32, deleteObjectsBody("presigned-victim.txt")))
+		req.URL.RawQuery = q.Encode()
+
+		rec := serve(req)
+		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "<Code>SignatureDoesNotMatch</Code>")
+		require.True(t, env.exists(key), "object must survive a query checksum edited after signing")
+	})
+
+	t.Run("injected_checksum_header", func(t *testing.T) {
+		key := "presigned-injected.txt"
+		env.seed(key)
+		body := deleteObjectsBody(key)
+		swappedBody := deleteObjectsBody("presigned-swapped.txt")
+		req := newPresigned(t, presignedDeleteURL(computeChecksumBase64(ChecksumAlgorithmCRC32, body)), swappedBody)
+		req.Header.Set(s3_constants.AmzChecksumCRC32, computeChecksumBase64(ChecksumAlgorithmCRC32, swappedBody))
+
+		rec := serve(req)
+		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "<Code>SignatureDoesNotMatch</Code>")
+		require.True(t, env.exists(key), "object must survive an unsigned checksum header")
+	})
+
+	t.Run("injected_checksum_header_over_signed_query", func(t *testing.T) {
+		origKey := "presigned-orig.txt"
+		victimKey := "presigned-victim.txt"
+		env.seed(origKey)
+		env.seed(victimKey)
+
+		origBody := deleteObjectsBody(origKey)
+		swappedBody := deleteObjectsBody(victimKey)
+		req := newDeleteChecksumRequest(t, presignedDeleteURL(computeChecksumBase64(ChecksumAlgorithmCRC32, origBody)), swappedBody)
+		req.Header.Del("X-Amz-Content-Sha256")
+		req.Header.Set(s3_constants.AmzChecksumCRC32, computeChecksumBase64(ChecksumAlgorithmCRC32, swappedBody))
+		require.NoError(t, preSignV4WithHeaders(env.s3a.iam, req, "access_key_1", "secret_key_1", 600,
+			[]string{"host", s3_constants.AmzChecksumCRC32}))
+		req = mux.SetURLVars(req, map[string]string{"bucket": "warehouse"})
+
+		rec := serve(req)
+		require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "<Code>InvalidRequest</Code>")
+		require.True(t, env.exists(victimKey), "victim object must survive a checksum header duplicating the signed query")
 	})
 }

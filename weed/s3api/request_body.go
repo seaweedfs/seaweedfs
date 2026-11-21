@@ -137,7 +137,7 @@ func bindSignedPayload(r *http.Request, hashedPayload string) s3err.ErrorCode {
 			return s3err.ErrInvalidDigest
 		}
 		decoded, err := validateContentMd5(r.Header)
-		if err != nil || len(decoded) != md5.Size {
+		if err != nil || len(decoded) != md5.Size || base64.StdEncoding.EncodeToString(decoded) != vals[0] {
 			return s3err.ErrInvalidDigest
 		}
 		contentMd5 = decoded
@@ -218,7 +218,14 @@ func parseRequestBodyChecksum(r *http.Request) (requestBodyChecksum, s3err.Error
 		}
 	}
 
-	query := parseRequestQuery(r)
+	var query url.Values
+	if r.URL != nil && r.URL.RawQuery != "" {
+		var err error
+		query, err = url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			return requestBodyChecksum{}, s3err.ErrInvalidRequest
+		}
+	}
 
 	if trailerVals := requestHeaderOrQueryValues(r, query, s3_constants.AmzTrailer); len(trailerVals) > 0 {
 		if fips140Enforced() {
