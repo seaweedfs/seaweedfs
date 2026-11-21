@@ -2222,6 +2222,9 @@ func (s3a *S3ApiServer) downloadChunkDataFrom(srcUrl, fileId string, offset, siz
 	if shouldRetry {
 		return nil, fmt.Errorf("download chunk: retry needed")
 	}
+	if len(cipherKey) == 0 && int64(len(chunkData)) < size {
+		return nil, fmt.Errorf("download chunk %s: got %d of %d bytes", srcUrl, len(chunkData), size)
+	}
 	return chunkData, nil
 }
 

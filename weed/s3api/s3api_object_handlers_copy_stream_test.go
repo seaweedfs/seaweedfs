@@ -176,6 +176,11 @@ func TestDownloadChunkDataFallsBackToNextReplica(t *testing.T) {
 		}
 	}))
 	defer truncated.Close()
+	// holds a shorter needle, so the range comes back clamped with a clean end
+	short := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(payload[:len(payload)/2]))
+	}))
+	defer short.Close()
 
 	s3a := &S3ApiServer{}
 	for _, tc := range []struct {
@@ -185,6 +190,8 @@ func TestDownloadChunkDataFallsBackToNextReplica(t *testing.T) {
 	}{
 		{"first replica misses the needle", []string{missing.URL, healthy.URL}, false},
 		{"first replica breaks off mid-chunk", []string{truncated.URL, healthy.URL}, false},
+		{"first replica serves a shorter needle", []string{short.URL, healthy.URL}, false},
+		{"only replica serves a shorter needle", []string{short.URL}, true},
 		{"no replica has the needle", []string{missing.URL, missing.URL}, true},
 		{"no source location", nil, true},
 	} {
