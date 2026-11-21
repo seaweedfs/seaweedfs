@@ -299,6 +299,23 @@ func TestRecursiveDeleteFailingAfterItsLinkedChildTookItsLinkOff(t *testing.T) {
 	require.Equal(t, 1, f.pendingDeletionCount())
 }
 
+// The folder's other children are refused after the file's last link went
+// with its hard-linked child. Nothing names those chunks any more, so they
+// are deleted then, not with the folder's other chunks at the end.
+func TestRecursiveDeleteFailingAfterALastLinkWentDeletesItsChunks(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+	store.entries["/d/sub"] = &Entry{FullPath: "/d/sub", Attr: Attr{Mode: os.ModeDir | 0o755}}
+	store.entries["/d/sub/c"] = &Entry{FullPath: "/d/sub/c", Attr: Attr{Mode: 0o644}}
+	id := linkedFile(t, store, "/d/sub/a")
+
+	store.deleteFolderErr = storeRefusal
+	require.ErrorContains(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}), "write conflict")
+	require.Equal(t, int32(0), linkCount(t, store, id))
+	require.Equal(t, 1, f.pendingDeletionCount(), "the chunks of the file's last link were left behind")
+}
+
 // Every name of the file is in the deleted tree, in two folders: the second
 // name takes the last link off, and the chunks go once.
 func TestRecursiveDeleteOfEveryNameDeletesChunksOnce(t *testing.T) {

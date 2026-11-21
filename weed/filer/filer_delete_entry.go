@@ -243,7 +243,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 					if len(sub.HardLinkId) != 0 {
 						// it goes now, the way a single delete takes it;
 						// DeleteFolderChildren below takes the other children
-						err = f.deleteLinkedName(ctx, sub, shouldDeleteChunks, subChunksToDelete)
+						err = f.deleteLinkedName(ctx, sub, shouldDeleteChunks)
 					} else {
 						if shouldDeleteChunks {
 							*subChunksToDelete = append(*subChunksToDelete, sub.GetChunks()...)
@@ -414,11 +414,11 @@ func (f *Filer) hardLinkIsOrphaned(ctx context.Context, hardLinkId HardLinkId) b
 
 // deleteLinkedName deletes sub, a hard-linked name a recursive delete has
 // listed, the way a single delete does: the store deletes the name, its link
-// is dropped after that (dropLink), and its file's chunks are queued only when
+// is dropped after that (dropLink), and its file's chunks are deleted only when
 // that was the file's last link (lastLinkDropped). Left to DeleteFolderChildren,
 // the name would go without its link dropped, and a store that deletes in
 // batches and fails part way would leave the names it did delete counted.
-func (f *Filer) deleteLinkedName(ctx context.Context, sub *Entry, shouldDeleteChunks bool, chunksToDelete *[]*filer_pb.FileChunk) error {
+func (f *Filer) deleteLinkedName(ctx context.Context, sub *Entry, shouldDeleteChunks bool) error {
 	// the count listed with sub may be a page old
 	entry, err := f.Store.FindEntry(ctx, sub.FullPath)
 	if errors.Is(err, filer_pb.ErrNotFound) {
@@ -431,7 +431,10 @@ func (f *Filer) deleteLinkedName(ctx context.Context, sub *Entry, shouldDeleteCh
 		return err
 	}
 	if shouldDeleteChunks && (len(entry.HardLinkId) == 0 || f.lastLinkDropped(ctx, entry)) {
-		*chunksToDelete = append(*chunksToDelete, entry.GetChunks()...)
+		// now, not with the folder's other chunks: the name and the record
+		// are gone, so nothing would find these chunks again if the rest
+		// of the folder's delete failed
+		f.DeleteChunks(ctx, entry.FullPath, entry.GetChunks())
 	}
 	return nil
 }
