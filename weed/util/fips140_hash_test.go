@@ -2,6 +2,7 @@ package util
 
 import (
 	"bytes"
+	"crypto/fips140"
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -16,6 +17,9 @@ func setFIPS140Enforced(t *testing.T, enforced bool) {
 }
 
 func TestNewMd5KeepsMd5WhenNotEnforced(t *testing.T) {
+	if fips140.Enforced() {
+		t.Skip("GODEBUG=fips140=only refuses MD5 and SHA-1")
+	}
 	setFIPS140Enforced(t, false)
 	data := []byte("hello")
 	want := md5.Sum(data)
