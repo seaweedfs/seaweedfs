@@ -3,6 +3,7 @@ package weed_server
 import (
 	"bytes"
 	"context"
+	"crypto/fips140"
 	"crypto/md5"
 	"encoding/base64"
 	"errors"
@@ -31,6 +32,9 @@ var jpegStart = []byte{0xFF, 0xD8, 0xFF}
 func (vs *VolumeServer) replicaContentMd5(n *needle.Needle, contentMd5 string) string {
 	if !vs.FixJpgOrientation || contentMd5 == "" || !bytes.HasPrefix(n.Data, jpegStart) {
 		return contentMd5
+	}
+	if fips140.Enforced() {
+		return ""
 	}
 	if sum := md5.Sum(n.Data); base64.StdEncoding.EncodeToString(sum[:]) != contentMd5 {
 		return ""

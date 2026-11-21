@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -43,7 +44,8 @@ func canStreamCopyChunk(chunk *filer_pb.FileChunk) bool {
 	return true
 }
 
-// streamCopyChunkRange copies size bytes starting at offset from srcUrl to
+// streamCopyChunkRange copies size bytes starting at offset from the first of
+// srcUrls (one per source replica) that serves the chunk to
 // the destination volume identified by assignResult, using io.Pipe to avoid
 // buffering the chunk in memory. The destination volume server expects the
 // same multipart wire format that operation.upload_content writes — see
@@ -81,7 +83,7 @@ func canStreamCopyChunk(chunk *filer_pb.FileChunk) bool {
 // own ETag and needs no recomputation.
 func (s3a *S3ApiServer) streamCopyChunkRange(
 	ctx context.Context,
-	srcUrl, srcFileId string,
+	srcUrls []string, srcFileId string,
 	offset, size int64,
 	isFullChunk bool,
 	assignResult *filer_pb.AssignVolumeResponse,
@@ -108,37 +110,12 @@ func (s3a *S3ApiServer) streamCopyChunkRange(
 	dstJwt := security.EncodedJwt(assignResult.Auth)
 	srcJwt := filer.JwtForVolumeServer(srcFileId)
 
-	// Source GET: built directly (not through ReadUrlAsStream) because that
-	// helper auto-decompresses gzipped responses, which would defeat the
-	// whole-chunk pass-through optimization. We want the wire bytes.
-	srcReq, err := http.NewRequestWithContext(streamCtx, http.MethodGet, srcUrl, nil)
+	srcResp, srcUrl, err := openCopySource(streamCtx, srcUrls, srcJwt, offset, size, isFullChunk)
 	if err != nil {
-		return fmt.Errorf("create source GET: %w", err)
-	}
-	if srcJwt != "" {
-		srcReq.Header.Set("Authorization", security.BearerPrefix+srcJwt)
-	}
-	if isFullChunk {
-		// Manually setting Accept-Encoding tells Go's http.Transport that
-		// the user wants raw bytes back — Go's automatic decompression is
-		// only applied when it adds the header itself. The server may or
-		// may not actually gzip; the response Content-Encoding header is
-		// authoritative.
-		srcReq.Header.Set("Accept-Encoding", "gzip")
-	} else {
-		srcReq.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+size-1))
-	}
-
-	srcResp, err := util_http.GetGlobalHttpClient().Do(srcReq)
-	if err != nil {
-		return fmt.Errorf("source GET: %w", err)
+		return err
 	}
 	// CloseResponse drains and closes resp.Body for keepalive.
 	defer util_http.CloseResponse(srcResp)
-
-	if srcResp.StatusCode >= 400 {
-		return fmt.Errorf("source GET %s: %s", srcUrl, srcResp.Status)
-	}
 
 	// What's actually on the wire — trust this over caller hints. For range
 	// fetches the volume always returns raw bytes (no Content-Encoding); for
@@ -218,6 +195,64 @@ func (s3a *S3ApiServer) streamCopyChunkRange(
 		return fmt.Errorf("POST %s: %s", dstUrl, resp.Status)
 	}
 	return nil
+}
+
+// openCopySource opens the source chunk on the first replica that serves it and
+// returns the response with the URL it came from. Replicas can differ: one may
+// be down, or may be missing a needle the others hold, and the copy must not
+// fail while a readable copy exists. Trying the next replica is only safe here,
+// before any byte has been forwarded to the destination.
+//
+// The GET is built directly (not through ReadUrlAsStream) because that helper
+// auto-decompresses gzipped responses, which would defeat the whole-chunk
+// pass-through optimization. We want the wire bytes.
+func openCopySource(ctx context.Context, srcUrls []string, srcJwt string, offset, size int64, isFullChunk bool) (*http.Response, string, error) {
+	if len(srcUrls) == 0 {
+		return nil, "", fmt.Errorf("source GET: no source location")
+	}
+	var errs []error
+	for _, srcUrl := range srcUrls {
+		srcReq, err := http.NewRequestWithContext(ctx, http.MethodGet, srcUrl, nil)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("create source GET: %w", err))
+			continue
+		}
+		if srcJwt != "" {
+			srcReq.Header.Set("Authorization", security.BearerPrefix+srcJwt)
+		}
+		if isFullChunk {
+			// Manually setting Accept-Encoding tells Go's http.Transport that
+			// the user wants raw bytes back — Go's automatic decompression is
+			// only applied when it adds the header itself. The server may or
+			// may not actually gzip; the response Content-Encoding header is
+			// authoritative.
+			srcReq.Header.Set("Accept-Encoding", "gzip")
+		} else {
+			srcReq.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+size-1))
+		}
+
+		srcResp, err := util_http.GetGlobalHttpClient().Do(srcReq)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("source GET: %w", err))
+			if ctx.Err() != nil {
+				// the copy itself was cancelled; another replica cannot help
+				break
+			}
+			continue
+		}
+		if srcResp.StatusCode >= 400 {
+			util_http.CloseResponse(srcResp)
+			errs = append(errs, fmt.Errorf("source GET %s: %s", srcUrl, srcResp.Status))
+			continue
+		}
+		if srcResp.Header.Get("Content-Encoding") == "" && srcResp.ContentLength >= 0 && srcResp.ContentLength < size {
+			util_http.CloseResponse(srcResp)
+			errs = append(errs, fmt.Errorf("source GET %s: %d of %d bytes", srcUrl, srcResp.ContentLength, size))
+			continue
+		}
+		return srcResp, srcUrl, nil
+	}
+	return nil, "", errors.Join(errs...)
 }
 
 func shouldLogStreamError(err error) bool {

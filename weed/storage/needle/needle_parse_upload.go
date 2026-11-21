@@ -2,6 +2,7 @@ package needle
 
 import (
 	"bytes"
+	"crypto/fips140"
 	"crypto/md5"
 	"encoding/base64"
 	"fmt"
@@ -122,7 +123,10 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 	if expectedChecksum == "" {
 		expectedChecksum = pu.ContentMd5
 	}
-	if expectedChecksum != "" {
+	if expectedChecksum != "" && fips140.Enforced() {
+		// fips140=only refuses MD5: keep the client's digest unchecked.
+		pu.ContentMd5 = expectedChecksum
+	} else if expectedChecksum != "" {
 		h := md5.New()
 		h.Write(pu.UncompressedData)
 		pu.ContentMd5 = base64.StdEncoding.EncodeToString(h.Sum(nil))

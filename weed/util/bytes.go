@@ -2,7 +2,6 @@ package util
 
 import (
 	"bytes"
-	"crypto/md5"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
@@ -89,7 +88,7 @@ func Uint8toBytes(b []byte, v uint8) {
 
 // returns a 64 bit big int
 func HashStringToLong(dir string) (v int64) {
-	h := md5.New()
+	h := NewMd5()
 	io.WriteString(h, dir)
 
 	b := h.Sum(nil)
@@ -114,7 +113,7 @@ func HashStringToLong(dir string) (v int64) {
 }
 
 func HashToInt32(data []byte) (v int32) {
-	h := md5.New()
+	h := NewMd5()
 	h.Write(data)
 
 	b := h.Sum(nil)
@@ -135,7 +134,7 @@ func Base64Encode(data []byte) string {
 }
 
 func Md5(data []byte) []byte {
-	hash := md5.New()
+	hash := NewMd5()
 	hash.Write(data)
 	return hash.Sum(nil)
 }

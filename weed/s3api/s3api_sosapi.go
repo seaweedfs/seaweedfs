@@ -7,7 +7,6 @@ package s3api
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"encoding/hex"
 	"encoding/xml"
 	"errors"
@@ -21,6 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
@@ -259,8 +259,7 @@ func (s3a *S3ApiServer) handleSOSAPIGetObject(w http.ResponseWriter, r *http.Req
 	}
 
 	// Calculate ETag from content
-	hash := md5.Sum(xmlData)
-	etag := hex.EncodeToString(hash[:])
+	etag := hex.EncodeToString(util.Md5(xmlData))
 
 	// Set ETag header manually as ServeContent doesn't calculate it automatically
 	w.Header().Set("ETag", "\""+etag+"\"")
@@ -291,8 +290,7 @@ func (s3a *S3ApiServer) handleSOSAPIHeadObject(w http.ResponseWriter, r *http.Re
 	}
 
 	// Calculate ETag from content
-	hash := md5.Sum(xmlData)
-	etag := hex.EncodeToString(hash[:])
+	etag := hex.EncodeToString(util.Md5(xmlData))
 
 	// Set response headers (no body for HEAD)
 	w.Header().Set("Content-Type", "application/xml")

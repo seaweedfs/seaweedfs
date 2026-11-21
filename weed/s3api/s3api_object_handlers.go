@@ -511,7 +511,12 @@ func (s3a *S3ApiServer) checkDirectoryObject(bucket, object string) (*filer_pb.E
 func (s3a *S3ApiServer) resolveObjectEntry(bucket, object, versionId string) (*filer_pb.Entry, error) {
 	// Check if versioning is configured
 	versioningConfigured, err := s3a.isVersioningConfigured(bucket)
-	if err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			// Keep filer_pb.ErrNotFound in the error chain so callers that only
+			// check not-found do not misclassify a missing bucket as internal error.
+			return nil, fmt.Errorf("%w: %w", ErrBucketNotFound, err)
+		}
 		glog.Errorf("resolveObjectEntry: error checking versioning config for %s: %v", bucket, err)
 		return nil, err
 	}

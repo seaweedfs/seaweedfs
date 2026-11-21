@@ -3,7 +3,7 @@ package operation
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
+	"crypto/fips140"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -316,8 +316,7 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 	// verifies). Under cipher the server never sees the header, but the digest
 	// still becomes the chunk ETag.
 	if uploadOption.WantMd5 && uploadOption.Md5 == "" {
-		digest := md5.Sum(data)
-		uploadOption.Md5 = base64.StdEncoding.EncodeToString(digest[:])
+		uploadOption.Md5 = base64.StdEncoding.EncodeToString(util.Md5(data))
 	}
 
 	fileId, uploadResult, err = uploader.uploadWithRetryData(func() (fileId string, host string, auth security.EncodedJwt, fsync bool, err error) {
@@ -616,7 +615,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	if option.IsInputCompressed {
 		h.Set("Content-Encoding", "gzip")
 	}
-	if option.Md5 != "" {
+	if option.Md5 != "" && !fips140.Enforced() {
 		h.Set("Content-MD5", option.Md5)
 	}
 
@@ -756,7 +755,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 			uploader.fastUploadHosts.Store(req.URL.Host, fastHostMark{at: time.Now().UnixNano(), bps: bps})
 		}
 		ret.ETag = etag
-		ret.ContentMd5 = resp.Header.Get("Content-MD5")
+		ret.ContentMd5 = uploadedContentMd5(resp, option)
 		return &ret, nil
 	}
 
@@ -793,7 +792,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		uploader.fastUploadHosts.Store(req.URL.Host, fastHostMark{at: time.Now().UnixNano(), bps: bps})
 	}
 	ret.ETag = etag
-	ret.ContentMd5 = resp.Header.Get("Content-MD5")
+	ret.ContentMd5 = uploadedContentMd5(resp, option)
 	return &ret, nil
 }
 
@@ -868,4 +867,14 @@ func (b *watchdogBody) Read(p []byte) (int, error) {
 func (b *watchdogBody) Close() error {
 	b.sentAt.Store(time.Now().UnixNano())
 	return b.ReadCloser.Close()
+}
+
+// uploadedContentMd5 is the Content-MD5 the volume server checked and echoed.
+// Under fips140=only the digest is not an MD5 and is never sent, so the
+// caller's own digest stands.
+func uploadedContentMd5(resp *http.Response, option *UploadOption) string {
+	if fips140.Enforced() {
+		return option.Md5
+	}
+	return resp.Header.Get("Content-MD5")
 }

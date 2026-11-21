@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"bufio"
+	"crypto/fips140"
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/tls"
@@ -162,6 +163,9 @@ type FieldDescription struct {
 
 // NewPostgreSQLServer creates a new PostgreSQL protocol server
 func NewPostgreSQLServer(config *PostgreSQLServerConfig, masterAddr string) (*PostgreSQLServer, error) {
+	if config.AuthMethod == AuthMD5 && fips140.Enforced() {
+		return nil, fmt.Errorf("md5 authentication uses MD5, which GODEBUG=fips140=only refuses")
+	}
 	if config.Port <= 0 {
 		config.Port = DEFAULT_POSTGRES_PORT
 	}

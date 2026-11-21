@@ -102,7 +102,7 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 	requestQuery := parseRequestQuery(r)
 	archiveMd5 := r.Header.Get("Content-Md5")
 	var archiveMd5Hash hash.Hash
-	if archiveMd5 != "" {
+	if archiveMd5 != "" && !fips140Enforced() {
 		archiveMd5Hash = md5.New()
 		dataReader = io.TeeReader(dataReader, archiveMd5Hash)
 	}

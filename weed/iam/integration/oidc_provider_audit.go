@@ -2,7 +2,6 @@ package integration
 
 import (
 	"context"
-	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -13,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
 
@@ -35,11 +35,11 @@ const (
 
 // OIDCProviderAuditEvent is the payload emitted for each lifecycle event.
 type OIDCProviderAuditEvent struct {
-	Type      OIDCProviderAuditEventType `json:"type"`
-	ARN       string                     `json:"arn"`
-	URL       string                     `json:"url,omitempty"`
-	Detail    map[string]string          `json:"detail,omitempty"`
-	OccurredAt time.Time                 `json:"occurredAt"`
+	Type       OIDCProviderAuditEventType `json:"type"`
+	ARN        string                     `json:"arn"`
+	URL        string                     `json:"url,omitempty"`
+	Detail     map[string]string          `json:"detail,omitempty"`
+	OccurredAt time.Time                  `json:"occurredAt"`
 }
 
 // OIDCProviderAuditSink consumes lifecycle events. Implementations must be
@@ -149,8 +149,9 @@ func (f *FilerAuditSink) Emit(ctx context.Context, event *OIDCProviderAuditEvent
 	// at the same nano against different ARNs are perfectly plausible
 	// (audit-via-batch script). The ARN hash gives us an effectively-
 	// collision-free name without leaking the ARN into the filer path.
-	arnSum := sha1.Sum([]byte(event.ARN))
-	name := fmt.Sprintf("%d-%s-%s.json", event.OccurredAt.UnixNano(), event.Type, hex.EncodeToString(arnSum[:8]))
+	arnHash := util.NewSha1()
+	arnHash.Write([]byte(event.ARN))
+	name := fmt.Sprintf("%d-%s-%s.json", event.OccurredAt.UnixNano(), event.Type, hex.EncodeToString(arnHash.Sum(nil)[:8]))
 	occurredAt := event.OccurredAt.Unix()
 	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(addr), f.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{

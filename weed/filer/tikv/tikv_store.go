@@ -466,7 +466,7 @@ func runOwnTxn(ctx context.Context, run func() (inContext bool, err error)) erro
 
 // Encoding Functions
 func hashToBytes(dir string) []byte {
-	h := sha1.New()
+	h := util.NewSha1()
 	io.WriteString(h, dir)
 	b := h.Sum(nil)
 	return b

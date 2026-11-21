@@ -8,8 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 // readPersistedLedger pulls the persisted ledger payload straight from the store
@@ -581,4 +586,67 @@ func contains(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// A pending deletion on a volume the master no longer knows leaves the ledger
+// only once the master's "not found" has held for VolumeGoneGrace over
+// VolumeGoneMinAnswers retries: before that (a volume server away for a while,
+// a follower's cold cache) and whenever the master cannot answer, it stays.
+// Without this, the ledger reloaded such ids on every restart and retried them
+// forever.
+func TestDeletionLedgerVolumeGoneConfirmed(t *testing.T) {
+	withPersistedConfig(t, true)
+	noCache := func(vid string) ([]wdclient.Location, error) { return nil, fmt.Errorf("volume %s not cached", vid) }
+	gone := lookupWithMasterFallback(noCache, func(vids []string) (*master_pb.LookupVolumeResponse, error) {
+		resp := &master_pb.LookupVolumeResponse{}
+		for _, v := range vids {
+			resp.VolumeIdLocations = append(resp.VolumeIdLocations, &master_pb.LookupVolumeResponse_VolumeIdLocation{
+				VolumeOrFileId: v, Error: "volume id " + v + " not found"})
+		}
+		return resp, nil
+	})
+	unavailable := lookupWithMasterFallback(noCache, func(vids []string) (*master_pb.LookupVolumeResponse, error) {
+		return nil, fmt.Errorf("rpc error: code = Unavailable desc = master is warming up, topology is still loading")
+	})
+
+	f := newLedgerTestFiler(newStubFilerStore())
+	f.GrpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+	f.queueDeletions(false, "274,01")
+	pending := func() bool { return f.deletionEpoch("274,01") != 0 }
+	item := &DeletionRetryItem{FileId: "274,01", ledgerEpoch: f.deletionEpoch("274,01")}
+
+	// first answers: kept
+	f.processRetryBatch([]*DeletionRetryItem{item}, gone)
+	f.processRetryBatch([]*DeletionRetryItem{item}, gone)
+	if !pending() || item.goneSeen != 2 {
+		t.Fatalf("after two answers: pending=%v goneSeen=%d, want kept with a streak of 2", pending(), item.goneSeen)
+	}
+	// the master cannot answer: kept, and the streak starts over
+	item.goneSince = time.Now().Add(-VolumeGoneGrace - time.Minute)
+	f.processRetryBatch([]*DeletionRetryItem{item}, unavailable)
+	if !pending() || item.goneSeen != 0 {
+		t.Fatalf("master unavailable: pending=%v goneSeen=%d, want kept with the streak reset", pending(), item.goneSeen)
+	}
+	// enough answers, but not for long enough: kept
+	for i := 0; i < VolumeGoneMinAnswers+2; i++ {
+		f.processRetryBatch([]*DeletionRetryItem{item}, gone)
+	}
+	if !pending() {
+		t.Fatalf("answers within a few seconds dropped the deletion; want kept until VolumeGoneGrace")
+	}
+	// held for longer than the grace, but over too few answers: kept
+	f.processRetryBatch([]*DeletionRetryItem{item}, unavailable)
+	f.processRetryBatch([]*DeletionRetryItem{item}, gone)
+	item.goneSince = time.Now().Add(-VolumeGoneGrace - time.Minute)
+	for i := 1; i < VolumeGoneMinAnswers-1; i++ {
+		f.processRetryBatch([]*DeletionRetryItem{item}, gone)
+	}
+	if !pending() {
+		t.Fatalf("%d answers over the grace dropped the deletion; want kept until %d", item.goneSeen, VolumeGoneMinAnswers)
+	}
+	// enough answers over the grace: dropped from the ledger
+	f.processRetryBatch([]*DeletionRetryItem{item}, gone)
+	if pending() {
+		t.Fatalf("volume unknown to the master for %v: the deletion is still pending", VolumeGoneGrace)
+	}
 }

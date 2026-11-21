@@ -3,7 +3,6 @@ package filer
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"errors"
 	"fmt"
 	"io"
@@ -375,7 +374,7 @@ func saveFilerConfConditionally(ctx context.Context, client filer_pb.SeaweedFile
 		return err
 	}
 	content := buf.Bytes()
-	contentMd5 := md5.Sum(content)
+	contentMd5 := util.Md5(content)
 
 	if snap.entry == nil {
 		err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
@@ -388,7 +387,7 @@ func saveFilerConfConditionally(ctx context.Context, client filer_pb.SeaweedFile
 					Crtime:   time.Now().Unix(),
 					FileMode: uint32(0644),
 					FileSize: uint64(len(content)),
-					Md5:      contentMd5[:],
+					Md5:      contentMd5,
 				},
 				Content: content,
 			},
@@ -423,7 +422,7 @@ func saveFilerConfConditionally(ctx context.Context, client filer_pb.SeaweedFile
 	entry.Content = content
 	entry.Attributes.Mtime = time.Now().Unix()
 	entry.Attributes.FileSize = uint64(len(content))
-	entry.Attributes.Md5 = contentMd5[:]
+	entry.Attributes.Md5 = contentMd5
 	err := filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
 		Directory: DirectoryEtcSeaweedFS,
 		Entry:     entry,

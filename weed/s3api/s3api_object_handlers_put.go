@@ -3,7 +3,6 @@ package s3api
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -31,6 +30,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/constants"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"google.golang.org/grpc/codes"
@@ -234,9 +234,9 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		// Compute MD5 for ETag (md5.Sum of nil/empty = MD5 of empty content)
-		dirMd5 := md5.Sum(dirContent)
-		if expectedMd5, _ := validateContentMd5(r.Header); len(expectedMd5) > 0 && !bytes.Equal(dirMd5[:], expectedMd5) {
+		// ETag of the marker content, empty or not
+		dirMd5 := util.Md5(dirContent)
+		if expectedMd5, _ := validateContentMd5(r.Header); len(expectedMd5) > 0 && !contentMd5Matches(dirMd5, expectedMd5) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrBadDigest)
 			return
 		}
@@ -287,7 +287,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 						entry.Content = dirContent
 					}
 					entry.Attributes.Mime = objectContentType
-					entry.Attributes.Md5 = dirMd5[:]
+					entry.Attributes.Md5 = dirMd5
 
 					// Store ETag in extended attributes for consistency with regular objects
 					if entry.Extended == nil {
@@ -611,7 +611,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// Each part is encrypted independently, then decrypted using metadata during GET
 	partOffset := int64(0)
 
-	plaintextHash := md5.New()
+	plaintextHash := util.NewMd5()
 	dataReader = io.TeeReader(dataReader, plaintextHash)
 
 	// Parse the request's query string once. AWS SDK presigners hoist signed
@@ -800,7 +800,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
 			return "", s3err.ErrInvalidDigest, SSEResponseMetadata{}
 		}
-		if !bytes.Equal(md5Sum, expectedMd5) {
+		if !contentMd5Matches(md5Sum, expectedMd5) {
 			glog.Warningf("putToFiler: Checksum verification failed, attempting to cleanup %d orphaned chunks", len(chunkResult.FileChunks))
 			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
 			return "", s3err.ErrBadDigest, SSEResponseMetadata{}
@@ -2986,7 +2986,12 @@ func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object 
 	// This ensures we check conditions against the LATEST version, not a null version.
 	entry, err := s3a.resolveObjectEntry(bucket, object, "")
 	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrDeleteMarker) {
+		if errors.Is(err, ErrBucketNotFound) {
+			if headers.ifMatch != "" {
+				return s3err.ErrNoSuchBucket
+			}
+			entry = nil
+		} else if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrDeleteMarker) {
 			entry = nil
 		} else {
 			glog.Errorf("checkConditionalHeaders: error resolving object entry for %s/%s: %v", bucket, object, err)
@@ -3104,7 +3109,9 @@ func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket,
 	versionId := r.URL.Query().Get("versionId")
 	entry, err := s3a.resolveObjectEntry(bucket, object, versionId)
 	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrDeleteMarker) {
+		if errors.Is(err, ErrBucketNotFound) {
+			return ConditionalHeaderResult{ErrorCode: s3err.ErrNoSuchBucket, Entry: nil}
+		} else if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrDeleteMarker) {
 			entry = nil
 		} else {
 			glog.Errorf("checkConditionalHeadersForReads: error resolving object entry for %s/%s: %v", bucket, object, err)
