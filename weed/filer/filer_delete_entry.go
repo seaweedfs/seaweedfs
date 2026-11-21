@@ -206,6 +206,13 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 
 	//collect all the chunks of this layer and delete them together at the end
 	var chunksToDelete, fsyncChunksToDelete []*filer_pb.FileChunk
+	// hard-linked files of this layer: their links are dropped once the
+	// store has deleted their names, as for a single delete (dropLink)
+	type linkedFile struct {
+		entry  *Entry
+		chunks *[]*filer_pb.FileChunk
+	}
+	var linkedFiles []linkedFile
 	lastFileName := ""
 	includeLastFile := false
 	listedChildren := !isDeletingBucket || !f.Store.CanDropWholeBucket()
@@ -252,10 +259,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 					}
 					if len(sub.HardLinkId) != 0 {
 						// hard link chunk data are deleted separately
-						err = onHardLinkIdsFn([]HardLinkId{sub.HardLinkId})
-						if shouldDeleteChunks && f.hardLinkIsOrphaned(ctx, sub.HardLinkId) {
-							*subChunksToDelete = append(*subChunksToDelete, sub.GetChunks()...)
-						}
+						linkedFiles = append(linkedFiles, linkedFile{sub, subChunksToDelete})
 					} else {
 						if shouldDeleteChunks {
 							*subChunksToDelete = append(*subChunksToDelete, sub.GetChunks()...)
@@ -280,6 +284,15 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 	if isRecursive || !listedChildren {
 		if storeDeletionErr := f.Store.DeleteFolderChildren(ctx, entry.FullPath); storeDeletionErr != nil {
 			return fmt.Errorf("filer store delete: %w", storeDeletionErr)
+		}
+	}
+
+	for _, linked := range linkedFiles {
+		if err := onHardLinkIdsFn([]HardLinkId{linked.entry.HardLinkId}); err != nil && !ignoreRecursiveError {
+			return err
+		}
+		if shouldDeleteChunks && f.hardLinkIsOrphaned(ctx, linked.entry.HardLinkId) {
+			*linked.chunks = append(*linked.chunks, linked.entry.GetChunks()...)
 		}
 	}
 

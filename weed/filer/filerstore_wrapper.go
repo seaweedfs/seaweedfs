@@ -150,11 +150,16 @@ func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) err
 			entry.FullPath, entry.HardLinkId, entry.HardLinkCounter)
 	}
 
-	if err := fsw.handleUpdateToHardLinks(ctx, entry); err != nil {
+	replacedLink, err := fsw.handleUpdateToHardLinks(ctx, entry)
+	if err != nil {
 		return err
 	}
 
-	return actualStore.InsertEntry(ctx, entry)
+	if err := actualStore.InsertEntry(ctx, entry); err != nil {
+		return err
+	}
+	fsw.dropLink(ctx, entry.FullPath, replacedLink)
+	return nil
 }
 
 // InsertEntryKnownAbsent skips the pre-insert FindEntry path when the caller has
@@ -207,11 +212,16 @@ func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) err
 			entry.FullPath, entry.HardLinkId, entry.HardLinkCounter)
 	}
 
-	if err := fsw.handleUpdateToHardLinks(ctx, entry); err != nil {
+	replacedLink, err := fsw.handleUpdateToHardLinks(ctx, entry)
+	if err != nil {
 		return err
 	}
 
-	return actualStore.UpdateEntry(ctx, entry)
+	if err := actualStore.UpdateEntry(ctx, entry); err != nil {
+		return err
+	}
+	fsw.dropLink(ctx, entry.FullPath, replacedLink)
+	return nil
 }
 
 func normalizeEntryMimeForStore(entry *Entry) {
@@ -263,21 +273,14 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 	if findErr == filer_pb.ErrNotFound || existingEntry == nil {
 		return nil
 	}
-	if len(existingEntry.HardLinkId) != 0 {
-		// remove hard link
-		op := ctx.Value("OP")
-		if op != "MV" {
-			glog.V(4).InfofCtx(ctx, "DeleteHardLink %s", existingEntry.FullPath)
-			if hlErr := fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); hlErr != nil {
-				// Log but continue: the directory entry must be removed
-				// even if hard link counter cleanup fails, otherwise the
-				// parent directory cannot be removed (rmdir ENOTEMPTY).
-				glog.Warningf("DeleteHardLink %s (id %x): %v", existingEntry.FullPath, existingEntry.HardLinkId, hlErr)
-			}
-		}
+	if err := actualStore.DeleteEntry(ctx, fp); err != nil {
+		return err
 	}
-
-	return actualStore.DeleteEntry(ctx, fp)
+	if ctx.Value("OP") != "MV" {
+		// a rename takes the name, link and all, elsewhere
+		fsw.dropLink(ctx, fp, existingEntry.HardLinkId)
+	}
+	return nil
 }
 
 func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry *Entry) (err error) {
@@ -292,22 +295,14 @@ func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry 
 		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "delete").Observe(time.Since(start).Seconds())
 	}()
 
-	if len(existingEntry.HardLinkId) != 0 {
-		// remove hard link
-		op := ctx.Value("OP")
-		if op != "MV" {
-			glog.V(4).InfofCtx(ctx, "DeleteHardLink %s", existingEntry.FullPath)
-			if hlErr := fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); hlErr != nil {
-				// Log the hard link cleanup error but continue to delete
-				// the directory entry. If we return early here, the entry
-				// remains in the store and the parent directory cannot be
-				// removed (rmdir returns ENOTEMPTY).
-				glog.Warningf("DeleteHardLink %s (id %x): %v", existingEntry.FullPath, existingEntry.HardLinkId, hlErr)
-			}
-		}
+	if err := actualStore.DeleteEntry(ctx, existingEntry.FullPath); err != nil {
+		return err
 	}
-
-	return actualStore.DeleteEntry(ctx, existingEntry.FullPath)
+	if ctx.Value("OP") != "MV" {
+		// a rename takes the name, link and all, elsewhere
+		fsw.dropLink(ctx, existingEntry.FullPath, existingEntry.HardLinkId)
+	}
+	return nil
 }
 
 func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {
