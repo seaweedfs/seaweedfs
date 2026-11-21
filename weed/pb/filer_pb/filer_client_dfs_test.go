@@ -2,7 +2,9 @@ package filer_pb
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"reflect"
 	"slices"
 	"sort"
@@ -155,5 +157,48 @@ func TestTraverseDfsReportsFilesBeforeTheirPageFinishes(t *testing.T) {
 	}
 	if want := []string{"/a", "/b", "/c", "/d/x", "/d"}; !reflect.DeepEqual(progressed, want) {
 		t.Fatalf("progress %v, want %v", progressed, want)
+	}
+}
+
+func TestTraverseDfsSkipsTheSubtreeFnSkips(t *testing.T) {
+	filerClient := startTreeFiler(t, map[string][]string{
+		"/":    {"a", "b"},
+		"/a":   {"x", "y", "z"},
+		"/a/y": {"1", "2"},
+	})
+
+	var mu sync.Mutex
+	var visited, progressed []string
+	err := TraverseDfs(context.Background(), filerClient, "/", "", func(parentPath util.FullPath, entry *Entry) error {
+		path := string(parentPath.Child(entry.Name))
+		mu.Lock()
+		visited = append(visited, path)
+		mu.Unlock()
+		if path == "/a/y" {
+			return fs.SkipDir
+		}
+		return nil
+	}, func(walked util.FullPath) {
+		progressed = append(progressed, string(walked))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(visited)
+	if want := []string{"/a", "/a/x", "/a/y", "/a/z", "/b"}; !slices.Equal(visited, want) {
+		t.Fatalf("visited %v, want %v", visited, want)
+	}
+	if want := []string{"/a/x", "/a/y", "/a/z", "/a", "/b"}; !slices.Equal(progressed, want) {
+		t.Fatalf("progress %v, want %v", progressed, want)
+	}
+
+	err = TraverseDfs(context.Background(), filerClient, "/a", "", func(parentPath util.FullPath, entry *Entry) error {
+		if entry.Name == "x" {
+			return fs.SkipDir
+		}
+		return nil
+	}, func(util.FullPath) {})
+	if !errors.Is(err, fs.SkipDir) {
+		t.Fatalf("fs.SkipDir for a file: err = %v, want it returned", err)
 	}
 }
