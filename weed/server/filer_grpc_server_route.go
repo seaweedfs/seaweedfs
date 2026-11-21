@@ -49,9 +49,9 @@ func (fs *FilerServer) writeOwner(key string) pb.ServerAddress {
 // An owner that refuses the forward as not its own applied nothing: the two
 // rings disagree. They converge once a ring update reaches the lagging filer or
 // a cooling-off window closes, so the forward is re-routed by this filer's ring
-// until shortly after its own window ends, then the refusal surfaces.
+// until shortly after its latest window ends, then the refusal surfaces.
 func (fs *FilerServer) forwardToWriteOwner(ctx context.Context, key string, send func(owner pb.ServerAddress) error) (handled bool, err error) {
-	var deadline time.Time
+	var firstRefusal time.Time
 	for wait := notWriteOwnerRetryWait; ; wait = min(2*wait, 10*notWriteOwnerRetryWait) {
 		owner := fs.writeOwner(key)
 		if owner == "" {
@@ -64,11 +64,15 @@ func (fs *FilerServer) forwardToWriteOwner(ctx context.Context, key string, send
 		if !isNotWriteOwner(err) {
 			return true, err
 		}
-		if deadline.IsZero() {
-			deadline = time.Now().Add(notWriteOwnerRetrySlack)
-			if end := fs.filer.Dlm.LockRing.PriorOwnerWindowEnd().Add(notWriteOwnerRetrySlack); end.After(deadline) {
-				deadline = end
-			}
+		if firstRefusal.IsZero() {
+			firstRefusal = time.Now()
+		}
+		deadline := firstRefusal.Add(notWriteOwnerRetrySlack)
+		if end := fs.filer.Dlm.LockRing.PriorOwnerWindowEnd().Add(notWriteOwnerRetrySlack); end.After(deadline) {
+			deadline = end
+		}
+		if limit := firstRefusal.Add(notWriteOwnerRetryLimit); deadline.After(limit) {
+			deadline = limit
 		}
 		if time.Now().Add(wait).After(deadline) {
 			return true, err
@@ -86,6 +90,7 @@ func (fs *FilerServer) forwardToWriteOwner(ctx context.Context, key string, send
 var (
 	notWriteOwnerRetryWait  = 50 * time.Millisecond
 	notWriteOwnerRetrySlack = time.Second
+	notWriteOwnerRetryLimit = 15 * time.Second
 )
 
 // entryRouteKey is the ring key for an entry's writes. It shares the S3

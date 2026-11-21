@@ -184,3 +184,34 @@ func TestForwardToWriteOwnerSurfacesAPersistentRefusal(t *testing.T) {
 		t.Fatalf("retries outlived their budget: %v", elapsed)
 	}
 }
+
+// A ring change that arrives while a refused forward is being retried starts a
+// new cooling-off window, and the retries wait for that one too.
+func TestForwardToWriteOwnerWaitsOutANewWindow(t *testing.T) {
+	wait, slack := notWriteOwnerRetryWait, notWriteOwnerRetrySlack
+	notWriteOwnerRetryWait, notWriteOwnerRetrySlack = 5*time.Millisecond, 50*time.Millisecond
+	t.Cleanup(func() { notWriteOwnerRetryWait, notWriteOwnerRetrySlack = wait, slack })
+	const window = 100 * time.Millisecond
+	fs := routeTestServer("f9:8888")
+	ring := lock_manager.NewLockRing(window)
+	ring.SetSnapshot(routeSetA, 1)
+	fs.filer.Dlm.LockRing = ring
+	time.Sleep(window + 10*time.Millisecond)
+
+	key := firstKey(t, func(string) bool { return true })
+	tries := 0
+	start := time.Now()
+	handled, err := fs.forwardToWriteOwner(context.Background(), key, func(pb.ServerAddress) error {
+		tries++
+		if tries == 2 {
+			ring.SetSnapshot(routeSetB, 2)
+		}
+		if time.Since(start) < window {
+			return notWriteOwnerError(key, "f9:8888")
+		}
+		return nil
+	})
+	if !handled || err != nil {
+		t.Fatalf("a refusal must be retried through a window that opened during the retries, got handled=%v err=%v after %d tries", handled, err, tries)
+	}
+}
