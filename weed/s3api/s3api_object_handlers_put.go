@@ -2986,7 +2986,12 @@ func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object 
 	// This ensures we check conditions against the LATEST version, not a null version.
 	entry, err := s3a.resolveObjectEntry(bucket, object, "")
 	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrDeleteMarker) {
+		if errors.Is(err, ErrBucketNotFound) {
+			if headers.ifMatch != "" || s3a.option == nil || !s3a.option.AutoCreateBucket {
+				return s3err.ErrNoSuchBucket
+			}
+			entry = nil
+		} else if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrDeleteMarker) {
 			entry = nil
 		} else {
 			glog.Errorf("checkConditionalHeaders: error resolving object entry for %s/%s: %v", bucket, object, err)
@@ -3104,7 +3109,9 @@ func (s3a *S3ApiServer) checkConditionalHeadersForReads(r *http.Request, bucket,
 	versionId := r.URL.Query().Get("versionId")
 	entry, err := s3a.resolveObjectEntry(bucket, object, versionId)
 	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrDeleteMarker) {
+		if errors.Is(err, ErrBucketNotFound) {
+			return ConditionalHeaderResult{ErrorCode: s3err.ErrNoSuchBucket, Entry: nil}
+		} else if errors.Is(err, filer_pb.ErrNotFound) || errors.Is(err, ErrDeleteMarker) {
 			entry = nil
 		} else {
 			glog.Errorf("checkConditionalHeadersForReads: error resolving object entry for %s/%s: %v", bucket, object, err)
