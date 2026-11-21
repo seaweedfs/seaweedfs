@@ -51,6 +51,16 @@ func encodeLinkRecord(t *testing.T, shared *Entry) []byte {
 	return blob
 }
 
+// setLinkCount rewrites the count in id's record, as a link or a delete
+// through another filer does. Callers hold store.mu (kvGetHook).
+func setLinkCount(t *testing.T, store *stubFilerStore, id HardLinkId, count int32) {
+	t.Helper()
+	shared := &Entry{}
+	require.NoError(t, shared.DecodeAttributesAndChunks(store.kv[string(id)]))
+	shared.HardLinkCounter = count
+	store.kv[string(id)] = encodeLinkRecord(t, shared)
+}
+
 // linkCount is the count in id's record, 0 once the record is gone.
 func linkCount(t *testing.T, store *stubFilerStore, id HardLinkId) int32 {
 	t.Helper()
@@ -62,6 +72,19 @@ func linkCount(t *testing.T, store *stubFilerStore, id HardLinkId) int32 {
 	shared := &Entry{}
 	require.NoError(t, shared.DecodeAttributesAndChunks(blob))
 	return shared.HardLinkCounter
+}
+
+// onSecondRecordRead runs f when the store reads id's record the second time:
+// a delete reads it first in its lookup, then to take the link off.
+func onSecondRecordRead(store *stubFilerStore, id HardLinkId, f func()) {
+	reads := 0
+	store.kvGetHook = func(key []byte) {
+		if string(key) == string(id) {
+			if reads++; reads == 2 {
+				f()
+			}
+		}
+	}
 }
 
 func TestDeleteRefusedByStoreKeepsHardLinkCount(t *testing.T) {
@@ -180,6 +203,44 @@ func TestDeleteEntryRefusedAndSentAgainKeepsChunksForOtherName(t *testing.T) {
 	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/b", false, false, true, false, nil, time.Time{}))
 	require.Equal(t, 1, f.pendingDeletionCount())
 	require.Equal(t, int32(0), linkCount(t, store, id))
+}
+
+// Another filer links the file under a new name after this delete read the
+// count of its only name: the record outlives the delete, and so do the
+// chunks, which the new name reads.
+func TestDeleteEntryKeepsChunksOfLinkAddedMeanwhile(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+	id := linkedFile(t, store, "/d/a")
+	onSecondRecordRead(store, id, func() {
+		setLinkCount(t, store, id, 2)
+		store.entries["/d/c"] = &Entry{FullPath: "/d/c", Attr: Attr{Mode: 0o644}, HardLinkId: id, HardLinkCounter: 2}
+	})
+
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/a", false, false, true, false, nil, time.Time{}))
+	store.kvGetHook = nil
+	require.Equal(t, 0, f.pendingDeletionCount(), "chunks deleted while /d/c reads them")
+	require.Equal(t, int32(1), linkCount(t, store, id))
+}
+
+// One name deleted twice at once through two filers: both read the file's two
+// links before either took one off, so both take one off and the record goes
+// while /d/b still holds the file. The count each delete read still shows
+// /d/b, and the chunks stay.
+func TestDeleteEntryTwiceAtOnceKeepsChunks(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+	id := linkedFile(t, store, "/d/a", "/d/b")
+	onSecondRecordRead(store, id, func() {
+		// the other delete of /d/a takes its link off first
+		setLinkCount(t, store, id, 1)
+	})
+
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/a", false, false, true, false, nil, time.Time{}))
+	store.kvGetHook = nil
+	require.Equal(t, 0, f.pendingDeletionCount(), "chunks deleted while /d/b still reads them")
 }
 
 // A recursive delete whose children the store refuses to delete leaves their

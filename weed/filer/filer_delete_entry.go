@@ -168,9 +168,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 	}
 
 	if shouldDeleteChunks && !dropsCollection {
-		if len(entry.HardLinkId) != 0 && entry.HardLinkCounter > 1 {
-			// if the file is a hard link and there are other hard links, do not delete the chunks
-		} else {
+		if len(entry.HardLinkId) == 0 || f.lastLinkDropped(ctx, entry) {
 			f.DeleteChunks(ctx, p, entry.GetChunks())
 		}
 	}
@@ -443,4 +441,18 @@ func (f *Filer) maybeDeleteHardLinks(ctx context.Context, hardLinkIds []HardLink
 func (f *Filer) hardLinkIsOrphaned(ctx context.Context, hardLinkId HardLinkId) bool {
 	_, err := f.Store.KvGet(ctx, hardLinkId)
 	return errors.Is(err, ErrKvNotFound)
+}
+
+// lastLinkDropped reports whether deleting entry, a hard-linked name the
+// store has just deleted, dropped its file's last link, so that no other name
+// reads its chunks: the link count read before the delete left no other name,
+// and the file's shared record is gone after it.
+//
+// Either one alone can be wrong while another filer works on the same file.
+// The count misses a link added after it was read; the record then outlives
+// this delete. The record goes early when one name is deleted twice at once,
+// each delete taking a link off; the count read before still shows the other
+// name. When the two disagree the chunks stay, leaked rather than lost.
+func (f *Filer) lastLinkDropped(ctx context.Context, entry *Entry) bool {
+	return entry.HardLinkCounter <= 1 && f.hardLinkIsOrphaned(ctx, entry.HardLinkId)
 }
