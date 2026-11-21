@@ -245,6 +245,11 @@ func openCopySource(ctx context.Context, srcUrls []string, srcJwt string, offset
 			errs = append(errs, fmt.Errorf("source GET %s: %s", srcUrl, srcResp.Status))
 			continue
 		}
+		if srcResp.Header.Get("Content-Encoding") == "" && srcResp.ContentLength >= 0 && srcResp.ContentLength < size {
+			util_http.CloseResponse(srcResp)
+			errs = append(errs, fmt.Errorf("source GET %s: %d of %d bytes", srcUrl, srcResp.ContentLength, size))
+			continue
+		}
 		return srcResp, srcUrl, nil
 	}
 	return nil, "", errors.Join(errs...)

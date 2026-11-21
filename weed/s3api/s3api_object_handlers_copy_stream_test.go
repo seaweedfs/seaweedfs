@@ -91,6 +91,11 @@ func TestStreamCopyChunkRangeFallsBackToNextReplica(t *testing.T) {
 	down := httptest.NewServer(http.NotFoundHandler())
 	downURL := down.URL
 	down.Close()
+	short := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(len(payload)/2))
+		_, _ = w.Write(payload[:len(payload)/2])
+	}))
+	defer short.Close()
 
 	for _, tc := range []struct {
 		name      string
@@ -102,6 +107,8 @@ func TestStreamCopyChunkRangeFallsBackToNextReplica(t *testing.T) {
 		{"first replica errors", []string{failing.URL, healthy.URL}, "", true},
 		{"first replica is down", []string{downURL, healthy.URL}, "", true},
 		{"healthy replica is last of three", []string{missing.URL, downURL, healthy.URL}, "", true},
+		{"first replica serves a shorter needle", []string{short.URL, healthy.URL}, "", true},
+		{"only replica serves a shorter needle", []string{short.URL}, fmt.Sprintf("of %d bytes", len(payload)), false},
 		{"no replica has the needle", []string{missing.URL, missing.URL}, "404", false},
 		{"no source location", nil, "no source location", false},
 	} {
