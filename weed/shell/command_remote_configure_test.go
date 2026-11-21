@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestMaskRemoteConfSecrets(t *testing.T) {
@@ -25,26 +26,24 @@ func TestMaskRemoteConfSecrets(t *testing.T) {
 		StorjSecretKey:          "storj-secret",
 		ContaboSecretKey:        "contabo-secret",
 	}
+	original := proto.Clone(conf).(*remote_pb.RemoteConf)
 	maskRemoteConfSecrets(conf)
-	for name, got := range map[string]string{
-		"s3":        conf.S3SecretKey,
-		"azure":     conf.AzureAccountKey,
-		"backblaze": conf.BackblazeApplicationKey,
-		"aliyun":    conf.AliyunSecretKey,
-		"tencent":   conf.TencentSecretKey,
-		"baidu ak":  conf.BaiduAccessKey,
-		"baidu sk":  conf.BaiduSecretKey,
-		"wasabi":    conf.WasabiSecretKey,
-		"filebase":  conf.FilebaseSecretKey,
-		"storj":     conf.StorjSecretKey,
-		"contabo":   conf.ContaboSecretKey,
+	for name, pair := range map[string][2]string{
+		"s3":        {original.S3SecretKey, conf.S3SecretKey},
+		"azure":     {original.AzureAccountKey, conf.AzureAccountKey},
+		"backblaze": {original.BackblazeApplicationKey, conf.BackblazeApplicationKey},
+		"aliyun":    {original.AliyunSecretKey, conf.AliyunSecretKey},
+		"tencent":   {original.TencentSecretKey, conf.TencentSecretKey},
+		"baidu ak":  {original.BaiduAccessKey, conf.BaiduAccessKey},
+		"baidu sk":  {original.BaiduSecretKey, conf.BaiduSecretKey},
+		"wasabi":    {original.WasabiSecretKey, conf.WasabiSecretKey},
+		"filebase":  {original.FilebaseSecretKey, conf.FilebaseSecretKey},
+		"storj":     {original.StorjSecretKey, conf.StorjSecretKey},
+		"contabo":   {original.ContaboSecretKey, conf.ContaboSecretKey},
 	} {
-		if got == "" || strings.Trim(got, "*") != "" {
-			t.Errorf("%s secret not masked: %q", name, got)
+		if want := strings.Repeat("*", len(pair[0])); pair[1] != want {
+			t.Errorf("%s secret masked as %q, want %q", name, pair[1], want)
 		}
-	}
-	if len(conf.AzureAccountKey) != len("azure-account-key==") {
-		t.Errorf("masked azure key changed length: %d", len(conf.AzureAccountKey))
 	}
 	if conf.AzureAccountName != "account" || conf.S3AccessKey != "AKID" {
 		t.Errorf("non-secret fields changed: %q %q", conf.AzureAccountName, conf.S3AccessKey)
@@ -56,10 +55,11 @@ func TestMaskRemoteConfSecrets(t *testing.T) {
 		t.Errorf("an unset key must stay empty (Entra ID), got %q", empty.AzureAccountKey)
 	}
 
-	gcs := &remote_pb.RemoteConf{Type: "gcs", GcsGoogleApplicationCredentials: ` {"type":"service_account","private_key":"-----BEGIN PRIVATE KEY-----"}`}
+	inline := ` {"type":"service_account","private_key":"-----BEGIN PRIVATE KEY-----"}`
+	gcs := &remote_pb.RemoteConf{Type: "gcs", GcsGoogleApplicationCredentials: inline}
 	maskRemoteConfSecrets(gcs)
-	if strings.Contains(gcs.GcsGoogleApplicationCredentials, "PRIVATE") || strings.Trim(gcs.GcsGoogleApplicationCredentials, "*") != "" {
-		t.Errorf("inline gcs credentials not masked: %q", gcs.GcsGoogleApplicationCredentials)
+	if want := strings.Repeat("*", len(inline)); gcs.GcsGoogleApplicationCredentials != want {
+		t.Errorf("inline gcs credentials masked as %q, want %q", gcs.GcsGoogleApplicationCredentials, want)
 	}
 	path := &remote_pb.RemoteConf{Type: "gcs", GcsGoogleApplicationCredentials: "/etc/seaweedfs/gcs.json"}
 	maskRemoteConfSecrets(path)
