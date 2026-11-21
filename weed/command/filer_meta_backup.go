@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"reflect"
 	"strings"
 	"time"
@@ -232,6 +233,9 @@ func (metaBackup *FilerMetaBackupOptions) traverseMetadata() (err error) {
 		}
 		fullpath := string(parentPath.Child(entry.Name))
 		if !metaBackup.shouldInclude(fullpath) {
+			if entry.IsDirectory && !metaBackup.pathFilter.ShouldWalk(fullpath) {
+				return fs.SkipDir
+			}
 			return nil
 		}
 

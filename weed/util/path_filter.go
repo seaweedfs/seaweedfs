@@ -104,6 +104,21 @@ func (pf *PathPrefixFilter) ShouldInclude(fullpath string) bool {
 	return true
 }
 
+// ShouldWalk reports whether a walk has to enter dir: dir is included, or an
+// include prefix lies under it. Nothing under any other dir is included.
+func (pf *PathPrefixFilter) ShouldWalk(dir string) bool {
+	if pf.ShouldInclude(dir) {
+		return true
+	}
+	checkPath := strings.TrimSuffix(dir, "/") + "/"
+	for _, prefix := range pf.includePrefixes {
+		if strings.HasPrefix(prefix, checkPath) {
+			return true
+		}
+	}
+	return false
+}
+
 // findDeepestMatch finds the longest prefix that matches the path.
 func findDeepestMatch(path string, prefixes []string) string {
 	var deepest string

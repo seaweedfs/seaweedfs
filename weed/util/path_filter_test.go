@@ -199,3 +199,34 @@ func TestPathPrefixFilter_BoundaryMatching(t *testing.T) {
 		}
 	}
 }
+
+func TestPathPrefixFilter_ShouldWalk(t *testing.T) {
+	pf := NewPathPrefixFilter("/buckets/legacy/important", "/buckets/legacy,/logs", nil)
+
+	tests := []struct {
+		dir  string
+		walk bool
+	}{
+		{"/", true},
+		{"/buckets", true},
+		{"/buckets/legacy", true}, // an include prefix lies under it
+		{"/buckets/legacy/other", false},
+		{"/buckets/legacy/important", true},
+		{"/buckets/legacy/important/sub", true},
+		{"/logs", false},
+		{"/logs/2026", false},
+		{"/other", false},
+	}
+	for _, tc := range tests {
+		if got := pf.ShouldWalk(tc.dir); got != tc.walk {
+			t.Errorf("ShouldWalk(%q) = %v, want %v", tc.dir, got, tc.walk)
+		}
+	}
+
+	pf = NewPathPrefixFilter("/data/keep", "", nil)
+	for dir, walk := range map[string]bool{"/": true, "/data": true, "/data/keep": true, "/data/other": false, "/other": false} {
+		if got := pf.ShouldWalk(dir); got != walk {
+			t.Errorf("include only: ShouldWalk(%q) = %v, want %v", dir, got, walk)
+		}
+	}
+}
