@@ -53,6 +53,20 @@ func WriteErrorResponse(w http.ResponseWriter, r *http.Request, errorCode ErrorC
 // request was rejected (e.g. which POST policy condition failed) instead
 // of the generic APIError Description.
 func WriteErrorResponseWithMessage(w http.ResponseWriter, r *http.Request, errorCode ErrorCode, message string) {
+	r, _ = request_id.Ensure(r)
+	apiError := GetAPIError(errorCode)
+	errorResponse := ErrorResponseFor(r, errorCode)
+	if message != "" {
+		errorResponse.Message = message
+	}
+	drainRequestBody(w, r)
+	WriteXMLResponse(w, r, apiError.HTTPStatusCode, errorResponse)
+	PostLog(r, apiError.HTTPStatusCode, errorCode)
+}
+
+// ErrorResponseFor builds the <Error> document WriteErrorResponse sends for
+// errorCode, for a caller that has to write it into a response already begun.
+func ErrorResponseFor(r *http.Request, errorCode ErrorCode) RESTErrorResponse {
 	r, reqID := request_id.Ensure(r)
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -60,15 +74,17 @@ func WriteErrorResponseWithMessage(w http.ResponseWriter, r *http.Request, error
 	if strings.HasPrefix(object, "/") {
 		object = object[1:]
 	}
+	return getRESTErrorResponse(GetAPIError(errorCode), r.URL.Path, bucket, object, reqID)
+}
 
-	apiError := GetAPIError(errorCode)
-	errorResponse := getRESTErrorResponse(apiError, r.URL.Path, bucket, object, reqID)
-	if message != "" {
-		errorResponse.Message = message
+// StartStreamingResponse sends the status line and the headers every response
+// carries, without a Content-Length, for a body the caller writes in pieces.
+func StartStreamingResponse(w http.ResponseWriter, r *http.Request, statusCode int, mType mimeType) {
+	setCommonHeaders(w, r)
+	if mType != mimeNone {
+		w.Header().Set("Content-Type", string(mType))
 	}
-	drainRequestBody(w, r)
-	WriteXMLResponse(w, r, apiError.HTTPStatusCode, errorResponse)
-	PostLog(r, apiError.HTTPStatusCode, errorCode)
+	w.WriteHeader(statusCode)
 }
 
 func drainRequestBody(w http.ResponseWriter, r *http.Request) {
@@ -95,8 +111,13 @@ func getRESTErrorResponse(err APIError, resource string, bucket, object, request
 
 // Encodes the response headers into XML format.
 func EncodeXMLResponse(response interface{}) []byte {
+	return append([]byte(xml.Header), EncodeXMLBody(response)...)
+}
+
+// EncodeXMLBody encodes response without the XML declaration, for a body
+// whose declaration was already sent.
+func EncodeXMLBody(response interface{}) []byte {
 	var bytesBuffer bytes.Buffer
-	bytesBuffer.WriteString(xml.Header)
 	e := xml.NewEncoder(&bytesBuffer)
 	e.Encode(response)
 	return bytesBuffer.Bytes()
