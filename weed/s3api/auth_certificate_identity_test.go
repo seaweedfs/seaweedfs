@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -86,4 +88,26 @@ func TestCertificateIdentity(t *testing.T) {
 	assert.NotEqual(t, s3err.ErrNone, errCode, "a bad signature is not rescued by the certificate")
 	assert.Nil(t, identity)
 	assert.False(t, iam.isAnonymousRequest(signed))
+}
+
+func TestCertificateIdentityReadIsNotDeferredAsAnonymous(t *testing.T) {
+	resetMemoryStore()
+	defer resetMemoryStore()
+	iam := NewIdentityAccessManagementWithStore(&S3ApiServerOption{}, nil, "memory")
+	_, err := iam.loadS3ApiConfigurationFromBytes([]byte(certificateIdentityConfig), true)
+	require.NoError(t, err)
+	s3a := &S3ApiServer{iam: iam}
+
+	for _, tc := range []struct {
+		cert     *x509.Certificate
+		deferred bool
+	}{
+		{clientCertificate("x", "spiffe://example.org/ns/ingest/sa/writer"), false},
+		{clientCertificate("retired", ""), false},
+		{clientCertificate("nobody", ""), true},
+	} {
+		r := mux.SetURLVars(requestWithClientCertificate(tc.cert, true), map[string]string{"bucket": "ingest", "object": "object"})
+		_, deferred := s3a.deferAnonymousObjectRead(r, s3_constants.ACTION_READ, "ingest", "object")
+		assert.Equal(t, tc.deferred, deferred, tc.cert.Subject.CommonName)
+	}
 }

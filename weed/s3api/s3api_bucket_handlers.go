@@ -1005,7 +1005,7 @@ func (s3a *S3ApiServer) AuthWithPublicRead(handler http.HandlerFunc, action Acti
 			return
 		}
 		authType := getRequestAuthType(r)
-		isAnonymous := authType == authTypeAnonymous
+		isAnonymous := s3a.iam.isAnonymousRequest(r)
 
 		glog.V(4).Infof("AuthWithPublicRead: bucket=%s, object=%s, authType=%v, isAnonymous=%v", bucket, object, authType, isAnonymous)
 
