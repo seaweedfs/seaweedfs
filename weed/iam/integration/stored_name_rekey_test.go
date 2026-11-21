@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"crypto/fips140"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -90,10 +91,19 @@ func (f *memFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb
 	return nil
 }
 
-// otherModeName is a record name the other fips140 mode could have derived.
+// sha1Names holds the SHA-1 names, which fips140=only cannot compute.
+var sha1Names = map[string]string{
+	"session-1": "96c71081c21826a93aad95a48dad46723ef67a06.json",
+	"arn:aws:iam::123456789012:oidc-provider/issuer.example.com": "a34a5d627a0d07f6793272fe8fae86d3957de95f.json",
+}
+
+// otherModeName is the name the other fips140 mode derives for key.
 func otherModeName(key string) string {
+	if fips140.Enforced() {
+		return sha1Names[key]
+	}
 	sum := sha256.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:]) + ".json"
+	return hex.EncodeToString(sum[:20]) + ".json"
 }
 
 func storeAs(t *testing.T, filer *memFiler, dir, name string, record any) {
