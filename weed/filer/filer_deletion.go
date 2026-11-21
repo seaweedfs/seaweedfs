@@ -348,8 +348,10 @@ const (
 	masterLookupTimeout = 5 * time.Second
 	// VolumeGoneGrace and VolumeGoneMinAnswers: how long, and over how many
 	// retries in a row, the master must answer "not found" for a volume
-	// before its pending chunk deletions count as done.
-	VolumeGoneGrace      = 30 * time.Minute
+	// before its pending chunk deletions count as done. A volume server that
+	// is down gets the same answer, so the grace outlasts a maintenance
+	// window rather than a reconnect.
+	VolumeGoneGrace      = MaxRetryDelay
 	VolumeGoneMinAnswers = 3
 )
 
