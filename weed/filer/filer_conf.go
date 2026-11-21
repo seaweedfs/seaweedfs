@@ -443,6 +443,10 @@ func UpdateFilerConf(ctx context.Context, client filer_pb.SeaweedFilerClient, up
 	if err != nil {
 		return false, err
 	}
+	if snap.entry != nil && len(snap.entry.Content) == 0 && len(snap.entry.GetChunks()) > 0 {
+		// the snapshot reads inline content only; saving it would drop every rule
+		return false, fmt.Errorf("%s/%s is stored in chunks, not updated", DirectoryEtcSeaweedFS, FilerConfName)
+	}
 	if changed, err = update(snap.fc); err != nil || !changed {
 		return false, err
 	}

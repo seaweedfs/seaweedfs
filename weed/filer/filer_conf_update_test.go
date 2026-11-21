@@ -49,3 +49,22 @@ func TestUpdateFilerConfSavesOnlyAChange(t *testing.T) {
 	require.NoError(t, fc.LoadFromBytes([]byte(readFilerConfText(client))))
 	assert.True(t, fc.MatchStorageRule("/buckets/a/").ReadOnly)
 }
+
+func TestUpdateFilerConfRefusesAChunkBackedConf(t *testing.T) {
+	client := newFakeFilerConfClient()
+	client.entries[client.key(DirectoryEtcSeaweedFS, FilerConfName)] = &filer_pb.Entry{
+		Name:       FilerConfName,
+		Chunks:     []*filer_pb.FileChunk{{FileId: "3,01637037d6", Size: 120}},
+		Attributes: &filer_pb.FuseAttributes{FileSize: 120},
+	}
+
+	called := false
+	changed, err := UpdateFilerConf(context.Background(), client, func(fc *FilerConf) (bool, error) {
+		called = true
+		return true, nil
+	})
+	assert.Error(t, err)
+	assert.False(t, changed)
+	assert.False(t, called)
+	assert.Len(t, client.entries[client.key(DirectoryEtcSeaweedFS, FilerConfName)].Chunks, 1)
+}
