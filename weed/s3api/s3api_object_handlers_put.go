@@ -2987,7 +2987,7 @@ func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object 
 	entry, err := s3a.resolveObjectEntry(bucket, object, "")
 	if err != nil {
 		if errors.Is(err, ErrBucketNotFound) {
-			if headers.ifMatch != "" || s3a.option == nil || !s3a.option.AutoCreateBucket {
+			if headers.ifMatch != "" {
 				return s3err.ErrNoSuchBucket
 			}
 			entry = nil

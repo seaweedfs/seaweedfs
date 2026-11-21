@@ -106,6 +106,26 @@ func TestPutObjectConditionalHeadersOnMissingBucket(t *testing.T) {
 		})
 	}
 
+	// A non-If-Match condition passes against an absent object, so the request must
+	// reach the handler's auto-create gate, which validates the bucket name. Answering
+	// NoSuchBucket here would report a malformed name as merely missing.
+	t.Run("malformed bucket name with If-None-Match wildcard reports InvalidBucketName", func(t *testing.T) {
+		const malformedBucket = "ab"
+		s3a := newMissingBucketConditionalTestServer(t, &fakeLookupFiler{})
+		s3a.option.AutoCreateBucket = false
+
+		req := httptest.NewRequest(http.MethodPut, "/"+malformedBucket+"/"+object, strings.NewReader("payload"))
+		req = mux.SetURLVars(req, map[string]string{"bucket": malformedBucket, "object": object})
+		req.Header.Set("If-None-Match", "*")
+		rr := httptest.NewRecorder()
+
+		s3a.PutObjectHandler(rr, req)
+
+		if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "<Code>InvalidBucketName</Code>") {
+			t.Fatalf("status = %d body = %q, want 400 InvalidBucketName", rr.Code, rr.Body.String())
+		}
+	})
+
 	t.Run("checkConditionalHeaders with AutoCreateBucket=true leaves auto-create to the handler", func(t *testing.T) {
 		future := time.Now().UTC().Add(24 * time.Hour).Format(http.TimeFormat)
 		past := time.Now().UTC().Add(-24 * time.Hour).Format(http.TimeFormat)
