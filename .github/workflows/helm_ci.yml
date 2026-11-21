@@ -259,6 +259,40 @@ jobs:
           grep -q "security-config" /tmp/security.yaml
           echo "Security configuration renders correctly"
 
+          echo "=== Testing volume server HTTPS ==="
+          awk '/^ *\[https.client\]$/{f=1;next} /^ *\[/{f=0} f' /tmp/security.yaml | grep -q 'enabled = false'
+          helm template test $CHART_DIR \
+            --set global.seaweedfs.enableSecurity=true \
+            --set global.seaweedfs.volumeHttps.enabled=true \
+            --set volumes.hot.replicas=1 \
+            > /tmp/volume-https.yaml
+          awk '/^ *\[https.client\]$/{f=1;next} /^ *\[/{f=0} f' /tmp/volume-https.yaml > /tmp/volume-https-client.txt
+          grep -q 'enabled = true' /tmp/volume-https-client.txt
+          grep -q 'cert = "/usr/local/share/ca-certificates/client/tls.crt"' /tmp/volume-https-client.txt
+          grep -q 'ca   = "/usr/local/share/ca-certificates/ca/tls.crt"' /tmp/volume-https-client.txt
+          awk '/^ *\[https.volume\]$/{f=1;next} /^ *\[/{f=0} f' /tmp/volume-https.yaml \
+            | grep -q 'cert = "/usr/local/share/ca-certificates/volume/tls.crt"'
+          grep -q "'\*.test-seaweedfs-volume.default'" /tmp/volume-https.yaml
+          grep -q "'\*.test-seaweedfs-volume-hot.default'" /tmp/volume-https.yaml
+          test "$(grep -c 'scheme: HTTPS' /tmp/volume-https.yaml)" -eq 4
+          test "$(grep -c 'checksum/volume-https:' /tmp/volume-https.yaml)" -eq 4
+          if grep -q 'checksum/volume-https' /tmp/security.yaml; then
+            echo "FAIL: the volume HTTPS rollout annotation should only render while the option is on"
+            exit 1
+          fi
+          if helm template test $CHART_DIR --set global.seaweedfs.volumeHttps.enabled=true > /dev/null 2>/tmp/volume-https-nosec.err; then
+            echo "FAIL: volumeHttps without enableSecurity should fail to render"
+            exit 1
+          fi
+          grep -q "requires global.seaweedfs.enableSecurity" /tmp/volume-https-nosec.err
+          if helm template test $CHART_DIR --set global.seaweedfs.enableSecurity=true \
+            --set global.seaweedfs.volumeHttps.enabled=true --set allInOne.enabled=true > /dev/null 2>/tmp/volume-https-aio.err; then
+            echo "FAIL: volumeHttps with allInOne should fail to render"
+            exit 1
+          fi
+          grep -q "not supported with allInOne" /tmp/volume-https-aio.err
+          echo "Volume server HTTPS renders [https.volume], [https.client], certificate names, HTTPS probes and rollout annotations"
+
           echo "=== Testing secure bucket-creation hook certificate mounts ==="
           helm template test $CHART_DIR \
             --show-only templates/shared/post-install-bucket-hook.yaml \

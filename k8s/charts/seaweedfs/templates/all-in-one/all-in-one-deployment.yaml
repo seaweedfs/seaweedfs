@@ -1,5 +1,8 @@
 {{- include "seaweedfs.compat" . -}}
 {{- if .Values.allInOne.enabled }}
+{{- if include "seaweedfs.volumeHttps" . }}
+{{- fail "global.seaweedfs.volumeHttps is not supported with allInOne: its volume server registers by pod IP, which the volume certificate cannot name" }}
+{{- end }}
 {{- $s3PreStopSeconds := 0 }}
 {{- if .Values.allInOne.s3.enabled }}
 {{- $s3PreStopSeconds = .Values.allInOne.s3.preStopSeconds }}

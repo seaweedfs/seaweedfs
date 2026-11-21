@@ -39,6 +39,7 @@ spec:
       {{- with .Values.cosi.podAnnotations }}
       {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with include "seaweedfs.volumeHttpsAnnotation" $ }}{{ . | nindent 8 }}{{ end }}
     spec:
       restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.cosi.restartPolicy }}
       {{- if .Values.cosi.affinity }}

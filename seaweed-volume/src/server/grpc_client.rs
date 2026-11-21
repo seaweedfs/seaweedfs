@@ -110,6 +110,17 @@ pub fn load_outgoing_grpc_tls(
     }))
 }
 
+#[cfg(test)]
+impl OutgoingGrpcTlsConfig {
+    pub(crate) fn self_signed_for_test() -> Self {
+        Self {
+            cert_pem: tests::TEST_CERT_PEM.to_string(),
+            key_pem: tests::TEST_KEY_PEM.to_string(),
+            ca_pem: tests::TEST_CERT_PEM.to_string(),
+        }
+    }
+}
+
 pub fn grpc_endpoint_uri(grpc_host_port: &str, tls: Option<&OutgoingGrpcTlsConfig>) -> String {
     let scheme = if tls.is_some() { "https" } else { "http" };
     format!("{}://{}", scheme, grpc_host_port)
@@ -360,8 +371,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    const TEST_CERT_PEM: &str = "-----BEGIN CERTIFICATE-----\nMIIBPDCB76ADAgECAhRuRPQgeAu43BT/M7EfAWSdapVdYDAFBgMrZXAwFDESMBAG\nA1UEAwwJbG9jYWxob3N0MB4XDTI2MDcwNTE2MTUyOVoXDTM2MDcwMjE2MTUyOVow\nFDESMBAGA1UEAwwJbG9jYWxob3N0MCowBQYDK2VwAyEAr/3bNIFI+8V32oCiY6y+\nXRFmZpdNQ2g//VtRkT+nQg+jUzBRMB0GA1UdDgQWBBTsy9tLf1zPiXCQfgci6zNi\ndEzRSjAfBgNVHSMEGDAWgBTsy9tLf1zPiXCQfgci6zNidEzRSjAPBgNVHRMBAf8E\nBTADAQH/MAUGAytlcANBAIvsdw0IbvOBBkb9cd7BfMJfIP9pQQrAL03pCRWJFnFh\nSysaLVgFXI4T078IiaM874oO+iB+5vNbWEpc7CkGow4=\n-----END CERTIFICATE-----\n";
-    const TEST_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIHbyn71Kk+Y7KT3sBctit7uZpErpoH6qDbFj6P8qGaZH\n-----END PRIVATE KEY-----\n";
+    pub(super) const TEST_CERT_PEM: &str = "-----BEGIN CERTIFICATE-----\nMIIBPDCB76ADAgECAhRuRPQgeAu43BT/M7EfAWSdapVdYDAFBgMrZXAwFDESMBAG\nA1UEAwwJbG9jYWxob3N0MB4XDTI2MDcwNTE2MTUyOVoXDTM2MDcwMjE2MTUyOVow\nFDESMBAGA1UEAwwJbG9jYWxob3N0MCowBQYDK2VwAyEAr/3bNIFI+8V32oCiY6y+\nXRFmZpdNQ2g//VtRkT+nQg+jUzBRMB0GA1UdDgQWBBTsy9tLf1zPiXCQfgci6zNi\ndEzRSjAfBgNVHSMEGDAWgBTsy9tLf1zPiXCQfgci6zNidEzRSjAPBgNVHRMBAf8E\nBTADAQH/MAUGAytlcANBAIvsdw0IbvOBBkb9cd7BfMJfIP9pQQrAL03pCRWJFnFh\nSysaLVgFXI4T078IiaM874oO+iB+5vNbWEpc7CkGow4=\n-----END CERTIFICATE-----\n";
+    pub(super) const TEST_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIHbyn71Kk+Y7KT3sBctit7uZpErpoH6qDbFj6P8qGaZH\n-----END PRIVATE KEY-----\n";
 
     #[test]
     fn test_build_grpc_endpoint_with_tls_resolves_crypto_provider() {

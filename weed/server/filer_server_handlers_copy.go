@@ -20,6 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 const recentCopyRequestTTL = 2 * time.Minute
@@ -262,7 +263,12 @@ func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dst
 		srcChunks := srcEntry.GetChunks()
 
 		// Create HTTP client once for reuse across all chunk operations
-		client := &http.Client{Timeout: 60 * time.Second}
+		globalClient := util_http.GetGlobalHttpClient()
+		client := &http.Client{
+			Timeout:       60 * time.Second,
+			Transport:     globalClient.GetClientTransport(),
+			CheckRedirect: globalClient.Client.CheckRedirect,
+		}
 
 		// Check if any chunks are manifest chunks - these require special handling
 		if filer.HasChunkManifest(srcChunks) {
@@ -684,7 +690,11 @@ func (fs *FilerServer) createManifestChunk(ctx context.Context, dataChunks []*fi
 
 // uploadData uploads data to a volume server
 func (fs *FilerServer) uploadData(ctx context.Context, reader io.Reader, urlLocation, auth string, client *http.Client) error {
-	req, err := http.NewRequestWithContext(ctx, "PUT", urlLocation, reader)
+	target, err := util_http.NormalizeUrl(urlLocation)
+	if err != nil {
+		return fmt.Errorf("invalid upload url %s: %w", urlLocation, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, "PUT", target, reader)
 	if err != nil {
 		return fmt.Errorf("failed to create upload request: %w", err)
 	}
@@ -765,7 +775,7 @@ func (fs *FilerServer) streamCopyChunk(ctx context.Context, srcChunk *filer_pb.F
 		glog.V(4).InfofCtx(ctx, "FilerServer.streamCopyChunk: attempting streaming copy from %s to %s (attempt %d/%d)", srcUrl, urlLocation, i+1, len(locations))
 
 		// Perform streaming copy using HTTP client
-		err := fs.performStreamCopy(ctx, srcUrl, urlLocation, string(auth), srcChunk.Size, client)
+		err := fs.performStreamCopy(ctx, srcUrl, filer.JwtForVolumeServer(fileIdString), urlLocation, string(auth), srcChunk.Size, client)
 		if err != nil {
 			lastErr = err
 			glog.V(2).InfofCtx(ctx, "FilerServer.streamCopyChunk: failed streaming copy from %s: %v", srcUrl, err)
@@ -789,11 +799,22 @@ func (fs *FilerServer) streamCopyChunk(ctx context.Context, srcChunk *filer_pb.F
 }
 
 // performStreamCopy performs the actual streaming copy from source URL to destination URL
-func (fs *FilerServer) performStreamCopy(ctx context.Context, srcUrl, dstUrl, auth string, expectedSize uint64, client *http.Client) error {
+func (fs *FilerServer) performStreamCopy(ctx context.Context, srcUrl, srcAuth, dstUrl, auth string, expectedSize uint64, client *http.Client) error {
+	srcUrl, err := util_http.NormalizeUrl(srcUrl)
+	if err != nil {
+		return fmt.Errorf("invalid source url: %v", err)
+	}
+	if dstUrl, err = util_http.NormalizeUrl(dstUrl); err != nil {
+		return fmt.Errorf("invalid destination url: %v", err)
+	}
+
 	// Create HTTP request to read from source
 	req, err := http.NewRequestWithContext(ctx, "GET", srcUrl, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create source request: %v", err)
+	}
+	if srcAuth != "" {
+		req.Header.Set("Authorization", security.BearerPrefix+srcAuth)
 	}
 
 	// Perform source request

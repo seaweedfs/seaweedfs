@@ -45,6 +45,18 @@ global:
           volumeRead: 0
           filerWrite: 0
           filerRead: 0
+    # Serve the volume servers' HTTP port over TLS with the chart's volume
+    # certificate, and make every chart component reach them over HTTPS
+    # ([https.volume] and [https.client] in security.toml). Requires
+    # enableSecurity and is not supported with allInOne. Clients outside the
+    # chart (weed mount, the CSI driver) need their own [https.client].
+    # The volume servers do not ask for client certificates, because kubelet
+    # probes cannot present one; JWT signing keeps authorizing volume access.
+    # [https.client] also sends the admin UI's HTTP lookups on masters and
+    # S3 over HTTPS, which their plain listeners refuse, so the UI can miss
+    # volume public URLs and refuse SSE-S3 vector buckets.
+    volumeHttps:
+      enabled: false
     # we will use this serviceAccountName for all ClusterRoles/ClusterRoleBindings
     serviceAccountName: "seaweedfs"
     serviceAccountAnnotations: {}

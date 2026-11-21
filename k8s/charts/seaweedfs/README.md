@@ -614,6 +614,17 @@ Two things worth knowing before you turn this on:
 
 The DNS selectors default to CoreDNS as kubeadm, kind and the managed offerings from AWS, Google and Azure install it. On OpenShift, override `egress.dnsNamespaceSelector` and `egress.dnsPodSelector` to match `openshift-dns`; see the comment in `values.yaml`.
 
+## Volume server HTTPS
+
+With `global.seaweedfs.enableSecurity`, gRPC between components uses mutual TLS, but the volume servers' HTTP port, which carries the file data, stays plaintext. Set `global.seaweedfs.volumeHttps.enabled: true` to serve it over TLS:
+
+- `[https.volume]` points at the volume certificate, which then also names every volume group's service (`*.<fullname>-volume.<namespace>`), since volume servers register as `<pod>.<fullname>-volume.<namespace>`. With `certificates.externalCertificates`, the provided `<fullname>-volume-cert` needs those names.
+- `[https.client]` is enabled with the client certificate and the chart CA, so every chart pod that talks to the volume servers does it over HTTPS.
+- The volume probes use HTTPS.
+- Every pod that reads `security.toml` gets a `checksum/volume-https` annotation, so switching the option on or off restarts them together.
+
+The volume servers do not require client certificates, because kubelet probes cannot present one; enable JWT signing (`securityConfig.jwtSigning`) to authorize volume reads and writes. `[https.client]` also sends the admin UI's HTTP lookups on masters and S3 over HTTPS, which their plain listeners refuse, so the UI can miss volume public URLs and refuse SSE-S3 vector buckets. A volume Ingress or HTTPRoute needs its controller's HTTPS-backend setting. `weed mount`, the CSI driver and other clients outside the chart need their own `[https.client]` with the chart CA. The option is not supported with `allInOne`, whose volume server registers by pod IP.
+
 ## Common labels
 
 `commonLabels` adds labels to the metadata of every object the chart creates. It may be a map or a template string rendering to one. The chart's own labels cannot be overridden, and pods (see `podLabels`) and `volumeClaimTemplates` are left unchanged.

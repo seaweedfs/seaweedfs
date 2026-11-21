@@ -25,6 +25,7 @@ spec:
       annotations:
         {{- with .Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{ end }}
         {{- with .Values.vector.podAnnotations }}{{ toYaml . | nindent 8 }}{{ end }}
+      {{- with include "seaweedfs.volumeHttpsAnnotation" $ }}{{ . | nindent 8 }}{{ end }}
     spec:
       {{- include "seaweedfs.imagePullSecrets" . | nindent 6 }}
       automountServiceAccountToken: {{ .Values.global.seaweedfs.automountServiceAccountToken }}

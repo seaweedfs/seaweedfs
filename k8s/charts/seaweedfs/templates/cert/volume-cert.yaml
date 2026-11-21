@@ -38,6 +38,14 @@ spec:
     - '*.{{ include "seaweedfs.fullname" . }}-master.{{ include "seaweedfs.namespace" . }}'
     - '*.{{ include "seaweedfs.fullname" . }}-master.{{ include "seaweedfs.namespace" . }}.svc'
     - '*.{{ include "seaweedfs.fullname" . }}-master.{{ include "seaweedfs.namespace" . }}.svc.cluster.local'
+{{- if include "seaweedfs.volumeHttps" . }}
+{{- range $vname, $_ := deepCopy .Values.volumes | mergeOverwrite (dict "" .Values.volume) }}
+{{- $volumeService := printf "%s.%s" (include "seaweedfs.componentName" (list $ (trimSuffix "-" (printf "volume-%s" $vname)))) (include "seaweedfs.namespace" $) }}
+    - '*.{{ $volumeService }}'
+    - '*.{{ $volumeService }}.svc'
+    - '*.{{ $volumeService }}.svc.cluster.local'
+{{- end }}
+{{- end }}
 {{- if .Values.certificates.ipAddresses }}
   ipAddresses:
     {{- range .Values.certificates.ipAddresses }}

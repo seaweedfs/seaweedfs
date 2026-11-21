@@ -17,11 +17,14 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
 use super::absolute_display_path;
-use super::grpc_client::{GrpcDialOptions, connect_channel, volume_server_client};
+use super::grpc_client::{
+    GrpcDialOptions, OutgoingGrpcTlsConfig, connect_channel, master_client, parse_grpc_address,
+    volume_server_client,
+};
 use super::volume_server::{VolumeServerState, normalize_outgoing_http_url, to_http_address};
 use crate::config::ReadMode;
 use crate::metrics;
-use crate::pb::volume_server_pb;
+use crate::pb::{master_pb, volume_server_pb};
 use crate::storage::needle::CRC;
 use crate::storage::needle::needle::Needle;
 use crate::storage::types::*;
@@ -519,17 +522,12 @@ fn parse_url_path(path: &str) -> Option<(VolumeId, NeedleId, Cookie)> {
 // ============================================================================
 
 /// A volume location returned by master lookup.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default)]
 struct VolumeLocation {
     url: String,
-    #[serde(rename = "readOnly", default)]
     read_only: bool,
-    #[serde(rename = "readOnlyCanDelete", default)]
     read_only_can_delete: bool,
-    // Master often omits publicUrl when it matches url (Go json omitempty).
-    #[serde(rename = "publicUrl", default)]
     public_url: String,
-    #[serde(rename = "grpcPort", default)]
     grpc_port: u32,
 }
 
@@ -543,56 +541,89 @@ impl VolumeLocation {
     }
 }
 
-/// Master /dir/lookup response.
-#[derive(Debug, Deserialize)]
-struct LookupResult {
-    #[serde(default)]
-    locations: Option<Vec<VolumeLocation>>,
-    #[serde(default)]
-    error: Option<String>,
+impl From<master_pb::Location> for VolumeLocation {
+    fn from(loc: master_pb::Location) -> Self {
+        Self {
+            url: loc.url,
+            read_only: loc.read_only,
+            read_only_can_delete: loc.read_only_can_delete,
+            public_url: loc.public_url,
+            grpc_port: loc.grpc_port,
+        }
+    }
 }
 
-/// Look up volume locations from the master via HTTP /dir/lookup.
+const LOOKUP_DIAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Lookups share one master channel, like Go's pooled master connection.
+static MASTER_LOOKUP_CHANNEL: std::sync::Mutex<Option<(String, tonic::transport::Channel)>> =
+    std::sync::Mutex::new(None);
+
+async fn master_lookup_once(
+    channel: tonic::transport::Channel,
+    volume_id: u32,
+) -> Result<master_pb::LookupVolumeResponse, tonic::Status> {
+    master_client(channel)
+        .lookup_volume(master_pb::LookupVolumeRequest {
+            volume_or_file_ids: vec![volume_id.to_string()],
+            ..Default::default()
+        })
+        .await
+        .map(tonic::Response::into_inner)
+}
+
+/// Look up volume locations over the master's gRPC port, like Go's
+/// operation.LookupVolumeIds: the master's HTTP port need not speak the
+/// `[https.client]` scheme.
 async fn lookup_volume(
-    client: &reqwest::Client,
-    scheme: &str,
+    tls: Option<&OutgoingGrpcTlsConfig>,
     master_url: &str,
     volume_id: u32,
 ) -> Result<Vec<VolumeLocation>, String> {
-    // master_url may be in SeaweedFS's "host:httpPort.grpcPort" form (mirrors
-    // Go's pb.ServerAddress); strip the gRPC port before building the HTTP URL.
-    let master_http = to_http_address(master_url);
-    let url = normalize_outgoing_http_url(
-        scheme,
-        &format!("{}/dir/lookup?volumeId={}", master_http, volume_id),
-    )?;
-    let resp = client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("lookup request failed: {}", e))?;
-    let status = resp.status();
-    let result: LookupResult = resp
-        .json()
-        .await
-        .map_err(|e| format!("lookup parse failed: {}", e))?;
-    if let Some(err) = result.error
-        && !err.is_empty()
-    {
-        // Mirror Go: a missing volume arrives as a per-volume error in an
-        // answered lookup (HTTP 404), meaning "no locations" — a real master
-        // failure (e.g. 503 while warming up) stays an error so proxy mode
-        // can tell missing data (404) from a failed lookup (500).
-        if status != StatusCode::NOT_FOUND {
-            return Err(err);
+    let grpc_addr = parse_grpc_address(master_url)?;
+    let cached = MASTER_LOOKUP_CHANNEL
+        .lock()
+        .unwrap()
+        .as_ref()
+        .filter(|(addr, _)| *addr == grpc_addr)
+        .map(|(_, channel)| channel.clone());
+    let cached_result = match cached {
+        Some(channel) => Some(master_lookup_once(channel, volume_id).await),
+        None => None,
+    };
+    let resp = match cached_result {
+        Some(Ok(resp)) => resp,
+        _ => {
+            // connect_channel bounds only the TCP connect; a master that
+            // stalls in the TLS handshake would hold the request forever.
+            let channel = tokio::time::timeout(
+                LOOKUP_DIAL_TIMEOUT,
+                connect_channel(&grpc_addr, tls, GrpcDialOptions::unary()),
+            )
+            .await
+            .map_err(|_| {
+                format!(
+                    "lookup connect to master {}: connection timeout",
+                    master_url
+                )
+            })?
+            .map_err(|e| format!("lookup connect to master {}: {}", master_url, e))?;
+            *MASTER_LOOKUP_CHANNEL.lock().unwrap() = Some((grpc_addr, channel.clone()));
+            master_lookup_once(channel, volume_id)
+                .await
+                .map_err(|e| format!("lookup request failed: {}", e.message()))?
         }
-        tracing::debug!("volume {} lookup: {}", volume_id, err);
-    } else if !status.is_success() && status != StatusCode::NOT_FOUND {
-        // A non-success answer without an error body (e.g. an intermediary's
-        // 503 as `{}`) is a failed lookup, not a missing volume.
-        return Err(format!("lookup failed: {}", status));
+    };
+    let mut locations = Vec::new();
+    for found in resp.volume_id_locations {
+        // Mirror Go: a per-volume error in an answered lookup (e.g. a missing
+        // volume) means "no locations"; only a failed call is an error.
+        if !found.error.is_empty() {
+            tracing::debug!("volume {} lookup: {}", volume_id, found.error);
+        }
+        locations.extend(found.locations.into_iter().map(VolumeLocation::from));
     }
-    Ok(result.locations.unwrap_or_default())
+    Ok(locations)
 }
 
 fn grpc_address_for_location(location: &VolumeLocation) -> Result<String, String> {
@@ -645,8 +676,7 @@ async fn batch_delete_file_ids(
             locations.clone()
         } else {
             let locations = lookup_volume(
-                &state.http_client,
-                &state.outgoing_http_scheme,
+                state.outgoing_grpc_tls.as_ref(),
                 &state.current_master().await,
                 volume_id,
             )
@@ -769,8 +799,7 @@ async fn do_replicated_request(
     body: Option<bytes::Bytes>,
 ) -> Result<(), String> {
     let locations = lookup_volume(
-        &state.http_client,
-        &state.outgoing_http_scheme,
+        state.outgoing_grpc_tls.as_ref(),
         &state.current_master().await,
         vid,
     )
@@ -936,8 +965,7 @@ async fn proxy_or_redirect_to_target(
 ) -> Response {
     // Look up volume locations from master
     let locations = match lookup_volume(
-        &state.http_client,
-        &state.outgoing_http_scheme,
+        state.outgoing_grpc_tls.as_ref(),
         &state.current_master().await,
         vid.0,
     )
@@ -4731,8 +4759,7 @@ async fn read_remote_chunk_needle(
     how: RemoteRead,
 ) -> Result<ChunkBytes, String> {
     let locations = lookup_volume(
-        &state.http_client,
-        &state.outgoing_http_scheme,
+        state.outgoing_grpc_tls.as_ref(),
         &state.current_master().await,
         vid.0,
     )
@@ -5937,139 +5964,186 @@ mod tests {
         );
     }
 
-    /// Master /dir/lookup often omits publicUrl when empty (Go `json:"publicUrl,omitempty"`).
-    /// Replication must still parse locations or every cross-DC write fails.
-    #[test]
-    fn test_lookup_result_deserializes_without_public_url() {
-        let body = r#"{
-            "volumeOrFileId": "9",
-            "locations": [
-                {"url": "volume-a.example:8080", "dataCenter": "dc-a", "grpcPort": 18080},
-                {"url": "volume-b.example:8080", "dataCenter": "dc-b", "grpcPort": 18080}
-            ]
-        }"#;
-        let result: LookupResult = serde_json::from_str(body).expect("parse lookup JSON");
-        let locations = result.locations.expect("locations");
-        assert_eq!(locations.len(), 2);
-        assert_eq!(locations[0].url, "volume-a.example:8080");
-        assert!(locations[0].public_url.is_empty());
-        assert_eq!(locations[0].public_or_url(), "volume-a.example:8080");
-        assert_eq!(locations[0].grpc_port, 18080);
+    type LookupAnswer =
+        dyn Fn(&str) -> Result<master_pb::LookupVolumeResponse, tonic::Status> + Send + Sync;
+
+    /// A master that answers only LookupVolume.
+    #[derive(Clone)]
+    struct LookupMaster(Arc<LookupAnswer>);
+
+    impl tonic::server::NamedService for LookupMaster {
+        const NAME: &'static str = "master_pb.Seaweed";
     }
 
-    /// Regression test for issue #9274.
-    ///
-    /// SeaweedFS encodes a server's gRPC port by appending `.grpcPort` to
-    /// the HTTP port: e.g. `master.local:9333.19333` (mirrors Go's
-    /// `pb.ServerAddress`). When the volume server's `--mserver` flag is
-    /// configured this way, replication writes look up the peer locations
-    /// from the master over HTTP. Prior to the fix, the lookup URL became
-    /// `http://host:9333.19333/dir/lookup?volumeId=...` — an invalid port
-    /// that reqwest rejects with a "builder error", causing every
-    /// replicated write to fail.
-    #[tokio::test]
-    async fn test_lookup_volume_strips_grpc_port_from_master_url() {
-        use axum::{Router, routing::get};
+    impl tonic::codegen::Service<tonic::codegen::http::Request<tonic::body::Body>> for LookupMaster {
+        type Response = tonic::codegen::http::Response<tonic::body::Body>;
+        type Error = std::convert::Infallible;
+        type Future = tonic::codegen::BoxFuture<Self::Response, Self::Error>;
 
-        let app = Router::new().route(
-            "/dir/lookup",
-            get(
-                |axum::extract::Query(params): axum::extract::Query<
-                    std::collections::HashMap<String, String>,
-                >| async move {
-                    assert_eq!(params.get("volumeId").map(String::as_str), Some("31"));
-                    axum::Json(serde_json::json!({
-                        "volumeOrFileId": "31",
-                        "locations": [
-                            {"url": "10.0.0.2:5301", "publicUrl": "10.0.0.2:5301", "grpcPort": 5311}
-                        ]
-                    }))
-                },
-            ),
+        fn poll_ready(
+            &mut self,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Result<(), Self::Error>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, req: tonic::codegen::http::Request<tonic::body::Body>) -> Self::Future {
+            let svc = self.clone();
+            Box::pin(async move {
+                if req.uri().path() != "/master_pb.Seaweed/LookupVolume" {
+                    return Ok(tonic::Status::unimplemented("").into_http());
+                }
+                let mut grpc = tonic::server::Grpc::new(tonic_prost::ProstCodec::default());
+                Ok(grpc.unary(svc, req).await)
+            })
+        }
+    }
+
+    impl tonic::server::UnaryService<master_pb::LookupVolumeRequest> for LookupMaster {
+        type Response = master_pb::LookupVolumeResponse;
+        type Future = tonic::codegen::BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+
+        fn call(
+            &mut self,
+            request: tonic::Request<master_pb::LookupVolumeRequest>,
+        ) -> Self::Future {
+            let ids = request.into_inner().volume_or_file_ids;
+            let answer = (self.0)(&ids.join(","));
+            Box::pin(async move { answer.map(tonic::Response::new) })
+        }
+    }
+
+    /// Serve `answer` as the master's gRPC LookupVolume. The returned address
+    /// carries an unused HTTP port, so a lookup over HTTP would fail.
+    async fn spawn_lookup_master(
+        answer: impl Fn(&str) -> Result<master_pb::LookupVolumeResponse, tonic::Status>
+        + Send
+        + Sync
+        + 'static,
+    ) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(
+            tonic::transport::Server::builder()
+                .add_service(LookupMaster(Arc::new(answer)))
+                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
         );
+        format!("127.0.0.1:1.{}", port)
+    }
 
+    fn lookup_answer(
+        volume_id: &str,
+        locations: Vec<master_pb::Location>,
+        error: &str,
+    ) -> master_pb::LookupVolumeResponse {
+        master_pb::LookupVolumeResponse {
+            volume_id_locations: vec![master_pb::lookup_volume_response::VolumeIdLocation {
+                volume_or_file_id: volume_id.to_string(),
+                locations,
+                error: error.to_string(),
+                ..Default::default()
+            }],
+        }
+    }
+
+    /// A master that places every volume on this server and `peer`.
+    async fn spawn_replica_master(peer: std::net::SocketAddr) -> String {
+        spawn_lookup_master(move |vid| {
+            let location = |url: String| master_pb::Location {
+                url,
+                ..Default::default()
+            };
+            Ok(lookup_answer(
+                vid,
+                vec![
+                    location("127.0.0.1:8080".to_string()),
+                    location(peer.to_string()),
+                ],
+                "",
+            ))
+        })
+        .await
+    }
+
+    /// Lookups go to the master's gRPC port, like Go, so they work whatever
+    /// scheme the master's HTTP port speaks.
+    #[tokio::test]
+    async fn test_lookup_volume_asks_master_over_grpc() {
+        let master_url = spawn_lookup_master(|vid| {
+            assert_eq!(vid, "31");
+            Ok(lookup_answer(
+                vid,
+                vec![master_pb::Location {
+                    url: "10.0.0.2:5301".to_string(),
+                    grpc_port: 5311,
+                    ..Default::default()
+                }],
+                "",
+            ))
+        })
+        .await;
+
+        for _ in 0..2 {
+            let locations = super::lookup_volume(None, &master_url, 31)
+                .await
+                .expect("lookup over the master's gRPC port");
+            assert_eq!(locations.len(), 1);
+            assert_eq!(locations[0].url, "10.0.0.2:5301");
+            assert_eq!(locations[0].public_or_url(), "10.0.0.2:5301");
+            assert_eq!(locations[0].grpc_port, 5311);
+        }
+    }
+
+    /// A master that accepts the connection but never finishes the TLS
+    /// handshake fails the lookup at the dial bound.
+    #[tokio::test(start_paused = true)]
+    async fn test_lookup_volume_times_out_on_a_stalled_tls_master() {
+        crate::security::tls::install_default_crypto_provider();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
+        let _held = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+            drop(socket);
         });
-
-        // Mirrors how main.rs receives masters: a `host:httpPort.grpcPort` token.
-        // The grpc-port part is fictitious here (the master is HTTP-only in
-        // this test) — what matters is that the volume server must not pass
-        // it through to reqwest.
-        let master_url = format!("127.0.0.1:{}.{}", addr.port(), 19999);
-        let client = reqwest::Client::new();
-
-        let locations = super::lookup_volume(&client, "http", &master_url, 31)
-            .await
-            .expect("lookup_volume should succeed even when master_url carries a .grpcPort suffix");
-
-        assert_eq!(locations.len(), 1);
-        assert_eq!(locations[0].url, "10.0.0.2:5301");
-        assert_eq!(locations[0].grpc_port, 5311);
-
-        server.abort();
+        let tls = crate::server::grpc_client::OutgoingGrpcTlsConfig::self_signed_for_test();
+        let master_url = format!("127.0.0.1:1.{}", addr.port());
+        let started = tokio::time::Instant::now();
+        let looked_up = tokio::time::timeout(
+            std::time::Duration::from_secs(600),
+            super::lookup_volume(Some(&tls), &master_url, 9),
+        )
+        .await
+        .expect("lookup must not outlive its dial bound");
+        let err = looked_up.expect_err("a stalled master cannot answer");
+        assert!(err.contains("connection timeout"), "{err}");
+        assert!(started.elapsed() >= super::LOOKUP_DIAL_TIMEOUT);
     }
 
-    /// The master answers a missing volume with 404 and a per-volume `error`
-    /// in the lookup body. Go's LookupResult.Error never becomes the Go error
-    /// return — the volume server treats it as empty locations and replies
-    /// 404. Surfacing it as Err would make proxy-mode reads answer 500.
-    /// A lookup answered with any other failure status (e.g. 503 while the
-    /// master warms up) stays an error, like Go's transport-level failure.
+    /// The master answers a missing volume with a per-volume error. Go's
+    /// LookupResult.Error never becomes the Go error return — the volume
+    /// server treats it as empty locations and replies 404. Surfacing it as
+    /// Err would make proxy-mode reads answer 500. A failed call (e.g.
+    /// Unavailable while the master warms up) stays an error.
     #[tokio::test]
     async fn test_lookup_volume_missing_volume_returns_empty() {
-        use axum::{Router, routing::get};
+        let master_url = spawn_lookup_master(|vid| match vid {
+            "7" => Ok(lookup_answer(vid, Vec::new(), "volume id 7 not found")),
+            _ => Err(tonic::Status::unavailable(
+                "service warming up, please retry",
+            )),
+        })
+        .await;
 
-        let app = Router::new().route(
-            "/dir/lookup",
-            get(|axum::extract::Query(params): axum::extract::Query<
-                std::collections::HashMap<String, String>,
-            >| async move {
-                let (status, error) = match params.get("volumeId").map(String::as_str) {
-                    Some("7") => (StatusCode::NOT_FOUND, Some("volume id 7 not found")),
-                    Some("9") => (StatusCode::SERVICE_UNAVAILABLE, None),
-                    _ => (
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        Some("service warming up, please retry"),
-                    ),
-                };
-                let mut body = serde_json::json!({
-                    "volumeOrFileId": params.get("volumeId")
-                });
-                if let Some(error) = error {
-                    body["error"] = serde_json::json!(error);
-                }
-                (status, axum::Json(body))
-            }),
-        );
-
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let master_url = format!("127.0.0.1:{}", addr.port());
-        let client = reqwest::Client::new();
-
-        let locations = super::lookup_volume(&client, "http", &master_url, 7)
+        let locations = super::lookup_volume(None, &master_url, 7)
             .await
             .expect("missing volume is not a lookup failure");
         assert!(locations.is_empty());
 
-        let err = super::lookup_volume(&client, "http", &master_url, 8)
+        let err = super::lookup_volume(None, &master_url, 8)
             .await
             .expect_err("master failure is a lookup failure");
         assert!(err.contains("warming up"));
-
-        let err = super::lookup_volume(&client, "http", &master_url, 9)
-            .await
-            .expect_err("a failed lookup without an error body is still a failure");
-        assert!(err.contains("503"));
-
-        server.abort();
     }
 
     /// A body streaming `data_size` bytes of `file` from offset 0.
@@ -8368,20 +8442,17 @@ mod tests {
     }
 
     async fn spawn_lookup(peer: std::net::SocketAddr) -> String {
-        use axum::routing::get;
-        let app = axum::Router::new().route(
-            "/dir/lookup",
-            get(move || async move {
-                axum::Json(serde_json::json!({
-                    "volumeOrFileId": "9",
-                    "locations": [{ "url": peer.to_string() }]
-                }))
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        format!("127.0.0.1:{}", addr.port())
+        spawn_lookup_master(move |vid| {
+            Ok(lookup_answer(
+                vid,
+                vec![master_pb::Location {
+                    url: peer.to_string(),
+                    ..Default::default()
+                }],
+                "",
+            ))
+        })
+        .await
     }
 
     fn remote_manifest_state(
@@ -8968,7 +9039,6 @@ mod tests {
     async fn http_local_refusal_after_replica_append_is_not_marked() {
         for local_read_only in [true, false] {
             use crate::storage::super_block::ReplicaPlacement;
-            use axum::{Json, Router, routing::get};
             use tower::ServiceExt;
 
             let tmp = tempfile::TempDir::new().unwrap();
@@ -9013,20 +9083,7 @@ mod tests {
             });
 
             // The master's writable view can lag behind the local seal.
-            let master = Router::new().route(
-                "/dir/lookup",
-                get(move || async move {
-                    Json(serde_json::json!({"locations": [
-                        {"url": "127.0.0.1:8080"},
-                        {"url": peer_addr.to_string()}
-                    ]}))
-                }),
-            );
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            *state.current_master_url.write().await = listener.local_addr().unwrap().to_string();
-            let master_server = tokio::spawn(async move {
-                axum::serve(listener, master).await.unwrap();
-            });
+            *state.current_master_url.write().await = spawn_replica_master(peer_addr).await;
 
             let id = 0x6e7a_0c03u64;
             let payload = b"replicated bytes";
@@ -9065,7 +9122,6 @@ mod tests {
             };
             written.read_needle(&mut stored).unwrap();
             assert_eq!(stored.data, payload);
-            master_server.abort();
             peer_server.abort();
         }
     }
@@ -9076,8 +9132,8 @@ mod tests {
     #[tokio::test]
     async fn test_delete_retry_reaches_the_replica_after_a_failed_fan_out() {
         use crate::storage::super_block::ReplicaPlacement;
+        use axum::middleware;
         use axum::response::IntoResponse;
-        use axum::{Json, Router, middleware, routing::get};
 
         let replicated = |state: &Arc<VolumeServerState>| {
             let vol = state
@@ -9125,19 +9181,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let peer_addr = listener.local_addr().unwrap();
         let peer_server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let master = Router::new().route(
-            "/dir/lookup",
-            get(move || async move {
-                Json(serde_json::json!({"locations": [
-                    {"url": "127.0.0.1:8080"},
-                    {"url": peer_addr.to_string()}
-                ]}))
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        *state.current_master_url.write().await = listener.local_addr().unwrap().to_string();
-        let master_server =
-            tokio::spawn(async move { axum::serve(listener, master).await.unwrap() });
+        *state.current_master_url.write().await = spawn_replica_master(peer_addr).await;
 
         assert_eq!(
             send_delete(&state, &path).await,
@@ -9148,7 +9192,6 @@ mod tests {
 
         assert_eq!(send_delete(&state, &path).await, StatusCode::NOT_FOUND);
         assert!(!live(&peer_volume));
-        master_server.abort();
         peer_server.abort();
     }
 
@@ -9187,7 +9230,7 @@ mod tests {
     async fn http_replication_preserves_query_authentication() {
         use crate::security::{SigningKey, gen_jwt};
         use crate::storage::super_block::ReplicaPlacement;
-        use axum::{Json, Router, middleware, routing::get};
+        use axum::middleware;
         use tower::ServiceExt;
 
         let tmp = tempfile::TempDir::new().unwrap();
@@ -9230,19 +9273,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let peer_addr = listener.local_addr().unwrap();
         let peer_server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let master = Router::new().route(
-            "/dir/lookup",
-            get(move || async move {
-                Json(serde_json::json!({"locations": [
-                    {"url": "127.0.0.1:8080"},
-                    {"url": peer_addr.to_string()}
-                ]}))
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        *state.current_master_url.write().await = listener.local_addr().unwrap().to_string();
-        let master_server =
-            tokio::spawn(async move { axum::serve(listener, master).await.unwrap() });
+        *state.current_master_url.write().await = spawn_replica_master(peer_addr).await;
         let id = 0x6e7a_0c05u64;
         let fid = format!("1,{id:x}{TEST_COOKIE:08x}");
         let token = gen_jwt(&key, 60, &fid).unwrap();
@@ -9294,14 +9325,12 @@ mod tests {
             }
         }
         assert_eq!(*queries.lock().unwrap(), [expected_query, expected_query]);
-        master_server.abort();
         peer_server.abort();
     }
 
     #[tokio::test]
     async fn http_replica_stores_the_primary_needle() {
         use crate::storage::super_block::ReplicaPlacement;
-        use axum::{Json, Router, routing::get};
         use tower::ServiceExt;
 
         let tmp = tempfile::TempDir::new().unwrap();
@@ -9336,19 +9365,7 @@ mod tests {
             .await
             .unwrap();
         });
-        let master = Router::new().route(
-            "/dir/lookup",
-            get(move || async move {
-                Json(serde_json::json!({"locations": [
-                    {"url": "127.0.0.1:8080"},
-                    {"url": peer_addr.to_string()}
-                ]}))
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        *state.current_master_url.write().await = listener.local_addr().unwrap().to_string();
-        let master_server =
-            tokio::spawn(async move { axum::serve(listener, master).await.unwrap() });
+        *state.current_master_url.write().await = spawn_replica_master(peer_addr).await;
 
         let payload = "compressible replica text ".repeat(64);
         let boundary = "replica-boundary";
@@ -9443,7 +9460,6 @@ mod tests {
             assert_eq!(replica.ttl, primary.ttl);
             assert_eq!(replica.last_modified, 1700000000);
         }
-        master_server.abort();
         peer_server.abort();
     }
 
