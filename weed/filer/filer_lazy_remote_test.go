@@ -214,7 +214,7 @@ func (s *stubFilerStore) FindEntry(_ context.Context, p util.FullPath) (*Entry, 
 		return nil, err
 	}
 	if e, ok := s.entries[string(p)]; ok {
-		return e, nil
+		return e.ShallowClone(), nil
 	}
 	return nil, filer_pb.ErrNotFound
 }
