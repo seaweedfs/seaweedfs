@@ -185,3 +185,17 @@ func TestResumeOutsideSkipped(t *testing.T) {
 		}
 	}
 }
+
+func TestTraverseMetadataSkipsAnExcludedRoot(t *testing.T) {
+	root, entriesPerSecond := "/logs", 0
+	backup := &FilerMetaBackupOptions{
+		store:            &kvOnlyStore{kv: map[string][]byte{}},
+		filerDirectory:   &root,
+		entriesPerSecond: &entriesPerSecond,
+		pathFilter:       util.NewPathPrefixFilter("", "/logs", nil),
+	}
+	// no filer address: listing anything would panic
+	if err := backup.traverseMetadata(); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -226,6 +226,9 @@ func (metaBackup *FilerMetaBackupOptions) traverseMetadata() (err error) {
 	if *metaBackup.entriesPerSecond > 0 {
 		limiter = rate.NewLimiter(rate.Limit(*metaBackup.entriesPerSecond), *metaBackup.entriesPerSecond)
 	}
+	if !metaBackup.pathFilter.ShouldWalk(string(util.NormalizePath(*metaBackup.filerDirectory))) {
+		return nil
+	}
 	lastSaved := time.Now()
 	return filer_pb.TraverseDfs(ctx, metaBackup, util.FullPath(*metaBackup.filerDirectory), metaBackup.resumeOutsideSkipped(util.FullPath(resumeAfter)), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 		if err := limiter.Wait(ctx); err != nil {
