@@ -29,11 +29,19 @@ func (f *refusingFiler) CreateEntry(context.Context, *filer_pb.CreateEntryReques
 	}, nil
 }
 
+func (f *refusingFiler) ListEntries(*filer_pb.ListEntriesRequest, filer_pb.SeaweedFiler_ListEntriesServer) error {
+	return nil
+}
+
 func startRefusingFiler(t *testing.T) (*refusingFiler, func() string) {
+	filer := &refusingFiler{}
+	return filer, startTestFiler(t, filer)
+}
+
+func startTestFiler(t *testing.T, filer filer_pb.SeaweedFilerServer) func() string {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	filer := &refusingFiler{}
 	server := pb.NewGrpcServer()
 	filer_pb.RegisterSeaweedFilerServer(server, filer)
 	go func() { _ = server.Serve(lis) }()
@@ -46,7 +54,7 @@ func startRefusingFiler(t *testing.T) (*refusingFiler, func() string) {
 	grpcPort, err := strconv.Atoi(port)
 	require.NoError(t, err)
 	address := string(pb.NewServerAddress(host, 1, grpcPort))
-	return filer, func() string { return address }
+	return func() string { return address }
 }
 
 // The IAM stores must not take a refused create for a stored record. A session

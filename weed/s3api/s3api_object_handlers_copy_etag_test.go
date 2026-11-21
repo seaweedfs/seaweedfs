@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -446,7 +447,7 @@ func TestWriteEmptyCopyPartStoresMd5(t *testing.T) {
 	if code != s3err.ErrNone {
 		t.Fatalf("writeEmptyCopyPart: %v", code)
 	}
-	const emptyMD5Hex = "d41d8cd98f00b204e9800998ecf8427e"
+	emptyMD5Hex := fmt.Sprintf("%x", util.Md5(nil))
 	if etag != emptyMD5Hex {
 		t.Fatalf("writeEmptyCopyPart etag = %q, want %q", etag, emptyMD5Hex)
 	}

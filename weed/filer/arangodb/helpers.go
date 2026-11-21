@@ -2,7 +2,6 @@ package arangodb
 
 import (
 	"context"
-	"crypto/md5"
 	"encoding/binary"
 	"encoding/hex"
 	"io"
@@ -14,7 +13,7 @@ import (
 
 // convert a string into arango-key safe hex bytes hash
 func hashString(dir string) string {
-	h := md5.New()
+	h := util.NewMd5()
 	io.WriteString(h, dir)
 	b := h.Sum(nil)
 	return hex.EncodeToString(b)

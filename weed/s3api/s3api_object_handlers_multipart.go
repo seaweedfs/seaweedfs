@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
@@ -23,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const (
@@ -605,7 +605,7 @@ func (s3a *S3ApiServer) genPartUploadPath(bucket, uploadID string, partID int) s
 func (s3a *S3ApiServer) generateUploadID(object string) string {
 
 	object = strings.TrimPrefix(object, "/")
-	h := sha1.New()
+	h := util.NewSha1()
 	h.Write([]byte(object))
 	return fmt.Sprintf("%x", h.Sum(nil))
 }

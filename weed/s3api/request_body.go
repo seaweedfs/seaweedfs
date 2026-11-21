@@ -139,8 +139,10 @@ func bindSignedPayload(r *http.Request, hashedPayload string) s3err.ErrorCode {
 		if emptySum := sha256.Sum256(nil); expected != nil && !bytes.Equal(expected, emptySum[:]) {
 			return s3err.ErrContentSHA256Mismatch
 		}
-		if emptySum := md5.Sum(nil); contentMd5 != nil && !bytes.Equal(contentMd5, emptySum[:]) {
-			return s3err.ErrBadDigest
+		if contentMd5 != nil {
+			if emptySum := md5.Sum(nil); !bytes.Equal(contentMd5, emptySum[:]) {
+				return s3err.ErrBadDigest
+			}
 		}
 		return s3err.ErrNone
 	}
@@ -162,15 +164,17 @@ func parseCanonicalContentMd5(h http.Header) ([]byte, s3err.ErrorCode) {
 	if len(vals) == 0 {
 		return nil, s3err.ErrNone
 	}
-	if fips140Enforced() {
-		return nil, s3err.ErrNotImplemented
-	}
 	if len(vals) != 1 || vals[0] == "" {
 		return nil, s3err.ErrInvalidDigest
 	}
 	decoded, err := base64.StdEncoding.DecodeString(vals[0])
 	if err != nil || len(decoded) != md5.Size || base64.StdEncoding.EncodeToString(decoded) != vals[0] {
 		return nil, s3err.ErrInvalidDigest
+	}
+	// Under fips140=only the stored digest is not an MD5, so the header's
+	// syntax is still enforced but its value goes unchecked.
+	if fips140Enforced() {
+		return nil, s3err.ErrNone
 	}
 	return decoded, s3err.ErrNone
 }

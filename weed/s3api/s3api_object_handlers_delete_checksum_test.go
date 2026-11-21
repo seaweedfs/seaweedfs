@@ -355,7 +355,8 @@ func TestDeleteObjectsChecksumFIPS140(t *testing.T) {
 	noAuthEnv := newDeleteChecksumTestEnv(t, false)
 
 	// Hardcoded valid 16-byte MD5 base64 (MD5("")) so this test never calls
-	// crypto/md5 when executed under real GODEBUG=fips140=only.
+	// crypto/md5 when executed under real GODEBUG=fips140=only. It does not
+	// match the delete body, so accepting it shows the header goes unchecked.
 	const validMD5Base64 = "1B2M2Y8AsgTpgAmY7PhCfg=="
 
 	rejected := []struct {
@@ -385,17 +386,10 @@ func TestDeleteObjectsChecksumFIPS140(t *testing.T) {
 			},
 		},
 		{
-			name:    "content_md5_auth",
-			withIAM: true,
-			prepare: func(req *http.Request) {
-				req.Header.Set("Content-Md5", validMD5Base64)
-			},
-		},
-		{
-			name:    "content_md5_iam_disabled",
+			name:    "sha1_value_header_iam_disabled",
 			withIAM: false,
 			prepare: func(req *http.Request) {
-				req.Header.Set("Content-Md5", validMD5Base64)
+				req.Header.Set(s3_constants.AmzChecksumSHA1, "AAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 			},
 		},
 	}
@@ -424,12 +418,72 @@ func TestDeleteObjectsChecksumFIPS140(t *testing.T) {
 		})
 	}
 
+	// Content-MD5 cannot be checked in this mode: valid syntax is accepted
+	// unchecked, even when the value does not match the body.
+	unchecked := []struct {
+		name    string
+		withIAM bool
+	}{
+		{"content_md5_auth", true},
+		{"content_md5_iam_disabled", false},
+	}
+	for _, tc := range unchecked {
+		t.Run(tc.name, func(t *testing.T) {
+			env := authEnv
+			if !tc.withIAM {
+				env = noAuthEnv
+			}
+			key := "fips-unchecked-" + tc.name + ".txt"
+			env.seed(key)
+			body := deleteObjectsBody(key)
+			req := newDeleteChecksumRequest(t, "http://127.0.0.1:9000/warehouse?delete", body)
+			req.Header.Set("Content-Md5", validMD5Base64)
+			if tc.withIAM {
+				require.NoError(t, signRequestV4(req, "access_key_1", "secret_key_1"))
+			}
+			req = mux.SetURLVars(req, map[string]string{"bucket": "warehouse"})
+			rec := httptest.NewRecorder()
+			env.handler(rec, req)
+
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			require.False(t, env.exists(key), "object must be deleted when Content-MD5 is unchecked under FIPS")
+		})
+	}
+
+	// Syntax is still enforced in this mode.
+	invalidMD5 := []struct {
+		name  string
+		value string
+	}{
+		{"malformed", "not-valid-md5"},
+		{"non_canonical_padding", "AAAAAAAAAAAAAAAAAAAAAB=="},
+	}
+	for _, tc := range invalidMD5 {
+		t.Run("invalid_content_md5_"+tc.name, func(t *testing.T) {
+			key := "fips-invalid-md5-" + tc.name + ".txt"
+			authEnv.seed(key)
+			body := deleteObjectsBody(key)
+			req := newDeleteChecksumRequest(t, "http://127.0.0.1:9000/warehouse?delete", body)
+			req.Header.Set("Content-Md5", tc.value)
+			require.NoError(t, signRequestV4(req, "access_key_1", "secret_key_1"))
+			req = mux.SetURLVars(req, map[string]string{"bucket": "warehouse"})
+			rec := httptest.NewRecorder()
+			authEnv.handler(rec, req)
+
+			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+			require.Contains(t, rec.Body.String(), "<Code>InvalidDigest</Code>")
+			require.True(t, authEnv.exists(key), "object must survive an invalid Content-MD5 under FIPS")
+		})
+	}
+
 	allowed := []struct {
 		name   string
 		alg    ChecksumAlgorithm
 		header string
 	}{
 		{"CRC32", ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32},
+		{"CRC32C", ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C},
+		{"CRC64NVME", ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME},
 		{"SHA256", ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
 	}
 	for _, tc := range allowed {
@@ -447,6 +501,23 @@ func TestDeleteObjectsChecksumFIPS140(t *testing.T) {
 
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 			require.False(t, authEnv.exists(key), "object must be deleted under FIPS for %s", tc.name)
+		})
+
+		t.Run("tampered_"+tc.name, func(t *testing.T) {
+			key := "fips-tampered-" + tc.name + ".txt"
+			authEnv.seed(key)
+			body := deleteObjectsBody(key)
+			req := newDeleteChecksumRequest(t, "http://127.0.0.1:9000/warehouse?delete", body)
+			req.Header.Set(s3_constants.AmzSdkChecksumAlgorithm, tc.name)
+			req.Header.Set(tc.header, tamperedChecksumBase64(tc.alg, body))
+			require.NoError(t, signRequestV4(req, "access_key_1", "secret_key_1"))
+			req = mux.SetURLVars(req, map[string]string{"bucket": "warehouse"})
+			rec := httptest.NewRecorder()
+			authEnv.handler(rec, req)
+
+			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+			require.Contains(t, rec.Body.String(), "<Code>BadDigest</Code>")
+			require.True(t, authEnv.exists(key), "object must survive a tampered %s checksum under FIPS", tc.name)
 		})
 	}
 }

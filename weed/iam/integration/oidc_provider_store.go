@@ -2,7 +2,6 @@ package integration
 
 import (
 	"context"
-	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -19,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -234,6 +234,7 @@ type FilerOIDCProviderStore struct {
 	grpcDialOption       grpc.DialOption
 	basePath             string
 	filerAddressProvider func() string
+	names                *storedNameRekey
 }
 
 // NewFilerOIDCProviderStore returns a filer-backed store. Default path
@@ -247,6 +248,17 @@ func NewFilerOIDCProviderStore(config map[string]interface{}, filerAddressProvid
 		if bp, ok := config["basePath"].(string); ok && bp != "" {
 			store.basePath = strings.TrimSuffix(bp, "/")
 		}
+	}
+	store.names = &storedNameRekey{
+		dir:  store.basePath,
+		name: store.fileName,
+		keyOf: func(content []byte) string {
+			var record OIDCProviderRecord
+			if json.Unmarshal(content, &record) != nil {
+				return ""
+			}
+			return record.ARN
+		},
 	}
 	glog.V(2).Infof("Initialized FilerOIDCProviderStore with basePath %s", store.basePath)
 	return store
@@ -265,8 +277,9 @@ func (f *FilerOIDCProviderStore) resolveFilerAddress(filerAddress string) string
 func (f *FilerOIDCProviderStore) fileName(arn string) string {
 	// Hash the ARN to a fixed-width filename so we can store any character set
 	// (including the URL fragments AWS lets through) without filer-path issues.
-	h := sha1.Sum([]byte(arn))
-	return hex.EncodeToString(h[:]) + ".json"
+	h := util.NewSha1()
+	h.Write([]byte(arn))
+	return hex.EncodeToString(h.Sum(nil)) + ".json"
 }
 
 // StoreProvider persists `record` as JSON.
@@ -284,7 +297,7 @@ func (f *FilerOIDCProviderStore) StoreProvider(ctx context.Context, filerAddress
 		return fmt.Errorf("marshal OIDC provider: %v", err)
 	}
 
-	return f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
+	return f.withFilerClient(ctx, filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 			Directory: f.basePath,
 			Entry: &filer_pb.Entry{
@@ -313,7 +326,7 @@ func (f *FilerOIDCProviderStore) GetProviderByARN(ctx context.Context, filerAddr
 	}
 
 	var data []byte
-	err := f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
+	err := f.withFilerClient(ctx, filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: f.basePath,
 			Name:      f.fileName(arn),
@@ -386,7 +399,7 @@ func (f *FilerOIDCProviderStore) ListProviders(ctx context.Context, filerAddress
 	}
 
 	var out []*OIDCProviderRecord
-	err := f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
+	err := f.withFilerClient(ctx, filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		// Stream-paginate via StartFromFileName so deployments with more
 		// than 1000 providers don't get a silently truncated list.
 		const pageSize = 1000
@@ -446,7 +459,7 @@ func (f *FilerOIDCProviderStore) DeleteProvider(ctx context.Context, filerAddres
 	if filerAddress == "" {
 		return fmt.Errorf("filer address is required")
 	}
-	return f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
+	return f.withFilerClient(ctx, filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
 			Directory:    f.basePath,
 			Name:         f.fileName(arn),
@@ -479,7 +492,7 @@ func (f *FilerOIDCProviderStore) UpdateProvider(ctx context.Context, filerAddres
 	if arn == "" {
 		return fmt.Errorf("ARN is required")
 	}
-	return f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
+	return f.withFilerClient(ctx, filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		for attempt := 0; attempt < maxProviderUpdateAttempts; attempt++ {
 			var entry *filer_pb.Entry
 			var current *OIDCProviderRecord
@@ -589,8 +602,13 @@ func (f *FilerOIDCProviderStore) deleteProviderEntryIfUnchanged(ctx context.Cont
 	return true, nil
 }
 
-func (f *FilerOIDCProviderStore) withFilerClient(filerAddress string, fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddress), f.grpcDialOption, fn)
+func (f *FilerOIDCProviderStore) withFilerClient(ctx context.Context, filerAddress string, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddress), f.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		if err := f.names.ensure(ctx, filerAddress, client); err != nil {
+			return err
+		}
+		return fn(client)
+	})
 }
 
 // DeriveOIDCProviderARN turns an issuer URL into the canonical IAM ARN AWS uses.

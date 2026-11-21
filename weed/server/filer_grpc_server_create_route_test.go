@@ -78,6 +78,20 @@ func peerOwnedName(t *testing.T, fs *FilerServer) string {
 	return ""
 }
 
+// selfOwnedName returns a child name under /test whose entry the ring assigns
+// to this filer.
+func selfOwnedName(t *testing.T, fs *FilerServer) string {
+	t.Helper()
+	for i := 0; i < 4000; i++ {
+		name := fmt.Sprintf("obj-%d", i)
+		if fs.writeOwner(entryRouteKey(util.NewFullPath("/test", name))) == "" {
+			return name
+		}
+	}
+	t.Skip("no name owned by this filer")
+	return ""
+}
+
 func createReq(name string, oExcl bool) *filer_pb.CreateEntryRequest {
 	return &filer_pb.CreateEntryRequest{
 		Directory:                "/test",
@@ -128,11 +142,10 @@ func ringPeerCtx() context.Context {
 	})
 }
 
-// is_moved bounds forwarding to one hop: the owner applies it even if its own
-// ring view says someone else owns the key.
+// A forwarded create is applied by the owner without forwarding it again.
 func TestCreateEntryMovedAppliesLocally(t *testing.T) {
 	fs, store := createRouteServer(t)
-	name := peerOwnedName(t, fs)
+	name := selfOwnedName(t, fs)
 
 	req := createReq(name, true)
 	req.IsMoved = true
@@ -142,6 +155,24 @@ func TestCreateEntryMovedAppliesLocally(t *testing.T) {
 	}
 	if _, found := store.entries[string(util.NewFullPath("/test", name))]; !found {
 		t.Fatal("forwarded create must reach the local store")
+	}
+}
+
+// A filer whose own ring names a peer as the owner refuses a forwarded create
+// rather than check it under its own lock: the sender's ring disagrees with
+// this one, and the peer's lock may be arbitrating the same entry.
+func TestCreateEntryMovedRefusedByNonOwner(t *testing.T) {
+	fs, store := createRouteServer(t)
+	name := peerOwnedName(t, fs)
+
+	req := createReq(name, true)
+	req.IsMoved = true
+	_, err := fs.CreateEntry(ringPeerCtx(), req)
+	if !isNotWriteOwner(err) {
+		t.Fatalf("a forwarded create on a non-owner must be refused as not the write owner, got err=%v", err)
+	}
+	if _, found := store.entries[string(util.NewFullPath("/test", name))]; found {
+		t.Fatal("a refused forward must not write locally")
 	}
 }
 

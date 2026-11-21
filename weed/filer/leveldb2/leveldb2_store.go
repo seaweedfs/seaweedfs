@@ -3,6 +3,7 @@ package leveldb
 import (
 	"bytes"
 	"context"
+	"crypto/fips140"
 	"crypto/md5"
 	"fmt"
 	"io"
@@ -117,6 +118,10 @@ func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
 	}
 	store.dbCount = dbCount
 
+	if err := leveldb_handle.CheckKeyHash(store.dbs, fips140.Enforced(), store.ReadOnly); err != nil {
+		store.Shutdown()
+		return err
+	}
 	return
 }
 
@@ -319,7 +324,7 @@ func getNameFromKey(key []byte) string {
 
 // hash directory, and use last byte for partitioning
 func hashToBytes(dir string, dbCount int) ([]byte, int) {
-	h := md5.New()
+	h := weed_util.NewMd5()
 	io.WriteString(h, dir)
 
 	b := h.Sum(nil)

@@ -3,7 +3,6 @@ package operation
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -64,7 +64,7 @@ func UploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUpl
 
 func uploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUploadOption, prepare func([]byte, *UploadOption) (*preparedUpload, error)) (*ChunkedUploadResult, error) {
 
-	md5Hash := md5.New()
+	md5Hash := util.NewMd5()
 	var partReader = io.TeeReader(reader, md5Hash)
 
 	var fileChunks []*filer_pb.FileChunk
@@ -183,7 +183,7 @@ uploadLoop:
 			}()
 
 			// Hash and prepare only this bounded chunk before minting its volume JWT.
-			chunkMd5 := md5.Sum(buf.Bytes())
+			chunkMd5 := util.Md5(buf.Bytes())
 			chunkMd5B64 := base64.StdEncoding.EncodeToString(chunkMd5[:])
 			var prepared *preparedUpload
 			if opt.UploadFunc == nil {
