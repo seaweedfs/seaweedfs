@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/xml"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 
@@ -440,9 +439,20 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("DeleteMultipleObjectsHandler %s", bucket)
 
-	deleteXMLBytes, err := io.ReadAll(r.Body)
+	bodyChecksum, errCode := parseRequestBodyChecksum(r)
+	if errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	deleteXMLBytes, err := readRequestBody(r, s3_constants.GetRequestBodyLimitFromContext(r, iamRequestBodyLimit))
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, requestBodyErrorCode(err, s3err.ErrInternalError))
+		return
+	}
+
+	if errCode := bodyChecksum.verify(deleteXMLBytes); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
