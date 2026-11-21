@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"crypto/md5"
 	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -125,15 +128,9 @@ func bindSignedPayload(r *http.Request, hashedPayload string) s3err.ErrorCode {
 		}
 		return s3err.ErrNone
 	}
-	var contentMd5 []byte
-	if _, present := r.Header["Content-Md5"]; present {
-		decoded, err := validateContentMd5(r.Header)
-		if err != nil || len(decoded) != md5.Size {
-			return s3err.ErrInvalidDigest
-		}
-		if !fips140Enforced() {
-			contentMd5 = decoded
-		}
+	contentMd5, errCode := parseCanonicalContentMd5(r.Header)
+	if errCode != s3err.ErrNone {
+		return errCode
 	}
 	if expected == nil && contentMd5 == nil {
 		return s3err.ErrNone
@@ -159,6 +156,29 @@ func bindSignedPayload(r *http.Request, hashedPayload string) s3err.ErrorCode {
 	return s3err.ErrNone
 }
 
+// parseCanonicalContentMd5 decodes the single Content-MD5 header, rejecting a
+// base64 spelling that does not re-encode to the sent text so the digest covers
+// the bytes the signature covered.
+func parseCanonicalContentMd5(h http.Header) ([]byte, s3err.ErrorCode) {
+	vals := h.Values("Content-Md5")
+	if len(vals) == 0 {
+		return nil, s3err.ErrNone
+	}
+	if len(vals) != 1 || vals[0] == "" {
+		return nil, s3err.ErrInvalidDigest
+	}
+	decoded, err := base64.StdEncoding.DecodeString(vals[0])
+	if err != nil || len(decoded) != md5.Size || base64.StdEncoding.EncodeToString(decoded) != vals[0] {
+		return nil, s3err.ErrInvalidDigest
+	}
+	// Under fips140=only the stored digest is not an MD5, so the header's
+	// syntax is still enforced but its value goes unchecked.
+	if fips140Enforced() {
+		return nil, s3err.ErrNone
+	}
+	return decoded, s3err.ErrNone
+}
+
 // requestBodyErrorCode names the check a failed body read tripped, or returns
 // fallback for any other read error.
 func requestBodyErrorCode(err error, fallback s3err.ErrorCode) s3err.ErrorCode {
@@ -171,4 +191,154 @@ func requestBodyErrorCode(err error, fallback s3err.ErrorCode) s3err.ErrorCode {
 		return s3err.ErrEntityTooLarge
 	}
 	return fallback
+}
+
+type requestBodyChecksum struct {
+	md5              []byte
+	checksumAlg      ChecksumAlgorithm
+	checksumExpected []byte
+}
+
+func requestHeaderOrQueryValues(r *http.Request, lowerQuery map[string][]string, canonicalHeader string) []string {
+	headerVals := r.Header.Values(canonicalHeader)
+	queryVals := lowerQuery[strings.ToLower(canonicalHeader)]
+	switch {
+	case len(queryVals) == 0:
+		return headerVals
+	case len(headerVals) == 0:
+		return queryVals
+	}
+	vals := make([]string, 0, len(headerVals)+len(queryVals))
+	vals = append(vals, headerVals...)
+	return append(vals, queryVals...)
+}
+
+// parseRequestBodyChecksum parses Content-MD5 and x-amz-checksum-* headers/query
+// parameters for buffered XML request handlers.
+func parseRequestBodyChecksum(r *http.Request) (requestBodyChecksum, s3err.ErrorCode) {
+	var check requestBodyChecksum
+
+	decoded, errCode := parseCanonicalContentMd5(r.Header)
+	if errCode != s3err.ErrNone {
+		return requestBodyChecksum{}, errCode
+	}
+	if bound, ok := r.Body.(*signedPayloadBody); !ok || bound.md5 == nil {
+		check.md5 = decoded
+	}
+
+	var lowerQuery map[string][]string
+	if r.URL != nil && r.URL.RawQuery != "" {
+		query, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			return requestBodyChecksum{}, s3err.ErrInvalidRequest
+		}
+		lowerQuery = make(map[string][]string, len(query))
+		for k, v := range query {
+			lk := strings.ToLower(k)
+			lowerQuery[lk] = append(lowerQuery[lk], v...)
+		}
+	}
+
+	if trailerVals := requestHeaderOrQueryValues(r, lowerQuery, s3_constants.AmzTrailer); len(trailerVals) > 0 {
+		if fips140Enforced() {
+			for _, v := range trailerVals {
+				for _, part := range strings.Split(v, ",") {
+					if m, ok := trailerToChecksumAlgorithm[strings.ToLower(strings.TrimSpace(part))]; ok && m.alg == ChecksumAlgorithmSHA1 {
+						return requestBodyChecksum{}, s3err.ErrNotImplemented
+					}
+				}
+			}
+		}
+		// Buffered XML handlers do not decode aws-chunked trailers and must not ignore declared trailer checksums.
+		return requestBodyChecksum{}, s3err.ErrInvalidRequest
+	}
+
+	for _, v := range requestHeaderOrQueryValues(r, lowerQuery, "X-Amz-Content-Sha256") {
+		switch v {
+		case streamingContentSHA256, streamingContentSHA256Trailer, streamingUnsignedPayload:
+			return requestBodyChecksum{}, s3err.ErrInvalidRequest
+		}
+	}
+	for _, v := range r.Header.Values("Content-Encoding") {
+		for _, part := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(part), "aws-chunked") {
+				return requestBodyChecksum{}, s3err.ErrInvalidRequest
+			}
+		}
+	}
+
+	declaredAlg := ChecksumAlgorithmNone
+	for _, header := range []string{s3_constants.AmzSdkChecksumAlgorithm, s3_constants.AmzChecksumAlgorithm} {
+		vals := requestHeaderOrQueryValues(r, lowerQuery, header)
+		if len(vals) == 0 {
+			continue
+		}
+		if len(vals) != 1 || vals[0] == "" {
+			return requestBodyChecksum{}, s3err.ErrInvalidRequest
+		}
+		m, ok := checksumAlgorithmMapping[strings.ToUpper(vals[0])]
+		if !ok {
+			return requestBodyChecksum{}, s3err.ErrInvalidRequest
+		}
+		if declaredAlg != ChecksumAlgorithmNone && declaredAlg != m.alg {
+			return requestBodyChecksum{}, s3err.ErrInvalidRequest
+		}
+		declaredAlg = m.alg
+	}
+
+	valueAlg := ChecksumAlgorithmNone
+	var rawValue string
+	for _, entry := range checksumHeaders {
+		vals := requestHeaderOrQueryValues(r, lowerQuery, entry.header)
+		if len(vals) == 0 {
+			continue
+		}
+		if len(vals) > 1 || vals[0] == "" {
+			return requestBodyChecksum{}, s3err.ErrInvalidRequest
+		}
+		if valueAlg != ChecksumAlgorithmNone {
+			return requestBodyChecksum{}, s3err.ErrInvalidRequest
+		}
+		valueAlg = entry.alg
+		rawValue = vals[0]
+	}
+
+	if (declaredAlg == ChecksumAlgorithmSHA1 || valueAlg == ChecksumAlgorithmSHA1) && fips140Enforced() {
+		return requestBodyChecksum{}, s3err.ErrNotImplemented
+	}
+	if declaredAlg != ChecksumAlgorithmNone && valueAlg != ChecksumAlgorithmNone && declaredAlg != valueAlg {
+		return requestBodyChecksum{}, s3err.ErrBadDigest
+	}
+	if declaredAlg != ChecksumAlgorithmNone && valueAlg == ChecksumAlgorithmNone {
+		return requestBodyChecksum{}, s3err.ErrInvalidRequest
+	}
+
+	if valueAlg != ChecksumAlgorithmNone {
+		hasher := getCheckSumWriter(valueAlg)
+		decoded, err := base64.StdEncoding.DecodeString(rawValue)
+		if err != nil || len(decoded) != hasher.Size() || base64.StdEncoding.EncodeToString(decoded) != rawValue {
+			return requestBodyChecksum{}, s3err.ErrInvalidRequest
+		}
+		check.checksumAlg = valueAlg
+		check.checksumExpected = decoded
+	}
+
+	return check, s3err.ErrNone
+}
+
+func (c requestBodyChecksum) verify(body []byte) s3err.ErrorCode {
+	if c.md5 != nil {
+		sum := md5.Sum(body)
+		if !bytes.Equal(sum[:], c.md5) {
+			return s3err.ErrBadDigest
+		}
+	}
+	if c.checksumAlg != ChecksumAlgorithmNone {
+		h := getCheckSumWriter(c.checksumAlg)
+		h.Write(body)
+		if !bytes.Equal(h.Sum(nil), c.checksumExpected) {
+			return s3err.ErrBadDigest
+		}
+	}
+	return s3err.ErrNone
 }
