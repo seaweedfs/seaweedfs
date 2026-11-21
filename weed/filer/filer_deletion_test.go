@@ -187,6 +187,7 @@ func TestIsRetryableError(t *testing.T) {
 		{"deadline exceeded", true, "deadline exceeded"},
 		{"context canceled", true, "context canceled"},
 		{"lookup error: volume not found", true, "lookup error"},
+		{"lookup error: volume 123 has no active locations", true, "no active locations"},
 		{"connection refused", true, "connection refused"},
 		{"too many requests", true, "rate limiting"},
 		{"service unavailable", true, "service unavailable"},
