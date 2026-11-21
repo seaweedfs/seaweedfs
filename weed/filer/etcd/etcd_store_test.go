@@ -2,6 +2,7 @@ package etcd
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -79,5 +80,36 @@ func TestWritesHaveNoRequestDeadline(t *testing.T) {
 		if hasDeadline {
 			t.Errorf("put %d has a request deadline", i)
 		}
+	}
+}
+
+type getDeadlineKV struct {
+	clientv3.KV
+	deadlines []bool
+}
+
+func (kv *getDeadlineKV) Get(ctx context.Context, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error) {
+	_, ok := ctx.Deadline()
+	kv.deadlines = append(kv.deadlines, ok)
+	return &clientv3.GetResponse{}, nil
+}
+
+func TestListHasNoRequestDeadline(t *testing.T) {
+	kv := &getDeadlineKV{}
+	store := &EtcdStore{client: &clientv3.Client{KV: kv}, requestTimeout: 3 * time.Second}
+	ctx := context.Background()
+	each := func(*filer.Entry) (bool, error) { return true, nil }
+
+	if _, err := store.ListDirectoryEntries(ctx, "/dir", "", false, 1024, each); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ListDirectoryPrefixedEntries(ctx, "/dir", "b", true, 1024, "a", each); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.FindEntry(ctx, "/dir/file"); err == nil {
+		t.Fatal("found an entry in an empty store")
+	}
+	if want := []bool{false, false, true}; !slices.Equal(kv.deadlines, want) {
+		t.Fatalf("got deadlines %v for list, list, find; want %v", kv.deadlines, want)
 	}
 }

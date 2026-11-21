@@ -228,6 +228,10 @@ func (store *EtcdStore) DeleteFolderChildren(ctx context.Context, fullpath weed_
 	return nil
 }
 
+// ListDirectoryPrefixedEntries runs without the store's timeout too: etcd
+// counts every key left in the range even when the page is limited, so one
+// page of a directory takes longer the more entries follow it (about 0.3 s
+// per page at the start of 4 million entries).
 func (store *EtcdStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath weed_util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
 	directoryPrefix := genDirectoryKeyPrefix(dirPath, prefix)
 	lastFileStart := directoryPrefix
@@ -235,9 +239,7 @@ func (store *EtcdStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 		lastFileStart = genDirectoryKeyPrefix(dirPath, startFileName)
 	}
 
-	opCtx, cancel := store.withTimeout(ctx)
-	defer cancel()
-	resp, err := store.client.Get(opCtx, store.etcdKeyPrefix+string(lastFileStart),
+	resp, err := store.client.Get(ctx, store.etcdKeyPrefix+string(lastFileStart),
 		clientv3.WithRange(clientv3.GetPrefixRangeEnd(store.etcdKeyPrefix+string(directoryPrefix))),
 		clientv3.WithLimit(limit+1))
 	if err != nil {

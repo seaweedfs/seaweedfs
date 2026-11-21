@@ -2,7 +2,9 @@ package filer_pb
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"slices"
 	"strings"
 	"sync"
@@ -19,7 +21,8 @@ var traverseDfsPageSize uint32 = 1024
 // one path tells how far it got: every entry before it was visited, and so was
 // the subtree of a directory it names. progress gets these paths in walk
 // order, and a walk given one as resumeAfter skips everything up to it. fn may
-// run concurrently for the files of one directory.
+// run concurrently for the files of one directory, and returns fs.SkipDir to
+// leave out the subtree of a directory.
 func TraverseDfs(ctx context.Context, filerClient FilerClient, parentPath, resumeAfter util.FullPath, fn func(parentPath util.FullPath, entry *Entry) error, progress func(walked util.FullPath)) error {
 	parentPath = util.NormalizePath(string(parentPath))
 	var resume []string
@@ -69,13 +72,16 @@ func traverseDfsDirectory(ctx context.Context, filerClient FilerClient, dir util
 			if i := slices.IndexFunc(page, func(entry *Entry) bool { return entry.IsDirectory }); i >= 0 {
 				run = page[:i+1]
 			}
-			if err := visitDfsRun(ctx, dir, run, fn, progress); err != nil {
+			skipDir, err := visitDfsRun(ctx, dir, run, fn, progress)
+			if err != nil {
 				return err
 			}
 			if last := run[len(run)-1]; last.IsDirectory {
 				child := dir.Child(last.Name)
-				if err := traverseDfsDirectory(ctx, filerClient, child, nil, fn, progress); err != nil {
-					return err
+				if !skipDir {
+					if err := traverseDfsDirectory(ctx, filerClient, child, nil, fn, progress); err != nil {
+						return err
+					}
 				}
 				progress(child)
 			}
@@ -95,8 +101,8 @@ func traverseDfsDirectory(ctx context.Context, filerClient FilerClient, dir util
 
 // visitDfsRun calls fn concurrently on entries that end at the first
 // directory, and reports each file once every entry before it is done. The
-// caller reports the directory after its subtree.
-func visitDfsRun(ctx context.Context, dir util.FullPath, run []*Entry, fn func(parentPath util.FullPath, entry *Entry) error, progress func(walked util.FullPath)) error {
+// caller reports the directory after its subtree, which fn may skip.
+func visitDfsRun(ctx context.Context, dir util.FullPath, run []*Entry, fn func(parentPath util.FullPath, entry *Entry) error, progress func(walked util.FullPath)) (skipDir bool, err error) {
 	var mu sync.Mutex
 	done := make([]bool, len(run))
 	next := 0
@@ -107,11 +113,13 @@ func visitDfsRun(ctx context.Context, dir util.FullPath, run []*Entry, fn func(p
 			if err := gctx.Err(); err != nil {
 				return err
 			}
-			if err := fn(dir, entry); err != nil {
+			err := fn(dir, entry)
+			if err != nil && !(entry.IsDirectory && errors.Is(err, fs.SkipDir)) {
 				return err
 			}
 			mu.Lock()
 			defer mu.Unlock()
+			skipDir = skipDir || err != nil
 			done[i] = true
 			for next < len(run) && done[next] && !run[next].IsDirectory {
 				progress(dir.Child(run[next].Name))
@@ -120,5 +128,6 @@ func visitDfsRun(ctx context.Context, dir util.FullPath, run []*Entry, fn func(p
 			return nil
 		})
 	}
-	return g.Wait()
+	err = g.Wait()
+	return skipDir, err
 }
