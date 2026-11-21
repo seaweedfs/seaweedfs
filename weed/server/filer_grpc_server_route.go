@@ -49,13 +49,15 @@ func (fs *FilerServer) writeOwner(key string) pb.ServerAddress {
 // An owner that refuses the forward as not its own applied nothing: the two
 // rings disagree. They converge once a ring update reaches the lagging filer or
 // a cooling-off window closes, so the forward is re-routed by this filer's ring
-// until shortly after its latest window ends, then the refusal surfaces.
+// until shortly after its latest window ends, then the refusal surfaces. It
+// also surfaces once this filer's ring names itself: a caller may have checked
+// the entry before routing, and that check is stale after the wait.
 func (fs *FilerServer) forwardToWriteOwner(ctx context.Context, key string, send func(owner pb.ServerAddress) error) (handled bool, err error) {
 	var firstRefusal time.Time
 	for wait := notWriteOwnerRetryWait; ; wait = min(2*wait, 10*notWriteOwnerRetryWait) {
 		owner := fs.writeOwner(key)
 		if owner == "" {
-			return false, nil
+			return err != nil, err
 		}
 		if err = send(owner); err == nil {
 			return true, nil

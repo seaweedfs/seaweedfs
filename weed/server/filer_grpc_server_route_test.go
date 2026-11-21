@@ -117,9 +117,10 @@ func windowlessRouteServer(host pb.ServerAddress, servers []pb.ServerAddress) *F
 	return fs
 }
 
-// A refusal from an owner whose ring disagrees applied nothing, so the forward
-// is routed again by this filer's ring, which may by then name this filer.
-func TestForwardToWriteOwnerReroutesARefusal(t *testing.T) {
+// A refused forward is not applied locally once this filer's ring names
+// itself: the caller checked the entry before routing, and the wait made that
+// check stale, so the refusal surfaces for the caller to retry.
+func TestForwardToWriteOwnerSurfacesARefusalOnceOwned(t *testing.T) {
 	fs := windowlessRouteServer("f2:8888", routeSetA)
 	ring := fs.filer.Dlm.LockRing
 
@@ -130,8 +131,8 @@ func TestForwardToWriteOwnerReroutesARefusal(t *testing.T) {
 		ring.SetSnapshot([]pb.ServerAddress{"f2:8888"}, 2)
 		return notWriteOwnerError(key, "f2:8888")
 	})
-	if handled || err != nil {
-		t.Fatalf("a key this filer owns after the refusal must be applied locally, got handled=%v err=%v", handled, err)
+	if !handled || !isNotWriteOwner(err) {
+		t.Fatalf("a refused forward must not fall back to a local apply, got handled=%v err=%v", handled, err)
 	}
 	if len(tried) != 1 {
 		t.Fatalf("expected one forward before the ring named this filer, tried %v", tried)
