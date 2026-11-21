@@ -2,7 +2,6 @@ package integration
 
 import (
 	"context"
-	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -19,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -265,8 +265,9 @@ func (f *FilerOIDCProviderStore) resolveFilerAddress(filerAddress string) string
 func (f *FilerOIDCProviderStore) fileName(arn string) string {
 	// Hash the ARN to a fixed-width filename so we can store any character set
 	// (including the URL fragments AWS lets through) without filer-path issues.
-	h := sha1.Sum([]byte(arn))
-	return hex.EncodeToString(h[:]) + ".json"
+	h := util.NewSha1()
+	h.Write([]byte(arn))
+	return hex.EncodeToString(h.Sum(nil)) + ".json"
 }
 
 // StoreProvider persists `record` as JSON.

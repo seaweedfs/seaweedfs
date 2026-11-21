@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"crypto/sha1"
 	"crypto/tls"
 	"fmt"
 	"io/fs"
@@ -449,8 +448,9 @@ func copyDirForReadOnly(src string) (string, error) {
 	if err != nil {
 		abs = src
 	}
-	sum := sha1.Sum([]byte(abs))
-	dst := filepath.Join(os.TempDir(), fmt.Sprintf("weed-master-ro-%x", sum[:8]))
+	h := util.NewSha1()
+	h.Write([]byte(abs))
+	dst := filepath.Join(os.TempDir(), fmt.Sprintf("weed-master-ro-%x", h.Sum(nil)[:8]))
 	if fi, err := os.Stat(dst); err == nil && fi.IsDir() &&
 		fi.Mode().Perm() == 0700 && util.DirOwnedBySelf(fi) {
 		if !newestMtime(dst).Before(newestMtime(src)) {

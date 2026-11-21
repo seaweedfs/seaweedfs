@@ -2,7 +2,6 @@ package integration
 
 import (
 	"context"
-	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
 
@@ -128,8 +128,9 @@ func (f *FilerSessionRevocationStore) resolveFilerAddress(filerAddress string) s
 // hex name that's both filesystem-safe and stable, so the lookup-on-revoke
 // path still finds the right entry.
 func (f *FilerSessionRevocationStore) fileName(jti string) string {
-	sum := sha1.Sum([]byte(jti))
-	return hex.EncodeToString(sum[:]) + ".json"
+	h := util.NewSha1()
+	h.Write([]byte(jti))
+	return hex.EncodeToString(h.Sum(nil)) + ".json"
 }
 
 func (f *FilerSessionRevocationStore) Revoke(ctx context.Context, filerAddress string, entry *RevocationEntry) error {
