@@ -149,13 +149,18 @@ func TestBinarySearchByAppendAtNsDuringCompactionCommit(t *testing.T) {
 // bounds how long a foreground write can wait. The slowest search is one whose
 // probe lands in a long run of index-only tombstones (offset zero): it scans
 // left and right row by row. With such a run of searchLockRunRows rows, a
-// search and a foreground write must stay within searchLockBudget. The budget
-// is a Linux figure (about 5 ms measured there); other platforms only log the
+// search and a foreground write must stay within searchLockBudget. Every
+// search scans the run, so a slow search shows up in every round, while a
+// stall of a loaded host (a goroutine not scheduled for a while) hits one
+// round: the check passes once a round stays within the budget. The budget
+// is a Linux figure (15-40 ms measured there); other platforms only log the
 // times, since per-row file reads are much slower there (about 0.8 s per search
 // measured on Windows). Correctness (no search error) is checked everywhere.
 const (
 	searchLockRunRows = 20000
 	searchLockBudget  = 250 * time.Millisecond
+	searchLockRounds  = 5
+	searchLockRound   = 500 * time.Millisecond
 )
 
 func TestBinarySearchByAppendAtNsLockHoldBudget(t *testing.T) {
@@ -190,47 +195,52 @@ func TestBinarySearchByAppendAtNsLockHoldBudget(t *testing.T) {
 	}
 	write(500)
 
-	var (
-		maxSearch atomic.Int64
-		searches  atomic.Int64
-	)
-	stop := startSearcher(t, func() {
-		start := time.Now()
-		if _, _, err := v.BinarySearchByAppendAtNs(mid); err != nil {
-			t.Errorf("search: %v", err)
-		}
-		if d := int64(time.Since(start)); d > maxSearch.Load() {
-			maxSearch.Store(d)
-		}
-		searches.Add(1)
-	})
-	defer func() { joined = stop() }()
+	measure := func() (searches int64, maxSearch, maxWrite time.Duration) {
+		var slowest, count atomic.Int64
+		stop := startSearcher(t, func() {
+			start := time.Now()
+			if _, _, err := v.BinarySearchByAppendAtNs(mid); err != nil {
+				t.Errorf("search: %v", err)
+			}
+			if d := int64(time.Since(start)); d > slowest.Load() {
+				slowest.Store(d)
+			}
+			count.Add(1)
+		})
+		defer func() { joined = stop() }()
 
-	var maxWrite time.Duration
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		start := time.Now()
-		write(1)
-		if d := time.Since(start); d > maxWrite {
-			maxWrite = d
+		deadline := time.Now().Add(searchLockRound)
+		for time.Now().Before(deadline) {
+			start := time.Now()
+			write(1)
+			if d := time.Since(start); d > maxWrite {
+				maxWrite = d
+			}
+		}
+		if joined = stop(); !joined {
+			return
+		}
+		return count.Load(), time.Duration(slowest.Load()), maxWrite
+	}
+
+	searched := false
+	for round := 1; round <= searchLockRounds; round++ {
+		searches, maxSearch, maxWrite := measure()
+		if !joined {
+			return
+		}
+		t.Logf("round %d: %d searches over a %d-row tombstone run: slowest search %v, slowest foreground write %v (budget %v)",
+			round, searches, searchLockRunRows, maxSearch, maxWrite, searchLockBudget)
+		if searches == 0 {
+			continue
+		}
+		searched = true
+		if runtime.GOOS != "linux" || (maxSearch <= searchLockBudget && maxWrite <= searchLockBudget) {
+			return
 		}
 	}
-	if joined = stop(); !joined {
-		return
-	}
-
-	t.Logf("%d searches over a %d-row tombstone run: slowest search %v, slowest foreground write %v (budget %v)",
-		searches.Load(), searchLockRunRows, time.Duration(maxSearch.Load()), maxWrite, searchLockBudget)
-	if searches.Load() == 0 {
+	if !searched {
 		t.Fatal("no search ran")
 	}
-	if runtime.GOOS != "linux" {
-		return
-	}
-	if s := time.Duration(maxSearch.Load()); s > searchLockBudget {
-		t.Errorf("a search held the read lock for %v, over the %v budget", s, searchLockBudget)
-	}
-	if maxWrite > searchLockBudget {
-		t.Errorf("a foreground write waited %v, over the %v budget", maxWrite, searchLockBudget)
-	}
+	t.Errorf("a search or a foreground write went over the %v budget in every one of %d rounds", searchLockBudget, searchLockRounds)
 }
