@@ -165,7 +165,7 @@ type bucketSizeFunc func(entry *filer_pb.Entry) (float64, error)
 // volumes are only a cache) and every other bucket from its collection.
 func autoBucketSize(mounts *remote_pb.RemoteStorageMapping, filerBucketsPath string, filerSize, collectionSize bucketSizeFunc) bucketSizeFunc {
 	return func(entry *filer_pb.Entry) (float64, error) {
-		if bucketsize.IsMounted(mounts, filerBucketsPath+"/"+entry.Name) {
+		if bucketsize.IsMounted(mounts, string(util.FullPath(filerBucketsPath).Child(entry.Name))) {
 			return filerSize(entry)
 		}
 		return collectionSize(entry)

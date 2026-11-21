@@ -202,6 +202,10 @@ func TestQuotaEnforceAutoSizesOnlyMountedBucketsFromFiler(t *testing.T) {
 	if got := f.listedUnder("/buckets/local"); len(got) != 0 {
 		t.Fatalf("unmounted bucket was walked: %v", got)
 	}
+	trailingSlash := autoBucketSize(mounts, "/buckets/", filerQuotaSizer(f), collection)
+	if size, err := trailingSlash(quotaBucketEntry("mounted", 1)); err != nil || size != 3000 {
+		t.Fatalf("mounted bucket under \"/buckets/\": size=%v err=%v, want the filer's 3000", size, err)
+	}
 }
 
 func TestQuotaEnforceListingErrorLeavesStateUnchanged(t *testing.T) {
