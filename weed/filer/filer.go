@@ -549,7 +549,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 			return fmt.Errorf("find entry %s: %w", entry.FullPath, findErr)
 		}
 		if oldEntry == nil && entry.IsDirectory() {
-			unlockDirectory = f.lockDirectoryCreate(entry.FullPath)
+			unlockDirectory = f.lockDirectoryCreate(ctx, entry.FullPath)
 			defer unlockDirectory()
 			if oldEntry, findErr = f.FindEntry(context.WithValue(ctx, lazyFetchContextKey{}, true), entry.FullPath); findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
 				return fmt.Errorf("find entry %s: %w", entry.FullPath, findErr)
@@ -655,9 +655,11 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 }
 
 // lockDirectoryCreate holds the path's directoryCreateLock; the returned
-// unlock may be called more than once.
-func (f *Filer) lockDirectoryCreate(p util.FullPath) (unlock func()) {
-	if f.directoryCreateLock == nil {
+// unlock may be called more than once. A store transaction keeps its
+// connection until it commits, and a holder may need that connection, so
+// writes inside one do not take the lock.
+func (f *Filer) lockDirectoryCreate(ctx context.Context, p util.FullPath) (unlock func()) {
+	if f.directoryCreateLock == nil || ctx.Value(storeTransactionKey{}) != nil {
 		return func() {}
 	}
 	lock := f.directoryCreateLock.AcquireLock("createDirectory", p, util.ExclusiveLock)
@@ -720,7 +722,7 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 		}
 
 		glog.V(2).InfofCtx(ctx, "create directory: %s %v", dirPath, dirEntry.Mode)
-		unlock := f.lockDirectoryCreate(dirEntry.FullPath)
+		unlock := f.lockDirectoryCreate(ctx, dirEntry.FullPath)
 		if current, findErr := f.FindEntry(context.WithValue(ctx, lazyFetchContextKey{}, true), dirEntry.FullPath); current != nil || (findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound)) {
 			unlock()
 			if current == nil {
