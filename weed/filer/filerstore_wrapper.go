@@ -270,7 +270,10 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 	}()
 
 	existingEntry, findErr := fsw.FindEntry(ctx, fp)
-	if findErr == filer_pb.ErrNotFound || existingEntry == nil {
+	if findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
+		return findErr
+	}
+	if existingEntry == nil {
 		return nil
 	}
 	if err := actualStore.DeleteEntry(ctx, fp); err != nil {

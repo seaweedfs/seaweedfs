@@ -267,6 +267,24 @@ func TestDeleteEntryOfANameGoneSinceItsLookupKeepsTheOtherLink(t *testing.T) {
 	require.Equal(t, int32(1), linkCount(t, store, id))
 }
 
+// The second lookup of a hard-linked name fails: the delete reports the error,
+// and the name stays with its link.
+func TestDeleteEntryReportsAFailedSecondLookup(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+	id := linkedFile(t, store, "/d/a", "/d/b")
+	onRecordRead(store, id, 1, func() {
+		store.findErrByPath = map[string]error{"/d/a": storeRefusal}
+	})
+
+	require.Error(t, f.DeleteEntryMetaAndData(ctx, "/d/a", false, false, true, false, nil, time.Time{}))
+	store.kvGetHook = nil
+	require.Contains(t, store.entries, "/d/a")
+	require.Equal(t, int32(2), linkCount(t, store, id))
+	require.Equal(t, 0, f.pendingDeletionCount())
+}
+
 // onRecordReadAfterDelete runs f once, when the store reads id's record after
 // name is gone from it: the delete that removed name has come to take its link
 // off.
