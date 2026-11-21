@@ -77,10 +77,15 @@ func linkCount(t *testing.T, store *stubFilerStore, id HardLinkId) int32 {
 // onSecondRecordRead runs f when the store reads id's record the second time:
 // a delete reads it first in its lookup, then to take the link off.
 func onSecondRecordRead(store *stubFilerStore, id HardLinkId, f func()) {
+	onRecordRead(store, id, 2, f)
+}
+
+// onRecordRead runs f when the store reads id's record the nth time.
+func onRecordRead(store *stubFilerStore, id HardLinkId, nth int, f func()) {
 	reads := 0
 	store.kvGetHook = func(key []byte) {
 		if string(key) == string(id) {
-			if reads++; reads == 2 {
+			if reads++; reads == nth {
 				f()
 			}
 		}
@@ -243,6 +248,25 @@ func TestDeleteEntryTwiceAtOnceKeepsChunks(t *testing.T) {
 	require.Equal(t, 0, f.pendingDeletionCount(), "chunks deleted while /d/b still reads them")
 }
 
+// Another filer deletes /d/a, name and link, after this delete read the name
+// and before it read the count: the count it reads already lacks /d/a, so its
+// link must not come off again, or the record and chunks go with /d/b left.
+func TestDeleteEntryOfANameGoneSinceItsLookupKeepsTheOtherLink(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+	id := linkedFile(t, store, "/d/a", "/d/b")
+	onRecordRead(store, id, 1, func() {
+		delete(store.entries, "/d/a")
+		setLinkCount(t, store, id, 1)
+	})
+
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/a", false, false, true, false, nil, time.Time{}))
+	store.kvGetHook = nil
+	require.Equal(t, 0, f.pendingDeletionCount(), "chunks deleted while /d/b still reads them")
+	require.Equal(t, int32(1), linkCount(t, store, id))
+}
+
 // onRecordReadAfterDelete runs f once, when the store reads id's record after
 // name is gone from it: the delete that removed name has come to take its link
 // off.
@@ -350,4 +374,24 @@ func TestRecursiveDeletesAtOnceKeepChunksOfANameOutside(t *testing.T) {
 	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}))
 	store.kvGetHook = nil
 	require.Equal(t, 0, f.pendingDeletionCount(), "chunks deleted while /d/b still reads them")
+}
+
+// The recursive delete's take on the race above: /d/sub/a goes through another
+// filer between this delete's lookup of the name and its read of the count.
+func TestRecursiveDeleteOfANameGoneSinceItsLookupKeepsTheOtherLink(t *testing.T) {
+	store := newStubFilerStore()
+	f := newTestFiler(t, store, NewFilerRemoteStorage())
+	ctx := context.Background()
+	store.entries["/d/sub"] = &Entry{FullPath: "/d/sub", Attr: Attr{Mode: os.ModeDir | 0o755}}
+	id := linkedFile(t, store, "/d/sub/a", "/d/b")
+	// the listing reads the record first, the lookup of /d/sub/a second
+	onRecordRead(store, id, 2, func() {
+		delete(store.entries, "/d/sub/a")
+		setLinkCount(t, store, id, 1)
+	})
+
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}))
+	store.kvGetHook = nil
+	require.Equal(t, 0, f.pendingDeletionCount(), "chunks deleted while /d/b still reads them")
+	require.Equal(t, int32(1), linkCount(t, store, id))
 }

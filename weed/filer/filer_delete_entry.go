@@ -296,7 +296,7 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 		f.noteRemoteDeletion(entry.FullPath, entry.IsDirectory(), time.Now().UnixNano())
 	}
 
-	if storeDeletionErr := f.Store.DeleteOneEntry(ctx, entry); storeDeletionErr != nil {
+	if storeDeletionErr := f.deleteStoredEntry(ctx, entry); storeDeletionErr != nil {
 		return fmt.Errorf("filer store delete: %w", storeDeletionErr)
 	}
 
@@ -427,7 +427,7 @@ func (f *Filer) deleteLinkedName(ctx context.Context, sub *Entry, shouldDeleteCh
 	if err != nil {
 		return err
 	}
-	if err := f.Store.DeleteOneEntry(ctx, entry); err != nil {
+	if err := f.deleteStoredEntry(ctx, entry); err != nil {
 		return err
 	}
 	if shouldDeleteChunks && (len(entry.HardLinkId) == 0 || f.lastLinkDropped(ctx, entry)) {
@@ -437,6 +437,16 @@ func (f *Filer) deleteLinkedName(ctx context.Context, sub *Entry, shouldDeleteCh
 		f.DeleteChunks(ctx, entry.FullPath, entry.GetChunks())
 	}
 	return nil
+}
+
+// deleteStoredEntry deletes entry from the store. A hard-linked name is looked
+// up again (DeleteEntry): when another delete took it, link and all, after entry
+// was read, its link must not come off a second time.
+func (f *Filer) deleteStoredEntry(ctx context.Context, entry *Entry) error {
+	if len(entry.HardLinkId) == 0 {
+		return f.Store.DeleteOneEntry(ctx, entry)
+	}
+	return f.Store.DeleteEntry(ctx, entry.FullPath)
 }
 
 // lastLinkDropped reports whether deleting entry, a hard-linked name the
