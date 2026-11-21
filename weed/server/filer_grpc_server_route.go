@@ -45,17 +45,48 @@ func (fs *FilerServer) writeOwner(key string) pb.ServerAddress {
 // already committed — and an owner unreachable from here may be partitioned
 // rather than down, still serving the key to everyone else. The ring hands the
 // key on when the cooling-off window closes, so the outage is bounded.
+//
+// An owner that refuses the forward as not its own applied nothing: the two
+// rings disagree. They converge once a ring update reaches the lagging filer or
+// a cooling-off window closes, so the forward is re-routed by this filer's ring
+// until shortly after its own window ends, then the refusal surfaces.
 func (fs *FilerServer) forwardToWriteOwner(ctx context.Context, key string, send func(owner pb.ServerAddress) error) (handled bool, err error) {
-	owner := fs.writeOwner(key)
-	if owner == "" {
-		return false, nil
-	}
-	if err := send(owner); err != nil {
+	var deadline time.Time
+	for wait := notWriteOwnerRetryWait; ; wait = min(2*wait, 10*notWriteOwnerRetryWait) {
+		owner := fs.writeOwner(key)
+		if owner == "" {
+			return false, nil
+		}
+		if err = send(owner); err == nil {
+			return true, nil
+		}
 		glog.V(1).InfofCtx(ctx, "route %s to owner %s: %v", key, owner, err)
-		return true, err
+		if !isNotWriteOwner(err) {
+			return true, err
+		}
+		if deadline.IsZero() {
+			deadline = time.Now().Add(notWriteOwnerRetrySlack)
+			if end := fs.filer.Dlm.LockRing.PriorOwnerWindowEnd().Add(notWriteOwnerRetrySlack); end.After(deadline) {
+				deadline = end
+			}
+		}
+		if time.Now().Add(wait).After(deadline) {
+			return true, err
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return true, err
+		case <-timer.C:
+		}
 	}
-	return true, nil
 }
+
+var (
+	notWriteOwnerRetryWait  = 50 * time.Millisecond
+	notWriteOwnerRetrySlack = time.Second
+)
 
 // entryRouteKey is the ring key for an entry's writes. It shares the S3
 // gateway's namespace so an object's ObjectTransaction and its CreateEntry
