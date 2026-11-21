@@ -421,19 +421,20 @@ func (s3a *S3ApiServer) writeEmptyCopyPart(dstBucket, dstObject, uploadID string
 			return "", s3err.ErrInternalError
 		}
 	}
-	const emptyMD5Hex = "d41d8cd98f00b204e9800998ecf8427e"
+	emptyMd5 := util.Md5(nil)
+	emptyETag := fmt.Sprintf("%x", emptyMd5)
 	if err := upload.mkFile(uploadDir, partName, nil, func(e *filer_pb.Entry) {
 		if e.Attributes == nil {
 			e.Attributes = &filer_pb.FuseAttributes{}
 		}
 		e.Attributes.FileSize = 0
-		e.Attributes.Md5 = util.Md5(nil)
+		e.Attributes.Md5 = emptyMd5
 		if e.Extended == nil {
 			e.Extended = map[string][]byte{}
 		}
-		e.Extended[s3_constants.ExtETagKey] = []byte(emptyMD5Hex)
+		e.Extended[s3_constants.ExtETagKey] = []byte(emptyETag)
 	}); err != nil {
 		return "", s3err.ErrInternalError
 	}
-	return emptyMD5Hex, s3err.ErrNone
+	return emptyETag, s3err.ErrNone
 }
