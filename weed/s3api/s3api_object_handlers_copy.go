@@ -329,8 +329,12 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	// The metadata-only self-copy moves no data and is never kept alive; it
 	// decides on the filled entry, so a remote-only source it may take is
 	// filled first, as it always was. So is one with source conditions, whose
-	// 412 or 400 reads the filled entry and keeps its own status.
-	if remoteOnly && (hasCopySourceConditions(r.Header) || replacesSource && (replaceMeta || replaceTagging || changesStorageClass)) {
+	// 412 or 400 reads the filled entry and keeps its own status. The fill
+	// changes no encryption state, so the unfilled entry tells which
+	// self-copies can stay metadata-only; the rest fill under the keep-alive.
+	metadataOnlySelfCopy := replacesSource && (replaceMeta || replaceTagging || changesStorageClass) &&
+		s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject)
+	if remoteOnly && (hasCopySourceConditions(r.Header) || metadataOnlySelfCopy) {
 		cachedEntry, errCode := s3a.fillCopySource(r, entry, srcBucket, srcObject, srcVersionId, "CopyObjectHandler")
 		if errCode != s3err.ErrNone {
 			w.Header().Set("Retry-After", "5")

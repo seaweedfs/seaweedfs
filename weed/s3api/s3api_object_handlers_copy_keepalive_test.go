@@ -437,3 +437,31 @@ func TestCopyKeepAliveRemoteSourceConditionKeeps412(t *testing.T) {
 		}
 	}
 }
+
+// A remote-only self-copy that has to move data (here plaintext into SSE-S3)
+// is not metadata-only, so its fill runs under the keep-alive.
+func TestCopyObjectKeepAliveCoversSelfCopyRemoteFill(t *testing.T) {
+	s3a, filer, calls := keepAliveCopyServer(t, 20*time.Millisecond, "", func() error { return nil })
+	key := "/buckets/" + keepAliveSrc + "/" + keepAliveObject
+	filled := filer.entries[key]
+	remote := &filer_pb.RemoteEntry{RemoteSize: 4, RemoteETag: "r", RemoteMtime: 1}
+	filled.RemoteEntry = remote
+	filer.entries[key] = &filer_pb.Entry{Name: keepAliveObject, Attributes: filled.Attributes, RemoteEntry: remote}
+	copyRemoteFill = func(*S3ApiServer, context.Context, *filer_pb.Entry, string, string, string) *filer_pb.Entry {
+		time.Sleep(150 * time.Millisecond)
+		return filled
+	}
+	req := httptest.NewRequest(http.MethodPut, "/"+keepAliveSrc+"/"+keepAliveObject, nil)
+	req = mux.SetURLVars(req, map[string]string{"bucket": keepAliveSrc, "object": keepAliveObject})
+	req.Header.Set("X-Amz-Copy-Source", "/"+keepAliveSrc+"/"+keepAliveObject)
+	req.Header.Set(s3_constants.AmzUserMetaDirective, "REPLACE")
+	req.Header.Set(s3_constants.AmzServerSideEncryption, "AES256")
+	rr := httptest.NewRecorder()
+	s3a.CopyObjectHandler(rr, req)
+	if doc := keptAliveBody(t, rr); !strings.HasPrefix(doc, "<CopyObjectResult") {
+		t.Fatalf("document = %q, want a CopyObjectResult", doc)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("the filled source was not copied")
+	}
+}
