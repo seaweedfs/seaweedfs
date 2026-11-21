@@ -128,19 +128,9 @@ func bindSignedPayload(r *http.Request, hashedPayload string) s3err.ErrorCode {
 		}
 		return s3err.ErrNone
 	}
-	var contentMd5 []byte
-	if vals := r.Header.Values("Content-Md5"); len(vals) > 0 {
-		if fips140Enforced() {
-			return s3err.ErrNotImplemented
-		}
-		if len(vals) != 1 {
-			return s3err.ErrInvalidDigest
-		}
-		decoded, err := validateContentMd5(r.Header)
-		if err != nil || len(decoded) != md5.Size || base64.StdEncoding.EncodeToString(decoded) != vals[0] {
-			return s3err.ErrInvalidDigest
-		}
-		contentMd5 = decoded
+	contentMd5, errCode := parseCanonicalContentMd5(r.Header)
+	if errCode != s3err.ErrNone {
+		return errCode
 	}
 	if expected == nil && contentMd5 == nil {
 		return s3err.ErrNone
@@ -164,6 +154,27 @@ func bindSignedPayload(r *http.Request, hashedPayload string) s3err.ErrorCode {
 	return s3err.ErrNone
 }
 
+// parseCanonicalContentMd5 decodes the single Content-MD5 header, rejecting a
+// base64 spelling that does not re-encode to the sent text so the digest covers
+// the bytes the signature covered.
+func parseCanonicalContentMd5(h http.Header) ([]byte, s3err.ErrorCode) {
+	vals := h.Values("Content-Md5")
+	if len(vals) == 0 {
+		return nil, s3err.ErrNone
+	}
+	if fips140Enforced() {
+		return nil, s3err.ErrNotImplemented
+	}
+	if len(vals) != 1 || vals[0] == "" {
+		return nil, s3err.ErrInvalidDigest
+	}
+	decoded, err := base64.StdEncoding.DecodeString(vals[0])
+	if err != nil || len(decoded) != md5.Size || base64.StdEncoding.EncodeToString(decoded) != vals[0] {
+		return nil, s3err.ErrInvalidDigest
+	}
+	return decoded, s3err.ErrNone
+}
+
 // requestBodyErrorCode names the check a failed body read tripped, or returns
 // fallback for any other read error.
 func requestBodyErrorCode(err error, fallback s3err.ErrorCode) s3err.ErrorCode {
@@ -184,14 +195,18 @@ type requestBodyChecksum struct {
 	checksumExpected []byte
 }
 
-func requestHeaderOrQueryValues(r *http.Request, query url.Values, canonicalHeader string) []string {
-	vals := append([]string(nil), r.Header.Values(canonicalHeader)...)
-	for k, v := range query {
-		if strings.EqualFold(k, canonicalHeader) {
-			vals = append(vals, v...)
-		}
+func requestHeaderOrQueryValues(r *http.Request, lowerQuery map[string][]string, canonicalHeader string) []string {
+	headerVals := r.Header.Values(canonicalHeader)
+	queryVals := lowerQuery[strings.ToLower(canonicalHeader)]
+	switch {
+	case len(queryVals) == 0:
+		return headerVals
+	case len(headerVals) == 0:
+		return queryVals
 	}
-	return vals
+	vals := make([]string, 0, len(headerVals)+len(queryVals))
+	vals = append(vals, headerVals...)
+	return append(vals, queryVals...)
 }
 
 // parseRequestBodyChecksum parses Content-MD5 and x-amz-checksum-* headers/query
@@ -199,35 +214,28 @@ func requestHeaderOrQueryValues(r *http.Request, query url.Values, canonicalHead
 func parseRequestBodyChecksum(r *http.Request) (requestBodyChecksum, s3err.ErrorCode) {
 	var check requestBodyChecksum
 
-	if vals := r.Header.Values("Content-Md5"); len(vals) > 0 {
-		if fips140Enforced() {
-			return requestBodyChecksum{}, s3err.ErrNotImplemented
-		}
-		if len(vals) != 1 {
-			return requestBodyChecksum{}, s3err.ErrInvalidDigest
-		}
-		if bound, ok := r.Body.(*signedPayloadBody); !ok || bound.md5 == nil {
-			if vals[0] == "" {
-				return requestBodyChecksum{}, s3err.ErrInvalidDigest
-			}
-			decoded, err := base64.StdEncoding.DecodeString(vals[0])
-			if err != nil || len(decoded) != md5.Size || base64.StdEncoding.EncodeToString(decoded) != vals[0] {
-				return requestBodyChecksum{}, s3err.ErrInvalidDigest
-			}
-			check.md5 = decoded
-		}
+	decoded, errCode := parseCanonicalContentMd5(r.Header)
+	if errCode != s3err.ErrNone {
+		return requestBodyChecksum{}, errCode
+	}
+	if bound, ok := r.Body.(*signedPayloadBody); !ok || bound.md5 == nil {
+		check.md5 = decoded
 	}
 
-	var query url.Values
+	var lowerQuery map[string][]string
 	if r.URL != nil && r.URL.RawQuery != "" {
-		var err error
-		query, err = url.ParseQuery(r.URL.RawQuery)
+		query, err := url.ParseQuery(r.URL.RawQuery)
 		if err != nil {
 			return requestBodyChecksum{}, s3err.ErrInvalidRequest
 		}
+		lowerQuery = make(map[string][]string, len(query))
+		for k, v := range query {
+			lk := strings.ToLower(k)
+			lowerQuery[lk] = append(lowerQuery[lk], v...)
+		}
 	}
 
-	if trailerVals := requestHeaderOrQueryValues(r, query, s3_constants.AmzTrailer); len(trailerVals) > 0 {
+	if trailerVals := requestHeaderOrQueryValues(r, lowerQuery, s3_constants.AmzTrailer); len(trailerVals) > 0 {
 		if fips140Enforced() {
 			for _, v := range trailerVals {
 				for _, part := range strings.Split(v, ",") {
@@ -241,7 +249,7 @@ func parseRequestBodyChecksum(r *http.Request) (requestBodyChecksum, s3err.Error
 		return requestBodyChecksum{}, s3err.ErrInvalidRequest
 	}
 
-	for _, v := range requestHeaderOrQueryValues(r, query, "X-Amz-Content-Sha256") {
+	for _, v := range requestHeaderOrQueryValues(r, lowerQuery, "X-Amz-Content-Sha256") {
 		switch v {
 		case streamingContentSHA256, streamingContentSHA256Trailer, streamingUnsignedPayload:
 			return requestBodyChecksum{}, s3err.ErrInvalidRequest
@@ -257,7 +265,7 @@ func parseRequestBodyChecksum(r *http.Request) (requestBodyChecksum, s3err.Error
 
 	declaredAlg := ChecksumAlgorithmNone
 	for _, header := range []string{s3_constants.AmzSdkChecksumAlgorithm, s3_constants.AmzChecksumAlgorithm} {
-		vals := requestHeaderOrQueryValues(r, query, header)
+		vals := requestHeaderOrQueryValues(r, lowerQuery, header)
 		if len(vals) == 0 {
 			continue
 		}
@@ -277,7 +285,7 @@ func parseRequestBodyChecksum(r *http.Request) (requestBodyChecksum, s3err.Error
 	valueAlg := ChecksumAlgorithmNone
 	var rawValue string
 	for _, entry := range checksumHeaders {
-		vals := requestHeaderOrQueryValues(r, query, entry.header)
+		vals := requestHeaderOrQueryValues(r, lowerQuery, entry.header)
 		if len(vals) == 0 {
 			continue
 		}
