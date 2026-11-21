@@ -56,15 +56,13 @@ const iamSelfServiceRequiresGrantUsage = "if true, an identity needs an explicit
 
 const s3PreStopSecondsUsage = "seconds to keep serving after SIGTERM, with /status, /healthz and /readyz returning 503, before the S3 gateway shuts down. Gives load balancers and Kubernetes Services time to stop routing to it. 0 shuts down at once"
 
-// allowBackslashInKeyUsage documents the S3 flag keeping '\' a literal
-// object-key character instead of normalizing it to '/'. Repeated '//' in a
-// key still collapses: a filer entry name cannot contain an empty segment.
-// quotaFilerSizeIntervalUsage documents the S3 flag bounding how often quota
-// enforcement re-walks a remote-mounted bucket to size it.
 const quotaFilerSizeIntervalUsage = "about how often quota enforcement re-sizes each remote-mounted bucket with a quota from a full filer listing (its local volumes are only a cache); walks run in the background, one bucket at a time, spread over the interval; 0 walks back to back. Other buckets are sized from their collection every pass."
 
 const defaultQuotaFilerSizeInterval = 5 * time.Minute
 
+// allowBackslashInKeyUsage documents the S3 flag keeping '\' a literal
+// object-key character instead of normalizing it to '/'. Repeated '//' in a
+// key still collapses: a filer entry name cannot contain an empty segment.
 const allowBackslashInKeyUsage = "treat backslash as a regular object-key character instead of converting it to '/' (aws-compatible; '//' still collapses)"
 
 // The S3 gateway's filer timeouts, shared by every command that runs it. They
