@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -166,37 +165,26 @@ func (s3a *S3ApiServer) refreshQuotaMounts(buckets []*filer_pb.Entry, mappings *
 
 // enforceBucketQuotas flips each bucket's read-only flag to match its quota,
 // rewriting filer.conf only when a flag changes. filer.conf is read right
-// before it is changed and saved, with no sizing in between, and the buckets
-// are listed again after it, so a quota changed meanwhile is not applied stale.
+// before it is changed, with no sizing in between, and the buckets are listed
+// again after it, so a quota changed meanwhile is not applied stale. The save
+// is conditional on filer.conf being unchanged since the read, so a flag
+// cleared meanwhile is not restored; the next pass redoes the change.
 func (s3a *S3ApiServer) enforceBucketQuotas(ctx context.Context, buckets []*filer_pb.Entry, collectionInfos map[string]*CollectionInfo, mounted map[string]bool) {
 	if len(s3a.option.Filers) == 0 {
 		return
 	}
 
-	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil)
-	if err != nil {
-		glog.V(1).Infof("read filer.conf for quota enforcement: %v", err)
-		return
-	}
-	current, err := s3a.listBuckets(ctx)
-	if err != nil {
-		glog.V(1).Infof("list buckets for quota enforcement: %v", err)
-		return
-	}
-
-	if !s3a.applyBucketQuotas(fc, buckets, current, collectionInfos, mounted) {
-		return
-	}
-
-	var buf bytes.Buffer
-	if err := fc.ToText(&buf); err != nil {
-		glog.Errorf("serialize filer.conf for quota enforcement: %v", err)
-		return
-	}
 	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer.SaveInsideFiler(ctx, client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
+		_, err := filer.UpdateFilerConf(ctx, client, func(fc *filer.FilerConf) (bool, error) {
+			current, err := s3a.listBuckets(ctx)
+			if err != nil {
+				return false, fmt.Errorf("list buckets: %w", err)
+			}
+			return s3a.applyBucketQuotas(fc, buckets, current, collectionInfos, mounted), nil
+		})
+		return err
 	}); err != nil {
-		glog.Errorf("save filer.conf for quota enforcement: %v", err)
+		glog.Warningf("quota enforcement: %v", err)
 	}
 }
 

@@ -435,6 +435,23 @@ func saveFilerConfConditionally(ctx context.Context, client filer_pb.SeaweedFile
 	return nil
 }
 
+// UpdateFilerConf reads filer.conf, lets update change it and, when update
+// reports a change, saves it on condition that nothing wrote filer.conf since
+// the read; a racing writer fails the save instead of losing its change.
+func UpdateFilerConf(ctx context.Context, client filer_pb.SeaweedFilerClient, update func(fc *FilerConf) (changed bool, err error)) (changed bool, err error) {
+	snap, err := readFilerConfSnapshot(ctx, client)
+	if err != nil {
+		return false, err
+	}
+	if changed, err = update(snap.fc); err != nil || !changed {
+		return false, err
+	}
+	if err = saveFilerConfConditionally(ctx, client, snap); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // ClearBucketLifecycleDayTTLs removes any day-TTL filer.conf rules a legacy
 // PutBucketLifecycleConfiguration handler installed under the bucket's path.
 // Per-write TTL is now driven by the LifecycleTTLResolver built off the
