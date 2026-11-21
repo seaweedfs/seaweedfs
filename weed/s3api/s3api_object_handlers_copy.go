@@ -1555,7 +1555,7 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 
 	// Prepare chunk copy (assign new volume and get source URL)
 	fileId := chunk.GetFileIdString()
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
+	assignResult, srcUrls, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
 	if err != nil {
 		return nil, err
 	}
@@ -1571,7 +1571,7 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 	// the source volume for compressed bytes, so a gzipped chunk is
 	// forwarded to the destination without anyone having to decompress.
 	if canStreamCopyChunk(chunk) {
-		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, 0, int64(chunk.Size), true /*isFullChunk*/, assignResult, nil); err != nil {
+		if err := s3a.streamCopyChunkRange(context.Background(), srcUrls, fileId, 0, int64(chunk.Size), true /*isFullChunk*/, assignResult, nil); err != nil {
 			return nil, fmt.Errorf("stream chunk: %w", err)
 		}
 		return dstChunk, nil
@@ -1579,7 +1579,7 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 
 	// SSE / per-chunk-cipher: bytes need to be transformed in transit, so
 	// download into a buffer first.
-	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
+	chunkData, err := s3a.downloadChunkData(srcUrls, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download chunk data: %w", err)
 	}
@@ -1598,7 +1598,7 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 
 	// Prepare chunk copy (assign new volume and get source URL)
 	fileId := originalChunk.GetFileIdString()
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath, rangeChunk.Size)
+	assignResult, srcUrls, err := s3a.prepareChunkCopy(fileId, dstPath, rangeChunk.Size)
 	if err != nil {
 		return nil, err
 	}
@@ -1632,7 +1632,7 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 		if !isFullChunk {
 			digest = md5.New()
 		}
-		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size), isFullChunk, assignResult, digest); err != nil {
+		if err := s3a.streamCopyChunkRange(context.Background(), srcUrls, fileId, offsetInChunk, int64(rangeChunk.Size), isFullChunk, assignResult, digest); err != nil {
 			return nil, fmt.Errorf("stream chunk range: %w", err)
 		}
 		if digest != nil {
@@ -1646,7 +1646,7 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 	}
 
 	// Download and upload the chunk portion
-	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size), originalChunk.CipherKey)
+	chunkData, err := s3a.downloadChunkData(srcUrls, fileId, offsetInChunk, int64(rangeChunk.Size), originalChunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download chunk range data: %w", err)
 	}
@@ -1993,9 +1993,11 @@ func (s3a *S3ApiServer) createDestinationChunkPreservingSSE(sourceChunk *filer_p
 	return dst
 }
 
-// lookupVolumeUrl looks up the volume URL for a given file ID using the filer's LookupVolume method
-func (s3a *S3ApiServer) lookupVolumeUrl(fileId string) (string, error) {
-	var srcUrl string
+// lookupVolumeUrls looks up the URLs of every replica holding a file ID, using
+// the filer's LookupVolume method. A copy reads from the first one that can
+// serve the chunk, as the GET path does.
+func (s3a *S3ApiServer) lookupVolumeUrls(fileId string) ([]string, error) {
+	var srcUrls []string
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		vid, _, err := operation.ParseFileId(fileId)
 		if err != nil {
@@ -2009,18 +2011,32 @@ func (s3a *S3ApiServer) lookupVolumeUrl(fileId string) (string, error) {
 			return fmt.Errorf("lookup volume: %w", err)
 		}
 
-		if locations, found := resp.LocationsMap[vid]; found && len(locations.Locations) > 0 {
-			srcUrl = "http://" + locations.Locations[0].Url + "/" + fileId
-		} else {
+		if locations, found := resp.LocationsMap[vid]; found {
+			srcUrls = volumeLocationUrls(locations.Locations, fileId)
+		}
+		if len(srcUrls) == 0 {
 			return fmt.Errorf("no location found for volume %s", vid)
 		}
 
 		return nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("lookup volume URL: %w", err)
+		return nil, fmt.Errorf("lookup volume URL: %w", err)
 	}
-	return srcUrl, nil
+	return srcUrls, nil
+}
+
+// volumeLocationUrls builds one chunk URL per replica location, in the order
+// the lookup returned them.
+func volumeLocationUrls(locations []*filer_pb.Location, fileId string) []string {
+	urls := make([]string, 0, len(locations))
+	for _, location := range locations {
+		if location.GetUrl() == "" {
+			continue
+		}
+		urls = append(urls, "http://"+location.Url+"/"+fileId)
+	}
+	return urls
 }
 
 // setChunkFileId sets the file ID on the destination chunk
@@ -2034,21 +2050,22 @@ func (s3a *S3ApiServer) setChunkFileId(chunk *filer_pb.FileChunk, assignResult *
 	return nil
 }
 
-// prepareChunkCopy prepares a chunk for copying by assigning a new volume and looking up the source URL
-func (s3a *S3ApiServer) prepareChunkCopy(sourceFileId, dstPath string, expectedDataSize uint64) (*filer_pb.AssignVolumeResponse, string, error) {
+// prepareChunkCopy prepares a chunk for copying by assigning a new volume and
+// looking up the source URLs, one per replica of the source volume.
+func (s3a *S3ApiServer) prepareChunkCopy(sourceFileId, dstPath string, expectedDataSize uint64) (*filer_pb.AssignVolumeResponse, []string, error) {
 	// Assign new volume
 	assignResult, err := s3a.assignNewVolume(dstPath, expectedDataSize)
 	if err != nil {
-		return nil, "", fmt.Errorf("assign volume: %w", err)
+		return nil, nil, fmt.Errorf("assign volume: %w", err)
 	}
 
-	// Look up source URL
-	srcUrl, err := s3a.lookupVolumeUrl(sourceFileId)
+	// Look up source URLs
+	srcUrls, err := s3a.lookupVolumeUrls(sourceFileId)
 	if err != nil {
-		return nil, "", fmt.Errorf("lookup source URL: %w", err)
+		return nil, nil, fmt.Errorf("lookup source URL: %w", err)
 	}
 
-	return assignResult, srcUrl, nil
+	return assignResult, srcUrls, nil
 }
 
 // uploadChunkData uploads chunk data to the destination using common upload logic
@@ -2138,8 +2155,26 @@ func newChunkUploadOption(chunkData []byte, assignResult *filer_pb.AssignVolumeR
 	}
 }
 
-// downloadChunkData downloads chunk data from the source URL
-func (s3a *S3ApiServer) downloadChunkData(srcUrl, fileId string, offset, size int64, cipherKey []byte) ([]byte, error) {
+// downloadChunkData downloads chunk data from the first source replica that
+// serves it. Replicas can differ: one may be down, or may be missing a needle
+// the others hold, and a copy must not fail while a readable copy exists.
+func (s3a *S3ApiServer) downloadChunkData(srcUrls []string, fileId string, offset, size int64, cipherKey []byte) ([]byte, error) {
+	if len(srcUrls) == 0 {
+		return nil, fmt.Errorf("download chunk %s: no source location", fileId)
+	}
+	var errs []error
+	for _, srcUrl := range srcUrls {
+		chunkData, err := s3a.downloadChunkDataFrom(srcUrl, fileId, offset, size, cipherKey)
+		if err == nil {
+			return chunkData, nil
+		}
+		errs = append(errs, err)
+	}
+	return nil, errors.Join(errs...)
+}
+
+// downloadChunkDataFrom downloads chunk data from one source URL
+func (s3a *S3ApiServer) downloadChunkDataFrom(srcUrl, fileId string, offset, size int64, cipherKey []byte) ([]byte, error) {
 	jwt := filer.JwtForVolumeServer(fileId)
 	// Only perform HEAD request for encrypted chunks to get physical size
 	if offset == 0 && len(cipherKey) > 0 {
@@ -2322,7 +2357,7 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, sour
 
 	// Prepare chunk copy (assign new volume and get source URL)
 	fileId := chunk.GetFileIdString()
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
+	assignResult, srcUrls, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
 	if err != nil {
 		return nil, err
 	}
@@ -2333,7 +2368,7 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, sour
 	}
 
 	// Download encrypted chunk data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
+	encryptedData, err := s3a.downloadChunkData(srcUrls, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download encrypted chunk data: %w", err)
 	}
@@ -2428,7 +2463,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 
 	// Prepare chunk copy (assign new volume and get source URL)
 	fileId := chunk.GetFileIdString()
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
+	assignResult, srcUrls, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2439,7 +2474,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 	}
 
 	// Download encrypted chunk data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
+	encryptedData, err := s3a.downloadChunkData(srcUrls, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("download encrypted chunk data: %w", err)
 	}
@@ -2731,7 +2766,7 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 
 	// Prepare chunk copy (assign new volume and get source URL)
 	fileId := chunk.GetFileIdString()
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
+	assignResult, srcUrls, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
 	if err != nil {
 		return nil, err
 	}
@@ -2742,7 +2777,7 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 	}
 
 	// Download encrypted chunk data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
+	encryptedData, err := s3a.downloadChunkData(srcUrls, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download encrypted chunk data: %w", err)
 	}
@@ -3085,7 +3120,7 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 
 	// Prepare chunk copy (assign new volume and get source URL)
 	fileId := chunk.GetFileIdString()
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
+	assignResult, srcUrls, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
 	if err != nil {
 		return nil, err
 	}
@@ -3096,7 +3131,7 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 	}
 
 	// Download encrypted chunk data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
+	encryptedData, err := s3a.downloadChunkData(srcUrls, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download encrypted chunk data: %w", err)
 	}
@@ -3425,7 +3460,7 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 
 	// Prepare chunk copy (assign new volume and get source URL)
 	fileId := chunk.GetFileIdString()
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
+	assignResult, srcUrls, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
 	if err != nil {
 		return nil, err
 	}
@@ -3436,7 +3471,7 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 	}
 
 	// Download chunk data
-	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
+	chunkData, err := s3a.downloadChunkData(srcUrls, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download chunk data: %w", err)
 	}
