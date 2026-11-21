@@ -277,14 +277,7 @@ func (c *commandRemoteConfigure) listExistingRemoteStorages(commandEnv *CommandE
 			return fmt.Errorf("unmarshal %s/%s: %v", filer.DirectoryEtcRemote, entry.Name, err)
 		}
 
-		// change secret key to stars
-		conf.S3SecretKey = strings.Repeat("*", len(conf.S3SecretKey))
-		conf.AliyunSecretKey = strings.Repeat("*", len(conf.AliyunSecretKey))
-		conf.BaiduAccessKey = strings.Repeat("*", len(conf.BaiduAccessKey))
-		conf.FilebaseSecretKey = strings.Repeat("*", len(conf.FilebaseSecretKey))
-		conf.StorjSecretKey = strings.Repeat("*", len(conf.StorjSecretKey))
-		conf.TencentSecretKey = strings.Repeat("*", len(conf.TencentSecretKey))
-		conf.WasabiSecretKey = strings.Repeat("*", len(conf.WasabiSecretKey))
+		maskRemoteConfSecrets(conf)
 
 		return filer.ProtoToText(writer, conf)
 
@@ -324,4 +317,31 @@ func (c *commandRemoteConfigure) saveRemoteStorage(commandEnv *CommandEnv, write
 
 	return nil
 
+}
+
+// maskRemoteConfSecrets replaces every secret of a remote configuration with
+// stars of the same length before it is listed: the listing still shows
+// whether a secret is set, never its value.
+func maskRemoteConfSecrets(conf *remote_pb.RemoteConf) {
+	for _, secret := range []*string{
+		&conf.S3SecretKey,
+		&conf.AzureAccountKey,
+		&conf.BackblazeApplicationKey,
+		&conf.AliyunSecretKey,
+		&conf.TencentSecretKey,
+		&conf.BaiduAccessKey,
+		&conf.BaiduSecretKey,
+		&conf.WasabiSecretKey,
+		&conf.FilebaseSecretKey,
+		&conf.StorjSecretKey,
+		&conf.ContaboSecretKey,
+	} {
+		*secret = strings.Repeat("*", len(*secret))
+	}
+	// The gcs credentials are a file path (remote.configure's
+	// -gcs.appCredentialsFile) or the service account JSON itself, private key
+	// included: a path is listed, inline JSON is masked.
+	if strings.HasPrefix(strings.TrimSpace(conf.GcsGoogleApplicationCredentials), "{") {
+		conf.GcsGoogleApplicationCredentials = strings.Repeat("*", len(conf.GcsGoogleApplicationCredentials))
+	}
 }
