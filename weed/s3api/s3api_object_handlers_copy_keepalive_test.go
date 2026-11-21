@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -463,5 +465,49 @@ func TestCopyObjectKeepAliveCoversSelfCopyRemoteFill(t *testing.T) {
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("the filled source was not copied")
+	}
+}
+
+// Over a real connection the declaration and the keep-alive spaces reach the
+// client while the copy is still running, and the result follows them.
+func TestCopyObjectKeepAliveStreamsWhileCopying(t *testing.T) {
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	s3a, _, _ := keepAliveCopyServer(t, 20*time.Millisecond, "", func() error { <-release; return nil })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s3a.CopyObjectHandler(w, mux.SetURLVars(r, map[string]string{"bucket": keepAliveDst, "object": keepAliveObject}))
+	}))
+	defer srv.Close()
+	defer releaseOnce.Do(func() { close(release) })
+
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/"+keepAliveDst+"/"+keepAliveObject, nil)
+	req.Header.Set("X-Amz-Copy-Source", "/"+keepAliveSrc+"/"+keepAliveObject)
+	start := time.Now()
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("copy: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	head := make([]byte, len(xml.Header)+2*len(copyKeepAliveSpaces))
+	if _, err := io.ReadFull(resp.Body, head); err != nil {
+		t.Fatalf("read before the copy ended: %v", err)
+	}
+	// unflushed, the bytes would wait in the server's buffer for seconds
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("the keep-alive reached the client only after %v", elapsed)
+	}
+	if want := xml.Header + strings.Repeat(" ", 2*len(copyKeepAliveSpaces)); string(head) != want {
+		t.Fatalf("streamed %q, want %q", head, want)
+	}
+	releaseOnce.Do(func() { close(release) })
+	rest, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read the result: %v", err)
+	}
+	if doc := strings.TrimLeft(string(rest), " "); !strings.HasPrefix(doc, "<CopyObjectResult") {
+		t.Fatalf("document = %q, want a CopyObjectResult", doc)
 	}
 }
