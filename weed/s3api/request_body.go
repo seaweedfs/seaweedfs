@@ -131,7 +131,9 @@ func bindSignedPayload(r *http.Request, hashedPayload string) s3err.ErrorCode {
 		if err != nil || len(decoded) != md5.Size {
 			return s3err.ErrInvalidDigest
 		}
-		contentMd5 = decoded
+		if !fips140Enforced() {
+			contentMd5 = decoded
+		}
 	}
 	if expected == nil && contentMd5 == nil {
 		return s3err.ErrNone

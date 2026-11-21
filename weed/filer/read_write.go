@@ -3,10 +3,10 @@ package filer
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
@@ -54,7 +54,7 @@ func SaveInsideFiler(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 		Name:      name,
 	})
 
-	contentMd5 := md5.Sum(content)
+	contentMd5 := util.Md5(content)
 
 	if err == filer_pb.ErrNotFound {
 		err = filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
@@ -67,7 +67,7 @@ func SaveInsideFiler(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 					Crtime:   time.Now().Unix(),
 					FileMode: uint32(0644),
 					FileSize: uint64(len(content)),
-					Md5:      contentMd5[:],
+					Md5:      contentMd5,
 				},
 				Content: content,
 			},
@@ -75,13 +75,13 @@ func SaveInsideFiler(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 		})
 	} else if err == nil {
 		entry := resp.Entry
-		if bytes.Equal(entry.Content, content) && bytes.Equal(entry.GetAttributes().GetMd5(), contentMd5[:]) {
+		if bytes.Equal(entry.Content, content) && bytes.Equal(entry.GetAttributes().GetMd5(), contentMd5) {
 			return nil
 		}
 		entry.Content = content
 		entry.Attributes.Mtime = time.Now().Unix()
 		entry.Attributes.FileSize = uint64(len(content))
-		entry.Attributes.Md5 = contentMd5[:]
+		entry.Attributes.Md5 = contentMd5
 		err = filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
 			Directory: dir,
 			Entry:     entry,

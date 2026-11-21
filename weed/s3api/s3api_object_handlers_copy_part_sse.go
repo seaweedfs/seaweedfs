@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"context"
-	"crypto/md5"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -20,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // errCopySourceSSEUnsupported is returned by openSourcePlaintextReader when
@@ -427,7 +427,7 @@ func (s3a *S3ApiServer) writeEmptyCopyPart(dstBucket, dstObject, uploadID string
 			e.Attributes = &filer_pb.FuseAttributes{}
 		}
 		e.Attributes.FileSize = 0
-		e.Attributes.Md5 = md5.New().Sum(nil)
+		e.Attributes.Md5 = util.Md5(nil)
 		if e.Extended == nil {
 			e.Extended = map[string][]byte{}
 		}

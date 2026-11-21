@@ -3,7 +3,6 @@ package weed_server
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -69,7 +68,7 @@ func (fs *FilerServer) uploadRequestToChunks(ctx context.Context, w http.Respons
 				}
 				if int64(len(prefix)) < remainingInlineBudget {
 					inlineAppend := append([]byte{}, prefix...)
-					md5Hash = md5.New()
+					md5Hash = util.NewMd5()
 					_, _ = md5Hash.Write(inlineAppend)
 					if len(inlineAppend) > 0 {
 						stats.FilerHandlerCounter.WithLabelValues(stats.ContentSaveToFiler).Inc()
@@ -88,7 +87,7 @@ func (fs *FilerServer) uploadRequestToChunks(ctx context.Context, w http.Respons
 					return nil, nil, 0, fmt.Errorf("read input: %w", readErr), nil
 				}
 				if len(prefix) == 0 {
-					return nil, md5.New(), 0, nil, []byte{}
+					return nil, util.NewMd5(), 0, nil, []byte{}
 				}
 				if chunkSize <= 0 {
 					return nil, nil, 0, fmt.Errorf("invalid chunk size %d for inline append promotion", chunkSize), nil
@@ -103,7 +102,7 @@ func (fs *FilerServer) uploadRequestToChunks(ctx context.Context, w http.Respons
 
 func (fs *FilerServer) uploadReaderToChunks(ctx context.Context, r *http.Request, reader io.Reader, startOffset int64, chunkSize int32, fileName, contentType string, isAppend bool, so *operation.StorageOption) (fileChunks []*filer_pb.FileChunk, md5Hash hash.Hash, chunkOffset int64, uploadErr error, smallContent []byte) {
 
-	md5Hash = md5.New()
+	md5Hash = util.NewMd5()
 	chunkOffset = startOffset
 	var partReader = io.NopCloser(io.TeeReader(reader, md5Hash))
 
@@ -272,7 +271,7 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 			stats.FilerHandlerCounter.WithLabelValues(stats.ChunkAssignRetry).Inc()
 			return uploadErr
 		}
-		chunkMd5 := md5.Sum(data)
+		chunkMd5 := util.Md5(data)
 		chunkMd5B64 := base64.StdEncoding.EncodeToString(chunkMd5[:])
 		// upload the chunk to the volume server
 		uploadResult, uploadErr, _ = fs.doUpload(ctx, urlLocation, dataReader, fileName, contentType, nil, auth, chunkMd5B64)

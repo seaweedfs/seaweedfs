@@ -3,7 +3,6 @@ package filer_etc
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const (
@@ -546,7 +546,7 @@ func (store *FilerEtcStore) createIfAbsent(ctx context.Context, subDir, name str
 	if err != nil {
 		return err
 	}
-	contentMd5 := md5.Sum(data)
+	contentMd5 := util.Md5(data)
 	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 			Directory: filer.IamConfigDirectory + "/" + subDir,
@@ -558,7 +558,7 @@ func (store *FilerEtcStore) createIfAbsent(ctx context.Context, subDir, name str
 					Crtime:   time.Now().Unix(),
 					FileMode: uint32(0644),
 					FileSize: uint64(len(data)),
-					Md5:      contentMd5[:],
+					Md5:      contentMd5,
 				},
 			},
 			OExcl: true,
