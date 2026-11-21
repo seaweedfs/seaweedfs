@@ -2,18 +2,18 @@ package iam
 
 import (
 	"crypto/rand"
-	"crypto/sha1"
 	"fmt"
 	"math/big"
 	"sort"
 
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // Hash computes a SHA1 hash of the input string.
 func Hash(s *string) string {
-	h := sha1.New()
+	h := util.NewSha1()
 	h.Write([]byte(*s))
 	return fmt.Sprintf("%x", h.Sum(nil))
 }

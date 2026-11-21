@@ -301,8 +301,8 @@ func fetchChunkFromPeer(ctx context.Context, dial MountPeerDialer, peerAddr, fid
 	// Compare raw digests so we don't reject every valid peer response
 	// because of an encoding mismatch.
 	if expectedETag != "" {
-		got := md5.Sum(buf)
-		if !etagMatchesMD5(expectedETag, got[:]) {
+		got := util.Md5(buf)
+		if !etagMatchesMD5(expectedETag, got) {
 			return nil, fmt.Errorf("etag mismatch: peer=%s got=%x want=%s", peerAddr, got, expectedETag)
 		}
 	}

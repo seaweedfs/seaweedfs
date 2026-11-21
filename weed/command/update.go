@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/fips140"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
@@ -152,6 +153,9 @@ func downloadRelease(ctx context.Context, target string, ver string) (version st
 	}
 
 	suffix := fmt.Sprintf("%s_%s%s%s.%s", runtime.GOOS, runtime.GOARCH, fullSuffix, largeDiskSuffix, ext)
+	if fips140.Enforced() {
+		return "", fmt.Errorf("the download is checked with MD5, which GODEBUG=fips140=only refuses")
+	}
 	md5Filename := fmt.Sprintf("%s.md5", suffix)
 	_, md5Val, err := getGithubDataFile(ctx, rel.Assets, md5Filename)
 	if err != nil {

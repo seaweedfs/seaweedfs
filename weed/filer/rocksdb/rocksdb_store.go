@@ -321,7 +321,7 @@ func getNameFromKey(key []byte) string {
 
 // hash directory, and use last byte for partitioning
 func hashToBytes(dir string) []byte {
-	h := md5.New()
+	h := weed_util.NewMd5()
 	io.WriteString(h, dir)
 
 	b := h.Sum(nil)

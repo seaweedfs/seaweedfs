@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"container/heap"
 	"context"
-	"crypto/md5"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -1965,7 +1964,7 @@ func calculateMultipartETag(partEntries map[int][]*filer_pb.Entry, completedPart
 			glog.Warningf("calculateMultipartETag: failed to decode etag '%s' for part %d: %v", etag, partNumber, err)
 		}
 	}
-	return fmt.Sprintf("%x-%d", md5.Sum(etags), len(completedPartNumbers))
+	return fmt.Sprintf("%x-%d", util.Md5(etags), len(completedPartNumbers))
 }
 
 func decodePartChecksum(partNumber int, entries []*filer_pb.Entry, checksumHeaderName string) ([]byte, *filer_pb.Entry, error) {

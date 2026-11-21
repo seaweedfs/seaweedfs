@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/fips140"
 	"crypto/rsa"
 	"crypto/sha1"
 	"crypto/tls"
@@ -258,6 +259,9 @@ func normalizeThumbprints(in []string) map[string]struct{} {
 // self-signed deployments and skip-verify test setups. When the chain has not
 // been built (InsecureSkipVerify), we fall back to PeerCertificates.
 func verifyThumbprintMatch(cs tls.ConnectionState, expected map[string]struct{}) error {
+	if fips140.Enforced() {
+		return fmt.Errorf("OIDC TLS thumbprints are SHA-1, which GODEBUG=fips140=only refuses")
+	}
 	candidates := collectThumbprintCandidates(cs)
 	for _, c := range candidates {
 		sum := sha1.Sum(c.Raw)

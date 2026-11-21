@@ -3,6 +3,7 @@ package weed_server
 import (
 	"bytes"
 	"context"
+	"crypto/fips140"
 	"errors"
 	"fmt"
 	"io"
@@ -64,7 +65,7 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 		}
 	} else if reply != nil {
-		if len(md5bytes) > 0 {
+		if len(md5bytes) > 0 && !fips140.Enforced() {
 			md5InBase64 := util.Base64Encode(md5bytes)
 			w.Header().Set("Content-MD5", md5InBase64)
 		}
@@ -104,8 +105,7 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 			return nil, nil, fmt.Errorf("read input: %w", err)
 		}
 		md5bytes = util.Md5(buf.Bytes())
-		headerMd5 := r.Header.Get("Content-Md5")
-		if headerMd5 != "" && !(util.Base64Encode(md5bytes) == headerMd5 || fmt.Sprintf("%x", md5bytes) == headerMd5) {
+		if contentMd5Mismatch(md5bytes, r.Header.Get("Content-Md5")) {
 			bufPool.Put(buf)
 			return nil, nil, errors.New(constants.ErrMsgBadDigest)
 		}
@@ -120,8 +120,7 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 	}
 
 	md5bytes = md5Hash.Sum(nil)
-	headerMd5 := r.Header.Get("Content-Md5")
-	if headerMd5 != "" && !(util.Base64Encode(md5bytes) == headerMd5 || fmt.Sprintf("%x", md5bytes) == headerMd5) {
+	if contentMd5Mismatch(md5bytes, r.Header.Get("Content-Md5")) {
 		fs.filer.DeleteUncommittedChunks(ctx, fileChunks)
 		return nil, nil, errors.New(constants.ErrMsgBadDigest)
 	}
@@ -153,8 +152,7 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 	}
 
 	md5bytes = md5Hash.Sum(nil)
-	headerMd5 := r.Header.Get("Content-Md5")
-	if headerMd5 != "" && !(util.Base64Encode(md5bytes) == headerMd5 || fmt.Sprintf("%x", md5bytes) == headerMd5) {
+	if contentMd5Mismatch(md5bytes, r.Header.Get("Content-Md5")) {
 		fs.filer.DeleteUncommittedChunks(ctx, fileChunks)
 		return nil, nil, errors.New(constants.ErrMsgBadDigest)
 	}
@@ -714,4 +712,14 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 		glog.V(0).InfofCtx(ctx, "failing to create dir %s on filer server : %v", path, dbErr)
 	}
 	return filerResult, replyerr
+}
+
+// contentMd5Mismatch compares the body digest with the client's Content-MD5,
+// base64 or hex. Under fips140=only the digest is not an MD5, so Content-MD5
+// goes unchecked.
+func contentMd5Mismatch(md5bytes []byte, headerMd5 string) bool {
+	if headerMd5 == "" || fips140.Enforced() {
+		return false
+	}
+	return util.Base64Encode(md5bytes) != headerMd5 && fmt.Sprintf("%x", md5bytes) != headerMd5
 }

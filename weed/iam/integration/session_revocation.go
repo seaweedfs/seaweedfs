@@ -2,7 +2,6 @@ package integration
 
 import (
 	"context"
-	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
 
@@ -92,6 +92,7 @@ type FilerSessionRevocationStore struct {
 	grpcDialOption       grpc.DialOption
 	basePath             string
 	filerAddressProvider func() string
+	names                *storedNameRekey
 }
 
 // NewFilerSessionRevocationStore returns a filer-backed blocklist store.
@@ -106,6 +107,17 @@ func NewFilerSessionRevocationStore(config map[string]interface{}, filerAddressP
 		if bp, ok := config["basePath"].(string); ok && bp != "" {
 			store.basePath = strings.TrimSuffix(bp, "/")
 		}
+	}
+	store.names = &storedNameRekey{
+		dir:  store.basePath,
+		name: store.fileName,
+		keyOf: func(content []byte) string {
+			var record RevocationEntry
+			if json.Unmarshal(content, &record) != nil {
+				return ""
+			}
+			return record.JTI
+		},
 	}
 	glog.V(2).Infof("Initialized FilerSessionRevocationStore with basePath %s", store.basePath)
 	return store
@@ -128,8 +140,9 @@ func (f *FilerSessionRevocationStore) resolveFilerAddress(filerAddress string) s
 // hex name that's both filesystem-safe and stable, so the lookup-on-revoke
 // path still finds the right entry.
 func (f *FilerSessionRevocationStore) fileName(jti string) string {
-	sum := sha1.Sum([]byte(jti))
-	return hex.EncodeToString(sum[:]) + ".json"
+	h := util.NewSha1()
+	h.Write([]byte(jti))
+	return hex.EncodeToString(h.Sum(nil)) + ".json"
 }
 
 func (f *FilerSessionRevocationStore) Revoke(ctx context.Context, filerAddress string, entry *RevocationEntry) error {
@@ -147,7 +160,7 @@ func (f *FilerSessionRevocationStore) Revoke(ctx context.Context, filerAddress s
 	if err != nil {
 		return fmt.Errorf("marshal revocation entry: %v", err)
 	}
-	return f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
+	return f.withFilerClient(ctx, filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 			Directory: f.basePath,
 			Entry: &filer_pb.Entry{
@@ -174,7 +187,7 @@ func (f *FilerSessionRevocationStore) IsRevoked(ctx context.Context, filerAddres
 		return false, fmt.Errorf("filer address is required")
 	}
 	revoked := false
-	err := f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
+	err := f.withFilerClient(ctx, filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: f.basePath,
 			Name:      f.fileName(jti),
@@ -197,7 +210,7 @@ func (f *FilerSessionRevocationStore) Purge(ctx context.Context, filerAddress st
 		return 0, fmt.Errorf("filer address is required")
 	}
 	count := 0
-	err := f.withFilerClient(filerAddress, func(client filer_pb.SeaweedFilerClient) error {
+	err := f.withFilerClient(ctx, filerAddress, func(client filer_pb.SeaweedFilerClient) error {
 		// Stream-paginate the directory: ListEntriesRequest has no built-in
 		// "page until done" semantics, so we use StartFromFileName to walk
 		// the directory in chunks and avoid the previous hardcoded 10k cap.
@@ -248,6 +261,11 @@ func (f *FilerSessionRevocationStore) Purge(ctx context.Context, filerAddress st
 	return count, err
 }
 
-func (f *FilerSessionRevocationStore) withFilerClient(filerAddress string, fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddress), f.grpcDialOption, fn)
+func (f *FilerSessionRevocationStore) withFilerClient(ctx context.Context, filerAddress string, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddress), f.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		if err := f.names.ensure(ctx, filerAddress, client); err != nil {
+			return err
+		}
+		return fn(client)
+	})
 }

@@ -3,7 +3,6 @@ package sftpd
 
 import (
 	"context"
-	"crypto/md5"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -603,7 +602,7 @@ func (fs *SftpServer) putFile(filepath string, reader io.Reader, user *user.User
 	uploadUrl = normalizedUrl
 
 	// Compute MD5 while uploading
-	hash := md5.New()
+	hash := util.NewMd5()
 	body := io.TeeReader(reader, hash)
 
 	// We can skip ContentLength if unknown (chunked transfer encoding)

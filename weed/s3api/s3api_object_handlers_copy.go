@@ -1263,7 +1263,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 		// For zero-size files or invalid ranges, create an empty part with size 0
 		dstEntry.Attributes.FileSize = 0
 		dstEntry.Chunks = nil
-		dstEntry.Attributes.Md5 = md5.New().Sum(nil)
+		dstEntry.Attributes.Md5 = util.Md5(nil)
 	} else {
 		// Copy chunks that overlap with the range
 		dstChunks, partMd5, err := s3a.copyChunksForRange(entry, startOffset, endOffset, dstAssignPath)
@@ -1630,7 +1630,7 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 		// its ETag has to be recomputed; a whole-chunk copy reuses it.
 		var digest hash.Hash
 		if !isFullChunk {
-			digest = md5.New()
+			digest = util.NewMd5()
 		}
 		if err := s3a.streamCopyChunkRange(context.Background(), srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size), isFullChunk, assignResult, digest); err != nil {
 			return nil, fmt.Errorf("stream chunk range: %w", err)
@@ -1856,7 +1856,7 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 // md5Zeros hashes size zero bytes without a volume read — a copied range
 // that overlaps no source chunk assembles to all zeros.
 func md5Zeros(size int64) []byte {
-	h := md5.New()
+	h := util.NewMd5()
 	var zeros [1 << 16]byte
 	for size > 0 {
 		n := min(size, int64(len(zeros)))
@@ -1878,7 +1878,7 @@ func (s3a *S3ApiServer) copiedRangeMd5(ctx context.Context, entry *filer_pb.Entr
 		return nil, err
 	}
 	defer reader.Close()
-	h := md5.New()
+	h := util.NewMd5()
 	if _, err := io.Copy(h, reader); err != nil {
 		return nil, err
 	}

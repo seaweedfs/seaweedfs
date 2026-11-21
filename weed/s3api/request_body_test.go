@@ -263,3 +263,11 @@ func TestPrebufferedSignedBodyChecksContentMd5(t *testing.T) {
 	_, err = io.ReadAll(req.Body)
 	assert.ErrorIs(t, err, errContentMd5Mismatch)
 }
+
+func TestBodylessSignedRequestSkipsContentMd5UnderFIPS140Only(t *testing.T) {
+	setFIPS140Enforced(t, true)
+	emptySha256 := sha256.Sum256(nil)
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:9000/bucket/key", nil)
+	req.Header.Set("Content-Md5", "AAAAAAAAAAAAAAAAAAAAAA==")
+	assert.Equal(t, s3err.ErrNone, bindSignedPayload(req, hex.EncodeToString(emptySha256[:])))
+}
