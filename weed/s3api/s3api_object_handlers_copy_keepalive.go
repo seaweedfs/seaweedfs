@@ -25,13 +25,15 @@ import (
 // pyarrow) sets libcurl's CURLOPT_LOW_SPEED_LIMIT to 1 byte/s over
 // CURLOPT_LOW_SPEED_TIME = its request timeout, ~3 s by default. So the
 // declaration (39 bytes) goes out after 1 s, well inside the first window, and
-// then one byte a second keeps every later window at >= 1 byte/s. A copy that
-// ends within 1 s answers exactly as it always did. Variables so tests can
-// shorten them.
+// then copyKeepAliveSpaces a second keep every later window well above 1
+// byte/s, which libcurl measures rounded down. A copy that ends within 1 s
+// answers exactly as it always did. Variables so tests can shorten them.
 var (
 	copyKeepAliveDelay    = 1 * time.Second
 	copyKeepAliveInterval = 1 * time.Second
 )
+
+var copyKeepAliveSpaces = []byte("        ")
 
 // copyKeepAlive owns the ResponseWriter from start until halt returns: the
 // handler must not touch w (headers included) in between, and afterwards
@@ -90,7 +92,7 @@ func (k *copyKeepAlive) run() {
 		case <-k.r.Context().Done():
 			return
 		case <-ticker.C:
-			if !k.write([]byte(" ")) {
+			if !k.write(copyKeepAliveSpaces) {
 				return
 			}
 		}
