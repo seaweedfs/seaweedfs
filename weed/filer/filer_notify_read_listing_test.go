@@ -130,3 +130,50 @@ func TestCollectLogFileRefsListsLaterDaysWhole(t *testing.T) {
 		t.Fatalf("listed %d entries for %d log files", n, len(refs))
 	}
 }
+
+// unorderedListStore lists like countingListStore but declares its listings
+// unordered, as the Elasticsearch store does.
+type unorderedListStore struct{ *countingListStore }
+
+func (s *unorderedListStore) ListsUnordered() bool { return true }
+
+// TestLogListingsOnUnorderedStoreListWholeDay: a store whose listings are not
+// in name order cannot start at the scan start's minute, so there both passes
+// list the whole start day, and still find the same files.
+func TestLogListingsOnUnorderedStoreListWholeDay(t *testing.T) {
+	wholeDay := int64(1 + (12*60+31)*len(listingTestFilerIds))
+	newStore := func(withChunks bool) (*countingListStore, *Filer) {
+		counting := &countingListStore{stubFilerStore: newStubFilerStore()}
+		f := newReplayTestFiler(&unorderedListStore{countingListStore: counting})
+		f.persistedLogCache = newPersistedLogCache(1 << 20)
+		fillLogDay(counting.stubFilerStore, "2026-10-25", 12*60+30, withChunks)
+		return counting, f
+	}
+
+	t.Run("CollectLogFileRefs", func(t *testing.T) {
+		store, f := newStore(true)
+		refs, _, err := f.CollectLogFileRefs(context.Background(), log_buffer.NewMessagePosition(listingTestCursor.UnixNano(), -2), 0)
+		if err != nil {
+			t.Fatalf("CollectLogFileRefs: %v", err)
+		}
+		if len(refs) != 2*len(listingTestFilerIds) {
+			t.Fatalf("refs = %d, want %d", len(refs), 2*len(listingTestFilerIds))
+		}
+		if n := store.listed.Load(); n != wholeDay {
+			t.Fatalf("listed %d entries, want the whole day: %d", n, wholeDay)
+		}
+	})
+	t.Run("persisted log scan", func(t *testing.T) {
+		store, f := newStore(false)
+		v, err := f.collectPersistedLogBuffer(log_buffer.NewMessagePosition(listingTestCursor.UnixNano(), -2), 0)
+		if err != nil {
+			t.Fatalf("collectPersistedLogBuffer: %v", err)
+		}
+		if len(v.perFilerIteratorMap) != len(listingTestFilerIds) {
+			t.Fatalf("iterators for %d filers, want %d", len(v.perFilerIteratorMap), len(listingTestFilerIds))
+		}
+		if n := store.listed.Load(); n != wholeDay {
+			t.Fatalf("listed %d entries, want the whole day: %d", n, wholeDay)
+		}
+	})
+}

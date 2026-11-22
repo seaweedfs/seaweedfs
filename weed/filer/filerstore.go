@@ -48,6 +48,13 @@ type FilerStore interface {
 // any entry is visited, when the store cannot serve the scan.
 var ErrUnsupportedEntryScan = errors.New("entry scan not supported by this filer store")
 
+// UnorderedListingStore is implemented by a store whose directory listings do
+// not come in file name order (Elasticsearch pages by a hash of the entry
+// path), so a listing there cannot start at a name the store did not return.
+type UnorderedListingStore interface {
+	ListsUnordered() bool
+}
+
 // EntryScanner is an optional FilerStore capability: visit every entry at and
 // below dirPath, in any order, from one consistent snapshot of the store.
 //
