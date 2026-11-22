@@ -28,7 +28,9 @@ runs:
         # Cosign 3 also defaults to --use-signing-config, which insists on a
         # bundle for its output; turning it off falls back to the default
         # Fulcio and Rekor URLs, which is all the .sig layout ever used.
-        cosign sign --yes --recursive \
+        # --recursive signs every platform manifest in every registry, which
+        # outlasts the 3m default timeout when Fulcio or Rekor is slow.
+        cosign sign --yes --recursive --timeout 15m \
           --new-bundle-format=false --use-signing-config=false \
           $IMAGES
 
