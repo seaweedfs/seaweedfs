@@ -255,9 +255,13 @@ func TestFlushMergeThroughChunkProxy(t *testing.T) {
 			a.GetFileIdString(): pa, b.GetFileIdString(): pb, c.GetFileIdString(): pc,
 		}}
 	}
-	// flush publishes as doFlush does after its own drain.
+	// flush publishes as doFlush does after its own drain, which it reaches
+	// only for a handle with changes to publish.
 	flush := func(t *testing.T, w *WFS, fh *FileHandle, publication *contentPublication) {
 		t.Helper()
+		lock := w.fhLockTable.AcquireLock("test flush", fh.fh, util.ExclusiveLock)
+		fh.dirtyMetadata = true
+		w.fhLockTable.ReleaseLock(fh.fh, lock)
 		if err := w.flushMetadataToFiler(context.Background(), fh, "/dir", "file", 0, 0, nil, publication); err != nil {
 			t.Fatalf("flush: %v", err)
 		}

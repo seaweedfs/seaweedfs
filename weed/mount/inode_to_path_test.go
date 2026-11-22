@@ -245,3 +245,28 @@ func TestRemoveAliasKeepsSoleName(t *testing.T) {
 		t.Fatal("removed the surviving name")
 	}
 }
+
+// AllocateInode must return the first number no inode holds. It used to
+// re-check the number it had just stepped off and return the next one
+// unchecked, so a file created in the same second as a renamed one could store
+// that file's inode number and stat as the same file (GNU mv refused with
+// "are the same file").
+func TestAllocateInodeReturnsFirstFreeNumber(t *testing.T) {
+	itp := NewInodeToPath(util.FullPath("/"), 60)
+	tmp := util.FullPath("/run/active.json.tmp")
+	now := time.Now().Unix()
+	a := tmp.AsInode(now)
+
+	// a and a+2 are held, a+1 is free
+	itp.Lookup("/run/x", now, false, false, a, true)
+	itp.Lookup("/run/y", now, false, false, a+2, true)
+	if got := itp.AllocateInode(tmp, now); got != a+1 {
+		t.Fatalf("AllocateInode = a%+d, want a+1", int64(got-a))
+	}
+
+	// a, a+1 and a+2 are held
+	itp.Lookup("/run/z", now, false, false, a+1, true)
+	if got := itp.AllocateInode(tmp, now); got != a+3 {
+		t.Fatalf("AllocateInode = a%+d, want a+3", int64(got-a))
+	}
+}

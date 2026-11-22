@@ -109,7 +109,7 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 				if !newEntry.IsDirectory() {
 					return false, fmt.Errorf("%s is not directory", targetDir)
 				}
-				if entries, _, _ := fs.filer.ListDirectoryEntries(context.Background(), targetDir, "", false, 1, "", "", ""); len(entries) > 0 {
+				if entries, _, _ := fs.filer.ListDirectoryEntries(ctx, targetDir, "", false, 1, "", "", ""); len(entries) > 0 {
 					return false, fmt.Errorf("%s is not empty", targetDir)
 				}
 			}
