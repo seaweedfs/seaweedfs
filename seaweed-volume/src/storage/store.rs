@@ -478,6 +478,10 @@ impl Store {
     /// their index files across disks of the same node and lose them at
     /// startup. See seaweedfs/seaweedfs#9212.
     ///
+    /// A non-empty `required_disk_type` limits every step to disks of that
+    /// type, so a copy meant for one medium never lands beside the volume's
+    /// copy on another.
+    ///
     /// `data_shard_count` is taken as a parameter rather than read from
     /// `DATA_SHARDS_COUNT` so custom-ratio builds can swap the default
     /// without touching this helper.
@@ -491,6 +495,7 @@ impl Store {
         collection: &str,
         vid: VolumeId,
         data_shard_count: u32,
+        required_disk_type: &str,
         shard_ids: &[ShardId],
     ) -> Option<usize> {
         const TIER_ANY_DISK: u8 = 1;
@@ -499,13 +504,15 @@ impl Store {
         const TIER_MOUNTED: u8 = 4;
         const TIER_OWNS_SHARD: u8 = 5;
 
+        let required =
+            (!required_disk_type.is_empty()).then(|| DiskType::from_string(required_disk_type));
         // (index, tier, owned shard count, free shard slots)
         let mut best: Option<(usize, u8, usize, i64)> = None;
         for (i, loc) in self.locations.iter().enumerate() {
             let owned = owned_ec_shard_count(loc, vid, shard_ids);
-            if loc.read_only_mount {
-                // A read-only owner still owns the shard: placing another
-                // copy on a writable sibling would register it on two disks.
+            if loc.read_only_mount || required.as_ref().is_some_and(|t| loc.disk_type != *t) {
+                // An owner that cannot take the copy still owns the shard:
+                // placing another copy on a sibling would register it on two disks.
                 if owned > 0 {
                     return None;
                 }
@@ -3934,7 +3941,7 @@ mod tests {
         let base = volume_file_name(&store.locations[2].idx_directory, collection, vid);
         std::fs::write(format!("{}.ecx", base), vec![0u8; 20]).unwrap();
 
-        let got = store.find_ec_shard_target_location(collection, vid, 10, &[]);
+        let got = store.find_ec_shard_target_location(collection, vid, 10, "", &[]);
         assert_eq!(
             got,
             Some(2),
@@ -4144,7 +4151,7 @@ mod tests {
         let base = volume_file_name(&store.locations[2].idx_directory, collection, vid);
         std::fs::write(format!("{}.ecx", base), vec![0u8; 20]).unwrap();
 
-        let got = store.find_ec_shard_target_location(collection, vid, 10, &[]);
+        let got = store.find_ec_shard_target_location(collection, vid, 10, "", &[]);
         assert_eq!(
             got,
             Some(1),
@@ -4158,7 +4165,7 @@ mod tests {
     #[test]
     fn test_find_ec_shard_target_location_falls_through_to_hdd_when_nothing_matches() {
         let (store, _tmp) = make_ec_target_test_store(2);
-        let got = store.find_ec_shard_target_location("grafana-loki", VolumeId(3333), 10, &[]);
+        let got = store.find_ec_shard_target_location("grafana-loki", VolumeId(3333), 10, "", &[]);
         assert!(got.is_some(), "expected an HDD fallback");
         assert_eq!(store.locations[got.unwrap()].disk_type, DiskType::HardDrive);
     }
@@ -4174,7 +4181,7 @@ mod tests {
             .max_volume_count
             .store(0, Ordering::Relaxed);
 
-        let got = store.find_ec_shard_target_location("grafana-loki", VolumeId(4444), 10, &[]);
+        let got = store.find_ec_shard_target_location("grafana-loki", VolumeId(4444), 10, "", &[]);
         assert_eq!(
             got,
             Some(0),
@@ -4223,7 +4230,7 @@ mod tests {
             .mount_ec_shards(vid, collection, &[0], "")
             .unwrap();
 
-        let got = store.find_ec_shard_target_location(collection, vid, 10, &[]);
+        let got = store.find_ec_shard_target_location(collection, vid, 10, "", &[]);
         assert_eq!(
             got,
             Some(1),
@@ -4265,21 +4272,59 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            store.find_ec_shard_target_location(collection, vid, 10, &[0]),
+            store.find_ec_shard_target_location(collection, vid, 10, "", &[0]),
             Some(0),
             "a copy of shard 0 left its owning disk",
         );
         assert_eq!(
-            store.find_ec_shard_target_location(collection, vid, 10, &[2]),
+            store.find_ec_shard_target_location(collection, vid, 10, "", &[2]),
             Some(1),
             "a copy of shard 2 left its owning disk",
         );
         // A shard no disk owns yet is placed by the unchanged waterfall: both
         // disks have it mounted, so the emptier one wins.
         assert_eq!(
-            store.find_ec_shard_target_location(collection, vid, 10, &[7]),
+            store.find_ec_shard_target_location(collection, vid, 10, "", &[7]),
             Some(1),
             "placement of an unclaimed shard changed",
+        );
+    }
+
+    /// A copy that names a disk type skips the other medium even when that
+    /// disk has the EC volume mounted, and refuses rather than split a shard
+    /// another medium already owns.
+    #[test]
+    fn test_find_ec_shard_target_location_required_disk_type() {
+        let (mut store, _tmp) = make_ec_target_test_store(2);
+        store.locations[0].disk_type = DiskType::Ssd;
+        store.locations[1].disk_type = DiskType::from_string("hdd_ht");
+        let collection = "grafana-loki";
+        let vid = VolumeId(5555);
+        let base0 = volume_file_name(&store.locations[0].directory, collection, vid);
+        std::fs::write(format!("{}.ec00", base0), b"x").unwrap();
+        std::fs::write(format!("{}.ec01", base0), b"x").unwrap();
+        std::fs::write(format!("{}.ecx", base0), vec![0u8; 20]).unwrap();
+        store.locations[0]
+            .mount_ec_shards(vid, collection, &[0, 1], "")
+            .unwrap();
+
+        assert_eq!(
+            store.find_ec_shard_target_location(collection, vid, 10, "", &[2]),
+            Some(0)
+        );
+        assert_eq!(
+            store.find_ec_shard_target_location(collection, vid, 10, "hdd_ht", &[2]),
+            Some(1),
+            "a hdd_ht copy landed off the hdd_ht disk",
+        );
+        assert_eq!(
+            store.find_ec_shard_target_location(collection, vid, 10, "hdd_ht", &[1]),
+            None,
+            "a shard the ssd disk owns must not get a second claim on hdd_ht",
+        );
+        assert_eq!(
+            store.find_ec_shard_target_location(collection, vid, 10, "hdd", &[2]),
+            None
         );
     }
 
@@ -4317,13 +4362,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            store.find_ec_shard_target_location(collection, vid, 10, &[0]),
+            store.find_ec_shard_target_location(collection, vid, 10, "", &[0]),
             Some(0),
             "a copy of shard 0 left its owning disk when the disk was full",
         );
         // A shard it does not own still respects the space filter.
         assert_eq!(
-            store.find_ec_shard_target_location(collection, vid, 10, &[7]),
+            store.find_ec_shard_target_location(collection, vid, 10, "", &[7]),
             Some(1),
             "an unclaimed shard should go to the disk with free slots",
         );

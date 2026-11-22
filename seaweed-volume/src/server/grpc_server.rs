@@ -2708,6 +2708,7 @@ impl VolumeServer for VolumeGrpcService {
                                         &info.collection,
                                         vid,
                                         data_shards,
+                                        "",
                                         &[],
                                     )
                                     .map(|i| store.locations[i].directory.clone())
@@ -6300,6 +6301,16 @@ impl VolumeGrpcService {
                     )));
                 }
                 let loc = &store.locations[req.disk_id as usize];
+                if !req.disk_type.is_empty()
+                    && loc.disk_type != DiskType::from_string(&req.disk_type)
+                {
+                    return Err(Status::invalid_argument(format!(
+                        "disk {} is {}, not {}",
+                        req.disk_id,
+                        loc.disk_type.readable_string(),
+                        req.disk_type
+                    )));
+                }
                 (loc.directory.clone(), loc.idx_directory.clone())
             } else {
                 // A batch whose requested shards are already owned by
@@ -6323,11 +6334,18 @@ impl VolumeGrpcService {
                     &req.collection,
                     vid,
                     data_shards,
+                    &req.disk_type,
                     &shard_ids,
                 ) {
                     Some(i) => {
                         let loc = &store.locations[i];
                         (loc.directory.clone(), loc.idx_directory.clone())
+                    }
+                    None if !req.disk_type.is_empty() => {
+                        return Err(Status::resource_exhausted(format!(
+                            "no space left on a {} disk",
+                            req.disk_type
+                        )));
                     }
                     None => {
                         return Err(Status::internal("no space left".to_string()));
@@ -10403,6 +10421,73 @@ mod tests {
         assert_eq!(sorted_dir_names(&dir), before);
         assert_eq!(std::fs::read(format!("{}/57.ecx", dir)).unwrap(), ecx);
         assert_eq!(std::fs::read(format!("{}/57.ec05", dir)).unwrap(), ec05);
+    }
+
+    // A copy naming a disk type must land on that medium even when the volume's
+    // index already sits on another disk of the server, which auto-select prefers.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_shards_copy_disk_type_picks_that_medium() {
+        let (source_service, source_tmp) = make_local_service_with_volume("", None);
+        let src = source_tmp.path().to_str().unwrap().to_string();
+        let ecx = vec![1u8; NEEDLE_MAP_ENTRY_SIZE as usize];
+        for vid in 61..=63 {
+            std::fs::write(format!("{}/{}.ecx", src, vid), &ecx).unwrap();
+            std::fs::write(format!("{}/{}.ec02", src, vid), vec![2u8; 4096]).unwrap();
+        }
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest, _dest_tmp, hdd_dir) = ec_copy_destination().await;
+        let ht_tmp = TempDir::new().unwrap();
+        let ht_dir = ht_tmp.path().to_str().unwrap().to_string();
+        {
+            let mut store = dest.state.store.write().unwrap();
+            store
+                .add_location(
+                    &ht_dir,
+                    &ht_dir,
+                    100,
+                    DiskType::from_string("hdd_ht"),
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+            for loc in &store.locations {
+                loc.check_disk_space();
+            }
+        }
+        for vid in 61..=63 {
+            std::fs::write(format!("{}/{}.ecx", hdd_dir, vid), &ecx).unwrap();
+        }
+        let copy = |vid: u32, disk_id: u32, disk_type: &str| {
+            dest.volume_ec_shards_copy(Request::new(volume_server_pb::VolumeEcShardsCopyRequest {
+                volume_id: vid,
+                shard_ids: vec![2],
+                copy_ecx_file: true,
+                source_data_node: format!("127.0.0.1:1.{}", port),
+                disk_id,
+                disk_type: disk_type.to_string(),
+                ..Default::default()
+            }))
+        };
+        let landed =
+            |dir: &str, vid: u32| std::path::Path::new(&format!("{}/{}.ec02", dir, vid)).exists();
+
+        copy(61, 0, "").await.expect("copy without a disk type");
+        assert!(
+            landed(&hdd_dir, 61),
+            "without a disk type the shard should follow the index"
+        );
+
+        copy(62, 0, "hdd_ht").await.expect("copy to hdd_ht");
+        assert!(
+            landed(&ht_dir, 62) && !landed(&hdd_dir, 62),
+            "a hdd_ht copy landed off the hdd_ht disk"
+        );
+
+        let err = copy(63, 1, "ssd").await.expect_err("disk 1 is hdd_ht");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument, "{}", err);
+        let err = copy(63, 0, "ssd").await.expect_err("no ssd disk");
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted, "{}", err);
     }
 
     // A copy failing after some shards landed removes exactly those shards and
