@@ -495,9 +495,24 @@ func TestSameUrlsIgnoresOrder(t *testing.T) {
 // stalledBodyServer answers with the status and the start of a body, and then
 // sends nothing more until the test ends.
 func stalledBodyServer(t *testing.T, status int, bodyStart string) *httptest.Server {
+	return stalledServer(t, status, "", bodyStart)
+}
+
+// stalledGzipServer announces a gzip body and then stalls before the gzip
+// header. A request that leaves Accept-Encoding to the transport gets a body
+// the transport decodes, and up to Go 1.26 closing that body cannot interrupt
+// a read waiting for the gzip header.
+func stalledGzipServer(t *testing.T, status int) *httptest.Server {
+	return stalledServer(t, status, "gzip", "")
+}
+
+func stalledServer(t *testing.T, status int, contentEncoding, bodyStart string) *httptest.Server {
 	t.Helper()
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if contentEncoding != "" {
+			w.Header().Set("Content-Encoding", contentEncoding)
+		}
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(bodyStart))
 		w.(http.Flusher).Flush()
@@ -549,9 +564,41 @@ func TestCloseResponseGivesUpOnAStalledBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	returnsWithin(t, 5*time.Second, func() { CloseResponse(resp) })
-	if _, err := resp.Body.Read(make([]byte, 1)); err == nil || err == io.EOF {
-		t.Errorf("read after CloseResponse: got %v, want the body closed", err)
+	returnsWithin(t, 5*time.Second, func() {
+		if _, err := resp.Body.Read(make([]byte, 1)); err == nil || err == io.EOF {
+			t.Errorf("read after CloseResponse: got %v, want the body closed", err)
+		}
+	})
+}
+
+// The same holds when the transport is decoding gzip and the server stalls
+// before the gzip header, where closing the body does not end the read.
+func TestUnwantedBodyReadsDoNotWaitForAStalledGzipHeader(t *testing.T) {
+	InitGlobalHttpClient()
+	setUnwantedBodyTimeout(t, 50*time.Millisecond)
+	server := stalledGzipServer(t, http.StatusInternalServerError)
+
+	get := func() *http.Response {
+		resp, err := GetGlobalHttpClient().Get(server.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !resp.Uncompressed {
+			t.Fatal("the transport is not decoding the body")
+		}
+		return resp
 	}
+	resp := get()
+	returnsWithin(t, 5*time.Second, func() { CloseResponse(resp) })
+
+	resp = get()
+	want := server.URL + ": 500 Internal Server Error"
+	returnsWithin(t, 5*time.Second, func() {
+		if err := StatusError(server.URL, resp); err.Error() != want {
+			t.Errorf("StatusError: got %v, want %q", err, want)
+		}
+	})
+	returnsWithin(t, 5*time.Second, func() { CloseResponse(resp) })
 }
 
 // A body that arrives is still read to its end, which lets the next request
@@ -584,8 +631,8 @@ func TestCloseResponseKeepsTheConnectionOfADrainedBody(t *testing.T) {
 }
 
 // A read that fails on the status must return it even when the server never
-// finishes the error body. 404 goes straight to CloseResponse; 500 reads the
-// server's message first.
+// finishes the error body. 404 goes straight to CloseResponse; 500 waits for
+// the server's message first and then goes without it.
 func TestReadErrorsDoNotWaitForAStalledBody(t *testing.T) {
 	InitGlobalHttpClient()
 	setUnwantedBodyTimeout(t, 50*time.Millisecond)
@@ -596,8 +643,8 @@ func TestReadErrorsDoNotWaitForAStalledBody(t *testing.T) {
 		wantStream       string
 		wantReaderCloser string
 	}{
-		{"not found", http.StatusNotFound, ": 404 Not Found: not found", ": 404 Not Found: disk"},
-		{"server error", http.StatusInternalServerError, ": 500 Internal Server Error: disk", ": 500 Internal Server Error: disk"},
+		{"not found", http.StatusNotFound, ": 404 Not Found: not found", ": 404 Not Found"},
+		{"server error", http.StatusInternalServerError, ": 500 Internal Server Error", ": 500 Internal Server Error"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := stalledBodyServer(t, tc.status, "disk ")
