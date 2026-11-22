@@ -1182,8 +1182,16 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 		if err != nil {
 			return fmt.Errorf("lookup ec volume %d: %v", ecVolume.VolumeId, err)
 		}
-		if len(resp.ShardIdLocations) < ecCtx.DataShards {
-			return fmt.Errorf("only %d shards found but %d required", len(resp.ShardIdLocations), ecCtx.DataShards)
+		// The master answers every shard slot it tracks; only the shards it
+		// places on a server count toward a usable map.
+		located := 0
+		for _, shardIdLocations := range resp.ShardIdLocations {
+			if len(shardIdLocations.Locations) > 0 {
+				located++
+			}
+		}
+		if located < ecCtx.DataShards {
+			return fmt.Errorf("only %d shards found but %d required", located, ecCtx.DataShards)
 		}
 
 		ecVolume.ShardLocationsLock.Lock()

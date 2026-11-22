@@ -30,6 +30,9 @@ type countingMaster struct {
 	onLookup func()
 	// failLookup answers with an error instead of a shard map.
 	failLookup atomic.Bool
+	// located, when set, answers every shard slot as the master does but
+	// places only the first located shards on a server.
+	located atomic.Int64
 }
 
 func (m *countingMaster) LookupEcVolume(_ context.Context, req *master_pb.LookupEcVolumeRequest) (*master_pb.LookupEcVolumeResponse, error) {
@@ -41,6 +44,16 @@ func (m *countingMaster) LookupEcVolume(_ context.Context, req *master_pb.Lookup
 		return nil, status.Error(codes.Unavailable, "master is having a moment")
 	}
 	resp := &master_pb.LookupEcVolumeResponse{VolumeId: req.VolumeId}
+	if located := int(m.located.Load()); located > 0 {
+		for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
+			entry := &master_pb.LookupEcVolumeResponse_EcShardIdLocation{ShardId: uint32(shardId)}
+			if shardId < located {
+				entry.Locations = []*master_pb.Location{{Url: "127.0.0.1:1", GrpcPort: 2}}
+			}
+			resp.ShardIdLocations = append(resp.ShardIdLocations, entry)
+		}
+		return resp, nil
+	}
 	for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
 		resp.ShardIdLocations = append(resp.ShardIdLocations, &master_pb.LookupEcVolumeResponse_EcShardIdLocation{
 			ShardId:   uint32(shardId),
@@ -149,6 +162,39 @@ func TestCachedLookupEcShardLocationsSettlesAfterRefresh(t *testing.T) {
 	}
 	if got := master.lookups.Load(); got != 2 {
 		t.Errorf("asked the master %d times, want 2: one cold, one after the failed read", got)
+	}
+}
+
+// The master answers every shard slot, so a reply naming 32 shards can still
+// place fewer than the data shards on a server, as while several holders are
+// down. That reply is a partial and must leave a complete cache as it was.
+func TestCachedLookupEcShardLocationsRefusesAReplyWithFewLocatedShards(t *testing.T) {
+	master, masterAddr := startCountingMaster(t)
+	store := &Store{
+		MasterFn:       func() pb.ServerAddress { return masterAddr },
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
+	ecVolume := &erasure_coding.EcVolume{
+		VolumeId:       9,
+		ShardLocations: make(map[erasure_coding.ShardId][]pb.ServerAddress),
+	}
+	if err := store.cachedLookupEcShardLocations(ecVolume); err != nil {
+		t.Fatalf("first lookup: %v", err)
+	}
+
+	master.located.Store(7)
+	rewindShardLocationsRefresh(ecVolume, 12*time.Second)
+	ecVolume.ShardLocationsLock.Lock()
+	ecVolume.ShardLocationsStale = true
+	ecVolume.ShardLocationsLock.Unlock()
+	if err := store.cachedLookupEcShardLocations(ecVolume); err == nil {
+		t.Error("a reply placing 7 of 14 shards was accepted")
+	}
+	ecVolume.ShardLocationsLock.RLock()
+	cached := len(ecVolume.ShardLocations)
+	ecVolume.ShardLocationsLock.RUnlock()
+	if cached != erasure_coding.TotalShardsCount {
+		t.Errorf("the cache holds %d shards after the partial reply, want all %d kept", cached, erasure_coding.TotalShardsCount)
 	}
 }
 
