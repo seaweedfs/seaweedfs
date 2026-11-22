@@ -95,15 +95,17 @@ func stagedUploadOption(assignDelay time.Duration, uploadErr error) *operation.C
 }
 
 func TestPutStagesRecordEachStage(t *testing.T) {
-	r := withMultipartPart(httptest.NewRequest(http.MethodPut, "/bucket/object?partNumber=1&uploadId=u", nil), uploadFilerClient{})
+	body := slowReader{Reader: bytes.NewReader([]byte("12345678")), delay: 10 * time.Millisecond}
+	r := withMultipartPart(httptest.NewRequest(http.MethodPut, "/bucket/object?partNumber=1&uploadId=u", body), uploadFilerClient{})
 	before := map[string]uint64{}
 	sums := map[string]float64{}
 	for _, stage := range []string{"body_read", "assign", "chunk_upload", "metadata"} {
 		before[stage], sums[stage] = putStageSamples(t, "UploadPart", stage)
 	}
 
+	r = timeBodyReads(r)
 	stages := newPutStages(r)
-	result, err := stages.upload(context.Background(), slowReader{Reader: bytes.NewReader([]byte("12345678")), delay: 10 * time.Millisecond}, stagedUploadOption(20*time.Millisecond, nil))
+	result, err := stages.upload(context.Background(), r.Body, stagedUploadOption(20*time.Millisecond, nil))
 	require.NoError(t, err)
 	require.Len(t, result.FileChunks, 2)
 	time.Sleep(5 * time.Millisecond)
@@ -130,6 +132,19 @@ func TestPutStagesSkipMetadataAfterFailedUpload(t *testing.T) {
 	metadataAfter, _ := putStageSamples(t, "PutObject", "metadata")
 	assert.Equal(t, bodyBefore+1, bodyAfter)
 	assert.Equal(t, metadataBefore, metadataAfter)
+}
+
+func TestTrackTimesBodyReadsBeforeTheWrite(t *testing.T) {
+	var readBeforeWrite time.Duration
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		prefix := make([]byte, 2)
+		_, _ = io.ReadFull(r.Body, prefix)
+		readBeforeWrite = bodyReadTime(r)
+		w.WriteHeader(http.StatusOK)
+	}
+	body := slowReader{Reader: bytes.NewReader([]byte("1234")), delay: 10 * time.Millisecond}
+	track(handler, "PUT")(httptest.NewRecorder(), httptest.NewRequest(http.MethodPut, "/bucket/object", body))
+	assert.GreaterOrEqual(t, readBeforeWrite, 10*time.Millisecond)
 }
 
 func TestPutStagesRecordNothingBeforeUpload(t *testing.T) {

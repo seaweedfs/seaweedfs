@@ -35,6 +35,7 @@ func track(f http.HandlerFunc, action string) http.HandlerFunc {
 		// entry can report the requester even though auth records it on a
 		// request copy this middleware never sees.
 		r = s3_constants.EnsureIdentityHolder(r)
+		r = timeBodyReads(r)
 		start := time.Now()
 		f(recorder, r)
 		elapsed := time.Since(start)
@@ -78,11 +79,12 @@ func BucketTrafficSent(bytesTransferred int64, r *http.Request) {
 
 // putStages times one object write's stages for S3PutStageHistogram.
 type putStages struct {
-	operation string
-	bodyRead  time.Duration
-	assign    atomic.Int64
-	uploading time.Duration
-	uploaded  time.Time
+	r          *http.Request
+	operation  string
+	readDuring time.Duration
+	assign     atomic.Int64
+	uploading  time.Duration
+	uploaded   time.Time
 }
 
 func newPutStages(r *http.Request) *putStages {
@@ -90,10 +92,10 @@ func newPutStages(r *http.Request) *putStages {
 	if isMultipartPartRequest(r) {
 		op = "UploadPart"
 	}
-	return &putStages{operation: op}
+	return &putStages{r: r, operation: op}
 }
 
-// upload runs UploadReaderInChunks, timing body reads and volume assigns.
+// upload runs UploadReaderInChunks, timing volume assigns and the body reads it waits on.
 func (p *putStages) upload(ctx context.Context, reader io.Reader, opt *operation.ChunkedUploadOption) (*operation.ChunkedUploadResult, error) {
 	if assign := opt.AssignFunc; assign != nil {
 		opt.AssignFunc = func(ctx context.Context, count int, expectedDataSize uint64) (*operation.VolumeAssignRequest, *operation.AssignResult, error) {
@@ -102,9 +104,11 @@ func (p *putStages) upload(ctx context.Context, reader io.Reader, opt *operation
 			return assign(ctx, count, expectedDataSize)
 		}
 	}
+	readBefore := bodyReadTime(p.r)
 	start := time.Now()
-	result, err := operation.UploadReaderInChunks(ctx, &timedReader{Reader: reader, elapsed: &p.bodyRead}, opt)
+	result, err := operation.UploadReaderInChunks(ctx, reader, opt)
 	p.uploading = time.Since(start)
+	p.readDuring = bodyReadTime(p.r) - readBefore
 	if err == nil {
 		p.uploaded = time.Now()
 	}
@@ -119,23 +123,42 @@ func (p *putStages) record() {
 	observe := func(stage string, d time.Duration) {
 		stats_collect.S3PutStageHistogram.WithLabelValues(p.operation, stage).Observe(d.Seconds())
 	}
-	observe("body_read", p.bodyRead)
+	observe("body_read", bodyReadTime(p.r))
 	observe("assign", time.Duration(p.assign.Load()))
-	observe("chunk_upload", max(p.uploading-p.bodyRead, 0))
+	observe("chunk_upload", max(p.uploading-p.readDuring, 0))
 	if !p.uploaded.IsZero() {
 		observe("metadata", time.Since(p.uploaded))
 	}
 }
 
-// timedReader adds the time spent in Read to elapsed.
-type timedReader struct {
-	io.Reader
-	elapsed *time.Duration
+type bodyReadTimeKey struct{}
+
+// timeBodyReads makes r count the time its body reads block, for bodyReadTime.
+func timeBodyReads(r *http.Request) *http.Request {
+	if r.Body == nil || r.Body == http.NoBody {
+		return r
+	}
+	elapsed := new(atomic.Int64)
+	r = r.WithContext(context.WithValue(r.Context(), bodyReadTimeKey{}, elapsed))
+	r.Body = &timedBody{ReadCloser: r.Body, elapsed: elapsed}
+	return r
 }
 
-func (t *timedReader) Read(b []byte) (int, error) {
+func bodyReadTime(r *http.Request) time.Duration {
+	if elapsed, ok := r.Context().Value(bodyReadTimeKey{}).(*atomic.Int64); ok {
+		return time.Duration(elapsed.Load())
+	}
+	return 0
+}
+
+type timedBody struct {
+	io.ReadCloser
+	elapsed *atomic.Int64
+}
+
+func (t *timedBody) Read(b []byte) (int, error) {
 	start := time.Now()
-	n, err := t.Reader.Read(b)
-	*t.elapsed += time.Since(start)
+	n, err := t.ReadCloser.Read(b)
+	t.elapsed.Add(int64(time.Since(start)))
 	return n, err
 }
