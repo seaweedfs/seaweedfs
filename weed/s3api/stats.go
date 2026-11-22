@@ -115,7 +115,8 @@ func (p *putStages) upload(ctx context.Context, reader io.Reader, opt *operation
 	return result, err
 }
 
-// record observes the stages reached; metadata only after a successful upload.
+// record observes the stages reached: metadata only after a successful upload,
+// body_read once per request even when it writes several objects.
 func (p *putStages) record() {
 	if p.uploading == 0 {
 		return
@@ -123,7 +124,9 @@ func (p *putStages) record() {
 	observe := func(stage string, d time.Duration) {
 		stats_collect.S3PutStageHistogram.WithLabelValues(p.operation, stage).Observe(d.Seconds())
 	}
-	observe("body_read", bodyReadTime(p.r))
+	if d, first := takeBodyReadTime(p.r); first {
+		observe("body_read", d)
+	}
 	observe("assign", time.Duration(p.assign.Load()))
 	observe("chunk_upload", max(p.uploading-p.readDuring, 0))
 	if !p.uploaded.IsZero() {
@@ -133,32 +136,46 @@ func (p *putStages) record() {
 
 type bodyReadTimeKey struct{}
 
+type bodyReads struct {
+	elapsed  atomic.Int64
+	reported atomic.Bool
+}
+
 // timeBodyReads makes r count the time its body reads block, for bodyReadTime.
 func timeBodyReads(r *http.Request) *http.Request {
 	if r.Body == nil || r.Body == http.NoBody {
 		return r
 	}
-	elapsed := new(atomic.Int64)
-	r = r.WithContext(context.WithValue(r.Context(), bodyReadTimeKey{}, elapsed))
-	r.Body = &timedBody{ReadCloser: r.Body, elapsed: elapsed}
+	reads := new(bodyReads)
+	r = r.WithContext(context.WithValue(r.Context(), bodyReadTimeKey{}, reads))
+	r.Body = &timedBody{ReadCloser: r.Body, reads: reads}
 	return r
 }
 
 func bodyReadTime(r *http.Request) time.Duration {
-	if elapsed, ok := r.Context().Value(bodyReadTimeKey{}).(*atomic.Int64); ok {
-		return time.Duration(elapsed.Load())
+	if reads, ok := r.Context().Value(bodyReadTimeKey{}).(*bodyReads); ok {
+		return time.Duration(reads.elapsed.Load())
 	}
 	return 0
 }
 
+// takeBodyReadTime returns the body read time to the first caller only.
+func takeBodyReadTime(r *http.Request) (time.Duration, bool) {
+	reads, ok := r.Context().Value(bodyReadTimeKey{}).(*bodyReads)
+	if !ok || !reads.reported.CompareAndSwap(false, true) {
+		return 0, false
+	}
+	return time.Duration(reads.elapsed.Load()), true
+}
+
 type timedBody struct {
 	io.ReadCloser
-	elapsed *atomic.Int64
+	reads *bodyReads
 }
 
 func (t *timedBody) Read(b []byte) (int, error) {
 	start := time.Now()
 	n, err := t.ReadCloser.Read(b)
-	t.elapsed.Add(int64(time.Since(start)))
+	t.reads.elapsed.Add(int64(time.Since(start)))
 	return n, err
 }

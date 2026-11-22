@@ -119,12 +119,12 @@ func TestPutStagesRecordEachStage(t *testing.T) {
 }
 
 func TestPutStagesSkipMetadataAfterFailedUpload(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPut, "/bucket/object", nil)
+	r := timeBodyReads(httptest.NewRequest(http.MethodPut, "/bucket/object", bytes.NewReader([]byte("1234"))))
 	bodyBefore, _ := putStageSamples(t, "PutObject", "body_read")
 	metadataBefore, _ := putStageSamples(t, "PutObject", "metadata")
 
 	stages := newPutStages(r)
-	_, err := stages.upload(context.Background(), bytes.NewReader([]byte("1234")), stagedUploadOption(0, errors.New("volume down")))
+	_, err := stages.upload(context.Background(), r.Body, stagedUploadOption(0, errors.New("volume down")))
 	require.Error(t, err)
 	stages.record()
 
@@ -145,6 +145,22 @@ func TestTrackTimesBodyReadsBeforeTheWrite(t *testing.T) {
 	body := slowReader{Reader: bytes.NewReader([]byte("1234")), delay: 10 * time.Millisecond}
 	track(handler, "PUT")(httptest.NewRecorder(), httptest.NewRequest(http.MethodPut, "/bucket/object", body))
 	assert.GreaterOrEqual(t, readBeforeWrite, 10*time.Millisecond)
+}
+
+func TestPutStagesRecordBodyReadOncePerRequest(t *testing.T) {
+	r := timeBodyReads(httptest.NewRequest(http.MethodPut, "/bucket/archive.zip", bytes.NewReader([]byte("12345678"))))
+	before, _ := putStageSamples(t, "PutObject", "body_read")
+	uploadsBefore, _ := putStageSamples(t, "PutObject", "chunk_upload")
+	for i := 0; i < 3; i++ {
+		stages := newPutStages(r)
+		_, err := stages.upload(context.Background(), io.LimitReader(r.Body, 4), stagedUploadOption(0, nil))
+		require.NoError(t, err)
+		stages.record()
+	}
+	after, _ := putStageSamples(t, "PutObject", "body_read")
+	uploadsAfter, _ := putStageSamples(t, "PutObject", "chunk_upload")
+	assert.Equal(t, before+1, after)
+	assert.Equal(t, uploadsBefore+3, uploadsAfter)
 }
 
 func TestPutStagesRecordNothingBeforeUpload(t *testing.T) {
