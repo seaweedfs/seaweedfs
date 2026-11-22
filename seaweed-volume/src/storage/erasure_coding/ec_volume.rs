@@ -37,6 +37,11 @@ pub(crate) struct ShardLocationCache {
     /// since went to a listed holder, which reconstruction asks. Deletes never
     /// use them.
     read_hints: HashMap<ShardId, Vec<String>>,
+    /// Changes with every change to `read_hints` (Go's `ShardReadHintsRevision`),
+    /// so a read only forgets the hint holders it asked if no lookup changed them.
+    /// Drawn from `READ_HINTS_REVISION`, so a revision read before a remount
+    /// never matches the new `EcVolume`'s cache.
+    read_hints_revision: u64,
     /// Wall-clock timestamp of the most recent successful `LookupEcVolume`
     /// refresh of `locations`. `None` until the first refresh. Drives the
     /// staleness heuristic in `cached_lookup_ec_shard_locations` (mirrors Go's
@@ -54,6 +59,12 @@ pub(crate) struct ShardLocationCache {
 /// Bytes read per positional read when seeding `deleted_needles` from `.ecj`.
 /// A multiple of `NEEDLE_ID_SIZE`; 1 MiB is 131072 entries per syscall.
 const ECJ_LOAD_CHUNK_BYTES: usize = 1 << 20;
+
+static READ_HINTS_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn next_read_hints_revision() -> u64 {
+    READ_HINTS_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+}
 
 /// Process-wide epoch bumped whenever a failed .ecj append truncates its
 /// uncommitted tail. A decode that read the journal without the store lock
@@ -1751,9 +1762,12 @@ impl EcVolume {
                     && !known.is_empty()
                 {
                     cache.read_hints.insert(shard_id, known);
+                    cache.read_hints_revision = next_read_hints_revision();
                 }
             } else {
-                cache.read_hints.remove(&shard_id);
+                if cache.read_hints.remove(&shard_id).is_some() {
+                    cache.read_hints_revision = next_read_hints_revision();
+                }
                 cache.locations.insert(shard_id, addrs);
             }
         }
@@ -1798,18 +1812,35 @@ impl EcVolume {
         (cache.locations.clone(), cache.refreshed_at)
     }
 
-    pub(crate) fn shard_read_hints(&self, shard_id: ShardId) -> Option<Vec<String>> {
+    /// The shard's hint with the revision to pass back to
+    /// `forget_shard_read_hints`.
+    pub(crate) fn shard_read_hints(&self, shard_id: ShardId) -> Option<(Vec<String>, u64)> {
         let cache = self.shard_locations.read().unwrap();
-        cache.read_hints.get(&shard_id).cloned()
+        let hints = cache.read_hints.get(&shard_id)?.clone();
+        Some((hints, cache.read_hints_revision))
     }
 
-    /// Drops the shard's hint only if it is still `used`: a lookup may have
-    /// replaced it while the read that failed was in flight.
-    pub(crate) fn forget_shard_read_hints(&self, shard_id: ShardId, used: &[String]) {
+    /// Drops the `failed` holders from the shard's hint only if no lookup
+    /// changed the hints since `revision`, as one may have while the reads were
+    /// in flight.
+    pub(crate) fn forget_shard_read_hints(
+        &self,
+        shard_id: ShardId,
+        revision: u64,
+        failed: &[String],
+    ) {
         let mut cache = self.shard_locations.write().unwrap();
-        if cache.read_hints.get(&shard_id).is_some_and(|h| h == used) {
+        if cache.read_hints_revision != revision {
+            return;
+        }
+        let Some(hints) = cache.read_hints.get_mut(&shard_id) else {
+            return;
+        };
+        hints.retain(|h| !failed.contains(h));
+        if hints.is_empty() {
             cache.read_hints.remove(&shard_id);
         }
+        cache.read_hints_revision = next_read_hints_revision();
     }
 
     /// Mark the cached map for a prompt re-check after a read failed against one
@@ -3766,6 +3797,33 @@ mod tests {
         assert_eq!(vol.read_deleted_needles().unwrap(), ids);
     }
 
+    /// A read hint revision taken from one instance of a volume must not let
+    /// a read forget the hint a later instance holds after a remount.
+    #[test]
+    fn test_read_hint_revision_is_not_shared_across_instances() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let vid = VolumeId(50);
+        write_ecx_file(dir, "", vid, &[]);
+        let holder = "127.0.0.1:8080".to_string();
+        let delist = |vol: &EcVolume| {
+            vol.merge_shard_locations(HashMap::from([(0, vec![holder.clone()])]));
+            vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
+            vol.shard_read_hints(0).unwrap().1
+        };
+        let old = EcVolume::new(dir, dir, "", vid).unwrap();
+        let revision = delist(&old);
+        drop(old);
+
+        let vol = EcVolume::new(dir, dir, "", vid).unwrap();
+        delist(&vol);
+        vol.forget_shard_read_hints(0, revision, std::slice::from_ref(&holder));
+        assert_eq!(
+            vol.shard_read_hints(0).map(|(hints, _)| hints),
+            Some(vec![holder])
+        );
+    }
+
     /// A journal that grew, or was replaced, after it was loaded must not be
     /// compacted from the stale set.
     #[test]
@@ -5510,24 +5568,37 @@ mod tests {
         // a delete would trust; its holder stays a place a read can ask first.
         let merged = vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
         assert_eq!(merged, HashMap::from([(1, vec!["c:3".to_string()])]));
-        assert_eq!(vol.shard_read_hints(0), Some(vec!["a:1".to_string()]));
+        let hint = || vol.shard_read_hints(0).map(|(hint, _)| hint);
+        let a = vec!["a:1".to_string()];
+        assert_eq!(hint(), Some(a.clone()));
         vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
         assert_eq!(
-            vol.shard_read_hints(0),
-            Some(vec!["a:1".to_string()]),
+            hint(),
+            Some(a.clone()),
             "a later reply placing the shard nowhere keeps the hint"
         );
-        vol.merge_shard_locations(HashMap::from([(0, vec!["d:4".to_string()])]));
-        assert_eq!(vol.shard_read_hints(0), None);
+        let (_, revision) = vol.shard_read_hints(0).unwrap();
+        vol.merge_shard_locations(HashMap::from([(0, a.clone())]));
+        assert_eq!(hint(), None);
         vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
-        vol.forget_shard_read_hints(0, &["a:1".to_string()]);
+        vol.forget_shard_read_hints(0, revision, &a);
         assert_eq!(
-            vol.shard_read_hints(0),
-            Some(vec!["d:4".to_string()]),
-            "a failed read of an older hint keeps its replacement"
+            hint(),
+            Some(a.clone()),
+            "a failed read keeps a hint a lookup reinstalled meanwhile, even for the same holder"
         );
-        vol.forget_shard_read_hints(0, &["d:4".to_string()]);
-        assert_eq!(vol.shard_read_hints(0), None);
+        let (_, revision) = vol.shard_read_hints(0).unwrap();
+        vol.forget_shard_read_hints(0, revision, &a);
+        assert_eq!(hint(), None);
+        vol.merge_shard_locations(HashMap::from([(0, vec!["e:5".into(), "f:6".into()])]));
+        vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
+        let (_, revision) = vol.shard_read_hints(0).unwrap();
+        vol.forget_shard_read_hints(0, revision, &["e:5".into()]);
+        assert_eq!(
+            hint(),
+            Some(vec!["f:6".to_string()]),
+            "only the holders that failed are forgotten"
+        );
     }
 
     #[test]

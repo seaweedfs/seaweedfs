@@ -1358,35 +1358,10 @@ async fn fetch_one_interval(
 ) -> io::Result<(Vec<u8>, bool)> {
     let EcInterval { vid, shard_id, .. } = iv;
     if map.locations.get(&shard_id).is_none_or(Vec::is_empty)
-        && let Some(hints) = shard_read_hints(state, vid, shard_id)
+        && let Some((hints, revision)) = shard_read_hints(state, vid, shard_id)
+        && ask_ec_shard_read_hints(state, iv, &hints, revision).await
     {
-        // Only a deleted answer is taken from a hint, so one byte is enough.
-        let probe = EcInterval { size: 1, ..iv };
-        let read = tokio::time::timeout(
-            EC_READ_HINT_TIMEOUT,
-            read_remote_ec_shard_interval(state, &hints, probe),
-        )
-        .await
-        .unwrap_or_else(|_| {
-            Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "read hint timed out",
-            ))
-        });
-        match read {
-            Ok((buf, true)) => return Ok((buf, true)),
-            Ok(_) => {}
-            Err(e) => {
-                tracing::debug!(
-                    "read ec shard {}.{} from delisted holders {:?} failed: {}",
-                    vid.0,
-                    shard_id,
-                    hints,
-                    e
-                );
-                forget_shard_read_hints(state, vid, shard_id, &hints);
-            }
-        }
+        return Ok((Vec::new(), true));
     }
     // Direct peer read against the cached locations for this shard.
     if let Some(sources) = map.locations.get(&shard_id)
@@ -1565,7 +1540,8 @@ async fn do_read_remote_ec_shard_interval(
 }
 
 /// Reads one `VolumeEcShardRead` reply into the interval's bytes, or the
-/// holder's deleted answer, which stands even if the stream fails after it.
+/// holder's deleted answer, taken as soon as it arrives so a stream that fails
+/// or stalls after it cannot lose it.
 async fn collect_ec_shard_read(
     mut stream: tonic::Streaming<VolumeEcShardReadResponse>,
     source: &str,
@@ -1579,12 +1555,11 @@ async fn collect_ec_shard_read(
         ..
     } = iv;
     let mut out = Vec::with_capacity(size);
-    let mut is_deleted = false;
-    // A deleted answer stands even if the stream fails after it.
-    while let Some(msg) = match stream.message().await {
-        Err(_) if is_deleted => None,
-        msg => msg.map_err(|e| io::Error::other(format!("recv: {}", e)))?,
-    } {
+    while let Some(msg) = stream
+        .message()
+        .await
+        .map_err(|e| io::Error::other(format!("recv: {}", e)))?
+    {
         // Validate the served shard's identity client-side, so the guard holds even
         // against a pre-upgrade server that ignored the request field (returns 0).
         // A mismatch fails the read; the caller recovers from parity.
@@ -1594,22 +1569,19 @@ async fn collect_ec_shard_read(
                 vid.0, shard_id, source, expected_encode_ts_ns, msg.encode_ts_ns
             )));
         }
+        // A runtime EC delete keeps the .ecx size positive; the holder masks the delete
+        // at read time and answers is_deleted with no payload. Signal the deletion to
+        // the caller (Go's `(bytes, is_deleted)` contract) instead of synthesizing bytes
+        // here: the scrub zero-fills the interval (so the assembled needle hits read_bytes
+        // -> SizeMismatch{found:0} -> suppression), the serving direct read short-circuits
+        // to "deleted", and reconstruction EXCLUDES the shard rather than feeding zeros
+        // into Reed-Solomon. Exempt from the short-read guard below.
         if msg.is_deleted {
-            is_deleted = true;
+            return Ok((Vec::new(), true));
         }
         if !msg.data.is_empty() {
             out.extend_from_slice(&msg.data);
         }
-    }
-    // A runtime EC delete keeps the .ecx size positive; the holder masks the delete
-    // at read time and answers is_deleted with no payload. Signal the deletion to
-    // the caller (Go's `(bytes, is_deleted)` contract) instead of synthesizing bytes
-    // here: the scrub zero-fills the interval (so the assembled needle hits read_bytes
-    // -> SizeMismatch{found:0} -> suppression), the serving direct read short-circuits
-    // to "deleted", and reconstruction EXCLUDES the shard rather than feeding zeros
-    // into Reed-Solomon. Exempt from the short-read guard below.
-    if is_deleted {
-        return Ok((Vec::new(), true));
     }
     if out.len() < size {
         return Err(io::Error::new(
@@ -1872,25 +1844,60 @@ async fn recover_one_remote_ec_shard_interval(
     }
 }
 
+/// Reports whether a delisted holder of the shard journaled the needle's
+/// delete (Go's `askEcShardReadHints`). Each holder is asked, since any one of
+/// them may hold the delete; only a deleted answer is taken, so one byte is
+/// enough. Holders that failed are forgotten, even when a later one answers
+/// deleted, unless a lookup changed the hints meanwhile.
+async fn ask_ec_shard_read_hints(
+    state: &Arc<VolumeServerState>,
+    iv: EcInterval,
+    hints: &[String],
+    revision: u64,
+) -> bool {
+    let probe = EcInterval { size: 1, ..iv };
+    let mut failed = Vec::new();
+    let mut deleted = false;
+    for hint in hints {
+        let err = match tokio::time::timeout(
+            EC_READ_HINT_TIMEOUT,
+            do_read_remote_ec_shard_interval(state, hint, probe),
+        )
+        .await
+        {
+            Ok(Ok((_, true))) => {
+                deleted = true;
+                break;
+            }
+            Ok(Ok(_)) => continue,
+            Ok(Err(e)) => e.to_string(),
+            Err(_) => "timed out".to_string(),
+        };
+        tracing::debug!(
+            "read ec shard {}.{} from delisted holder {} failed: {}",
+            iv.vid.0,
+            iv.shard_id,
+            hint,
+            err
+        );
+        failed.push(hint.clone());
+    }
+    if !failed.is_empty() {
+        let store = state.store.read().unwrap();
+        if let Some(ecv) = store.find_ec_volume(iv.vid) {
+            ecv.forget_shard_read_hints(iv.shard_id, revision, &failed);
+        }
+    }
+    deleted
+}
+
 fn shard_read_hints(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
     shard_id: ShardId,
-) -> Option<Vec<String>> {
+) -> Option<(Vec<String>, u64)> {
     let store = state.store.read().unwrap();
     store.find_ec_volume(vid)?.shard_read_hints(shard_id)
-}
-
-fn forget_shard_read_hints(
-    state: &Arc<VolumeServerState>,
-    vid: VolumeId,
-    shard_id: ShardId,
-    used: &[String],
-) {
-    let store = state.store.read().unwrap();
-    if let Some(ecv) = store.find_ec_volume(vid) {
-        ecv.forget_shard_read_hints(shard_id, used);
-    }
 }
 
 /// Drop a confirmed-corrupt shard's cached location so later reads go straight
@@ -2905,9 +2912,10 @@ mod tests {
         assert!(needs_refresh(&locations(0), None, false, 10, 14));
     }
 
-    struct FailAfterFrame(Option<bytes::Bytes>);
+    /// Serves one frame, then fails the stream or, with `stall`, never ends it.
+    struct AfterFrame(Option<bytes::Bytes>, bool);
 
-    impl http_body::Body for FailAfterFrame {
+    impl http_body::Body for AfterFrame {
         type Data = bytes::Bytes;
         type Error = tonic::Status;
 
@@ -2916,46 +2924,54 @@ mod tests {
             _cx: &mut std::task::Context<'_>,
         ) -> std::task::Poll<Option<Result<http_body::Frame<bytes::Bytes>, tonic::Status>>>
         {
-            std::task::Poll::Ready(Some(match self.0.take() {
-                Some(frame) => Ok(http_body::Frame::data(frame)),
-                None => Err(tonic::Status::unavailable(
+            match self.0.take() {
+                Some(frame) => std::task::Poll::Ready(Some(Ok(http_body::Frame::data(frame)))),
+                None if self.1 => std::task::Poll::Pending,
+                None => std::task::Poll::Ready(Some(Err(tonic::Status::unavailable(
                     "stream failed after the deleted answer",
-                )),
-            }))
+                )))),
+            }
         }
     }
 
-    /// A holder's deleted answer stands even when its stream fails afterwards,
-    /// so a later source or the quarantined shard cannot answer for the needle.
+    /// A holder's deleted answer stands even when its stream fails or stalls
+    /// afterwards, so a later source or the quarantined shard cannot answer for
+    /// the needle.
     #[tokio::test]
     async fn test_collect_ec_shard_read_keeps_deletion_when_the_stream_fails() {
-        let message = prost::Message::encode_to_vec(&VolumeEcShardReadResponse {
-            is_deleted: true,
-            ..Default::default()
-        });
-        let mut frame = vec![0u8];
-        frame.extend_from_slice(&(message.len() as u32).to_be_bytes());
-        frame.extend_from_slice(&message);
-        let stream = tonic::Streaming::new_response(
-            tonic_prost::ProstDecoder::<VolumeEcShardReadResponse>::default(),
-            FailAfterFrame(Some(frame.into())),
-            tonic::codegen::http::StatusCode::OK,
-            None,
-            None,
-        );
-        let iv = EcInterval {
-            vid: VolumeId(7),
-            needle_id: NeedleId(42),
-            shard_id: 0,
-            shard_offset: 0,
-            size: 64,
-            expected_encode_ts_ns: 0,
-        };
+        for stall in [false, true] {
+            let message = prost::Message::encode_to_vec(&VolumeEcShardReadResponse {
+                is_deleted: true,
+                ..Default::default()
+            });
+            let mut frame = vec![0u8];
+            frame.extend_from_slice(&(message.len() as u32).to_be_bytes());
+            frame.extend_from_slice(&message);
+            let stream = tonic::Streaming::new_response(
+                tonic_prost::ProstDecoder::<VolumeEcShardReadResponse>::default(),
+                AfterFrame(Some(frame.into()), stall),
+                tonic::codegen::http::StatusCode::OK,
+                None,
+                None,
+            );
+            let iv = EcInterval {
+                vid: VolumeId(7),
+                needle_id: NeedleId(42),
+                shard_id: 0,
+                shard_offset: 0,
+                size: 64,
+                expected_encode_ts_ns: 0,
+            };
 
-        let (buf, is_deleted) = collect_ec_shard_read(stream, "peer:18080", iv)
+            let (buf, is_deleted) = tokio::time::timeout(
+                Duration::from_secs(5),
+                collect_ec_shard_read(stream, "peer:18080", iv),
+            )
             .await
+            .expect("the deleted answer waited for the stream to end")
             .unwrap();
-        assert!(is_deleted);
-        assert!(buf.is_empty());
+            assert!(is_deleted, "stall={stall}");
+            assert!(buf.is_empty());
+        }
     }
 }
