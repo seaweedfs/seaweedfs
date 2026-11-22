@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
@@ -22,7 +23,7 @@ func (s *renameTestStream) Send(resp *filer_pb.StreamRenameEntryResponse) error 
 	return nil
 }
 
-func streamRename(t *testing.T, store *renameTestStore, oldName, newName string) (*renameTestStream, error) {
+func streamRename(t *testing.T, store filer.FilerStore, oldName, newName string) (*renameTestStream, error) {
 	t.Helper()
 	server := &FilerServer{filer: newRenameTestFiler(t, store), entryLockTable: util.NewLockTable[util.FullPath]()}
 	stream := &renameTestStream{}
