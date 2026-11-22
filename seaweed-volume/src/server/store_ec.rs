@@ -1358,8 +1358,8 @@ async fn fetch_one_interval(
 ) -> io::Result<(Vec<u8>, bool)> {
     let EcInterval { vid, shard_id, .. } = iv;
     if map.locations.get(&shard_id).is_none_or(Vec::is_empty)
-        && let Some(hints) = shard_read_hints(state, vid, shard_id)
-        && ask_ec_shard_read_hints(state, iv, &hints).await
+        && let Some((hints, revision)) = shard_read_hints(state, vid, shard_id)
+        && ask_ec_shard_read_hints(state, iv, &hints, revision).await
     {
         return Ok((Vec::new(), true));
     }
@@ -1847,12 +1847,13 @@ async fn recover_one_remote_ec_shard_interval(
 /// Reports whether a delisted holder of the shard journaled the needle's
 /// delete (Go's `askEcShardReadHints`). Each holder is asked, since any one of
 /// them may hold the delete; only a deleted answer is taken, so one byte is
-/// enough. Holders that fail are forgotten unless a lookup replaced the hint
+/// enough. Holders that fail are forgotten unless a lookup changed the hints
 /// meanwhile.
 async fn ask_ec_shard_read_hints(
     state: &Arc<VolumeServerState>,
     iv: EcInterval,
     hints: &[String],
+    revision: u64,
 ) -> bool {
     let probe = EcInterval { size: 1, ..iv };
     let mut failed = Vec::new();
@@ -1880,7 +1881,7 @@ async fn ask_ec_shard_read_hints(
     if !failed.is_empty() {
         let store = state.store.read().unwrap();
         if let Some(ecv) = store.find_ec_volume(iv.vid) {
-            ecv.forget_shard_read_hints(iv.shard_id, hints, &failed);
+            ecv.forget_shard_read_hints(iv.shard_id, revision, &failed);
         }
     }
     false
@@ -1890,7 +1891,7 @@ fn shard_read_hints(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
     shard_id: ShardId,
-) -> Option<Vec<String>> {
+) -> Option<(Vec<String>, u64)> {
     let store = state.store.read().unwrap();
     store.find_ec_volume(vid)?.shard_read_hints(shard_id)
 }
