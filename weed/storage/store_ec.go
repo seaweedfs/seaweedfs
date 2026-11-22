@@ -1191,6 +1191,20 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 			}
 		}
 		if located < ecCtx.DataShards {
+			// Too few to trust as the volume's map, but a cold cache can still
+			// read the shards it names directly: fill only the shards the cache
+			// does not know, and leave the refresh time alone.
+			ecVolume.ShardLocationsLock.Lock()
+			for _, shardIdLocations := range resp.ShardIdLocations {
+				shardId := erasure_coding.ShardId(shardIdLocations.ShardId)
+				if len(ecVolume.ShardLocations[shardId]) > 0 {
+					continue
+				}
+				for _, loc := range shardIdLocations.Locations {
+					ecVolume.ShardLocations[shardId] = append(ecVolume.ShardLocations[shardId], pb.NewServerAddressFromLocation(loc))
+				}
+			}
+			ecVolume.ShardLocationsLock.Unlock()
 			return fmt.Errorf("only %d shards found but %d required", located, ecCtx.DataShards)
 		}
 

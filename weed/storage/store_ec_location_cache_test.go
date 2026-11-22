@@ -198,6 +198,35 @@ func TestCachedLookupEcShardLocationsRefusesAReplyWithFewLocatedShards(t *testin
 	}
 }
 
+// A partial reply is no map to trust, but a cold cache takes the holders it
+// names, so a read can still go straight to a shard whose holder is up.
+func TestCachedLookupEcShardLocationsFillsAColdCacheFromAPartialReply(t *testing.T) {
+	master, masterAddr := startCountingMaster(t)
+	master.located.Store(7)
+	store := &Store{
+		MasterFn:       func() pb.ServerAddress { return masterAddr },
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
+	ecVolume := &erasure_coding.EcVolume{
+		VolumeId:       9,
+		ShardLocations: make(map[erasure_coding.ShardId][]pb.ServerAddress),
+	}
+	if err := store.cachedLookupEcShardLocations(ecVolume); err == nil {
+		t.Error("a reply placing 7 of 14 shards was accepted")
+	}
+	ecVolume.ShardLocationsLock.RLock()
+	cached := len(ecVolume.ShardLocations)
+	refreshed := !ecVolume.ShardLocationsRefreshTime.IsZero()
+	stale := ecVolume.ShardLocationsStale
+	ecVolume.ShardLocationsLock.RUnlock()
+	if cached != 7 {
+		t.Errorf("the cold cache holds %d shards after the partial reply, want the 7 it placed", cached)
+	}
+	if refreshed || !stale {
+		t.Errorf("a partial reply must leave the map due a lookup: refreshed=%v stale=%v", refreshed, stale)
+	}
+}
+
 func TestEcShardLocationsTTL(t *testing.T) {
 	ecCtx := erasure_coding.NewDefaultECContext("", 1)
 	for _, tc := range []struct {
