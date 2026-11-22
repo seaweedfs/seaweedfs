@@ -853,6 +853,12 @@ func TestDeleteOneVolumeRefusesTrimOfUncoveredNeedles(t *testing.T) {
 			wantDeleted: 1,
 		},
 		{
+			name:        "remote-tier survivor holds the delete at offset zero",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(1), {Key: 2, Size: types.TombstoneFileSize}}},
+			wantDeleted: 1,
+		},
+		{
 			name:        "needle already deleted on the doomed replica",
 			doomed:      []needle_map.NeedleValue{live(1), live(2), deleted(2)},
 			survivors:   [][]needle_map.NeedleValue{{live(1)}},

@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"slices"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -336,7 +338,8 @@ func checkOneVolume(a *VolumeReplica, b *VolumeReplica, writer io.Writer, comman
 
 // countUncoveredNeedles counts the needles live on doomed that no other
 // replica holds, live or deleted. Each may be a missed write, so trimming
-// doomed could delete its only copy.
+// doomed could delete its only copy. Survivor indexes are walked unfiltered:
+// a remote-tier replica records its deletes with offset zero.
 func countUncoveredNeedles(commandEnv *CommandEnv, writer io.Writer, doomed *VolumeReplica, replicas []*VolumeReplica) (int, error) {
 	vcd := &volumeCheckDisk{writer: writer, commandEnv: commandEnv}
 	uncovered := needle_map.NewMemDb()
@@ -348,14 +351,13 @@ func countUncoveredNeedles(commandEnv *CommandEnv, writer io.Writer, doomed *Vol
 		if survivor.location.dataNode == doomed.location.dataNode {
 			continue
 		}
-		survivorDB := needle_map.NewMemDb()
-		err := vcd.readIndexDatabase(survivorDB, survivor.info.Collection, survivor.info.Id, pb.NewServerAddressFromDataNode(survivor.location.dataNode))
+		var index bytes.Buffer
+		err := vcd.copyVolumeIndexFile(survivor.info.Collection, survivor.info.Id, pb.NewServerAddressFromDataNode(survivor.location.dataNode), &index)
 		if err == nil {
-			err = survivorDB.AscendingVisit(func(value needle_map.NeedleValue) error {
-				return uncovered.Delete(value.Key)
+			err = idx.WalkIndexFile(bytes.NewReader(index.Bytes()), 0, func(key types.NeedleId, _ types.Offset, _ types.Size) error {
+				return uncovered.Delete(key)
 			})
 		}
-		survivorDB.Close()
 		if err != nil {
 			return 0, fmt.Errorf("readIndexDatabase %s volume %d: %v", survivor.location.dataNode.Id, survivor.info.Id, err)
 		}
