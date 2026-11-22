@@ -1359,34 +1359,9 @@ async fn fetch_one_interval(
     let EcInterval { vid, shard_id, .. } = iv;
     if map.locations.get(&shard_id).is_none_or(Vec::is_empty)
         && let Some(hints) = shard_read_hints(state, vid, shard_id)
+        && ask_ec_shard_read_hints(state, iv, &hints).await
     {
-        // Only a deleted answer is taken from a hint, so one byte is enough.
-        let probe = EcInterval { size: 1, ..iv };
-        let read = tokio::time::timeout(
-            EC_READ_HINT_TIMEOUT,
-            read_remote_ec_shard_interval(state, &hints, probe),
-        )
-        .await
-        .unwrap_or_else(|_| {
-            Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "read hint timed out",
-            ))
-        });
-        match read {
-            Ok((buf, true)) => return Ok((buf, true)),
-            Ok(_) => {}
-            Err(e) => {
-                tracing::debug!(
-                    "read ec shard {}.{} from delisted holders {:?} failed: {}",
-                    vid.0,
-                    shard_id,
-                    hints,
-                    e
-                );
-                forget_shard_read_hints(state, vid, shard_id, &hints);
-            }
-        }
+        return Ok((Vec::new(), true));
     }
     // Direct peer read against the cached locations for this shard.
     if let Some(sources) = map.locations.get(&shard_id)
@@ -1869,6 +1844,48 @@ async fn recover_one_remote_ec_shard_interval(
     }
 }
 
+/// Reports whether a delisted holder of the shard journaled the needle's
+/// delete (Go's `askEcShardReadHints`). Each holder is asked, since any one of
+/// them may hold the delete; only a deleted answer is taken, so one byte is
+/// enough. Holders that fail are forgotten unless a lookup replaced the hint
+/// meanwhile.
+async fn ask_ec_shard_read_hints(
+    state: &Arc<VolumeServerState>,
+    iv: EcInterval,
+    hints: &[String],
+) -> bool {
+    let probe = EcInterval { size: 1, ..iv };
+    let mut failed = Vec::new();
+    for hint in hints {
+        let err = match tokio::time::timeout(
+            EC_READ_HINT_TIMEOUT,
+            do_read_remote_ec_shard_interval(state, hint, probe),
+        )
+        .await
+        {
+            Ok(Ok((_, true))) => return true,
+            Ok(Ok(_)) => continue,
+            Ok(Err(e)) => e.to_string(),
+            Err(_) => "timed out".to_string(),
+        };
+        tracing::debug!(
+            "read ec shard {}.{} from delisted holder {} failed: {}",
+            iv.vid.0,
+            iv.shard_id,
+            hint,
+            err
+        );
+        failed.push(hint.clone());
+    }
+    if !failed.is_empty() {
+        let store = state.store.read().unwrap();
+        if let Some(ecv) = store.find_ec_volume(iv.vid) {
+            ecv.forget_shard_read_hints(iv.shard_id, hints, &failed);
+        }
+    }
+    false
+}
+
 fn shard_read_hints(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
@@ -1876,18 +1893,6 @@ fn shard_read_hints(
 ) -> Option<Vec<String>> {
     let store = state.store.read().unwrap();
     store.find_ec_volume(vid)?.shard_read_hints(shard_id)
-}
-
-fn forget_shard_read_hints(
-    state: &Arc<VolumeServerState>,
-    vid: VolumeId,
-    shard_id: ShardId,
-    used: &[String],
-) {
-    let store = state.store.read().unwrap();
-    if let Some(ecv) = store.find_ec_volume(vid) {
-        ecv.forget_shard_read_hints(shard_id, used);
-    }
 }
 
 /// Drop a confirmed-corrupt shard's cached location so later reads go straight

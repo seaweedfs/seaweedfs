@@ -1803,11 +1803,23 @@ impl EcVolume {
         cache.read_hints.get(&shard_id).cloned()
     }
 
-    /// Drops the shard's hint only if it is still `used`: a lookup may have
-    /// replaced it while the read that failed was in flight.
-    pub(crate) fn forget_shard_read_hints(&self, shard_id: ShardId, used: &[String]) {
+    /// Drops the `failed` holders from the shard's hint only if it is still
+    /// `used`: a lookup may have replaced it while the reads were in flight.
+    pub(crate) fn forget_shard_read_hints(
+        &self,
+        shard_id: ShardId,
+        used: &[String],
+        failed: &[String],
+    ) {
         let mut cache = self.shard_locations.write().unwrap();
-        if cache.read_hints.get(&shard_id).is_some_and(|h| h == used) {
+        let Some(hints) = cache.read_hints.get_mut(&shard_id) else {
+            return;
+        };
+        if hints != used {
+            return;
+        }
+        hints.retain(|h| !failed.contains(h));
+        if hints.is_empty() {
             cache.read_hints.remove(&shard_id);
         }
     }
@@ -5520,14 +5532,24 @@ mod tests {
         vol.merge_shard_locations(HashMap::from([(0, vec!["d:4".to_string()])]));
         assert_eq!(vol.shard_read_hints(0), None);
         vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
-        vol.forget_shard_read_hints(0, &["a:1".to_string()]);
+        let a = ["a:1".to_string()];
+        vol.forget_shard_read_hints(0, &a, &a);
         assert_eq!(
             vol.shard_read_hints(0),
             Some(vec!["d:4".to_string()]),
             "a failed read of an older hint keeps its replacement"
         );
-        vol.forget_shard_read_hints(0, &["d:4".to_string()]);
+        let d = ["d:4".to_string()];
+        vol.forget_shard_read_hints(0, &d, &d);
         assert_eq!(vol.shard_read_hints(0), None);
+        vol.merge_shard_locations(HashMap::from([(0, vec!["e:5".into(), "f:6".into()])]));
+        vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
+        vol.forget_shard_read_hints(0, &["e:5".into(), "f:6".into()], &["e:5".into()]);
+        assert_eq!(
+            vol.shard_read_hints(0),
+            Some(vec!["f:6".to_string()]),
+            "only the holders that failed are forgotten"
+        );
     }
 
     #[test]
