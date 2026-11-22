@@ -2022,19 +2022,45 @@ func (m *IAMManager) validateTrustPolicyForCredentials(ctx context.Context, role
 		return fmt.Errorf("role has no trust policy")
 	}
 
-	evalCtx := &policy.EvaluationContext{
-		Principal: request.Username,
-		Action:    sts.ActionAssumeRoleWithCredentials,
-		Resource:  roleDef.RoleArn,
-		RequestContext: map[string]interface{}{
-			"aws:FederatedProvider": request.ProviderName,
-		},
+	requestContext := map[string]interface{}{
+		"aws:FederatedProvider": request.ProviderName,
 	}
-	if !m.evaluateTrustPolicy(roleDef.TrustPolicy, evalCtx) {
-		return fmt.Errorf("trust policy does not allow credential assumption for provider: %s", request.ProviderName)
+	if request.DurationSeconds != nil {
+		requestContext["sts:DurationSeconds"] = *request.DurationSeconds
+	}
+	result, err := m.policyEngine.EvaluateTrustPolicy(ctx, roleDef.TrustPolicy, &policy.EvaluationContext{
+		Principal:      request.Username,
+		Action:         sts.ActionAssumeRoleWithCredentials,
+		Resource:       roleDef.RoleArn,
+		RequestContext: requestContext,
+	})
+	if err != nil {
+		return fmt.Errorf("trust policy evaluation failed: %w", err)
+	}
+	for _, match := range result.MatchingStatements {
+		if match.Effect == policy.EffectDeny {
+			return fmt.Errorf("trust policy denies credential assumption for provider: %s", request.ProviderName)
+		}
 	}
 
-	return nil
+	// Check if trust policy allows credential assumption for the specific provider
+	for _, statement := range roleDef.TrustPolicy.Statement {
+		if statement.Effect == "Allow" {
+			for _, action := range statement.Action {
+				if action == "sts:AssumeRoleWithCredentials" {
+					if principal, ok := statement.Principal.(map[string]interface{}); ok {
+						if federated, ok := principal["Federated"].(string); ok {
+							if federated == request.ProviderName {
+								return nil // Allow
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return fmt.Errorf("trust policy does not allow credential assumption for provider: %s", request.ProviderName)
 }
 
 // Helper functions
