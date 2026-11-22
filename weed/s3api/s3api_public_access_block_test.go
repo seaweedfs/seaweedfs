@@ -307,3 +307,55 @@ func TestIsPublicPolicy(t *testing.T) {
 		require.Equal(t, tc.public, isPublicPolicy(&doc), tc.statement)
 	}
 }
+
+func TestRestrictPublicBucketsIgnoresPublicPolicyForAnonymous(t *testing.T) {
+	const bucket = "pab-restrict"
+	public := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::pab-restrict/*"}]}`
+	sourceIP := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::pab-restrict/*","Condition":{"IpAddress":{"aws:SourceIp":"192.0.2.0/24"}}}]}`
+	restricted := false
+	bpe := NewBucketPolicyEngine()
+	bpe.RestrictsPublicBuckets = func(b string) bool { return b == bucket && restricted }
+	evaluate := func(principal string) (bool, bool) {
+		req := httptest.NewRequest(http.MethodGet, "http://s3/"+bucket+"/o", nil)
+		req.RemoteAddr = "192.0.2.10:4321"
+		allowed, evaluated, err := bpe.EvaluatePolicy(bucket, "o", string(s3_constants.ACTION_READ), principal, req, nil, nil)
+		require.NoError(t, err)
+		return allowed, evaluated
+	}
+	const user = "arn:aws:iam::000000000000:user/alice"
+
+	require.NoError(t, bpe.engine.SetBucketPolicy(bucket, public))
+	allowed, evaluated := evaluate("*")
+	require.True(t, allowed && evaluated)
+
+	restricted = true
+	allowed, evaluated = evaluate("*")
+	require.False(t, allowed)
+	require.False(t, evaluated, "an ignored public grant must not read as an explicit deny")
+	allowed, _ = evaluate(user)
+	require.True(t, allowed)
+
+	require.NoError(t, bpe.engine.SetBucketPolicy(bucket, sourceIP))
+	allowed, _ = evaluate("*")
+	require.True(t, allowed, "a policy narrowed by aws:SourceIp is not public")
+}
+
+func TestRestrictsPublicBucketsReadsBucketConfig(t *testing.T) {
+	const bucket = "pab-restrict-config"
+	for _, tc := range []struct {
+		pab  string
+		want bool
+	}{
+		{"", false},
+		{`<PublicAccessBlockConfiguration><BlockPublicPolicy>true</BlockPublicPolicy></PublicAccessBlockConfiguration>`, false},
+		{testPublicAccessBlockXML, true},
+		{"<PublicAccessBlockConfiguration><RestrictPublicBuckets>", true},
+	} {
+		entry := &filer_pb.Entry{Name: bucket, IsDirectory: true, Extended: map[string][]byte{}}
+		if tc.pab != "" {
+			entry.Extended[s3_constants.ExtPublicAccessBlockKey] = []byte(tc.pab)
+		}
+		s3a, _ := newPublicAccessBlockTestServer(t, entry)
+		require.Equal(t, tc.want, s3a.restrictsPublicBuckets(bucket), tc.pab)
+	}
+}

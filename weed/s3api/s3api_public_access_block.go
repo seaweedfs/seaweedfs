@@ -66,6 +66,17 @@ func (c *PublicAccessBlockConfiguration) blocksPublicPolicy() bool {
 	return c != nil && c.BlockPublicPolicy
 }
 
+func (c *PublicAccessBlockConfiguration) restrictsPublicBuckets() bool {
+	return c != nil && c.RestrictPublicBuckets
+}
+
+// restrictsPublicBuckets fails closed: a bucket whose configuration cannot be
+// read is treated as restricted.
+func (s3a *S3ApiServer) restrictsPublicBuckets(bucket string) bool {
+	config, errCode := s3a.getBucketConfig(bucket)
+	return errCode != s3err.ErrNone || config.PublicAccessBlock.restrictsPublicBuckets()
+}
+
 var errPublicPolicyBlocked = errors.New("bucket blocks public policies")
 
 // restrictingConditionKeys are the condition keys that, with fixed values,
