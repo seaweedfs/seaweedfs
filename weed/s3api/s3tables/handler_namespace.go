@@ -412,9 +412,10 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 	return nil
 }
 
-// handleUpdateNamespace replaces the stored properties of an existing namespace.
-// AWS S3 Tables namespaces have no properties; this backs the Iceberg REST
-// catalog's namespace-property updates, which carry the merged map.
+// handleUpdateNamespace replaces the stored properties of an existing
+// namespace, or applies PropertyChanges to them. AWS S3 Tables namespaces have
+// no properties; this backs the Iceberg REST catalog's namespace-property
+// updates.
 func (h *S3TablesHandler) handleUpdateNamespace(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
 	var req UpdateNamespaceRequest
 	if err := h.readRequestBody(r, &req); err != nil {
