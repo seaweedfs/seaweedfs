@@ -383,6 +383,24 @@ func TestMissedDeletes_ThreeReplicasPicksTheOneThatDeleted(t *testing.T) {
 	}
 }
 
+func TestMissedDeletes_AbsentOnThirdReplicaStillProves(t *testing.T) {
+	views, err := missedDeleteViews(t, []replicaRows{
+		{loc: replicaA, live: map[types.NeedleId]writeMeta{1: write1, 2: write2}},
+		{loc: replicaB, live: map[types.NeedleId]writeMeta{1: write1}, deleted: map[types.NeedleId]writeMeta{2: write2}},
+		{loc: replicaC, live: map[types.NeedleId]writeMeta{1: write1}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := chooseSourceFromLiveNeedles(7, views, replicaA.Url, io.Discard)
+	if err != nil {
+		t.Fatalf("B's write then tombstone proves the delete; C holding no row agrees with it: %v", err)
+	}
+	if got.Url != replicaB.Url {
+		t.Fatalf("source %s, want %s", got.Url, replicaB.Url)
+	}
+}
+
 func TestMissedDeletes_MetaReadErrorAborts(t *testing.T) {
 	_, err := missedDeleteViews(t, []replicaRows{
 		{loc: replicaA, live: map[types.NeedleId]writeMeta{1: write1, 2: write2}},
