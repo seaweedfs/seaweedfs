@@ -15,6 +15,10 @@ var (
 	ErrUnsupportedSuperLargeDirectoryListing = errors.New("unsupported super large directory listing")
 	ErrKvNotImplemented                      = errors.New("kv not implemented yet")
 	ErrKvNotFound                            = errors.New("kv: not found")
+	// ErrTransactionConflict marks a commit the store refused because another
+	// writer changed a key the transaction wrote after it began. Running the
+	// transaction again reads that write.
+	ErrTransactionConflict = errors.New("transaction conflict")
 )
 
 type ListEachEntryFunc func(entry *Entry) (bool, error)
@@ -75,4 +79,15 @@ type BucketAware interface {
 
 type Debuggable interface {
 	Debug(writer io.Writer)
+}
+
+// IsolatingTransactionStore is implemented by a store whose transactions are
+// real: the entry and KV writes made under the context BeginTransaction
+// returns go through that transaction, stay invisible to other readers until
+// CommitTransaction, and are undone by RollbackTransaction. A store says so
+// itself, once that has been checked for it: the SQL stores and TiKV do. It
+// cannot be told from the context a store hands back, which may carry a
+// transaction that its writes do not use.
+type IsolatingTransactionStore interface {
+	IsolatesTransactions() bool
 }

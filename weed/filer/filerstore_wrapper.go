@@ -447,6 +447,24 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 	return
 }
 
+// transactionCovers reports whether a transaction of the default store covers
+// the writes to the entries at paths: the store's transactions are real
+// (IsolatingTransactionStore) and it holds those entries. The writes of a
+// path-specific store bypass the default store's transaction. An entry in the
+// default store has its parents there too.
+func (fsw *FilerStoreWrapper) transactionCovers(paths ...util.FullPath) bool {
+	isolating, ok := fsw.defaultStore.(IsolatingTransactionStore)
+	if !ok || !isolating.IsolatesTransactions() {
+		return false
+	}
+	for _, p := range paths {
+		if fsw.getActualStore(p) != fsw.defaultStore {
+			return false
+		}
+	}
+	return true
+}
+
 func (fsw *FilerStoreWrapper) BeginTransaction(ctx context.Context) (context.Context, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
