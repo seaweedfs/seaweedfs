@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
+	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -40,6 +41,8 @@ type ErasureCodingTask struct {
 	// workerAddress is weed worker -address (host:port). Not a volume URL;
 	// late-bind matches replica hostnames against HostKey(workerAddress).
 	workerAddress string
+
+	masterAddresses []string
 
 	// EC parameters
 	dataShards       int32
@@ -98,6 +101,9 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	t.parityShards = ecParams.ParityShards
 	t.sourceDiskType = ecParams.SourceDiskType
 	t.encodeTsNs = ecParams.EncodeTsNs
+	if master := strings.TrimSpace(ecParams.MasterClient); len(t.masterAddresses) == 0 && master != "" {
+		t.masterAddresses = []string{master}
+	}
 	t.workDir = ecParams.WorkingDir
 	t.targets = params.Targets // Get unified targets
 	t.sources = params.Sources // Get unified sources
@@ -1076,7 +1082,28 @@ func (t *ErasureCodingTask) ensureCleanEcStart(ctx context.Context) error {
 	if t.server == "" && len(t.getReplicas()) == 0 {
 		return fmt.Errorf("no source replica for volume %d", t.volumeID)
 	}
+	if err := t.checkReplicasPresent(ctx); err != nil {
+		return err
+	}
 	return t.cleanupStaleEcShards(ctx)
+}
+
+// checkReplicasPresent refuses a plan whose regular replica is gone, as in a
+// replayed job whose earlier run already committed the EC copy and deleted
+// the source: wiping the shards then would destroy the only copy.
+func (t *ErasureCodingTask) checkReplicasPresent(ctx context.Context) error {
+	for _, loc := range t.replicaLocations() {
+		addr := loc.ServerAddress()
+		err := operation.WithVolumeServerClient(false, addr, t.grpcDialOption,
+			func(client volume_server_pb.VolumeServerClient) error {
+				_, e := client.ReadVolumeFileStatus(ctx, &volume_server_pb.ReadVolumeFileStatusRequest{VolumeId: t.volumeID})
+				return e
+			})
+		if err != nil {
+			return fmt.Errorf("regular replica of volume %d on %s: %w; refusing to clear EC shards", t.volumeID, addr, err)
+		}
+	}
+	return nil
 }
 
 // rollbackDistribute undoes a failed attempt that had already begun writing EC
@@ -1111,12 +1138,14 @@ func (t *ErasureCodingTask) rollbackDistribute(_ context.Context) {
 
 // cleanupStaleEcShards unmounts and deletes any EC shards for this volume on
 // destinations from a previous failed encode. Targets every node we plan to
-// write to (t.targets) plus every node detection saw EC shards on (t.sources
-// with ShardIds set), and issues the cleanup over the full shard range so a
-// stale topology snapshot — or shards landed by a prior attempt that haven't
-// heartbeated yet — cannot leave the mounted-volume guard tripped during
-// distributeEcShards. Called from the Step 0 preflight (ensureCleanEcStart) and
-// from rollbackDistribute.
+// write to (t.targets), every node detection saw EC shards on (t.sources
+// with ShardIds set) and every holder the master lists now, and issues the
+// cleanup over the full shard range so a stale topology snapshot — or shards
+// landed by a prior attempt that haven't heartbeated yet — cannot leave the
+// mounted-volume guard tripped during distributeEcShards. A holder outside
+// the plan must be cleared too, or its leftover shards end up beside the new
+// encode. Called from the Step 0 preflight (ensureCleanEcStart) and from
+// rollbackDistribute.
 //
 // Teardown is UNFENCED (encodeTsNs=0 -> the server's blanket teardown), which
 // wipes every EC artifact for this volume on every disk regardless of
@@ -1145,13 +1174,22 @@ func (t *ErasureCodingTask) cleanupStaleEcShards(ctx context.Context) error {
 		}
 		nodes[target.Node] = struct{}{}
 	}
-	if len(nodes) == 0 {
-		return nil
+
+	var cleanupErrors []string
+	if len(t.masterAddresses) > 0 {
+		holders, err := pluginworker.LookupEcVolumeLocations(ctx, t.masterAddresses, t.grpcDialOption, t.volumeID)
+		if err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Sprintf("masters %v: lookup EC shard holders: %v", t.masterAddresses, err))
+		}
+		for _, holder := range holders {
+			if !containsServerAddress(nodes, holder) {
+				nodes[string(holder)] = struct{}{}
+			}
+		}
 	}
 
 	allShards := fullShardIdRange(t.dataShards, t.parityShards)
 
-	var cleanupErrors []string
 	for node := range nodes {
 		t.GetLogger().WithFields(map[string]interface{}{
 			"volume_id":   t.volumeID,
@@ -1177,6 +1215,15 @@ func (t *ErasureCodingTask) cleanupStaleEcShards(ctx context.Context) error {
 			len(cleanupErrors), strings.Join(cleanupErrors, "; "))
 	}
 	return nil
+}
+
+func containsServerAddress(nodes map[string]struct{}, address pb.ServerAddress) bool {
+	for node := range nodes {
+		if address.Equals(pb.ServerAddress(node)) {
+			return true
+		}
+	}
+	return false
 }
 
 // fullShardIdRange builds [0..total-1] for unmount/delete RPCs. Falls back

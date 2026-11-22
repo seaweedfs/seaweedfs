@@ -560,6 +560,7 @@ func (h *ErasureCodingHandler) Execute(
 		h.grpcDialOption,
 	)
 	task.workerAddress = h.workerAddress
+	task.masterAddresses = request.GetClusterContext().GetMasterGrpcAddresses()
 	task.maxShardTransfers = deriveErasureCodingWorkerConfig(request.GetWorkerConfigValues()).TaskConfig.MaxShardTransfers
 	execCtx, execCancel := context.WithCancel(ctx)
 	defer execCancel()
