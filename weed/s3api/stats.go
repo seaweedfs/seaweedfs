@@ -39,6 +39,7 @@ func track(f http.HandlerFunc, action string) http.HandlerFunc {
 		start := time.Now()
 		f(recorder, r)
 		elapsed := time.Since(start)
+		observeBodyRead(r)
 		if glog.V(2) {
 			requester := s3_constants.GetIdentityNameFromContext(r)
 			if requester == "" {
@@ -115,17 +116,17 @@ func (p *putStages) upload(ctx context.Context, reader io.Reader, opt *operation
 	return result, err
 }
 
-// record observes the stages reached: metadata only after a successful upload,
-// body_read once per request even when it writes several objects.
+// record observes the stages reached, metadata only after a successful upload,
+// and leaves body_read to track so it covers every write of the request.
 func (p *putStages) record() {
 	if p.uploading == 0 {
 		return
 	}
+	if reads, ok := p.r.Context().Value(bodyReadTimeKey{}).(*bodyReads); ok {
+		reads.operation.CompareAndSwap(nil, &p.operation)
+	}
 	observe := func(stage string, d time.Duration) {
 		stats_collect.S3PutStageHistogram.WithLabelValues(p.operation, stage).Observe(d.Seconds())
-	}
-	if d, first := takeBodyReadTime(p.r); first {
-		observe("body_read", d)
 	}
 	observe("assign", time.Duration(p.assign.Load()))
 	observe("storage", max(p.uploading-p.readDuring, 0))
@@ -137,8 +138,8 @@ func (p *putStages) record() {
 type bodyReadTimeKey struct{}
 
 type bodyReads struct {
-	elapsed  atomic.Int64
-	reported atomic.Bool
+	elapsed   atomic.Int64
+	operation atomic.Pointer[string]
 }
 
 // timeBodyReads makes r count the time its body reads block, for bodyReadTime.
@@ -158,13 +159,15 @@ func bodyReadTime(r *http.Request) time.Duration {
 	return 0
 }
 
-// takeBodyReadTime returns the body read time to the first caller only.
-func takeBodyReadTime(r *http.Request) (time.Duration, bool) {
+// observeBodyRead observes body_read once for a request that reached an upload.
+func observeBodyRead(r *http.Request) {
 	reads, ok := r.Context().Value(bodyReadTimeKey{}).(*bodyReads)
-	if !ok || !reads.reported.CompareAndSwap(false, true) {
-		return 0, false
+	if !ok {
+		return
 	}
-	return time.Duration(reads.elapsed.Load()), true
+	if op := reads.operation.Load(); op != nil {
+		stats_collect.S3PutStageHistogram.WithLabelValues(*op, "body_read").Observe(time.Duration(reads.elapsed.Load()).Seconds())
+	}
 }
 
 type timedBody struct {
