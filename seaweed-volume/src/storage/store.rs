@@ -1363,6 +1363,19 @@ impl Store {
         None
     }
 
+    /// Takes the journal lock of every runtime of `vid`, in disk order, so no
+    /// delete append is in flight while the caller reads the journals.
+    pub(crate) fn lock_ec_journals(
+        &self,
+        vid: VolumeId,
+    ) -> Vec<std::sync::MutexGuard<'_, crate::storage::erasure_coding::ec_volume::EcJournal>> {
+        self.locations
+            .iter()
+            .filter_map(|loc| loc.find_ec_volume(vid))
+            .map(|ecv| ecv.journal())
+            .collect()
+    }
+
     /// Find an EC volume across all locations (mutable).
     /// Every per-disk `EcVolume` this store maps for `vid`. A vid can mount on
     /// N disks as N distinct runtimes, and the first-match `find_ec_volume_mut`

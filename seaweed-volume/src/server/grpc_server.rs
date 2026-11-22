@@ -7978,7 +7978,7 @@ impl EcDecodeJob {
         // VolumeEcShardsCopy into the idx dir, count as deleted throughout.
         // The first pass runs unlocked — a slow journal must not stall every
         // store writer — then a second pass runs with appends quiesced by the
-        // read lock. The rollback epoch proves whether it needs to be a full
+        // journal locks. The rollback epoch proves whether it needs to be a full
         // rescan: an unchanged epoch means no append was rolled back inside
         // the window, so every id folded in was committed and catch_up only
         // needs to pick up records appended meanwhile.
@@ -7987,7 +7987,8 @@ impl EcDecodeJob {
         let mut deleted = ec_decoder::EcjDeletions::read(&[&ecx_dir, &idx_dir], &collection, vid)
             .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
         {
-            let _guard = state.store.read().unwrap();
+            let store = state.store.read().unwrap();
+            let _journals = store.lock_ec_journals(vid);
             if epoch_before
                 == crate::storage::erasure_coding::ec_volume::ECJ_ROLLBACK_EPOCH
                     .load(std::sync::atomic::Ordering::Acquire)
@@ -8099,14 +8100,15 @@ impl EcDecodeJob {
             .insert(vid);
         let _tail = EcDecodeTailGuard(state, vid);
 
-        // Deletes journaled while the .dat was written. Journal appends hold
-        // the store write lock through their sync-or-truncate, so a read lock
-        // held from catch_up through the .idx publish guarantees every record
-        // read is committed — a rolled-back delete cannot leave a tombstone
-        // in the index — and no new journal record can be missed by the
-        // rebuilt .idx.
+        // Deletes journaled while the .dat was written. Runtime appends hold
+        // their volume's journal lock and path appends the store write lock
+        // through their sync-or-truncate, so holding both from catch_up
+        // through the .idx publish guarantees every record read is committed
+        // — a rolled-back delete cannot leave a tombstone in the index — and
+        // no new journal record can be missed by the rebuilt .idx.
         {
-            let _guard = state.store.read().unwrap();
+            let store = state.store.read().unwrap();
+            let _journals = store.lock_ec_journals(vid);
             deleted
                 .catch_up()
                 .map_err(|e| Status::internal(format!("read ecj: {}", e)))?;
