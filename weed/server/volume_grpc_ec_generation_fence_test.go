@@ -6,6 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
@@ -310,6 +315,50 @@ func TestVolumeEcShardsInfoReportsMixedLocalRuns(t *testing.T) {
 				"peer":  {Bits: erasure_coding.ShardBits(0).Set(2), EncodeTsNs: 1000},
 			})
 			require.Equal(t, tc.wantRun == erasure_coding.MixedEncodeRuns, err != nil, "agreement error: %v", err)
+		})
+	}
+}
+
+func TestVolumeEcShardsCopyRefusesOtherEncodeRun(t *testing.T) {
+	const collection = "ec-copy-run"
+	vid := needle.VolumeId(58)
+	for _, tc := range []struct {
+		name    string
+		srcRun  int64
+		wantErr bool
+	}{
+		{"same run", 1000, false},
+		{"other run", 2000, true},
+		{"unreported run", 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := buildEcStoreWithGeneration(t, filepath.Join(t.TempDir(), "src"), collection, vid, tc.srcRun, []erasure_coding.ShardId{0})
+			source := serveEcCopySource(t, &VolumeServer{store: src})
+			dstDir := filepath.Join(t.TempDir(), "dst")
+			receiver := &VolumeServer{
+				store:                         buildEcStoreWithGeneration(t, dstDir, collection, vid, 1000, []erasure_coding.ShardId{5}),
+				grpcDialOption:                grpc.WithTransportCredentials(insecure.NewCredentials()),
+				AllowUntrustedRemoteEndpoints: true,
+			}
+			before := listDir(t, dstDir)
+
+			_, err := receiver.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
+				VolumeId:       uint32(vid),
+				Collection:     collection,
+				ShardIds:       []uint32{0},
+				CopyEcxFile:    true,
+				CopyEcjFile:    true,
+				CopyVifFile:    true,
+				SourceDataNode: source,
+			})
+			if !tc.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.Equal(t, codes.FailedPrecondition, status.Code(err), "%v", err)
+			require.Equal(t, before, listDir(t, dstDir))
+			gen, _ := readEcGenerationTsNs(erasure_coding.EcShardFileName(collection, dstDir, int(vid)), "")
+			require.Equal(t, int64(1000), gen)
 		})
 	}
 }

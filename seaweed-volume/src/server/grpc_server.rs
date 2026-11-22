@@ -6453,6 +6453,41 @@ impl VolumeGrpcService {
             drain_copy_stream_to_file(&mut stream, file, &file_path, &ext).await?;
         }
 
+        // The sidecars are staged too and committed with the index, so a failed
+        // copy cannot pair a new .vif with the index this disk keeps.
+        let mut staged_sidecars: Vec<(String, crate::server::store_ec::RemoveIncomplete)> =
+            Vec::new();
+        if req.copy_vif_file {
+            let copy_req = volume_server_pb::CopyFileRequest {
+                volume_id: req.volume_id,
+                collection: req.collection.clone(),
+                is_ec_volume: true,
+                ext: ".vif".to_string(),
+                compaction_revision: u32::MAX,
+                stop_offset: i64::MAX as u64,
+                ignore_source_file_not_found: true,
+                ..Default::default()
+            };
+            let mut stream = client
+                .copy_file(copy_req)
+                .await
+                .map_err(|e| {
+                    Status::internal(format!(
+                        "VolumeEcShardsCopy volume {} copy .vif: {}",
+                        vid, e
+                    ))
+                })?
+                .into_inner();
+
+            let file_path = format!("{}.vif", data_base);
+            let staging = format!("{}.copying", file_path);
+            let staged = crate::server::store_ec::RemoveIncomplete::new(&staging);
+            if drain_optional_copy_to_file(&mut stream, &staging, ".vif").await? > 0 {
+                require_mounted_encode_run(&self.state.store.read().unwrap(), vid, &staging)?;
+                staged_sidecars.push((file_path, staged));
+            }
+        }
+
         // Copy .ecj file if requested. The journal is a *set* of ids: merge
         // the source's into the local one as a union, never append it whole,
         // or every balance round trip doubles it. A source without one
@@ -6495,40 +6530,6 @@ impl VolumeGrpcService {
                             vid, e
                         ))
                     })?;
-            }
-        }
-
-        // The sidecars are staged too and committed with the index, so a failed
-        // copy cannot pair a new .vif with the index this disk keeps.
-        let mut staged_sidecars: Vec<(String, crate::server::store_ec::RemoveIncomplete)> =
-            Vec::new();
-        if req.copy_vif_file {
-            let copy_req = volume_server_pb::CopyFileRequest {
-                volume_id: req.volume_id,
-                collection: req.collection.clone(),
-                is_ec_volume: true,
-                ext: ".vif".to_string(),
-                compaction_revision: u32::MAX,
-                stop_offset: i64::MAX as u64,
-                ignore_source_file_not_found: true,
-                ..Default::default()
-            };
-            let mut stream = client
-                .copy_file(copy_req)
-                .await
-                .map_err(|e| {
-                    Status::internal(format!(
-                        "VolumeEcShardsCopy volume {} copy .vif: {}",
-                        vid, e
-                    ))
-                })?
-                .into_inner();
-
-            let file_path = format!("{}.vif", data_base);
-            let staging = format!("{}.copying", file_path);
-            let staged = crate::server::store_ec::RemoveIncomplete::new(&staging);
-            if drain_optional_copy_to_file(&mut stream, &staging, ".vif").await? > 0 {
-                staged_sidecars.push((file_path, staged));
             }
         }
 
@@ -7327,6 +7328,36 @@ async fn drain_copy_stream_to_file(
             Err(e)
         }
     }
+}
+
+/// Refuses a copied .vif of another encode run than the one this server mounts
+/// for the volume: the mounted volume would keep reporting its run while
+/// serving the copied bytes.
+fn require_mounted_encode_run(
+    store: &crate::storage::store::Store,
+    vid: VolumeId,
+    staged_vif: &str,
+) -> Result<(), Status> {
+    let run = std::fs::read_to_string(staged_vif)
+        .ok()
+        .and_then(|s| serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&s).ok())
+        .and_then(|vi| vi.ec_shard_config)
+        .map_or(0, |c| c.encode_ts_ns);
+    if run == 0 {
+        return Ok(());
+    }
+    for loc in &store.locations {
+        if let Some(ecv) = loc.find_ec_volume(vid)
+            && ecv.encode_ts_ns != 0
+            && ecv.encode_ts_ns != run
+        {
+            return Err(Status::failed_precondition(format!(
+                "VolumeEcShardsCopy volume {}: copied shards are encode run {} but {} mounts run {}",
+                vid, run, loc.directory, ecv.encode_ts_ns
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Decode a CopyFile stream of an `.ecj` into its distinct ids without staging
@@ -10506,6 +10537,74 @@ mod tests {
         assert_eq!(sorted_dir_names(&dir), before);
         assert_eq!(std::fs::read(format!("{}/60.vif", dir)).unwrap(), vif);
         assert_eq!(std::fs::read(format!("{}/60.ecx", dir)).unwrap(), ecx);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_shards_copy_refuses_other_encode_run() {
+        let vif = |run: i64| {
+            serde_json::to_string(&crate::storage::volume::VifVolumeInfo {
+                version: 3,
+                ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                    data_shards: 10,
+                    parity_shards: 4,
+                    encode_ts_ns: run,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .unwrap()
+        };
+        for (src_run, want_err) in [(1000i64, false), (2000, true), (0, false)] {
+            let (source_service, source_tmp) = make_local_service_with_volume("", None);
+            let src = source_tmp.path().to_str().unwrap().to_string();
+            std::fs::write(
+                format!("{}/63.ecx", src),
+                vec![9u8; NEEDLE_MAP_ENTRY_SIZE as usize],
+            )
+            .unwrap();
+            std::fs::write(format!("{}/63.ec00", src), vec![1u8; 4096]).unwrap();
+            std::fs::write(format!("{}/63.vif", src), vif(src_run)).unwrap();
+            let (port, _shutdown) = serve_source(source_service).await;
+
+            let (dest, _dest_tmp, dir) = ec_copy_destination().await;
+            std::fs::write(
+                format!("{}/63.ecx", dir),
+                vec![0u8; NEEDLE_MAP_ENTRY_SIZE as usize],
+            )
+            .unwrap();
+            std::fs::write(format!("{}/63.ec05", dir), vec![5u8; 4096]).unwrap();
+            std::fs::write(format!("{}/63.vif", dir), vif(1000)).unwrap();
+            dest.state
+                .store
+                .write()
+                .unwrap()
+                .mount_ec_shards(VolumeId(63), "", &[5])
+                .unwrap();
+            let before = sorted_dir_names(&dir);
+
+            let result = dest
+                .volume_ec_shards_copy(Request::new(volume_server_pb::VolumeEcShardsCopyRequest {
+                    volume_id: 63,
+                    shard_ids: vec![0],
+                    copy_ecx_file: true,
+                    copy_ecj_file: true,
+                    copy_vif_file: true,
+                    source_data_node: format!("127.0.0.1:1.{}", port),
+                    ..Default::default()
+                }))
+                .await;
+            if !want_err {
+                result.expect("a copy of the mounted run or an unreported run");
+                continue;
+            }
+            let err = result.expect_err("a copy of another encode run");
+            assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{}", err);
+            assert_eq!(sorted_dir_names(&dir), before);
+            assert_eq!(
+                std::fs::read_to_string(format!("{}/63.vif", dir)).unwrap(),
+                vif(1000)
+            );
+        }
     }
 
     // A caller that goes away mid-copy must not release the volume's lifecycle

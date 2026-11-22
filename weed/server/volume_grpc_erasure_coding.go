@@ -522,15 +522,6 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			stagedShards = append(stagedShards, shardId)
 		}
 
-		if req.CopyEcjFile {
-			// The journal is a *set* of ids: merge the source's into the
-			// local one as a union, never append it whole.
-			created.track(indexBaseFileName + ".ecj")
-			if err := vs.copyEcjAndMerge(client, req.Collection, req.VolumeId, location.Directory, indexBaseFileName, throttler); err != nil {
-				return err
-			}
-		}
-
 		// The sidecars are staged too and committed with the index, so a failed
 		// copy cannot pair a new .vif with the index this disk keeps.
 		var stagedSidecars []string
@@ -542,6 +533,18 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			if staged != "" {
 				defer os.Remove(staged)
 				stagedSidecars = append(stagedSidecars, dataBaseFileName+".vif")
+				if err := vs.requireMountedEncodeRun(needle.VolumeId(req.VolumeId), staged); err != nil {
+					return err
+				}
+			}
+		}
+
+		if req.CopyEcjFile {
+			// The journal is a *set* of ids: merge the source's into the
+			// local one as a union, never append it whole.
+			created.track(indexBaseFileName + ".ecj")
+			if err := vs.copyEcjAndMerge(client, req.Collection, req.VolumeId, location.Directory, indexBaseFileName, throttler); err != nil {
+				return err
 			}
 		}
 
@@ -597,10 +600,27 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 	}, vs.grpcDialOption, vs.guardedGrpcDialOption(req.SourceDataNode))
 	if err != nil {
 		created.remove(req.VolumeId)
-		return nil, fmt.Errorf("VolumeEcShardsCopy volume %d: %v", req.VolumeId, err)
+		return nil, fmt.Errorf("VolumeEcShardsCopy volume %d: %w", req.VolumeId, err)
 	}
 
 	return &volume_server_pb.VolumeEcShardsCopyResponse{}, nil
+}
+
+// requireMountedEncodeRun refuses a copied .vif of another encode run than the
+// one this server mounts for the volume: the mounted volume would keep
+// reporting its run while serving the copied bytes.
+func (vs *VolumeServer) requireMountedEncodeRun(vid needle.VolumeId, stagedVif string) error {
+	vi, _, found, _ := volume_info.MaybeLoadVolumeInfo(stagedVif)
+	run := vi.GetEcShardConfig().GetEncodeTsNs()
+	if !found || run == 0 {
+		return nil
+	}
+	for _, location := range vs.store.Locations {
+		if ecv, ok := location.FindEcVolume(vid); ok && ecv.EncodeTsNs != 0 && ecv.EncodeTsNs != run {
+			return status.Errorf(codes.FailedPrecondition, "copied shards are encode run %d but %s mounts run %d", run, location.Directory, ecv.EncodeTsNs)
+		}
+	}
+	return nil
 }
 
 // ecCopyCreatedFiles records the files a VolumeEcShardsCopy adds to its disk,
