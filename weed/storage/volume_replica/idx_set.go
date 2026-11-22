@@ -14,8 +14,9 @@ import (
 )
 
 type replicaLiveIdx struct {
-	loc  wdclient.Location
-	live []types.NeedleId
+	loc    wdclient.Location
+	live   []types.NeedleId
+	missed []types.NeedleId
 }
 
 // LiveNeedlesFromIndex walks a compact needle map and returns live NeedleIds
@@ -63,9 +64,12 @@ func RequireCapacitySource(vid needle.VolumeId, loc wdclient.Location, capacityL
 	return wdclient.Location{}, fmt.Errorf("volume %d: selected source %s is not in the FreeVolumeCount>=2 replica set; refusing encode", vid, loc.Url)
 }
 
-// SelectSourceIfIndexesMatch copies each replica's live .idx and compares
-// NeedleId sets. A read error or a mismatch aborts. One replica skips the
-// comparison. On match, the source is prefer when listed, else the first.
+// SelectSourceIfIndexesMatch copies each replica's .idx and compares live
+// NeedleId sets. A needle live on one replica and tombstoned on another after
+// that write is a delete the first replica missed: it is left out of the
+// comparison, and the source must hold none of them. Any other mismatch or a
+// read error aborts. One replica skips the comparison. On match, the source is
+// prefer when eligible, else the first eligible replica.
 func SelectSourceIfIndexesMatch(grpcDialOption grpc.DialOption, vid needle.VolumeId, collection string, locations []wdclient.Location, prefer string, writer io.Writer) (wdclient.Location, error) {
 	if len(locations) == 0 {
 		return wdclient.Location{}, fmt.Errorf("no replicas available for volume %d", vid)
@@ -78,6 +82,12 @@ func SelectSourceIfIndexesMatch(grpcDialOption grpc.DialOption, vid needle.Volum
 	}
 
 	views := make([]replicaLiveIdx, 0, len(locations))
+	dbs := make([]*needle_map.MemDb, 0, len(locations))
+	defer func() {
+		for _, db := range dbs {
+			db.Close()
+		}
+	}()
 	for _, loc := range locations {
 		status := GetReplicaStatus(grpcDialOption, vid, loc)
 		if status.Error != nil {
@@ -87,15 +97,112 @@ func SelectSourceIfIndexesMatch(grpcDialOption grpc.DialOption, vid needle.Volum
 		if err != nil {
 			return wdclient.Location{}, fmt.Errorf("volume %d: read .idx from %s: %w", vid, loc.Url, err)
 		}
+		dbs = append(dbs, db)
 		live, err := LiveNeedlesFromIndex(db)
-		db.Close()
 		if err != nil {
 			return wdclient.Location{}, fmt.Errorf("volume %d: walk .idx from %s: %w", vid, loc.Url, err)
 		}
 		views = append(views, replicaLiveIdx{loc: loc, live: live})
 	}
 
+	lives := make([][]types.NeedleId, len(views))
+	for i := range views {
+		lives[i] = views[i].live
+	}
+	missed, err := MissedDeletes(lives, dbs, func(i int, nv needle_map.NeedleValue) (uint64, error) {
+		meta, err := ReadNeedleMeta(grpcDialOption, locations[i].ServerAddress(), uint32(vid), nv)
+		if err != nil {
+			return 0, fmt.Errorf("volume %d: read needle %s meta from %s: %w", vid, nv.Key, locations[i].Url, err)
+		}
+		return meta.AppendAtNs, nil
+	})
+	if err != nil {
+		return wdclient.Location{}, err
+	}
+	for i := range views {
+		views[i].missed = missed[i]
+	}
 	return chooseSourceFromLiveNeedles(vid, views, prefer, writer)
+}
+
+// MissedDeletes returns, per replica, the needles live there that another
+// replica tombstoned after that write: deletes the replica missed. live holds
+// each replica's sorted live ids, dbs its index with tombstone rows kept, and
+// appendAtNs reads the AppendAtNs of a row's record on replica i. Ordering by
+// AppendAtNs keeps a needle written again after its delete live, and volumes
+// without AppendAtNs never prove a delete.
+func MissedDeletes(live [][]types.NeedleId, dbs []*needle_map.MemDb, appendAtNs func(replica int, nv needle_map.NeedleValue) (uint64, error)) ([][]types.NeedleId, error) {
+	missed := make([][]types.NeedleId, len(live))
+	for i := range live {
+		notLiveSomewhere := make(map[types.NeedleId]bool)
+		for j := range live {
+			if j != i {
+				for _, id := range subtractNeedleIds(live[i], live[j]) {
+					notLiveSomewhere[id] = true
+				}
+			}
+		}
+		if len(notLiveSomewhere) == 0 {
+			continue
+		}
+		for _, id := range live[i] {
+			if !notLiveSomewhere[id] {
+				continue
+			}
+			liveRow, found := dbs[i].Get(id)
+			if !found {
+				continue
+			}
+			var liveTs uint64
+			for j := range live {
+				if j == i {
+					continue
+				}
+				tombstone, found := dbs[j].Get(id)
+				if !found || !tombstone.Size.IsDeleted() {
+					continue
+				}
+				if liveTs == 0 {
+					ts, err := appendAtNs(i, *liveRow)
+					if err != nil {
+						return nil, err
+					}
+					if ts == 0 {
+						break
+					}
+					liveTs = ts
+				}
+				tombstoneTs, err := appendAtNs(j, *tombstone)
+				if err != nil {
+					return nil, err
+				}
+				if tombstoneTs > liveTs {
+					missed[i] = append(missed[i], id)
+					break
+				}
+			}
+		}
+	}
+	return missed, nil
+}
+
+// subtractNeedleIds returns the ids of sorted a that are not in sorted b.
+func subtractNeedleIds(a, b []types.NeedleId) []types.NeedleId {
+	if len(b) == 0 {
+		return a
+	}
+	var out []types.NeedleId
+	j := 0
+	for _, id := range a {
+		for j < len(b) && b[j] < id {
+			j++
+		}
+		if j < len(b) && b[j] == id {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 func chooseSourceFromLiveNeedles(vid needle.VolumeId, views []replicaLiveIdx, prefer string, writer io.Writer) (wdclient.Location, error) {
@@ -103,12 +210,13 @@ func chooseSourceFromLiveNeedles(vid needle.VolumeId, views []replicaLiveIdx, pr
 		return wdclient.Location{}, fmt.Errorf("volume %d: no data-bearing replicas to encode", vid)
 	}
 
-	reference := views[0].live
+	reference := subtractNeedleIds(views[0].live, views[0].missed)
 	referenceUrl := views[0].loc.Url
 	for _, view := range views[1:] {
-		if !EqualLiveNeedleSets(reference, view.live) {
+		agreed := subtractNeedleIds(view.live, view.missed)
+		if !EqualLiveNeedleSets(reference, agreed) {
 			return wdclient.Location{}, fmt.Errorf("volume %d: replica %s live NeedleId set does not match %s (%d vs %d entries); refusing encode (no union)",
-				vid, view.loc.Url, referenceUrl, len(view.live), len(reference))
+				vid, view.loc.Url, referenceUrl, len(agreed), len(reference))
 		}
 	}
 
@@ -116,19 +224,35 @@ func chooseSourceFromLiveNeedles(vid needle.VolumeId, views []replicaLiveIdx, pr
 		return wdclient.Location{}, fmt.Errorf("volume %d: no data-bearing replicas to encode", vid)
 	}
 
-	if writer != nil {
-		fmt.Fprintf(writer, "volume %d: all %d data replicas are consistent (matching live idx sets, %d needles)\n",
-			vid, len(views), len(reference))
-	}
-
-	if prefer != "" {
-		for _, view := range views {
-			if view.loc.Url == prefer {
-				return view.loc, nil
+	var source *replicaLiveIdx
+	missedDeletes := 0
+	for i := range views {
+		if len(views[i].missed) > 0 {
+			missedDeletes += len(views[i].missed)
+			if writer != nil {
+				fmt.Fprintf(writer, "volume %d: replica %s missed %d delete(s) that another replica applied later; not encoding from it\n",
+					vid, views[i].loc.Url, len(views[i].missed))
 			}
+			continue
+		}
+		if source == nil || views[i].loc.Url == prefer {
+			source = &views[i]
 		}
 	}
-	return views[0].loc, nil
+	if source == nil {
+		return wdclient.Location{}, fmt.Errorf("volume %d: every replica missed a delete another replica applied; refusing encode (no union), run volume.check.disk -volumeId %d -slow -syncDeleted -apply first", vid, vid)
+	}
+
+	if writer != nil {
+		if missedDeletes == 0 {
+			fmt.Fprintf(writer, "volume %d: all %d data replicas are consistent (matching live idx sets, %d needles)\n",
+				vid, len(views), len(reference))
+		} else {
+			fmt.Fprintf(writer, "volume %d: all %d data replicas are consistent apart from %d missed delete(s) (%d needles); encoding from %s\n",
+				vid, len(views), missedDeletes, len(reference), source.loc.Url)
+		}
+	}
+	return source.loc, nil
 }
 
 // ReadReplicaIndex streams a replica's .idx into an in-memory compact map.

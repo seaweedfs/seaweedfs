@@ -420,8 +420,8 @@ func (t *ErasureCodingTask) syncAndSelectSourceReplica() error {
 
 // lateBindSourceToWorkerHost returns the replica on the worker -address host
 // (any port), keeping current when no replica shares that host. Worker address
-// is not a volume URL. Safe to prefer after the idx gate: matching live sets
-// make every listed replica an equivalent source.
+// is not a volume URL. Safe to prefer: the idx gate only honors it for a
+// replica that holds the agreed live set.
 func lateBindSourceToWorkerHost(current, workerAddress string, locs []wdclient.Location) string {
 	workerHost := util.HostKey(workerAddress)
 	if workerHost == "" {
