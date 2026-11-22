@@ -905,6 +905,13 @@ func TestDeleteOneVolumeRefusesTrimOfUncoveredNeedles(t *testing.T) {
 			wantDeleted: 1,
 		},
 		{
+			name:        "needle rewritten after a delete is short of copies",
+			replication: "001",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(1)}, {live(1), deleted(2), live(2)}},
+			wantDeleted: 0,
+		},
+		{
 			name:        "short volume keeps every needle on its only survivor",
 			replication: "002",
 			doomed:      []needle_map.NeedleValue{live(1), live(2)},
