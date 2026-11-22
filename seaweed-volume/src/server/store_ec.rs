@@ -158,7 +158,7 @@ pub async fn read_ec_shard_needle_or_miss(
         match cached_lookup_ec_shard_locations(state, vid).await {
             Ok(fresh) => {
                 // A complete reply merges into the cache; an incomplete one
-                // (< data_shards) is left unwritten — keep the prior cache.
+                // (< data_shards) only fills shards the cache lacks.
                 match write_back_shard_locations(
                     state,
                     vid,
@@ -167,8 +167,6 @@ pub async fn read_ec_shard_needle_or_miss(
                     snapshot.encode_ts_ns,
                 ) {
                     Some(merged) => shard_locations = merged,
-                    // An incomplete reply leaves the cache unwritten and its refresh
-                    // time unadvanced, so the mark this refresh consumed goes back.
                     None => mark_shard_locations_stale(state, vid),
                 }
             }
@@ -714,8 +712,10 @@ pub async fn scrub_ec_volume_distributed(
     ) {
         match cached_lookup_ec_shard_locations(state, vid).await {
             Ok(fresh) => {
+                let partial = fresh.len() < data_shards;
                 if write_back_shard_locations(state, vid, fresh, data_shards, expected_encode_ts_ns)
                     .is_none()
+                    || partial
                 {
                     mark_shard_locations_stale(state, vid);
                     return (
@@ -1262,16 +1262,15 @@ fn shard_locations_from_reply(
 }
 
 /// Merge a fresh `LookupEcVolume` reply into the per-EcVolume shard-location
-/// cache. Returns the merged map on success, or `None` when the reply is
-/// incomplete (and was therefore NOT written) or the volume is gone.
+/// cache. Returns the resulting map, or `None` when the volume is gone.
 ///
 /// Completeness guard (mirrors Go's `cachedLookupEcShardLocations`): a reply
 /// carrying fewer than `data_shards` shard locations is a master-mid-recovery
-/// partial, not ground truth — Go aborts the lookup with a retryable error and
-/// leaves the cache + refresh time untouched. Returning `None` without writing
-/// does the same, so a previously-complete cache is never clobbered with a
-/// partial map. On a complete reply the write is a per-shard MERGE (see
-/// `merge_shard_locations`), not a full replace.
+/// partial, not ground truth. It only fills shards the cache does not know, and
+/// leaves the refresh time unadvanced with the map marked stale, so a
+/// previously-complete cache is never clobbered with a partial map. On a
+/// complete reply the write is a per-shard MERGE (see `merge_shard_locations`),
+/// not a full replace.
 fn write_back_shard_locations(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
@@ -1279,11 +1278,11 @@ fn write_back_shard_locations(
     data_shards: usize,
     expected_encode_ts_ns: i64,
 ) -> Option<HashMap<ShardId, Vec<String>>> {
-    if locations.len() < data_shards {
-        return None;
-    }
     let store = state.store.read().unwrap();
     let ecv = find_ec_volume_for_scrub(&store, vid, expected_encode_ts_ns)?;
+    if locations.len() < data_shards {
+        return Some(ecv.fill_shard_location_gaps(locations));
+    }
     Some(ecv.merge_shard_locations(locations))
 }
 

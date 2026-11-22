@@ -1745,6 +1745,25 @@ impl EcVolume {
         cache.locations.clone()
     }
 
+    /// Take a partial reply's holders for the shards the cache does not know,
+    /// leaving every known shard and the refresh time alone. A partial is not
+    /// the volume's map, but a cold cache can still read those shards directly;
+    /// the map stays marked so the next read looks it up again.
+    pub(crate) fn fill_shard_location_gaps(
+        &self,
+        locations: HashMap<ShardId, Vec<String>>,
+    ) -> HashMap<ShardId, Vec<String>> {
+        let mut cache = self.shard_locations.write().unwrap();
+        for (shard_id, addrs) in locations {
+            let known = cache.locations.entry(shard_id).or_default();
+            if known.is_empty() {
+                *known = addrs;
+            }
+        }
+        cache.stale = true;
+        cache.locations.clone()
+    }
+
     /// The cached map and the time it was learned, read in one section. Both
     /// halves describe the same refresh, which is what the freshness heuristic
     /// assumes when it ages the map against the timestamp.
@@ -5447,6 +5466,34 @@ mod tests {
         assert!(
             later.unwrap() >= before,
             "the second merge re-stamped the refresh time"
+        );
+    }
+
+    #[test]
+    fn fill_shard_location_gaps_keeps_known_shards_and_refresh_time() {
+        let tmp = TempDir::new().unwrap();
+        let vol = mount_bare_ec_volume(tmp.path().to_str().unwrap());
+
+        let filled = vol.fill_shard_location_gaps(HashMap::from([(0, vec!["a:1".to_string()])]));
+        assert_eq!(filled.get(&0), Some(&vec!["a:1".to_string()]));
+        assert!(
+            vol.shard_locations_snapshot().1.is_none(),
+            "a partial reply is not a refresh"
+        );
+
+        vol.merge_shard_locations(HashMap::from([(1, vec!["b:2".to_string()])]));
+        let stamped = vol.shard_locations_snapshot().1;
+        vol.claim_shard_locations_refresh(|_| true);
+        let filled = vol.fill_shard_location_gaps(HashMap::from([
+            (1, vec!["c:3".to_string()]),
+            (2, vec!["d:4".to_string()]),
+        ]));
+        assert_eq!(filled.get(&1), Some(&vec!["b:2".to_string()]));
+        assert_eq!(filled.get(&2), Some(&vec!["d:4".to_string()]));
+        assert_eq!(vol.shard_locations_snapshot().1, stamped);
+        assert!(
+            vol.claim_shard_locations_refresh(|stale| stale),
+            "the partial leaves the map marked for the next lookup"
         );
     }
 
