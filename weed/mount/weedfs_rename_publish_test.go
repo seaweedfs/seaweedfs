@@ -474,7 +474,8 @@ func TestRenameStressWithAttributeChanges(t *testing.T) {
 				in := &fuse.SetAttrIn{}
 				in.NodeId, in.Valid, in.Mode = out.NodeId, fuse.FATTR_MODE, mode
 				in.Caller = fuse.Caller{Owner: fuse.Owner{Uid: 123, Gid: 456}}
-				if st := wfs.SetAttr(make(chan struct{}), in, &fuse.AttrOut{}); st != fuse.OK {
+				// EAGAIN: renamed again every time the chmod waited
+				if st := wfs.SetAttr(make(chan struct{}), in, &fuse.AttrOut{}); st != fuse.OK && st != fuse.Status(syscall.EAGAIN) {
 					failed <- st
 					return
 				}
@@ -558,7 +559,7 @@ func TestRenameStressWithFlushes(t *testing.T) {
 		in := &fuse.SetAttrIn{}
 		in.NodeId, in.Valid, in.Mode = out.NodeId, fuse.FATTR_MODE, 0o640
 		in.Caller = fuse.Caller{Owner: fuse.Owner{Uid: 123, Gid: 456}}
-		if st := wfs.SetAttr(make(chan struct{}), in, &fuse.AttrOut{}); st != fuse.OK {
+		if st := wfs.SetAttr(make(chan struct{}), in, &fuse.AttrOut{}); st != fuse.OK && st != fuse.Status(syscall.EAGAIN) {
 			return st.String()
 		}
 		return ""

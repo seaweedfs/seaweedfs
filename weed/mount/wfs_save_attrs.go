@@ -168,14 +168,18 @@ func (wfs *WFS) lockMetadataPublication(path util.FullPath) func() {
 // until it has moved the node here, so an attribute change that waited for
 // one finds the node under its new name, or under none when the rename
 // replaced it: it reads the node again and locks the name it has now instead
-// of writing the old one.
+// of writing the old one. A node renamed again each of four times it waited
+// gets EAGAIN rather than a write to a name it no longer has.
 func (wfs *WFS) lockNodePublication(ctx context.Context, nodeId uint64, path util.FullPath, fh *FileHandle, entry *filer_pb.Entry) (util.FullPath, *FileHandle, *filer_pb.Entry, func(), fuse.Status) {
 	for attempt := 0; ; attempt++ {
 		unlock := wfs.lockMetadataPublication(path)
-		if now, st := wfs.inodeToPath.GetPath(nodeId); st == fuse.OK && now == path || attempt == 3 {
+		if now, st := wfs.inodeToPath.GetPath(nodeId); st == fuse.OK && now == path {
 			return path, fh, entry, unlock, fuse.OK
 		}
 		unlock()
+		if attempt == 3 {
+			return path, fh, entry, func() {}, fuse.Status(syscall.EAGAIN)
+		}
 		var st fuse.Status
 		if path, fh, entry, st = wfs.maybeReadEntry(ctx, nodeId); st != fuse.OK || entry == nil || path == "" {
 			return path, fh, entry, func() {}, st
