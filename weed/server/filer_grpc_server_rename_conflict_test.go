@@ -409,3 +409,37 @@ func (s *renameLiveStream) Send(resp *filer_pb.StreamRenameEntryResponse) error 
 	s.sourceAt = append(s.sourceAt, err == nil)
 	return nil
 }
+
+// With a path-specific store configured, the default store's transaction does
+// not cover the writes under that store's prefix (a parent created at the
+// destination, say), so a refused rename is not run again.
+func TestRenameWithPathSpecificStoreIsNotRunAgain(t *testing.T) {
+	for _, stream := range []bool{true, false} {
+		t.Run(map[bool]string{true: "stream", false: "atomic"}[stream], func(t *testing.T) {
+			store := newTxnRenameStore()
+			store.entries["/ckpt/.tmpP"] = fileEntryWithChunk("/ckpt/.tmpP", 101, "1,0a01")
+			store.refuse = writeConflict
+			swapNotificationQueue(t, &captureQueue{})
+			f := newRenameTestFiler(t, store)
+			f.Store.(*filer.FilerStoreWrapper).AddPathSpecificStore("/archive/", "archive", newRenameTestStore())
+			server := &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()}
+
+			var err error
+			if stream {
+				err = server.StreamRenameEntry(&filer_pb.StreamRenameEntryRequest{
+					OldDirectory: "/ckpt", OldName: ".tmpP", NewDirectory: "/ckpt", NewName: "p.bin",
+				}, &commitStampedStream{store: store})
+			} else {
+				_, err = server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+					OldDirectory: "/ckpt", OldName: ".tmpP", NewDirectory: "/ckpt", NewName: "p.bin",
+				})
+			}
+			if err == nil || !strings.Contains(err.Error(), "move commit error") {
+				t.Fatalf("rename = %v, want the commit error", err)
+			}
+			if got := store.commitCount(); got != 1 {
+				t.Fatalf("commits = %d, want 1: the transaction does not cover every write", got)
+			}
+		})
+	}
+}

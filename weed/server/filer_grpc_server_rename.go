@@ -69,7 +69,7 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 		if moveErr := fs.moveEntry(ctx, nil, oldParent, oldEntry, newParent, req.NewName, req.Signatures, false, &effects.metadataEvents, &effects.pendingChunkDeletes, &effects.pendingRemoteCopies); moveErr != nil {
 			return false, fmt.Errorf("%s/%s move error: %v", req.OldDirectory, req.OldName, moveErr)
 		}
-		return retryableRename(oldEntry, effects), nil
+		return filer.IsolatingTransaction(ctx) && retryableRename(oldEntry, effects), nil
 	})
 	if err != nil {
 		return nil, err
@@ -190,7 +190,8 @@ func (fs *FilerServer) runRenameTransaction(ctx context.Context, oldPath string,
 // retryableRename reports whether a rename's transaction may run again after
 // the store refused its commit: a file move that did nothing outside the
 // transaction. A remote object copied or deleted on the way, for the file or
-// for the target it replaced, would stay copied or deleted.
+// for the target it replaced, would stay copied or deleted. The caller also
+// checks that the transaction covers every write (IsolatingTransaction).
 func retryableRename(oldEntry *filer.Entry, effects *renameEffects) bool {
 	if oldEntry.IsDirectory() || oldEntry.Remote != nil || len(effects.pendingRemoteCopies) > 0 {
 		return false

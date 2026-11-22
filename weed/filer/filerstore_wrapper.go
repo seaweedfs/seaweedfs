@@ -440,7 +440,9 @@ type isolatingTransactionKey struct{}
 
 // IsolatingTransaction reports whether ctx carries a transaction the store
 // began for real, whose writes no other reader sees before its commit (SQL,
-// TiKV). A store without transactions hands its context back unchanged.
+// TiKV), and which covers every write: a store without transactions hands its
+// context back unchanged, and with path-specific stores configured the writes
+// under their prefixes bypass the default store's transaction.
 func IsolatingTransaction(ctx context.Context) bool {
 	isolating, _ := ctx.Value(isolatingTransactionKey{}).(bool)
 	return isolating
@@ -452,7 +454,7 @@ func (fsw *FilerStoreWrapper) BeginTransaction(ctx context.Context) (context.Con
 	}
 	ctx = context.WithoutCancel(ctx)
 	txCtx, err := fsw.getDefaultStore().BeginTransaction(ctx)
-	if err == nil && txCtx != ctx {
+	if err == nil && txCtx != ctx && !fsw.hasPathSpecificStore {
 		txCtx = context.WithValue(txCtx, isolatingTransactionKey{}, true)
 	}
 	return txCtx, err
