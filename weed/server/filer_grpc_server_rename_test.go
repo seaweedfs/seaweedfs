@@ -34,6 +34,7 @@ type renameTestStore struct {
 	findDelay time.Duration // optional: widen check-then-act windows in tests
 	findErr   error         // simulates a failing entry lookup
 	strictTx  bool          // like a SQL store: calls through a committed transaction fail
+	openTx    int           // strictTx transactions begun and not yet committed or rolled back
 
 	kv        map[string][]byte // optional KV (hard links); nil: every key is absent
 	kvGetErrs int               // fail this many KvGet calls before answering
@@ -64,20 +65,38 @@ func (s *renameTestStore) Initialize(util.Configuration, string) error { return 
 func (s *renameTestStore) Shutdown()                                   {}
 func (s *renameTestStore) BeginTransaction(ctx context.Context) (context.Context, error) {
 	if s.strictTx {
+		s.mu.Lock()
+		s.openTx++
+		s.mu.Unlock()
 		return context.WithValue(ctx, renameTestTxKey{}, &renameTestTx{}), nil
 	}
 	return ctx, nil
 }
-func (s *renameTestStore) CommitTransaction(ctx context.Context) error {
+
+// endTx marks the transaction in ctx committed or rolled back.
+func (s *renameTestStore) endTx(ctx context.Context) {
 	if tx, ok := ctx.Value(renameTestTxKey{}).(*renameTestTx); ok {
-		tx.done = true
+		s.mu.Lock()
+		if !tx.done {
+			s.openTx--
+			tx.done = true
+		}
+		s.mu.Unlock()
 	}
+}
+
+func (s *renameTestStore) openTransactions() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.openTx
+}
+
+func (s *renameTestStore) CommitTransaction(ctx context.Context) error {
+	s.endTx(ctx)
 	return s.commitErr
 }
 func (s *renameTestStore) RollbackTransaction(ctx context.Context) error {
-	if tx, ok := ctx.Value(renameTestTxKey{}).(*renameTestTx); ok {
-		tx.done = true
-	}
+	s.endTx(ctx)
 	return nil
 }
 func (s *renameTestStore) KvPut(_ context.Context, key []byte, value []byte) error {
@@ -300,7 +319,7 @@ func swapNotificationQueue(t *testing.T, q notification.MessageQueue) {
 // each, and its loop goroutines keep the whole filer reachable, so the tens of
 // filers this package builds would otherwise pin gigabytes for the rest of the
 // run - fatal on 32-bit, where that exhausts the address space.
-func newRenameTestFiler(t *testing.T, store *renameTestStore) *filer.Filer {
+func newRenameTestFiler(t *testing.T, store filer.FilerStore) *filer.Filer {
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
 	masterClient := wdclient.NewMasterClient(
 		dialOption,
