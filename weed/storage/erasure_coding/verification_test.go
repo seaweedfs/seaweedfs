@@ -152,6 +152,8 @@ func TestRequireAgreedEncodeRun(t *testing.T) {
 	}{
 		{"one run", map[string]ServerShardInventory{"a": {Bits: stale, EncodeTsNs: 200}, "b": {Bits: fresh, EncodeTsNs: 200}}, false},
 		{"two runs", map[string]ServerShardInventory{"a": {Bits: stale, EncodeTsNs: 100}, "b": {Bits: fresh, EncodeTsNs: 200}}, true},
+		{"mixed holder alone", map[string]ServerShardInventory{"a": {Bits: stale | fresh, EncodeTsNs: MixedEncodeRuns}}, true},
+		{"mixed holder beside agreeing run", map[string]ServerShardInventory{"a": {Bits: stale, EncodeTsNs: MixedEncodeRuns}, "b": {Bits: fresh, EncodeTsNs: 200}}, true},
 		{"unreported run skipped", map[string]ServerShardInventory{"a": {Bits: stale}, "b": {Bits: fresh, EncodeTsNs: 200}}, false},
 		{"no shards skipped", map[string]ServerShardInventory{"a": {EncodeTsNs: 100}, "b": {Bits: fresh, EncodeTsNs: 200}}, false},
 		{"unreachable skipped", map[string]ServerShardInventory{"a": {Bits: stale, EncodeTsNs: 100, QueryError: errors.New("down")}, "b": {Bits: fresh, EncodeTsNs: 200}}, false},

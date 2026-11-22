@@ -142,6 +142,10 @@ func RequireAgreedBlockLayout(volumeID uint32, encodedBlockSize int64, perServer
 		volumeID, encodedBlockSize, disagreeing)
 }
 
+// MixedEncodeRuns is the encode run a holder reports when its disks serve
+// shards of more than one encode run for the volume.
+const MixedEncodeRuns int64 = -1
+
 // RequireAgreedEncodeRun fails when the holders that answered serve shards of
 // different encode runs. A shard set mixing runs counts as complete by shard
 // ids alone, yet reconstructs wrong bytes wherever the runs' inputs differ.
@@ -155,12 +159,16 @@ func RequireAgreedEncodeRun(volumeID uint32, perServer map[string]ServerShardInv
 		}
 		byRun[inv.EncodeTsNs] = append(byRun[inv.EncodeTsNs], server)
 	}
-	if len(byRun) <= 1 {
+	if _, mixed := byRun[MixedEncodeRuns]; !mixed && len(byRun) <= 1 {
 		return nil
 	}
 	runs := make([]string, 0, len(byRun))
 	for ts, servers := range byRun {
 		sort.Strings(servers)
+		if ts == MixedEncodeRuns {
+			runs = append(runs, fmt.Sprintf("more than one run on each of %v", servers))
+			continue
+		}
 		runs = append(runs, fmt.Sprintf("run %d on %v", ts, servers))
 	}
 	sort.Strings(runs)
