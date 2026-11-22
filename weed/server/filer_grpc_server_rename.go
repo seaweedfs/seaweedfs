@@ -69,7 +69,7 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 		if moveErr := fs.moveEntry(ctx, nil, oldParent, oldEntry, newParent, req.NewName, req.Signatures, false, &effects.metadataEvents, &effects.pendingChunkDeletes, &effects.pendingRemoteCopies); moveErr != nil {
 			return false, fmt.Errorf("%s/%s move error: %v", req.OldDirectory, req.OldName, moveErr)
 		}
-		return filer.IsolatingTransaction(ctx) && retryableRename(oldEntry, effects), nil
+		return fs.filer.TransactionCovers(ctx, oldParent.Child(req.OldName), newParent.Child(req.NewName)) && retryableRename(oldEntry, effects), nil
 	})
 	if err != nil {
 		return nil, err
@@ -115,16 +115,16 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 			}
 		}
 
-		// The client applies each response as it arrives. When the transaction
-		// covers the whole rename, a file's responses wait for the commit: a
-		// rename the store refuses never reaches the client, and one that runs
-		// again sends them once. A directory sends its children's as it moves
-		// them, which keeps the client of a long rename from timing out; having
-		// sent them, it does not run again. So does a file with a remote
-		// object, whose remote copy after the commit the client need not wait
-		// for.
+		// The client applies each response as it arrives. When the store's
+		// transaction covers the rename's writes, a file's responses wait for
+		// the commit: a rename the store refuses never reaches the client, and
+		// one that runs again sends them once. A directory sends its
+		// children's as it moves them, which keeps the client of a long rename
+		// from timing out; having sent them, it does not run again. Without
+		// such a transaction the writes show as they are made, and so do the
+		// responses.
 		responses := stream
-		if !oldEntry.IsDirectory() && oldEntry.Remote == nil && filer.IsolatingTransaction(ctx) {
+		if !oldEntry.IsDirectory() && fs.filer.TransactionCovers(ctx, oldParent.Child(req.OldName), newParent.Child(req.NewName)) {
 			held = &renameResponseBuffer{SeaweedFiler_StreamRenameEntryServer: stream}
 			responses = held
 		}
@@ -136,13 +136,23 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 	if err != nil {
 		return err
 	}
-	// Committed: finish what the commit leaves before the held responses go
-	// out, so that a client that stopped reading cannot hold it up.
-	fs.finishRename(afterCommitCtx, effects, req.Signatures)
-	if held != nil {
-		return held.release()
+	if held == nil {
+		fs.finishRename(afterCommitCtx, effects, req.Signatures)
+		return nil
 	}
-	return nil
+	// Committed. The held responses go out while the rename finishes what the
+	// commit leaves (events, chunk deletions, remote copies): a client that
+	// stopped reading cannot hold that work up, and a slow remote copy does
+	// not keep the client waiting for its responses. The call returns, and
+	// gives up the rename's path locks, once both are done.
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		fs.finishRename(afterCommitCtx, effects, req.Signatures)
+	}()
+	err = held.release()
+	<-finished
+	return err
 }
 
 // renameAttempts bounds how often a rename runs its transaction while the
@@ -193,7 +203,7 @@ func (fs *FilerServer) runRenameTransaction(ctx context.Context, oldPath string,
 // the store refused its commit: a file move that did nothing outside the
 // transaction. A remote object copied or deleted on the way, for the file or
 // for the target it replaced, would stay copied or deleted. The caller also
-// checks that the transaction covers every write (IsolatingTransaction).
+// checks that the transaction covers the rename's writes (TransactionCovers).
 func retryableRename(oldEntry *filer.Entry, effects *renameEffects) bool {
 	if oldEntry.IsDirectory() || oldEntry.Remote != nil || len(effects.pendingRemoteCopies) > 0 {
 		return false
@@ -229,7 +239,13 @@ type renameResponseBuffer struct {
 	held []*filer_pb.StreamRenameEntryResponse
 }
 
+// Send keeps resp for after the commit. It fails as the stream would once the
+// client has gone away, so a rename whose client canceled is rolled back, as
+// it is when the responses go out at once, instead of committed unseen.
 func (b *renameResponseBuffer) Send(resp *filer_pb.StreamRenameEntryResponse) error {
+	if err := b.Context().Err(); err != nil {
+		return err
+	}
 	b.held = append(b.held, resp)
 	return nil
 }

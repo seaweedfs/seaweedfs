@@ -376,6 +376,15 @@ func (store *TikvStore) CommitTransaction(ctx context.Context) error {
 	return nil
 }
 
+// IsolatesTransactions: every entry and KV call takes the transaction its
+// context carries (getTxn), and TiKV keeps a transaction's writes to itself
+// until its commit.
+func (store *TikvStore) IsolatesTransactions() bool {
+	return true
+}
+
+var _ filer.IsolatingTransactionStore = (*TikvStore)(nil)
+
 // commitError marks a write conflict as a transaction conflict: another writer
 // committed a key this optimistic transaction wrote after it began, so the
 // transaction can succeed when run again.
