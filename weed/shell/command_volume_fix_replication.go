@@ -350,18 +350,21 @@ func countUncoveredNeedles(commandEnv *CommandEnv, writer io.Writer, doomed *Vol
 	if err := vcd.readIndexDatabase(doomedDB, doomed.info.Collection, doomed.info.Id, pb.NewServerAddressFromDataNode(doomed.location.dataNode)); err != nil {
 		return 0, fmt.Errorf("readIndexDatabase %s volume %d: %v", doomed.location.dataNode.Id, doomed.info.Id, err)
 	}
-	var survivorDBs []*needle_map.MemDb
-	defer func() {
-		for _, db := range survivorDBs {
-			db.Close()
+	survivors := 0
+	for _, survivor := range replicas {
+		if survivor.location.dataNode != doomed.location.dataNode {
+			survivors++
 		}
-	}()
+	}
+	required := int8(min(copyCount, survivors))
+	// holders[i] counts, up to required, the survivors holding the i-th
+	// needle of doomedDB; -1 once a survivor holds its delete.
+	var holders []int8
 	for _, survivor := range replicas {
 		if survivor.location.dataNode == doomed.location.dataNode {
 			continue
 		}
 		db := needle_map.NewMemDb()
-		survivorDBs = append(survivorDBs, db)
 		var index bytes.Buffer
 		err := vcd.copyVolumeIndexFile(survivor.info.Collection, survivor.info.Id, pb.NewServerAddressFromDataNode(survivor.location.dataNode), &index)
 		if err == nil {
@@ -372,28 +375,34 @@ func countUncoveredNeedles(commandEnv *CommandEnv, writer io.Writer, doomed *Vol
 				return db.Set(key, offset, size)
 			})
 		}
+		if err == nil {
+			i := 0
+			err = doomedDB.AscendingVisit(func(value needle_map.NeedleValue) error {
+				if i == len(holders) {
+					holders = append(holders, 0)
+				}
+				if held, found := db.Get(value.Key); found && holders[i] >= 0 {
+					if held.Size.IsDeleted() {
+						holders[i] = -1
+					} else if holders[i] < required {
+						holders[i]++
+					}
+				}
+				i++
+				return nil
+			})
+		}
+		db.Close()
 		if err != nil {
 			return 0, fmt.Errorf("readIndexDatabase %s volume %d: %v", survivor.location.dataNode.Id, survivor.info.Id, err)
 		}
 	}
-	required := min(copyCount, len(survivorDBs))
-	count := 0
+	count, i := 0, 0
 	err := doomedDB.AscendingVisit(func(value needle_map.NeedleValue) error {
-		if value.Size.IsDeleted() {
-			return nil
-		}
-		holders := 0
-		for _, db := range survivorDBs {
-			if held, found := db.Get(value.Key); found {
-				if held.Size.IsDeleted() {
-					return nil
-				}
-				holders++
-			}
-		}
-		if holders < required {
+		if !value.Size.IsDeleted() && (i == len(holders) || (holders[i] >= 0 && holders[i] < required)) {
 			count++
 		}
+		i++
 		return nil
 	})
 	return count, err
