@@ -4663,7 +4663,7 @@ impl VolumeServer for VolumeGrpcService {
         let ec_shard_config = Some(volume_server_pb::EcShardConfig {
             data_shards: ec_vol.data_shards,
             parity_shards: ec_vol.parity_shards,
-            encode_ts_ns: 0,
+            encode_ts_ns: ec_vol.encode_ts_ns,
             block_size: ec_vol.block_size,
         });
 

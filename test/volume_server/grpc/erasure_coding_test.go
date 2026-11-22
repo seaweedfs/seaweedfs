@@ -259,6 +259,9 @@ func TestEcGenerateMountInfoUnmountLifecycle(t *testing.T) {
 	if infoResp.GetVolumeSize() == 0 {
 		t.Fatalf("VolumeEcShardsInfo expected non-zero volume size after mount")
 	}
+	if infoResp.GetEcShardConfig().GetEncodeTsNs() == 0 {
+		t.Fatalf("VolumeEcShardsInfo expected the encode run of the generated shards")
+	}
 
 	_, err = grpcClient.VolumeEcShardsUnmount(ctx, &volume_server_pb.VolumeEcShardsUnmountRequest{
 		VolumeId: volumeID,

@@ -269,3 +269,12 @@ func TestReadEcGenerationTsNs(t *testing.T) {
 	require.True(t, readableC)
 	require.Equal(t, int64(0), genC)
 }
+
+func TestVolumeEcShardsInfoReportsEncodeRun(t *testing.T) {
+	vid := needle.VolumeId(57)
+	store := buildEcStoreWithGeneration(t, t.TempDir(), "ec-info-run", vid, 4242, []erasure_coding.ShardId{0})
+	vs := &VolumeServer{store: store}
+	resp, err := vs.VolumeEcShardsInfo(context.Background(), &volume_server_pb.VolumeEcShardsInfoRequest{VolumeId: uint32(vid)})
+	require.NoError(t, err)
+	require.Equal(t, int64(4242), resp.GetEcShardConfig().GetEncodeTsNs())
+}

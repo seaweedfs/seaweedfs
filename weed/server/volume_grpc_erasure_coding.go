@@ -1712,6 +1712,7 @@ func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serv
 		ecShardConfig = &volume_server_pb.EcShardConfig{
 			DataShards:   uint32(primary.ECContext.DataShards),
 			ParityShards: uint32(primary.ECContext.ParityShards),
+			EncodeTsNs:   primary.EncodeTsNs,
 			BlockSize:    primary.ECContext.BlockSize,
 		}
 	}
