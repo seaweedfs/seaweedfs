@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -370,9 +371,6 @@ func TestStreamRenameOfRemoteFileIsNotRunAgain(t *testing.T) {
 	if got := store.commitCount(); got != 1 {
 		t.Fatalf("commits = %d, want 1: a remote file's rename is not run again", got)
 	}
-	if len(stream.sent) != 0 {
-		t.Fatalf("client got %d responses for a rename that did not happen", len(stream.sent))
-	}
 }
 
 // On a store without transactions nothing can refuse a commit, and the
@@ -441,5 +439,53 @@ func TestRenameWithPathSpecificStoreIsNotRunAgain(t *testing.T) {
 				t.Fatalf("commits = %d, want 1: the transaction does not cover every write", got)
 			}
 		})
+	}
+}
+
+// unreadRenameStream stands for a client that stopped reading: Send waits
+// until the test lets it go.
+type unreadRenameStream struct {
+	grpc.ServerStream
+	release chan struct{}
+}
+
+func (s *unreadRenameStream) Context() context.Context { return context.Background() }
+func (s *unreadRenameStream) Send(*filer_pb.StreamRenameEntryResponse) error {
+	<-s.release
+	return nil
+}
+
+// A committed rename finishes (events, chunk deletions) before its held
+// responses go out, so a client that stops reading cannot hold that up.
+func TestStreamRenameFinishesBeforeTheClientReads(t *testing.T) {
+	store := newTxnRenameStore()
+	store.entries["/ckpt/.tmpB"] = fileEntryWithChunk("/ckpt/.tmpB", 101, "1,0a01")
+	store.entries["/ckpt/b.bin"] = fileEntryWithChunk("/ckpt/b.bin", 102, "2,0b02")
+	queue := &captureQueue{}
+	swapNotificationQueue(t, queue)
+	f := newRenameTestFiler(t, store)
+	server := &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()}
+	stream := &unreadRenameStream{release: make(chan struct{})}
+	done := make(chan error, 1)
+	go func() {
+		done <- server.StreamRenameEntry(&filer_pb.StreamRenameEntryRequest{
+			OldDirectory: "/ckpt", OldName: ".tmpB", NewDirectory: "/ckpt", NewName: "b.bin",
+		}, stream)
+	}()
+	defer func() {
+		close(stream.release)
+		if err := <-done; err != nil {
+			t.Errorf("StreamRenameEntry: %v", err)
+		}
+	}()
+
+	for deadline := time.Now().Add(10 * time.Second); len(queue.snapshot()) < 2 && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if events := queue.snapshot(); len(events) != 2 {
+		t.Fatalf("metadata events = %d while the client does not read, want the target's delete and the rename", len(events))
+	}
+	if got := queuedDeletions(f); len(got) != 1 || got[0] != "2,0b02" {
+		t.Fatalf("queued chunk deletions = %v while the client does not read, want the replaced file's 2,0b02", got)
 	}
 }

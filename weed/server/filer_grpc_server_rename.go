@@ -115,14 +115,16 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 			}
 		}
 
-		// The client applies each response as it arrives. On a store whose
-		// transactions keep their writes to themselves, a file's responses wait
-		// for the commit: a rename the store refuses never reaches the client,
-		// and one that runs again sends them once. A directory sends its
-		// children's as it moves them, which keeps the client of a long rename
-		// from timing out; having sent them, it does not run again.
+		// The client applies each response as it arrives. When the transaction
+		// covers the whole rename, a file's responses wait for the commit: a
+		// rename the store refuses never reaches the client, and one that runs
+		// again sends them once. A directory sends its children's as it moves
+		// them, which keeps the client of a long rename from timing out; having
+		// sent them, it does not run again. So does a file with a remote
+		// object, whose remote copy after the commit the client need not wait
+		// for.
 		responses := stream
-		if !oldEntry.IsDirectory() && filer.IsolatingTransaction(ctx) {
+		if !oldEntry.IsDirectory() && oldEntry.Remote == nil && filer.IsolatingTransaction(ctx) {
 			held = &renameResponseBuffer{SeaweedFiler_StreamRenameEntryServer: stream}
 			responses = held
 		}
@@ -134,13 +136,13 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 	if err != nil {
 		return err
 	}
-	// Committed: what follows runs whether or not the client still listens.
-	if held != nil {
-		err = held.release()
-	}
+	// Committed: finish what the commit leaves before the held responses go
+	// out, so that a client that stopped reading cannot hold it up.
 	fs.finishRename(afterCommitCtx, effects, req.Signatures)
-
-	return err
+	if held != nil {
+		return held.release()
+	}
+	return nil
 }
 
 // renameAttempts bounds how often a rename runs its transaction while the
