@@ -118,7 +118,7 @@ func (s *stubFilerStore) DeleteFolderChildren(_ context.Context, dirPath util.Fu
 func (s *stubFilerStore) listDirectoryChildNames(dirPath util.FullPath, startFileName string, includeStartFile bool, namePrefix string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	dirPrefix := string(dirPath) + "/"
+	dirPrefix := strings.TrimSuffix(string(dirPath), "/") + "/"
 	var names []string
 	for k := range s.entries {
 		if !strings.HasPrefix(k, dirPrefix) {
@@ -145,7 +145,7 @@ func (s *stubFilerStore) getEntry(path string) *Entry {
 }
 func (s *stubFilerStore) ListDirectoryEntries(_ context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc ListEachEntryFunc) (string, error) {
 	names := s.listDirectoryChildNames(dirPath, startFileName, includeStartFile, "")
-	dirPrefix := string(dirPath) + "/"
+	dirPrefix := strings.TrimSuffix(string(dirPath), "/") + "/"
 	lastFileName := ""
 	for i, name := range names {
 		if int64(i) >= limit {
@@ -165,7 +165,7 @@ func (s *stubFilerStore) ListDirectoryEntries(_ context.Context, dirPath util.Fu
 }
 func (s *stubFilerStore) ListDirectoryPrefixedEntries(_ context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (string, error) {
 	names := s.listDirectoryChildNames(dirPath, startFileName, includeStartFile, prefix)
-	dirPrefix := string(dirPath) + "/"
+	dirPrefix := strings.TrimSuffix(string(dirPath), "/") + "/"
 	lastFileName := ""
 	for i, name := range names {
 		if int64(i) >= limit {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -176,4 +177,34 @@ func TestLogListingsOnUnorderedStoreListWholeDay(t *testing.T) {
 			t.Fatalf("listed %d entries, want the whole day: %d", n, wholeDay)
 		}
 	})
+}
+
+// TestLogListingsOnUnorderedDayStoreListWholeDay: a path-specific store that
+// serves the start day's directory decides how that day is listed, even when
+// the default store lists in name order.
+func TestLogListingsOnUnorderedDayStoreListWholeDay(t *testing.T) {
+	ordered := &countingListStore{stubFilerStore: newStubFilerStore()}
+	fillLogDay(ordered.stubFilerStore, "2026-10-25", 12*60+30, true)
+	dayDir := string(util.NewFullPath(SystemLogDir, "2026-10-25"))
+	day := &countingListStore{stubFilerStore: newStubFilerStore()}
+	for p, entry := range ordered.entries {
+		if strings.HasPrefix(p, dayDir+"/") {
+			entry.FullPath = util.FullPath(p[len(dayDir):])
+			day.entries[p[len(dayDir):]] = entry
+			delete(ordered.entries, p)
+		}
+	}
+	f := newReplayTestFiler(ordered)
+	f.Store.AddPathSpecificStore(dayDir+"/", "logday", &unorderedListStore{countingListStore: day})
+
+	refs, _, err := f.CollectLogFileRefs(context.Background(), log_buffer.NewMessagePosition(listingTestCursor.UnixNano(), -2), 0)
+	if err != nil {
+		t.Fatalf("CollectLogFileRefs: %v", err)
+	}
+	if len(refs) != 2*len(listingTestFilerIds) {
+		t.Fatalf("refs = %d, want %d", len(refs), 2*len(listingTestFilerIds))
+	}
+	if n, wholeDay := day.listed.Load(), int64((12*60+31)*len(listingTestFilerIds)); n != wholeDay {
+		t.Fatalf("day store listed %d entries, want the whole day: %d", n, wholeDay)
+	}
 }
