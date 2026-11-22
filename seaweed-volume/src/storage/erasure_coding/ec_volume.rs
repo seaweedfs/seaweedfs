@@ -310,6 +310,10 @@ impl EcJournalAppender {
     }
 }
 
+/// The encode run a holder reports when its disks serve shards of more than
+/// one encode run for the volume (Go `erasure_coding.MixedEncodeRuns`).
+pub const MIXED_ENCODE_RUNS: i64 = -1;
+
 /// An erasure-coded volume managing its local shards and index.
 pub struct EcVolume {
     pub volume_id: VolumeId,

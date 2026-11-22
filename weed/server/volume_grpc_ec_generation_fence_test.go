@@ -278,3 +278,38 @@ func TestVolumeEcShardsInfoReportsEncodeRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(4242), resp.GetEcShardConfig().GetEncodeTsNs())
 }
+
+func TestVolumeEcShardsInfoReportsMixedLocalRuns(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		runB    int64
+		wantRun int64
+	}{
+		{"same run on both disks", 1000, 1000},
+		{"different runs", 500, erasure_coding.MixedEncodeRuns},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			diskA, diskB := t.TempDir(), t.TempDir()
+			store := newMultiDiskEcScrubStore(t, diskA, diskB)
+			const vid = needle.VolumeId(902)
+			seedEcShardOnDisk(t, store, vid, "mixed", diskA, 0, 1000, 10, 4, 0)
+			seedEcShardOnDisk(t, store, vid, "mixed", diskB, 1, tc.runB, 10, 4, 0)
+
+			vs := &VolumeServer{store: store}
+			resp, err := vs.VolumeEcShardsInfo(context.Background(), &volume_server_pb.VolumeEcShardsInfoRequest{VolumeId: uint32(vid)})
+			require.NoError(t, err)
+			require.Len(t, resp.GetEcShardInfos(), 2)
+			require.Equal(t, tc.wantRun, resp.GetEcShardConfig().GetEncodeTsNs())
+
+			var bits erasure_coding.ShardBits
+			for _, s := range resp.GetEcShardInfos() {
+				bits = bits.Set(erasure_coding.ShardId(s.ShardId))
+			}
+			err = erasure_coding.RequireAgreedEncodeRun(uint32(vid), map[string]erasure_coding.ServerShardInventory{
+				"local": {Bits: bits, EncodeTsNs: resp.GetEcShardConfig().GetEncodeTsNs()},
+				"peer":  {Bits: erasure_coding.ShardBits(0).Set(2), EncodeTsNs: 1000},
+			})
+			require.Equal(t, tc.wantRun == erasure_coding.MixedEncodeRuns, err != nil, "agreement error: %v", err)
+		})
+	}
+}

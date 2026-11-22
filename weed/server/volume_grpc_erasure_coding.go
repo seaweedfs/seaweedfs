@@ -1664,6 +1664,7 @@ func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serv
 	// DiskLocation.FindEcVolume.
 	var primary *erasure_coding.EcVolume
 	var seenShards erasure_coding.ShardBits
+	var servedRun int64
 	shardInfos := make([]*volume_server_pb.EcShardInfo, 0, erasure_coding.MaxShardCount)
 	for _, location := range vs.store.Locations {
 		ecv, ok := location.FindEcVolume(vid)
@@ -1673,7 +1674,15 @@ func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serv
 		if primary == nil {
 			primary = ecv
 		}
-		for _, s := range ecv.Shards {
+		shards := ecv.Shards
+		if len(shards) > 0 && ecv.EncodeTsNs != 0 {
+			if servedRun == 0 {
+				servedRun = ecv.EncodeTsNs
+			} else if servedRun != ecv.EncodeTsNs {
+				servedRun = erasure_coding.MixedEncodeRuns
+			}
+		}
+		for _, s := range shards {
 			if seenShards.Has(s.ShardId) {
 				continue
 			}
@@ -1707,12 +1716,16 @@ func (vs *VolumeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_serv
 	// the only way a coordinator can tell a holder that understands the
 	// uniform block layout from one that dropped the unknown .vif field on the
 	// floor and mounted the volume as legacy.
+	encodeTsNs := primary.EncodeTsNs
+	if servedRun == erasure_coding.MixedEncodeRuns {
+		encodeTsNs = servedRun
+	}
 	var ecShardConfig *volume_server_pb.EcShardConfig
 	if primary.ECContext != nil {
 		ecShardConfig = &volume_server_pb.EcShardConfig{
 			DataShards:   uint32(primary.ECContext.DataShards),
 			ParityShards: uint32(primary.ECContext.ParityShards),
-			EncodeTsNs:   primary.EncodeTsNs,
+			EncodeTsNs:   encodeTsNs,
 			BlockSize:    primary.ECContext.BlockSize,
 		}
 	}

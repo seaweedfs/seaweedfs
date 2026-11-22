@@ -4660,10 +4660,28 @@ impl VolumeServer for VolumeGrpcService {
         // coordinator cannot otherwise tell a holder that understands the
         // uniform block layout from one that dropped the unknown .vif field
         // and mounted the volume as legacy.
+        let mut served_run = 0i64;
+        for ecv in store
+            .find_all_ec_volumes(vid)
+            .into_iter()
+            .filter(|ecv| ecv.encode_ts_ns != 0 && ecv.shards.iter().any(|s| s.is_some()))
+        {
+            if served_run == 0 {
+                served_run = ecv.encode_ts_ns;
+            } else if served_run != ecv.encode_ts_ns {
+                served_run = crate::storage::erasure_coding::ec_volume::MIXED_ENCODE_RUNS;
+            }
+        }
+        let encode_ts_ns =
+            if served_run == crate::storage::erasure_coding::ec_volume::MIXED_ENCODE_RUNS {
+                served_run
+            } else {
+                ec_vol.encode_ts_ns
+            };
         let ec_shard_config = Some(volume_server_pb::EcShardConfig {
             data_shards: ec_vol.data_shards,
             parity_shards: ec_vol.parity_shards,
-            encode_ts_ns: ec_vol.encode_ts_ns,
+            encode_ts_ns,
             block_size: ec_vol.block_size,
         });
 
@@ -15273,6 +15291,34 @@ mod tests {
         }
 
         (split_disk_grpc_service(store), tmp)
+    }
+
+    #[tokio::test]
+    async fn test_volume_ec_shards_info_reports_mixed_local_runs() {
+        for (run1, want) in [
+            (1000i64, 1000i64),
+            (
+                500,
+                crate::storage::erasure_coding::ec_volume::MIXED_ENCODE_RUNS,
+            ),
+        ] {
+            let (service, _tmp) = make_service_with_two_disk_complete_ec_volume(7061);
+            {
+                let mut store = service.state.store.write().unwrap();
+                let mut runtimes = store.find_all_ec_volumes_mut(VolumeId(7061));
+                assert_eq!(runtimes.len(), 2, "the vid must mount on both disks");
+                runtimes[0].encode_ts_ns = 1000;
+                runtimes[1].encode_ts_ns = run1;
+            }
+            let resp = service
+                .volume_ec_shards_info(Request::new(volume_server_pb::VolumeEcShardsInfoRequest {
+                    volume_id: 7061,
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            assert_eq!(resp.ec_shard_config.unwrap().encode_ts_ns, want);
+        }
     }
 
     /// The branch's newest production behavior, end to end: a mode 2 scrub of a
