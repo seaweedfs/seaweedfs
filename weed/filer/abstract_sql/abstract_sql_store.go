@@ -88,6 +88,15 @@ type TxOrDB interface {
 	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
 }
 
+// IsolatesTransactions: entry and KV calls take the sql.Tx their context
+// carries (getTxOrDB, kvDB), and the database keeps a transaction's writes to
+// itself until its commit. Bucket tables are created and dropped outside it.
+func (store *AbstractSqlStore) IsolatesTransactions() bool {
+	return true
+}
+
+var _ filer.IsolatingTransactionStore = (*AbstractSqlStore)(nil)
+
 func (store *AbstractSqlStore) BeginTransaction(ctx context.Context) (context.Context, error) {
 	tx, err := store.DB.BeginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelReadCommitted,
