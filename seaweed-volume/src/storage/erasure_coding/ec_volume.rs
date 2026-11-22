@@ -325,6 +325,12 @@ impl EcJournalAppender {
     pub(crate) fn lock_journal(&self) -> MutexGuard<'_, EcJournal> {
         self.ecj.lock().unwrap()
     }
+
+    /// Drops the journal file, so every later append fails.
+    #[cfg(test)]
+    pub(crate) fn drop_journal_file(&self) {
+        self.ecj.lock().unwrap().file = None;
+    }
 }
 
 /// The encode run a holder reports when its disks serve shards of more than

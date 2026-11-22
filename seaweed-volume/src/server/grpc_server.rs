@@ -4365,7 +4365,9 @@ impl VolumeServer for VolumeGrpcService {
                 // delete. Go's handler locates the needle first: absent from the
                 // first runtime fails the RPC so the caller moves to the next
                 // holder; an existing tombstone is a no-op. An unmounted volume
-                // is a no-op too.
+                // is a no-op too. A retry on this server resolves the volume
+                // through the first runtime, so it records last: a failure on
+                // any other leaves it live and the retry fans out again.
                 let mut appenders = Vec::new();
                 for (i, ec_vol) in store.find_all_ec_volumes(vid).into_iter().enumerate() {
                     match ec_vol.find_needle_from_ecx(needle_id) {
@@ -4386,7 +4388,7 @@ impl VolumeServer for VolumeGrpcService {
             };
             let state = self.state.clone();
             let committed = tokio::task::spawn_blocking(move || {
-                appenders.iter().try_for_each(|appender| {
+                appenders.iter().rev().try_for_each(|appender| {
                     appender.journal_delete(needle_id, || ec_decode_tail_contains(&state, vid))
                 })
             })
@@ -15912,6 +15914,33 @@ mod tests {
                 i
             );
         }
+    }
+
+    // A retry on this server resolves the volume through its first copy, so a
+    // delete that fails on another copy must leave the first one live.
+    #[tokio::test]
+    async fn test_volume_ec_blob_delete_failed_copy_leaves_first_live() {
+        let (service, _tmp) = make_service_with_two_disk_complete_ec_volume(7065);
+        let vid = VolumeId(7065);
+        let store = service.state.store.read().unwrap();
+        let copies = store.find_all_ec_volumes(vid);
+        assert_eq!(copies.len(), 2);
+        copies[1].journal_appender().drop_journal_file();
+        drop(store);
+        service
+            .volume_ec_blob_delete(Request::new(volume_server_pb::VolumeEcBlobDeleteRequest {
+                volume_id: 7065,
+                collection: String::new(),
+                file_key: 3,
+                version: 3,
+            }))
+            .await
+            .unwrap_err();
+        let store = service.state.store.read().unwrap();
+        assert!(
+            !store.find_all_ec_volumes(vid)[0].is_needle_deleted(NeedleId(3)),
+            "the first copy recorded a delete another copy failed"
+        );
     }
 
     #[tokio::test]
