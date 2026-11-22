@@ -598,7 +598,7 @@ func (stalledPeer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardReadRequ
 	return stream.Context().Err()
 }
 
-// hintReplacingPeer fails a read after a lookup has replaced the hint it used.
+// hintReplacingPeer fails a read after a lookup has changed the hint it used.
 type hintReplacingPeer struct {
 	volume_server_pb.UnimplementedVolumeServerServer
 	replace func()
@@ -610,7 +610,8 @@ func (p hintReplacingPeer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShard
 }
 
 // A delisted holder that stops answering costs a read only the hint's deadline,
-// and a failed hinted read drops only the hint it used.
+// and a failed hinted read leaves a hint a lookup installed meanwhile, even one
+// naming the same holder.
 func TestReadOneEcShardIntervalBoundsAndScopesAFailedReadHint(t *testing.T) {
 	const delisted = erasure_coding.ShardId(3)
 	baseFileName, n := writeEcVolumeFiles(t, t.TempDir(), 7)
@@ -650,15 +651,19 @@ func TestReadOneEcShardIntervalBoundsAndScopesAFailedReadHint(t *testing.T) {
 		t.Errorf("a hint that timed out is still kept: %v", got)
 	}
 
-	replacement := []pb.ServerAddress{others}
-	replacing := startEcShardPeer(t, hintReplacingPeer{replace: func() {
+	var replacing pb.ServerAddress
+	replacing = startEcShardPeer(t, hintReplacingPeer{replace: func() {
+		// The master places the shard on this holder again, then nowhere.
 		ecVolume.ShardLocationsLock.Lock()
-		ecVolume.ShardReadHints[delisted] = replacement
+		delete(ecVolume.ShardReadHints, delisted)
+		ecVolume.ShardReadHintsRevision++
+		ecVolume.ShardReadHints[delisted] = []pb.ServerAddress{replacing}
+		ecVolume.ShardReadHintsRevision++
 		ecVolume.ShardLocationsLock.Unlock()
 	}})
 	ecVolume.ShardReadHints[delisted] = []pb.ServerAddress{replacing}
 	read()
-	if got := hint(); !slices.Equal(got, replacement) {
-		t.Errorf("read hint %v, want the replacement %v kept", got, replacement)
+	if got, want := hint(), []pb.ServerAddress{replacing}; !slices.Equal(got, want) {
+		t.Errorf("read hint %v, want the reinstalled %v kept", got, want)
 	}
 }

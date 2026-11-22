@@ -723,9 +723,10 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 	ecVolume.ShardLocationsLock.RLock()
 	sourceDataNodes, hasShardIdLocation := ecVolume.ShardLocations[shardId]
 	readHints := ecVolume.ShardReadHints[shardId]
+	readHintsRevision := ecVolume.ShardReadHintsRevision
 	ecVolume.ShardLocationsLock.RUnlock()
 
-	if !hasShardIdLocation && len(readHints) > 0 && s.askEcShardReadHints(needleId, ecVolume, shardId, readHints, data[:1], actualOffset) {
+	if !hasShardIdLocation && len(readHints) > 0 && s.askEcShardReadHints(needleId, ecVolume, shardId, readHints, readHintsRevision, data[:1], actualOffset) {
 		return true, nil
 	}
 
@@ -1223,13 +1224,15 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 		ecVolume.ShardLocationsLock.Lock()
 		for _, shardIdLocations := range resp.ShardIdLocations {
 			shardId := erasure_coding.ShardId(shardIdLocations.ShardId)
-			if len(shardIdLocations.Locations) > 0 {
+			if _, hinted := ecVolume.ShardReadHints[shardId]; hinted && len(shardIdLocations.Locations) > 0 {
 				delete(ecVolume.ShardReadHints, shardId)
-			} else if known := ecVolume.ShardLocations[shardId]; len(known) > 0 {
+				ecVolume.ShardReadHintsRevision++
+			} else if known := ecVolume.ShardLocations[shardId]; len(known) > 0 && len(shardIdLocations.Locations) == 0 {
 				if ecVolume.ShardReadHints == nil {
 					ecVolume.ShardReadHints = make(map[erasure_coding.ShardId][]pb.ServerAddress)
 				}
 				ecVolume.ShardReadHints[shardId] = known
+				ecVolume.ShardReadHintsRevision++
 			}
 			delete(ecVolume.ShardLocations, shardId)
 			for _, loc := range shardIdLocations.Locations {
@@ -1264,8 +1267,8 @@ var ecReadHintTimeout = 5 * time.Second
 // askEcShardReadHints reports whether a delisted holder of the shard journaled
 // the needle's delete. Each holder is asked, since any one of them may hold the
 // delete; only a deleted answer is taken, so one byte is enough. Holders that
-// fail are forgotten unless a lookup replaced the hint meanwhile.
-func (s *Store) askEcShardReadHints(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, shardId erasure_coding.ShardId, hints []pb.ServerAddress, probe []byte, offset int64) bool {
+// fail are forgotten unless a lookup changed the hints meanwhile.
+func (s *Store) askEcShardReadHints(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, shardId erasure_coding.ShardId, hints []pb.ServerAddress, revision uint64, probe []byte, offset int64) bool {
 	var failed []pb.ServerAddress
 	for _, hint := range hints {
 		ctx, cancel := context.WithTimeout(context.Background(), ecReadHintTimeout)
@@ -1284,7 +1287,7 @@ func (s *Store) askEcShardReadHints(needleId types.NeedleId, ecVolume *erasure_c
 	}
 	ecVolume.ShardLocationsLock.Lock()
 	defer ecVolume.ShardLocationsLock.Unlock()
-	if !slices.Equal(ecVolume.ShardReadHints[shardId], hints) {
+	if ecVolume.ShardReadHintsRevision != revision {
 		return false
 	}
 	kept := slices.DeleteFunc(slices.Clone(hints), func(hint pb.ServerAddress) bool { return slices.Contains(failed, hint) })
@@ -1293,6 +1296,7 @@ func (s *Store) askEcShardReadHints(needleId types.NeedleId, ecVolume *erasure_c
 	} else {
 		ecVolume.ShardReadHints[shardId] = kept
 	}
+	ecVolume.ShardReadHintsRevision++
 	return false
 }
 
