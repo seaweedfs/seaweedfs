@@ -38,10 +38,11 @@ type ErasureCodingTask struct {
 	workDir        string
 	progress       float64
 	grpcDialOption grpc.DialOption
-	masterAddress  string
 	// workerAddress is weed worker -address (host:port). Not a volume URL;
 	// late-bind matches replica hostnames against HostKey(workerAddress).
 	workerAddress string
+
+	masterAddresses []string
 
 	// EC parameters
 	dataShards       int32
@@ -100,7 +101,9 @@ func (t *ErasureCodingTask) Execute(ctx context.Context, params *worker_pb.TaskP
 	t.parityShards = ecParams.ParityShards
 	t.sourceDiskType = ecParams.SourceDiskType
 	t.encodeTsNs = ecParams.EncodeTsNs
-	t.masterAddress = strings.TrimSpace(ecParams.MasterClient)
+	if master := strings.TrimSpace(ecParams.MasterClient); len(t.masterAddresses) == 0 && master != "" {
+		t.masterAddresses = []string{master}
+	}
 	t.workDir = ecParams.WorkingDir
 	t.targets = params.Targets // Get unified targets
 	t.sources = params.Sources // Get unified sources
@@ -1152,10 +1155,10 @@ func (t *ErasureCodingTask) cleanupStaleEcShards(ctx context.Context) error {
 	}
 
 	var cleanupErrors []string
-	if t.masterAddress != "" {
-		holders, err := pluginworker.LookupEcVolumeLocations(ctx, []string{t.masterAddress}, t.grpcDialOption, t.volumeID)
+	if len(t.masterAddresses) > 0 {
+		holders, err := pluginworker.LookupEcVolumeLocations(ctx, t.masterAddresses, t.grpcDialOption, t.volumeID)
 		if err != nil {
-			cleanupErrors = append(cleanupErrors, fmt.Sprintf("master %s: lookup EC shard holders: %v", t.masterAddress, err))
+			cleanupErrors = append(cleanupErrors, fmt.Sprintf("masters %v: lookup EC shard holders: %v", t.masterAddresses, err))
 		}
 		for _, holder := range holders {
 			if !containsServerAddress(nodes, holder) {

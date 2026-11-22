@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/raft"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -118,23 +119,23 @@ func startFakeEcLookupMaster(t *testing.T, master *fakeEcLookupMaster) string {
 	return fmt.Sprintf("127.0.0.1:%d", port)
 }
 
-func newMasterHolderCleanupTask(masterAddress, server string, volumeID uint32, collection, targetNode string) *ErasureCodingTask {
+func newMasterHolderCleanupTask(masterAddresses []string, server string, volumeID uint32, collection, targetNode string) *ErasureCodingTask {
 	return &ErasureCodingTask{
-		BaseTask:       base.NewBaseTask("master-holder-cleanup", types.TaskTypeErasureCoding),
-		server:         server,
-		volumeID:       volumeID,
-		collection:     collection,
-		dataShards:     erasure_coding.DataShardsCount,
-		parityShards:   erasure_coding.ParityShardsCount,
-		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
-		masterAddress:  masterAddress,
-		targets:        []*worker_pb.TaskTarget{{Node: targetNode, VolumeId: volumeID, ShardIds: []uint32{0}}},
+		BaseTask:        base.NewBaseTask("master-holder-cleanup", types.TaskTypeErasureCoding),
+		server:          server,
+		volumeID:        volumeID,
+		collection:      collection,
+		dataShards:      erasure_coding.DataShardsCount,
+		parityShards:    erasure_coding.ParityShardsCount,
+		grpcDialOption:  grpc.WithTransportCredentials(insecure.NewCredentials()),
+		masterAddresses: masterAddresses,
+		targets:         []*worker_pb.TaskTarget{{Node: targetNode, VolumeId: volumeID, ShardIds: []uint32{0}}},
 	}
 }
 
-func newFakeMasterHolderCleanupTask(masterAddress string, target *master_pb.Location) *ErasureCodingTask {
+func newFakeMasterHolderCleanupTask(target *master_pb.Location, masterAddresses ...string) *ErasureCodingTask {
 	node := string(pb.NewServerAddressFromLocation(target))
-	return newMasterHolderCleanupTask(masterAddress, node, 147, "ec", node)
+	return newMasterHolderCleanupTask(masterAddresses, node, 147, "ec", node)
 }
 
 // A server that came back after detection and remounted a failed attempt's
@@ -144,7 +145,7 @@ func TestEnsureCleanEcStartClearsMasterListedHolderOutsidePlan(t *testing.T) {
 	target, targetLocation := startFakeEcTeardownServer(t)
 	outside, outsideLocation := startFakeEcTeardownServer(t)
 	master := &fakeEcLookupMaster{holders: []*master_pb.Location{targetLocation, outsideLocation}}
-	task := newFakeMasterHolderCleanupTask(startFakeEcLookupMaster(t, master), targetLocation)
+	task := newFakeMasterHolderCleanupTask(targetLocation, startFakeEcLookupMaster(t, master))
 
 	require.NoError(t, task.ensureCleanEcStart(context.Background()))
 
@@ -156,10 +157,30 @@ func TestEnsureCleanEcStartClearsMasterListedHolderOutsidePlan(t *testing.T) {
 	require.Equal(t, 1, master.lookupCount())
 }
 
+// Detection may have reached the leader through a later entry of the master
+// list, so the cleanup cannot stop at a follower's refusal.
+func TestCleanupStaleEcShardsAsksNextMasterAfterFollower(t *testing.T) {
+	target, targetLocation := startFakeEcTeardownServer(t)
+	outside, outsideLocation := startFakeEcTeardownServer(t)
+	follower := &fakeEcLookupMaster{err: raft.NotLeaderError}
+	leader := &fakeEcLookupMaster{holders: []*master_pb.Location{outsideLocation}}
+	task := newFakeMasterHolderCleanupTask(targetLocation, startFakeEcLookupMaster(t, follower), startFakeEcLookupMaster(t, leader))
+
+	require.NoError(t, task.cleanupStaleEcShards(context.Background()))
+
+	for name, server := range map[string]*fakeEcTeardownServer{"target": target, "outside holder": outside} {
+		unmounted, deleted := server.calls()
+		require.Equal(t, []uint32{147}, unmounted, name)
+		require.Equal(t, []uint32{147}, deleted, name)
+	}
+	require.Equal(t, 1, follower.lookupCount())
+	require.Equal(t, 1, leader.lookupCount())
+}
+
 func TestCleanupStaleEcShardsTreatsMasterNotFoundAsNoHolders(t *testing.T) {
 	target, targetLocation := startFakeEcTeardownServer(t)
 	master := &fakeEcLookupMaster{}
-	task := newFakeMasterHolderCleanupTask(startFakeEcLookupMaster(t, master), targetLocation)
+	task := newFakeMasterHolderCleanupTask(targetLocation, startFakeEcLookupMaster(t, master))
 
 	require.NoError(t, task.cleanupStaleEcShards(context.Background()))
 
@@ -174,7 +195,7 @@ func TestCleanupStaleEcShardsTreatsMasterNotFoundAsNoHolders(t *testing.T) {
 func TestCleanupStaleEcShardsFailsWhenMasterLookupFails(t *testing.T) {
 	target, targetLocation := startFakeEcTeardownServer(t)
 	master := &fakeEcLookupMaster{err: fmt.Errorf("raft: not leader")}
-	task := newFakeMasterHolderCleanupTask(startFakeEcLookupMaster(t, master), targetLocation)
+	task := newFakeMasterHolderCleanupTask(targetLocation, startFakeEcLookupMaster(t, master))
 
 	err := task.cleanupStaleEcShards(context.Background())
 	require.ErrorContains(t, err, "lookup EC shard holders")
@@ -187,7 +208,7 @@ func TestCleanupStaleEcShardsFailsWhenMasterLookupFails(t *testing.T) {
 
 func TestCleanupStaleEcShardsSkipsMasterLookupWithoutMasterAddress(t *testing.T) {
 	target, targetLocation := startFakeEcTeardownServer(t)
-	task := newFakeMasterHolderCleanupTask("", targetLocation)
+	task := newFakeMasterHolderCleanupTask(targetLocation)
 
 	require.NoError(t, task.cleanupStaleEcShards(context.Background()))
 
@@ -234,7 +255,7 @@ func TestEnsureCleanEcStartClearsHolderOutsidePlanViaMaster(t *testing.T) {
 		return lookupErr == nil && slices.ContainsFunc(holders, holder.Equals)
 	}, 30*time.Second, 200*time.Millisecond, "master never listed the EC shard holder")
 
-	task := newMasterHolderCleanupTask(cluster.MasterAddress(), string(holder), volumeID, collection, serverAddress(0))
+	task := newMasterHolderCleanupTask([]string{cluster.MasterAddress()}, string(holder), volumeID, collection, serverAddress(0))
 
 	require.NoError(t, task.ensureCleanEcStart(ctx))
 
