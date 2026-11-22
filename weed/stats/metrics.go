@@ -790,6 +790,14 @@ var (
 			Help:      "Bucketed histogram of s3 time to first byte request processing time.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 27),
 		}, []string{"type", "bucket"})
+	S3PutStageHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemS3,
+			Name:      "put_stage_seconds",
+			Help:      "Bucketed histogram of the time one s3 object write spends in each stage: body_read waits on the request body, assign on volume assigns, storage on volume assigns and chunk uploads (the chunked upload apart from body reads), metadata from the uploaded chunks to the committed entry.",
+			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
+		}, []string{"operation", "stage"})
 	S3InFlightRequestsGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -1198,6 +1206,7 @@ func init() {
 	Gather.MustRegister(S3InFlightUploadBytesGauge)
 	Gather.MustRegister(S3InFlightUploadCountGauge)
 	Gather.MustRegister(S3TimeToFirstByteHistogram)
+	Gather.MustRegister(S3PutStageHistogram)
 	Gather.MustRegister(S3BucketTrafficReceivedBytesCounter)
 	Gather.MustRegister(S3BucketTrafficSentBytesCounter)
 	Gather.MustRegister(S3DeletedObjectsCounter)
