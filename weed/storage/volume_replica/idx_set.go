@@ -68,9 +68,9 @@ func RequireCapacitySource(vid needle.VolumeId, loc wdclient.Location, capacityL
 }
 
 // SelectSourceIfIndexesMatch copies each replica's .idx and compares live
-// NeedleId sets. A needle live on one replica that another replica wrote
-// identically and then tombstoned is a delete the first replica missed: it is
-// left out of the comparison, and the source must hold none of them. Any other
+// NeedleId sets. A needle written once on one replica that another replica
+// wrote identically and then tombstoned is a delete the first replica missed:
+// it is left out of the comparison, and the source must hold none of them. Any other
 // mismatch or a read error aborts. One replica skips the comparison. On match,
 // the source is prefer when eligible, else the first eligible replica.
 func SelectSourceIfIndexesMatch(grpcDialOption grpc.DialOption, vid needle.VolumeId, collection string, locations []wdclient.Location, prefer string, writer io.Writer) (wdclient.Location, error) {
@@ -85,9 +85,9 @@ func SelectSourceIfIndexesMatch(grpcDialOption grpc.DialOption, vid needle.Volum
 	}
 
 	views := make([]replicaLiveIdx, 0, len(locations))
-	var latest, deletedWrites []*needle_map.MemDb
+	var latest, replaced []*needle_map.MemDb
 	defer func() {
-		for _, db := range append(latest, deletedWrites...) {
+		for _, db := range append(latest, replaced...) {
 			db.Close()
 		}
 	}()
@@ -100,12 +100,12 @@ func SelectSourceIfIndexesMatch(grpcDialOption grpc.DialOption, vid needle.Volum
 		if err != nil {
 			return wdclient.Location{}, fmt.Errorf("volume %d: read .idx from %s: %w", vid, loc.Url, err)
 		}
-		db, writes := needle_map.NewMemDb(), needle_map.NewMemDb()
-		if db == nil || writes == nil {
+		db, earlier := needle_map.NewMemDb(), needle_map.NewMemDb()
+		if db == nil || earlier == nil {
 			return wdclient.Location{}, fmt.Errorf("failed to allocate in-memory needle DB")
 		}
-		latest, deletedWrites = append(latest, db), append(deletedWrites, writes)
-		if err := loadIndexHistory(data, db, writes); err != nil {
+		latest, replaced = append(latest, db), append(replaced, earlier)
+		if err := loadIndexHistory(data, db, earlier); err != nil {
 			return wdclient.Location{}, fmt.Errorf("volume %d: load .idx from %s: %w", vid, loc.Url, err)
 		}
 		live, err := LiveNeedlesFromIndex(db)
@@ -119,7 +119,7 @@ func SelectSourceIfIndexesMatch(grpcDialOption grpc.DialOption, vid needle.Volum
 	for i := range views {
 		lives[i] = views[i].live
 	}
-	missed, err := MissedDeletes(lives, latest, deletedWrites, func(i int, nv needle_map.NeedleValue) (*volume_server_pb.ReadNeedleMetaResponse, error) {
+	missed, err := MissedDeletes(lives, latest, replaced, func(i int, nv needle_map.NeedleValue) (*volume_server_pb.ReadNeedleMetaResponse, error) {
 		meta, err := ReadNeedleMeta(grpcDialOption, locations[i].ServerAddress(), uint32(vid), nv)
 		if err != nil {
 			return nil, fmt.Errorf("volume %d: read needle %s meta from %s: %w", vid, nv.Key, locations[i].Url, err)
@@ -136,17 +136,15 @@ func SelectSourceIfIndexesMatch(grpcDialOption grpc.DialOption, vid needle.Volum
 }
 
 // loadIndexHistory loads .idx rows into latest as ReadReplicaIndex does, and
-// records in deletedWrites the live row each tombstone replaced.
-func loadIndexHistory(data []byte, latest, deletedWrites *needle_map.MemDb) error {
+// records in replaced, per key, the last live row that a later row replaced.
+func loadIndexHistory(data []byte, latest, replaced *needle_map.MemDb) error {
 	return idx.WalkIndexFile(bytes.NewReader(data), 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
 		if offset.IsZero() {
 			return latest.Delete(key)
 		}
-		if size.IsDeleted() {
-			if prev, found := latest.Get(key); found && !prev.Size.IsDeleted() {
-				if err := deletedWrites.Set(key, prev.Offset, prev.Size); err != nil {
-					return err
-				}
+		if prev, found := latest.Get(key); found && !prev.Size.IsDeleted() && prev.Offset != offset {
+			if err := replaced.Set(key, prev.Offset, prev.Size); err != nil {
+				return err
 			}
 		}
 		return latest.Set(key, offset, size)
@@ -155,13 +153,13 @@ func loadIndexHistory(data []byte, latest, deletedWrites *needle_map.MemDb) erro
 
 // MissedDeletes returns, per replica, the needles live there that another
 // replica holds as the same write (cookie, CRC, last-modified) followed by a
-// tombstone, and that this replica never deleted itself: deletes the replica
-// missed. live holds each replica's sorted live ids, latest its index with
-// tombstone rows kept, deletedWrites the live row each tombstone replaced, and
-// readMeta reads a row's record on replica i. The order comes from the replicas'
-// own indexes, never from clocks across servers, so a needle written again
-// after its delete stays live.
-func MissedDeletes(live [][]types.NeedleId, latest, deletedWrites []*needle_map.MemDb, readMeta func(replica int, nv needle_map.NeedleValue) (*volume_server_pb.ReadNeedleMetaResponse, error)) ([][]types.NeedleId, error) {
+// tombstone: deletes the replica missed. live holds each replica's sorted live
+// ids, latest its index with tombstone rows kept, replaced the last live row a
+// later row replaced, and readMeta reads a row's record on replica i. The order
+// comes from the replicas' own indexes, never from clocks across servers. A
+// replica whose index has an earlier row for the needle (an overwrite or its
+// own delete) may hold a rewrite, so it never counts.
+func MissedDeletes(live [][]types.NeedleId, latest, replaced []*needle_map.MemDb, readMeta func(replica int, nv needle_map.NeedleValue) (*volume_server_pb.ReadNeedleMetaResponse, error)) ([][]types.NeedleId, error) {
 	missed := make([][]types.NeedleId, len(live))
 	for i := range live {
 		notLiveSomewhere := make(map[types.NeedleId]bool)
@@ -179,7 +177,7 @@ func MissedDeletes(live [][]types.NeedleId, latest, deletedWrites []*needle_map.
 			if !notLiveSomewhere[id] {
 				continue
 			}
-			if _, deletedHere := deletedWrites[i].Get(id); deletedHere {
+			if _, rewritten := replaced[i].Get(id); rewritten {
 				continue
 			}
 			liveRow, found := latest[i].Get(id)
@@ -194,7 +192,7 @@ func MissedDeletes(live [][]types.NeedleId, latest, deletedWrites []*needle_map.
 				if row, found := latest[j].Get(id); !found || !row.Size.IsDeleted() {
 					continue
 				}
-				deletedWrite, found := deletedWrites[j].Get(id)
+				deletedWrite, found := replaced[j].Get(id)
 				if !found {
 					continue
 				}

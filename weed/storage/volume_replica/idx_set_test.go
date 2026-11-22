@@ -202,10 +202,11 @@ type writeMeta struct {
 }
 
 type replicaRows struct {
-	loc     wdclient.Location
-	live    map[types.NeedleId]writeMeta
-	deleted map[types.NeedleId]writeMeta // written, then tombstoned
-	bare    []types.NeedleId             // tombstone with no earlier write
+	loc         wdclient.Location
+	live        map[types.NeedleId]writeMeta
+	deleted     map[types.NeedleId]writeMeta // written, then tombstoned
+	bare        []types.NeedleId             // tombstone with no earlier write
+	overwritten map[types.NeedleId]writeMeta // an earlier write the live row replaced
 }
 
 // missedDeleteViews writes each replica's rows as raw .idx bytes, loads them
@@ -214,7 +215,7 @@ func missedDeleteViews(t *testing.T, replicas []replicaRows, readErr error) ([]r
 	t.Helper()
 	metas := make([]map[int64]writeMeta, len(replicas))
 	views := make([]replicaLiveIdx, len(replicas))
-	var latest, deletedWrites []*needle_map.MemDb
+	var latest, replaced []*needle_map.MemDb
 	for i, r := range replicas {
 		metas[i] = make(map[int64]writeMeta)
 		var data []byte
@@ -231,13 +232,16 @@ func missedDeleteViews(t *testing.T, replicas []replicaRows, readErr error) ([]r
 		for _, id := range r.bare {
 			row(id, types.TombstoneFileSize, writeMeta{})
 		}
+		for id, m := range r.overwritten {
+			row(id, types.Size(40), m)
+		}
 		for id, m := range r.live {
 			row(id, types.Size(40), m)
 		}
-		db, writes := needle_map.NewMemDb(), needle_map.NewMemDb()
+		db, earlier := needle_map.NewMemDb(), needle_map.NewMemDb()
 		t.Cleanup(db.Close)
-		t.Cleanup(writes.Close)
-		if err := loadIndexHistory(data, db, writes); err != nil {
+		t.Cleanup(earlier.Close)
+		if err := loadIndexHistory(data, db, earlier); err != nil {
 			t.Fatal(err)
 		}
 		live, err := LiveNeedlesFromIndex(db)
@@ -245,13 +249,13 @@ func missedDeleteViews(t *testing.T, replicas []replicaRows, readErr error) ([]r
 			t.Fatal(err)
 		}
 		views[i] = replicaLiveIdx{loc: r.loc, live: live}
-		latest, deletedWrites = append(latest, db), append(deletedWrites, writes)
+		latest, replaced = append(latest, db), append(replaced, earlier)
 	}
 	lives := make([][]types.NeedleId, len(views))
 	for i := range views {
 		lives[i] = views[i].live
 	}
-	missed, err := MissedDeletes(lives, latest, deletedWrites, func(i int, nv needle_map.NeedleValue) (*volume_server_pb.ReadNeedleMetaResponse, error) {
+	missed, err := MissedDeletes(lives, latest, replaced, func(i int, nv needle_map.NeedleValue) (*volume_server_pb.ReadNeedleMetaResponse, error) {
 		if readErr != nil {
 			return nil, readErr
 		}
@@ -338,6 +342,19 @@ func TestMissedDeletes_IdenticalRewriteAfterOwnDeleteStillRefuses(t *testing.T) 
 	}
 	if _, err := chooseSourceFromLiveNeedles(7, views, "", io.Discard); err == nil || !strings.Contains(err.Error(), "no union") {
 		t.Fatalf("got %v, want a no-union refusal", err)
+	}
+}
+
+func TestMissedDeletes_OverwriteWithSameMetaStillRefuses(t *testing.T) {
+	views, err := missedDeleteViews(t, []replicaRows{
+		{loc: replicaA, live: map[types.NeedleId]writeMeta{1: write1, 2: write2}, overwritten: map[types.NeedleId]writeMeta{2: write2}},
+		{loc: replicaB, live: map[types.NeedleId]writeMeta{1: write1}, deleted: map[types.NeedleId]writeMeta{2: write2}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views[0].missed) != 0 {
+		t.Fatalf("A wrote the needle twice, so its live copy may postdate the delete: %v", views[0].missed)
 	}
 }
 
@@ -442,17 +459,24 @@ func TestLoadIndexHistory(t *testing.T) {
 	row(3, 448, types.TombstoneFileSize)
 	row(4, 512, 40)
 	row(4, 0, types.TombstoneFileSize)
+	row(5, 576, 40)
+	row(5, 640, 40)
+	row(6, 704, 40)
+	row(6, 704, 40)
 
-	latest, writes := needle_map.NewMemDb(), needle_map.NewMemDb()
+	latest, replaced := needle_map.NewMemDb(), needle_map.NewMemDb()
 	defer latest.Close()
-	defer writes.Close()
-	if err := loadIndexHistory(data, latest, writes); err != nil {
+	defer replaced.Close()
+	if err := loadIndexHistory(data, latest, replaced); err != nil {
 		t.Fatal(err)
 	}
-	for id, want := range map[types.NeedleId]int64{1: 8, 3: 320} {
-		if nv, found := writes.Get(id); !found || nv.Offset.ToActualOffset() != want {
-			t.Fatalf("deleted write of %d = %+v, want offset %d", id, nv, want)
+	for id, want := range map[types.NeedleId]int64{1: 8, 2: 128, 3: 320, 5: 576} {
+		if nv, found := replaced.Get(id); !found || nv.Offset.ToActualOffset() != want {
+			t.Fatalf("replaced row of %d = %+v, want offset %d", id, nv, want)
 		}
+	}
+	if _, found := replaced.Get(6); found {
+		t.Fatal("a repeated identical row replaces nothing")
 	}
 	if nv, found := latest.Get(2); !found || nv.Size != 50 {
 		t.Fatalf("latest row of 2 = %+v, want the rewrite", nv)
