@@ -1345,12 +1345,12 @@ struct EcShardMap<'a> {
     parity_shards: usize,
 }
 
-/// Try direct peer read; on failure, reconstruct via Reed-Solomon
-/// from the other shards. Mirrors `readOneEcShardInterval`'s tail.
 /// Bounds asking a delisted holder, which may have stopped answering, before
 /// the read reconstructs the shard (Go's `ecReadHintTimeout`).
 const EC_READ_HINT_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Try direct peer read; on failure, reconstruct via Reed-Solomon
+/// from the other shards. Mirrors `readOneEcShardInterval`'s tail.
 async fn fetch_one_interval(
     state: &Arc<VolumeServerState>,
     iv: EcInterval,
