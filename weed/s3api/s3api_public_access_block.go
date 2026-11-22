@@ -170,6 +170,9 @@ func fixedConditionValues(operator, key string, values []string) bool {
 			}
 			if _, network, err := net.ParseCIDR(value); err == nil {
 				ones, bits := network.Mask.Size()
+				if bits == 128 && network.IP.To4() != nil {
+					ones, bits = ones-96, 32
+				}
 				if (bits == 32 && ones < 8) || (bits == 128 && ones < 32) {
 					return false
 				}
