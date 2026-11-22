@@ -73,7 +73,7 @@ fn lock() -> MutexGuard<'static, HashMap<PathBuf, PathState>> {
 /// Canonical key for `path`: its resolved parent directory joined with the
 /// file name. The file itself may not exist yet (a copy creates it), so only
 /// the directory is resolved.
-fn key_for(path: &str) -> PathBuf {
+pub(crate) fn key_for(path: &str) -> PathBuf {
     let p = Path::new(path);
     let (Some(parent), Some(name)) = (p.parent(), p.file_name()) else {
         return std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());

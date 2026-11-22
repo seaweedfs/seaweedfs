@@ -3791,14 +3791,14 @@ impl VolumeServer for VolumeGrpcService {
                         fold.is_ok() || !std::path::Path::new(&journal_path).exists();
                     let mut result = fold;
                     if replaced {
+                        let key_for = crate::storage::erasure_coding::ecj_registry::key_for;
+                        let journal_key = key_for(&journal_path);
                         for (i, loc) in store.locations.iter_mut().enumerate() {
                             if i == loc_idx {
                                 continue;
                             }
                             if let Some(other) = loc.find_ec_volume_mut(vid) {
-                                if std::path::Path::new(&other.ecj_file_name())
-                                    == std::path::Path::new(&journal_path)
-                                {
+                                if key_for(&other.ecj_file_name()) == journal_key {
                                     if let Err(e) = other.adopt_folded_journal() {
                                         result = result.and(Err(e));
                                     }
