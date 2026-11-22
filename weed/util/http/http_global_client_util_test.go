@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
 	"testing"
 	"time"
 
@@ -488,5 +489,130 @@ func TestSameUrlsIgnoresOrder(t *testing.T) {
 	}
 	if SameUrls(a, a[:1]) {
 		t.Fatal("a shorter list should count as fresh")
+	}
+}
+
+// stalledBodyServer answers with the status and the start of a body, and then
+// sends nothing more until the test ends.
+func stalledBodyServer(t *testing.T, status int, bodyStart string) *httptest.Server {
+	t.Helper()
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(bodyStart))
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() {
+		close(release)
+		server.Close()
+	})
+	return server
+}
+
+func setUnwantedBodyTimeout(t *testing.T, timeout time.Duration) {
+	t.Helper()
+	old := unwantedBodyTimeout
+	unwantedBodyTimeout = timeout
+	t.Cleanup(func() { unwantedBodyTimeout = old })
+}
+
+// returnsWithin fails the test if fn is still running after limit, instead of
+// hanging the test run.
+func returnsWithin(t *testing.T, limit time.Duration, fn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	select {
+	case <-done:
+	case <-time.After(limit):
+		t.Fatalf("still waiting on the response body after %v", limit)
+	}
+}
+
+// A server that sends its headers and then stalls the body must not hold
+// CloseResponse: the caller is done with the response and may have another
+// replica to try.
+func TestCloseResponseGivesUpOnAStalledBody(t *testing.T) {
+	InitGlobalHttpClient()
+	setUnwantedBodyTimeout(t, 50*time.Millisecond)
+	server := stalledBodyServer(t, http.StatusInternalServerError, "disk ")
+
+	resp, err := GetGlobalHttpClient().Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	returnsWithin(t, 5*time.Second, func() { CloseResponse(resp) })
+	if _, err := resp.Body.Read(make([]byte, 1)); err == nil || err == io.EOF {
+		t.Errorf("read after CloseResponse: got %v, want the body closed", err)
+	}
+}
+
+// A body that arrives is still read to its end, which lets the next request
+// reuse the connection.
+func TestCloseResponseKeepsTheConnectionOfADrainedBody(t *testing.T) {
+	InitGlobalHttpClient()
+	setUnwantedBodyTimeout(t, 5*time.Second)
+	leftover := bytes.Repeat([]byte("leftover"), 64*1024)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(leftover)
+	}))
+	defer server.Close()
+
+	var reused []bool
+	trace := &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) { reused = append(reused, info.Reused) }}
+	for i := 0; i < 2; i++ {
+		req, err := http.NewRequestWithContext(httptrace.WithClientTrace(context.Background(), trace), http.MethodGet, server.URL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := GetGlobalHttpClient().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		CloseResponse(resp)
+	}
+	if len(reused) != 2 || reused[0] || !reused[1] {
+		t.Errorf("connection reused per request: got %v, want [false true]", reused)
+	}
+}
+
+// A read that fails on the status must return it even when the server never
+// finishes the error body. 404 goes straight to CloseResponse; 500 reads the
+// server's message first.
+func TestReadErrorsDoNotWaitForAStalledBody(t *testing.T) {
+	InitGlobalHttpClient()
+	setUnwantedBodyTimeout(t, 50*time.Millisecond)
+
+	for _, tc := range []struct {
+		name             string
+		status           int
+		wantStream       string
+		wantReaderCloser string
+	}{
+		{"not found", http.StatusNotFound, ": 404 Not Found: not found", ": 404 Not Found: disk"},
+		{"server error", http.StatusInternalServerError, ": 500 Internal Server Error: disk", ": 500 Internal Server Error: disk"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := stalledBodyServer(t, tc.status, "disk ")
+			returnsWithin(t, 5*time.Second, func() {
+				want := server.URL + tc.wantStream
+				if _, err := ReadUrlAsStream(context.Background(), server.URL, "", nil, false, true, 0, 0, func(data []byte) {}); err == nil || err.Error() != want {
+					t.Errorf("ReadUrlAsStream: got %v, want %q", err, want)
+				}
+			})
+			returnsWithin(t, 5*time.Second, func() {
+				want := server.URL + tc.wantReaderCloser
+				if _, _, err := ReadUrlAsReaderCloser(server.URL, "", ""); err == nil || err.Error() != want {
+					t.Errorf("ReadUrlAsReaderCloser: got %v, want %q", err, want)
+				}
+			})
+		})
 	}
 }
