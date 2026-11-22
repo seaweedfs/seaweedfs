@@ -412,9 +412,10 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 	return nil
 }
 
-// handleUpdateNamespace replaces the stored properties of an existing namespace.
-// AWS S3 Tables namespaces have no properties; this backs the Iceberg REST
-// catalog's namespace-property updates, which carry the merged map.
+// handleUpdateNamespace replaces the stored properties of an existing
+// namespace, or applies PropertyChanges to them. AWS S3 Tables namespaces have
+// no properties; this backs the Iceberg REST catalog's namespace-property
+// updates.
 func (h *S3TablesHandler) handleUpdateNamespace(w http.ResponseWriter, r *http.Request, filerClient FilerClient) error {
 	var req UpdateNamespaceRequest
 	if err := h.readRequestBody(r, &req); err != nil {
@@ -501,6 +502,7 @@ func (h *S3TablesHandler) handleUpdateNamespace(w http.ResponseWriter, r *http.R
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
+	var removed, missing []string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return h.mutateCatalogRecord(r.Context(), client, namespacePath, func(extended map[string][]byte) error {
 			// The write carries the authorized record's owner and creation
@@ -508,7 +510,24 @@ func (h *S3TablesHandler) handleUpdateNamespace(w http.ResponseWriter, r *http.R
 			if !isNamespaceCreatedAt(metadata.CreatedAt)(&filer_pb.Entry{Extended: extended}) {
 				return fmt.Errorf("%w: %s holds another namespace", ErrConcurrentUpdate, namespacePath)
 			}
-			extended[ExtendedKeyMetadata] = metadataBytes
+			if req.PropertyChanges == nil {
+				extended[ExtendedKeyMetadata] = metadataBytes
+				return nil
+			}
+			// Apply the changes to the record being written, not to the one
+			// read for authorization: the write is compare-checked against
+			// this record and redone on a fresh read when it changed, so an
+			// update another caller landed in between is kept.
+			var current namespaceMetadata
+			if err := json.Unmarshal(extended[ExtendedKeyMetadata], &current); err != nil {
+				return fmt.Errorf("decode namespace metadata of %s: %w", namespacePath, err)
+			}
+			current.Properties, removed, missing = ApplyNamespacePropertyChanges(current.Properties, req.PropertyChanges.Removals, req.PropertyChanges.Updates)
+			changed, err := json.Marshal(&current)
+			if err != nil {
+				return fmt.Errorf("marshal namespace metadata of %s: %w", namespacePath, err)
+			}
+			extended[ExtendedKeyMetadata] = changed
 			return nil
 		})
 	})
@@ -528,11 +547,44 @@ func (h *S3TablesHandler) handleUpdateNamespace(w http.ResponseWriter, r *http.R
 	resp := &UpdateNamespaceResponse{
 		Namespace:      metadata.Namespace,
 		TableBucketARN: req.TableBucketARN,
-		Properties:     metadata.Properties,
+		Removed:        removed,
+		Missing:        missing,
+	}
+	// UpdateNamespace does not grant GetNamespace: echo only what was sent.
+	if req.PropertyChanges == nil {
+		resp.Properties = metadata.Properties
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)
 	return nil
+}
+
+// ApplyNamespacePropertyChanges returns a copy of current with removals
+// deleted and updates set, and which removals found their key. A key repeated
+// in removals counts once. current is not modified.
+func ApplyNamespacePropertyChanges(current map[string]string, removals []string, updates map[string]string) (properties map[string]string, removed, missing []string) {
+	properties = make(map[string]string, len(current)+len(updates))
+	for k, v := range current {
+		properties[k] = v
+	}
+	removed, missing = []string{}, []string{}
+	seen := make(map[string]struct{}, len(removals))
+	for _, key := range removals {
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		if _, ok := properties[key]; ok {
+			delete(properties, key)
+			removed = append(removed, key)
+		} else {
+			missing = append(missing, key)
+		}
+	}
+	for key, value := range updates {
+		properties[key] = value
+	}
+	return properties, removed, missing
 }
 
 // handleListNamespaces lists all namespaces in a table bucket
