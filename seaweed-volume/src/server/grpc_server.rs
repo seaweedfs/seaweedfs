@@ -3780,33 +3780,39 @@ impl VolumeServer for VolumeGrpcService {
                     // the file or after that handle is repointed.
                     let path_lock = ev.journal_path_lock();
                     let _path = crate::storage::erasure_coding::ec_volume::lock_path(&path_lock);
-                    ev.rebuild_ecx_from_journal().map_err(|e| {
+                    let fold = ev.rebuild_ecx_from_journal();
+                    // The fold replaced a journal other disks may share:
+                    // repoint their handles before dropping the path lock,
+                    // or their next delete lands on the detached inode. A
+                    // fold that failed after removing the file (only once
+                    // its tombstones are synced) still owes them that, and
+                    // one sibling's failure must not skip the rest.
+                    let replaced =
+                        fold.is_ok() || !std::path::Path::new(&journal_path).exists();
+                    let mut result = fold;
+                    if replaced {
+                        for (i, loc) in store.locations.iter_mut().enumerate() {
+                            if i == loc_idx {
+                                continue;
+                            }
+                            if let Some(other) = loc.find_ec_volume_mut(vid) {
+                                if std::path::Path::new(&other.ecj_file_name())
+                                    == std::path::Path::new(&journal_path)
+                                {
+                                    if let Err(e) = other.adopt_folded_journal() {
+                                        result = result.and(Err(e));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    result.map_err(|e| {
                         status_internal_with_rebuild_ids(
                             format!("RebuildEcxFile: {}", e),
                             &rebuilt,
                         )
                     })?;
                     folded = true;
-                    // The fold replaced a journal other disks may share:
-                    // repoint their handles before dropping the store lock,
-                    // or their next delete lands on the detached inode.
-                    for (i, loc) in store.locations.iter_mut().enumerate() {
-                        if i == loc_idx {
-                            continue;
-                        }
-                        if let Some(other) = loc.find_ec_volume_mut(vid) {
-                            if std::path::Path::new(&other.ecj_file_name())
-                                == std::path::Path::new(&journal_path)
-                            {
-                                other.adopt_folded_journal().map_err(|e| {
-                                    status_internal_with_rebuild_ids(
-                                        format!("RebuildEcxFile: {}", e),
-                                        &rebuilt,
-                                    )
-                                })?;
-                            }
-                        }
-                    }
                 }
             }
         }
