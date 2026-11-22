@@ -6344,7 +6344,7 @@ impl VolumeGrpcService {
                     }
                     None if !req.disk_type.is_empty() => {
                         return Err(Status::resource_exhausted(format!(
-                            "no space left on a {} disk",
+                            "no space left on a {} disk, or a disk of another type holds the shards",
                             req.disk_type
                         )));
                     }

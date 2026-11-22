@@ -513,7 +513,12 @@ impl Store {
             if loc.read_only_mount || required.as_ref().is_some_and(|t| loc.disk_type != *t) {
                 // An owner that cannot take the copy still owns the shard:
                 // placing another copy on a sibling would register it on two disks.
-                if owned > 0 {
+                // A typed copy also yields to an unmounted file of the shard there,
+                // which a later mount would pick ahead of the copy.
+                if owned > 0
+                    || (required.is_some()
+                        && has_ec_shard_file_on_disk(loc, collection, vid, shard_ids))
+                {
                     return None;
                 }
                 continue;
@@ -2105,6 +2110,19 @@ fn ec_free_shard_count(loc: &DiskLocation, data_shard_count: u32) -> i64 {
         return 0;
     }
     free
+}
+
+/// Whether `loc` holds a file for one of `shard_ids` of `vid`, mounted or not.
+fn has_ec_shard_file_on_disk(
+    loc: &DiskLocation,
+    collection: &str,
+    vid: VolumeId,
+    shard_ids: &[ShardId],
+) -> bool {
+    let base = crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
+    shard_ids
+        .iter()
+        .any(|shard_id| std::path::Path::new(&format!("{}.ec{:02}", base, shard_id)).exists())
 }
 
 /// Reports how many of `shard_ids` this disk already claims for `vid`, per
@@ -4325,6 +4343,12 @@ mod tests {
         assert_eq!(
             store.find_ec_shard_target_location(collection, vid, 10, "hdd", &[2]),
             None
+        );
+        std::fs::write(format!("{}.ec03", base0), b"x").unwrap();
+        assert_eq!(
+            store.find_ec_shard_target_location(collection, vid, 10, "hdd_ht", &[3]),
+            None,
+            "an unmounted shard file on ssd would be mounted ahead of a hdd_ht copy",
         );
     }
 
