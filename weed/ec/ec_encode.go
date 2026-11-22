@@ -330,12 +330,18 @@ func doEcEncode(env *Env, writer io.Writer, volumeIdToCollection map[needle.Volu
 	// Compare live .idx sets across all replicas, not only the capacity
 	// subset — a filtered-out replica with a divergent live set still gets
 	// deleted below, so it must refuse encode here. The generation host
-	// must come from filteredLocations.
+	// must come from filteredLocations, so those replicas are listed first.
 	bestReplicas := make(map[needle.VolumeId]wdclient.Location)
 	for _, vid := range volumeIds {
 		collection := volumeIdToCollection[vid]
 		prefer := filteredLocations[vid][0].Url
-		bestLoc, selectErr := volume_replica.SelectSourceIfIndexesMatch(env.GrpcDialOption, vid, collection, locations[vid], prefer, writer)
+		compared := slices.Clone(filteredLocations[vid])
+		for _, l := range locations[vid] {
+			if !slices.ContainsFunc(filteredLocations[vid], func(f wdclient.Location) bool { return f.Url == l.Url }) {
+				compared = append(compared, l)
+			}
+		}
+		bestLoc, selectErr := volume_replica.SelectSourceIfIndexesMatch(env.GrpcDialOption, vid, collection, compared, prefer, writer)
 		if selectErr != nil {
 			return nil, fmt.Errorf("failed to compare replica indexes for volume %d: %v", vid, selectErr)
 		}
