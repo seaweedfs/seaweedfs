@@ -527,7 +527,6 @@ func (h *S3TablesHandler) handleUpdateNamespace(w http.ResponseWriter, r *http.R
 				return fmt.Errorf("marshal namespace metadata of %s: %w", namespacePath, err)
 			}
 			extended[ExtendedKeyMetadata] = changed
-			metadata.Properties = current.Properties
 			return nil
 		})
 	})
@@ -547,9 +546,12 @@ func (h *S3TablesHandler) handleUpdateNamespace(w http.ResponseWriter, r *http.R
 	resp := &UpdateNamespaceResponse{
 		Namespace:      metadata.Namespace,
 		TableBucketARN: req.TableBucketARN,
-		Properties:     metadata.Properties,
 		Removed:        removed,
 		Missing:        missing,
+	}
+	// UpdateNamespace does not grant GetNamespace: echo only what was sent.
+	if req.PropertyChanges == nil {
+		resp.Properties = metadata.Properties
 	}
 
 	h.writeJSON(w, http.StatusOK, resp)

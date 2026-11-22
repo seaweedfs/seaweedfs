@@ -155,3 +155,20 @@ func TestUpdateNamespacePropertyChangesVectorNamespaceReadOnly(t *testing.T) {
 	assert.Equal(t, vectorNamespaceReadOnly, got.body.Message)
 	assert.Equal(t, before, read())
 }
+
+// UpdateNamespace does not grant GetNamespace, so a PropertyChanges answer
+// carries no stored property.
+func TestUpdateNamespacePropertyChangesAnswerHidesStoredProperties(t *testing.T) {
+	fs, m := startEmptyBucket(t)
+	requireOK(t, m, fs, "CreateNamespace", createNamespaceNsRequest(t))
+	requireOK(t, m, fs, "UpdateNamespace", &UpdateNamespaceRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"},
+		Properties: map[string]string{"stored": "1", "drop": "1"}})
+
+	var resp UpdateNamespaceResponse
+	require.NoError(t, m.Execute(context.Background(), NewManagerClient(fs.Client), "UpdateNamespace", &UpdateNamespaceRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"},
+		PropertyChanges: &NamespacePropertyChanges{Removals: []string{"drop"}}}, &resp, "admin"))
+
+	assert.Empty(t, resp.Properties)
+	assert.Equal(t, []string{"drop"}, resp.Removed)
+	assert.Equal(t, map[string]string{"stored": "1"}, namespaceMetadataOf(t, fs, "ns").Properties)
+}
