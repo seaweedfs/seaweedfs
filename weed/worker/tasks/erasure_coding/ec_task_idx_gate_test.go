@@ -91,6 +91,70 @@ func TestEcEncodeAllowsVacuumOffsetMismatch(t *testing.T) {
 	require.NoError(t, task.Execute(ctx, params))
 }
 
+func TestEcEncodeDropsDeleteOneReplicaMissed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	cluster, task, params, ctx := twoReplicaTask(t, 9614, "ec-idx-missed-delete")
+	httpClient := framework.NewHTTPClient()
+	const volumeID = uint32(9614)
+
+	replicateNeedles(t, httpClient, []string{cluster.VolumeAdminURL(0), cluster.VolumeAdminURL(1)}, volumeID, []uint64{1, 2, 3})
+	deleteNeedles(t, httpClient, cluster.VolumeAdminURL(1), volumeID, []uint64{2})
+
+	require.NoError(t, task.Execute(ctx, params))
+	require.Equal(t, serverAddress(cluster, 1), task.server, "the replica that applied the delete is the source")
+
+	ecx := filepath.Join(cluster.VolumeDiskDir(0, 0), "ec-idx-missed-delete_9614.ecx")
+	require.True(t, idxHasNeedle(t, ecx, 1))
+	require.False(t, idxHasNeedle(t, ecx, 2), "the delete one replica missed must not come back in the EC volume")
+	require.True(t, idxHasNeedle(t, ecx, 3))
+}
+
+// Runs against the Rust volume server with VOLUME_SERVER_IMPL=rust.
+func TestSelectSourceIfIndexesMatchMissedDelete(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	cluster := framework.StartMultiVolumeClusterAuto(t, matrix.P1(), 2)
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	httpClient := framework.NewHTTPClient()
+	locs := []wdclient.Location{{Url: serverAddress(cluster, 0)}, {Url: serverAddress(cluster, 1)}}
+	for i := 0; i < 2; i++ {
+		conn, client := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress(i))
+		t.Cleanup(func() { conn.Close() })
+		framework.AllocateVolume(t, client, 9615, "ec-idx-order")
+		framework.AllocateVolume(t, client, 9616, "ec-idx-order")
+		framework.AllocateVolume(t, client, 9617, "ec-idx-order")
+	}
+
+	urls := []string{cluster.VolumeAdminURL(0), cluster.VolumeAdminURL(1)}
+	replicateNeedles(t, httpClient, urls, 9615, []uint64{1, 2, 3})
+	deleteNeedles(t, httpClient, urls[1], 9615, []uint64{2})
+	got, err := volume_replica.SelectSourceIfIndexesMatch(dialOption, 9615, "ec-idx-order", locs, locs[0].Url, &bytes.Buffer{})
+	require.NoError(t, err)
+	require.Equal(t, locs[1].Url, got.Url, "the replica that missed the delete must not be the source")
+
+	replicateNeedles(t, httpClient, urls, 9616, []uint64{1, 2})
+	deleteNeedles(t, httpClient, urls[1], 9616, []uint64{2})
+	resp := framework.UploadBytes(t, httpClient, urls[0], framework.NewFileID(9616, 2, cookieFor(2)), []byte("rewritten-2"))
+	_ = framework.ReadAllAndClose(t, resp)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	_, err = volume_replica.SelectSourceIfIndexesMatch(dialOption, 9616, "ec-idx-order", locs, "", &bytes.Buffer{})
+	require.Error(t, err, "a write other than the one the replica deleted is a missed write, not a missed delete")
+	require.Contains(t, err.Error(), "no union")
+
+	replicateNeedles(t, httpClient, urls, 9617, []uint64{1, 2})
+	deleteNeedles(t, httpClient, urls[0], 9617, []uint64{2})
+	deleteNeedles(t, httpClient, urls[1], 9617, []uint64{2})
+	replicateNeedles(t, httpClient, urls[:1], 9617, []uint64{2})
+	_, err = volume_replica.SelectSourceIfIndexesMatch(dialOption, 9617, "ec-idx-order", locs, "", &bytes.Buffer{})
+	require.Error(t, err, "an identical upload after both replicas deleted the needle is a missed write")
+	require.Contains(t, err.Error(), "no union")
+}
+
 func TestEcEncodeAbortsWhenIdxRpcFails(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -238,6 +302,31 @@ func uploadNeedles(t *testing.T, client *http.Client, volumeURL string, volumeID
 		resp := framework.UploadBytes(t, client, volumeURL, fid, []byte(fmt.Sprintf("payload-%d", id)))
 		_ = framework.ReadAllAndClose(t, resp)
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
+	}
+}
+
+// replicateNeedles writes each needle to every volume URL with one ts, as a
+// replicated write does.
+func replicateNeedles(t *testing.T, client *http.Client, volumeURLs []string, volumeID uint32, ids []uint64) {
+	t.Helper()
+	for _, id := range ids {
+		fid := framework.NewFileID(volumeID, id, cookieFor(id)) + "?ts=1700000000"
+		for _, volumeURL := range volumeURLs {
+			resp := framework.UploadBytes(t, client, volumeURL, fid, []byte(fmt.Sprintf("payload-%d", id)))
+			_ = framework.ReadAllAndClose(t, resp)
+			require.Equal(t, http.StatusCreated, resp.StatusCode)
+		}
+	}
+}
+
+func deleteNeedles(t *testing.T, client *http.Client, volumeURL string, volumeID uint32, ids []uint64) {
+	t.Helper()
+	for _, id := range ids {
+		req, err := http.NewRequest(http.MethodDelete, volumeURL+"/"+framework.NewFileID(volumeID, id, cookieFor(id)), nil)
+		require.NoError(t, err)
+		resp := framework.DoRequest(t, client, req)
+		_ = framework.ReadAllAndClose(t, resp)
+		require.Equal(t, http.StatusAccepted, resp.StatusCode)
 	}
 }
 

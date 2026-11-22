@@ -102,7 +102,7 @@ func TestEcEncodeRefusesOnEmptyStubReplica(t *testing.T) {
 
 // serverAddress builds the SeaweedFS ip:httpPort.grpcPort address the worker's
 // gRPC client decodes, from the multi-cluster's separate admin and grpc ports.
-func serverAddress(c *framework.MultiVolumeCluster, index int) string {
+func serverAddress(c framework.MultiCluster, index int) string {
 	_, grpcPort, err := net.SplitHostPort(c.VolumeGRPCAddress(index))
 	if err != nil {
 		panic(err)
