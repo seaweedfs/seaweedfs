@@ -742,16 +742,22 @@ func TestClassifyReplicaSet(t *testing.T) {
 
 type trimTestVolumeServer struct {
 	volume_server_pb.UnimplementedVolumeServerServer
-	afterIndex func()
-	gone       atomic.Bool
-	deletes    atomic.Int32
+	afterIndex   func()
+	index        []byte
+	gone         atomic.Bool
+	deletes      atomic.Int32
+	statusChecks atomic.Int32
 }
 
 func (s *trimTestVolumeServer) CopyFile(_ *volume_server_pb.CopyFileRequest, stream volume_server_pb.VolumeServer_CopyFileServer) error {
 	if s.gone.Load() {
 		return status.Error(codes.NotFound, "volume not found")
 	}
-	if err := stream.Send(&volume_server_pb.CopyFileResponse{FileContent: needle_map.ToBytes(1, types.ToOffset(8), 4)}); err != nil {
+	index := s.index
+	if index == nil {
+		index = needle_map.ToBytes(1, types.ToOffset(8), 4)
+	}
+	if err := stream.Send(&volume_server_pb.CopyFileResponse{FileContent: index}); err != nil {
 		return err
 	}
 	if s.afterIndex != nil {
@@ -761,6 +767,7 @@ func (s *trimTestVolumeServer) CopyFile(_ *volume_server_pb.CopyFileRequest, str
 }
 
 func (s *trimTestVolumeServer) VolumeStatus(context.Context, *volume_server_pb.VolumeStatusRequest) (*volume_server_pb.VolumeStatusResponse, error) {
+	s.statusChecks.Add(1)
 	if s.gone.Load() {
 		return nil, status.Error(codes.NotFound, "volume not found")
 	}
@@ -784,7 +791,13 @@ func TestDeleteOneVolumeRechecksSurvivorsBeforeDelete(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			doomed, survivor := &trimTestVolumeServer{}, &trimTestVolumeServer{}
 			if tc.survivorGoes {
-				survivor.afterIndex = func() { survivor.gone.Store(true) }
+				// Gone after the coverage check, its second index read.
+				var indexReads atomic.Int32
+				survivor.afterIndex = func() {
+					if indexReads.Add(1) == 2 {
+						survivor.gone.Store(true)
+					}
+				}
 			}
 			commandEnv, _ := configureReplicationTestEnv()
 			replicas := []*VolumeReplica{
@@ -801,8 +814,87 @@ func TestDeleteOneVolumeRechecksSurvivorsBeforeDelete(t *testing.T) {
 			if tc.survivorGoes && !survivor.gone.Load() {
 				t.Fatal("the survivor never served its index")
 			}
+			if survivor.statusChecks.Load() == 0 {
+				t.Fatal("the final survivor check never ran")
+			}
 			if deleted != tc.wantDeleted || int(doomed.deletes.Load()) != tc.wantDeleted {
 				t.Fatalf("deleted=%d VolumeDelete calls=%d, want %d", deleted, doomed.deletes.Load(), tc.wantDeleted)
+			}
+		})
+	}
+}
+
+func trimTestIndex(entries ...needle_map.NeedleValue) []byte {
+	var index []byte
+	for _, entry := range entries {
+		index = append(index, needle_map.ToBytes(entry.Key, entry.Offset, entry.Size)...)
+	}
+	return index
+}
+
+func TestDeleteOneVolumeRefusesTrimOfUncoveredNeedles(t *testing.T) {
+	live := func(key types.NeedleId) needle_map.NeedleValue {
+		return needle_map.NeedleValue{Key: key, Offset: types.ToOffset(int64(key) * 8), Size: 4}
+	}
+	deleted := func(key types.NeedleId) needle_map.NeedleValue {
+		return needle_map.NeedleValue{Key: key, Offset: types.ToOffset(int64(key) * 8), Size: types.TombstoneFileSize}
+	}
+	for _, tc := range []struct {
+		name        string
+		doomed      []needle_map.NeedleValue
+		survivors   [][]needle_map.NeedleValue
+		wantDeleted int
+	}{
+		{
+			name:        "needle on no survivor",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(1)}, {live(1)}},
+			wantDeleted: 0,
+		},
+		{
+			name:        "each needle on some survivor",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(1)}, {live(2)}},
+			wantDeleted: 1,
+		},
+		{
+			name:        "survivor holds the delete",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(1), deleted(2)}},
+			wantDeleted: 1,
+		},
+		{
+			name:        "remote-tier survivor holds the delete at offset zero",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(1), {Key: 2, Size: types.TombstoneFileSize}}},
+			wantDeleted: 1,
+		},
+		{
+			name:        "needle already deleted on the doomed replica",
+			doomed:      []needle_map.NeedleValue{live(1), live(2), deleted(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(1)}},
+			wantDeleted: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			commandEnv, _ := configureReplicationTestEnv()
+			doomed := &trimTestVolumeServer{index: trimTestIndex(tc.doomed...)}
+			replicas := []*VolumeReplica{
+				{location: &location{dataNode: startConfigureReplicationTestVolumeServer(t, doomed, 1)}, info: &master_pb.VolumeInformationMessage{Id: 1}},
+			}
+			for _, entries := range tc.survivors {
+				survivor := &trimTestVolumeServer{index: trimTestIndex(entries...)}
+				replicas = append(replicas, &VolumeReplica{location: &location{dataNode: startConfigureReplicationTestVolumeServer(t, survivor, 1)}, info: &master_pb.VolumeInformationMessage{Id: 1}})
+			}
+			pickDoomed := func([]*VolumeReplica, *super_block.ReplicaPlacement) *VolumeReplica { return replicas[0] }
+
+			c := &commandVolumeFixReplication{}
+			got, err := c.deleteOneVolume(commandEnv, io.Discard, true, true, []uint32{1}, map[uint32][]*VolumeReplica{1: replicas}, pickDoomed)
+			if err != nil {
+				t.Fatalf("deleteOneVolume: %v", err)
+			}
+			if got != tc.wantDeleted || int(doomed.deletes.Load()) != tc.wantDeleted {
+				t.Fatalf("deleted=%d VolumeDelete calls=%d, want %d", got, doomed.deletes.Load(), tc.wantDeleted)
 			}
 		})
 	}
