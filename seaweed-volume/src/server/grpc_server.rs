@@ -15943,6 +15943,25 @@ mod tests {
         );
     }
 
+    // The distributed delete journals on this server without the RPC when it
+    // holds the shard, so it too must reach every local copy.
+    #[tokio::test]
+    async fn test_local_ec_delete_records_on_every_local_copy() {
+        let (service, _tmp) = make_service_with_two_disk_complete_ec_volume(7066);
+        let vid = VolumeId(7066);
+        crate::server::store_ec::journal_delete_local(&service.state, vid, NeedleId(3))
+            .await
+            .unwrap();
+        let store = service.state.store.read().unwrap();
+        for (i, ec_vol) in store.find_all_ec_volumes(vid).into_iter().enumerate() {
+            assert!(
+                ec_vol.is_needle_deleted(NeedleId(3)),
+                "copy {} still serves the deleted needle",
+                i
+            );
+        }
+    }
+
     #[tokio::test]
     async fn volume_delete_reports_absent_volume_as_not_found() {
         let (service, _tmp) = make_service_with_seed_masters(&[]);
