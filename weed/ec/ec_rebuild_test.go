@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // TestEcShardMapRegister tests that EC shards are properly registered
@@ -273,7 +277,7 @@ func TestPrepareDataToRecoverTargetShardCount(t *testing.T) {
 	}
 
 	// Shards 10-13 are missing, but 14-31 should NOT be reported
-	_, _, err := erb.prepareDataToRecover(node1, "c1", needle.VolumeId(1), locations)
+	_, _, err := erb.prepareDataToRecover(node1, "c1", needle.VolumeId(1), locations, nil)
 	if err != nil {
 		t.Fatalf("prepareDataToRecover failed: %v", err)
 	}
@@ -320,5 +324,179 @@ func TestRebuilderVolumeIdMatches(t *testing.T) {
 				t.Errorf("Expected %v, got %v", want, got)
 			}
 		})
+	}
+}
+
+func TestRebuildOneEcVolumeRefusesMixedEncodeRuns(t *testing.T) {
+	const vid = 7
+	for _, tc := range []struct {
+		name    string
+		runB    int64
+		wantErr bool
+	}{
+		{"same run", 1000, false},
+		{"different runs", 2000, true},
+		{"unreported run", 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := startEcBalanceFakeServer(t, vid, 0, 1, 2, 3, 4)
+			b := startEcBalanceFakeServer(t, vid, 5, 6, 7, 8, 9)
+			a.run, b.run = 1000, tc.runB
+			nodeA := newEcNode("dc1", "rack1", a.nodeId(), 100).addEcVolumeAndShardsForTest(vid, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4})
+			nodeB := newEcNode("dc1", "rack1", b.nodeId(), 100).addEcVolumeAndShardsForTest(vid, "c1", []erasure_coding.ShardId{5, 6, 7, 8, 9})
+			locations := make(EcShardLocations, erasure_coding.MaxShardCount)
+			for i := 0; i < 10; i++ {
+				locations[i] = []*EcNode{nodeA}
+				if i >= 5 {
+					locations[i] = []*EcNode{nodeB}
+				}
+			}
+			erb := &ecRebuilder{
+				env:          &Env{GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials())},
+				ecNodes:      []*EcNode{nodeA, nodeB},
+				writer:       &bytes.Buffer{},
+				applyChanges: true,
+			}
+
+			err := erb.rebuildOneEcVolume("c1", vid, locations, nodeA)
+			if !tc.wantErr {
+				if a.copies() == 0 {
+					t.Fatalf("holders of one run must be copied from, err=%v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "different encode runs") {
+				t.Fatalf("expected a mixed-run refusal, got %v", err)
+			}
+			if a.copies() != 0 || b.copies() != 0 {
+				t.Fatalf("no shard may be copied from holders of different runs, copies=%d/%d", a.copies(), b.copies())
+			}
+		})
+	}
+}
+
+func TestRebuildOneEcVolumeSkipsExtraCopiesInRunCheck(t *testing.T) {
+	const vid = 7
+	a := startEcBalanceFakeServer(t, vid, 0, 1, 2, 3, 4)
+	b := startEcBalanceFakeServer(t, vid, 5, 6, 7, 8, 9)
+	extra := startEcBalanceFakeServer(t, vid, 5)
+	a.run, b.run, extra.stall = 1000, 1000, true
+	nodeA := newEcNode("dc1", "rack1", a.nodeId(), 100).addEcVolumeAndShardsForTest(vid, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4})
+	nodeB := newEcNode("dc1", "rack1", b.nodeId(), 100).addEcVolumeAndShardsForTest(vid, "c1", []erasure_coding.ShardId{5, 6, 7, 8, 9})
+	nodeExtra := newEcNode("dc1", "rack1", extra.nodeId(), 100).addEcVolumeAndShardsForTest(vid, "c1", []erasure_coding.ShardId{5})
+	locations := make(EcShardLocations, erasure_coding.MaxShardCount)
+	for i := 0; i < 10; i++ {
+		locations[i] = []*EcNode{nodeA}
+		if i >= 5 {
+			locations[i] = []*EcNode{nodeB}
+		}
+	}
+	locations[5] = append(locations[5], nodeExtra)
+	erb := &ecRebuilder{
+		env:          &Env{GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials())},
+		ecNodes:      []*EcNode{nodeA, nodeB, nodeExtra},
+		writer:       &bytes.Buffer{},
+		applyChanges: true,
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- erb.rebuildOneEcVolume("c1", vid, locations, nodeA) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a stalled extra copy the rebuild never reads must not block it")
+	}
+	if a.copies() == 0 {
+		t.Fatal("the rebuild must reach the copy step")
+	}
+}
+
+func TestRebuildOneEcVolumeSkipsUncheckedSourcesOnEmptyRebuilder(t *testing.T) {
+	const vid = 7
+	for _, tc := range []struct {
+		name      string
+		bInfoErr  error
+		wantFromB bool
+	}{
+		{"source answers", nil, true},
+		{"source run unchecked", fmt.Errorf("info unavailable"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rebuilder := startEcBalanceFakeServer(t, vid)
+			a := startEcBalanceFakeServer(t, vid, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+			b := startEcBalanceFakeServer(t, vid, 10, 11, 12, 13)
+			a.run = 1000
+			if tc.bInfoErr == nil {
+				b.run = 1000
+			} else {
+				b.run, b.infoErr = 2000, tc.bInfoErr
+			}
+			nodeR := newEcNode("dc1", "rack1", rebuilder.nodeId(), 100)
+			nodeA := newEcNode("dc1", "rack1", a.nodeId(), 100).addEcVolumeAndShardsForTest(vid, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+			nodeB := newEcNode("dc1", "rack1", b.nodeId(), 100).addEcVolumeAndShardsForTest(vid, "c1", []erasure_coding.ShardId{10, 11, 12, 13})
+			locations := make(EcShardLocations, erasure_coding.MaxShardCount)
+			for i := 0; i < erasure_coding.TotalShardsCount; i++ {
+				locations[i] = []*EcNode{nodeA}
+				if i >= 10 {
+					locations[i] = []*EcNode{nodeB}
+				}
+			}
+			erb := &ecRebuilder{
+				env:          &Env{GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials())},
+				ecNodes:      []*EcNode{nodeR, nodeA, nodeB},
+				writer:       &bytes.Buffer{},
+				applyChanges: true,
+			}
+
+			_ = erb.rebuildOneEcVolume("c1", vid, locations, nodeR)
+			fromA, fromB := 0, 0
+			for _, source := range rebuilder.copySources() {
+				switch source {
+				case string(pb.NewServerAddressFromDataNode(nodeA.Info)):
+					fromA++
+				case string(pb.NewServerAddressFromDataNode(nodeB.Info)):
+					fromB++
+				}
+			}
+			if fromA != 10 {
+				t.Fatalf("expected 10 shards copied from the checked source, got %d", fromA)
+			}
+			if tc.wantFromB != (fromB > 0) {
+				t.Fatalf("copies from the second source = %d, want any: %v", fromB, tc.wantFromB)
+			}
+		})
+	}
+}
+
+func TestRebuildOneEcVolumeSkipsRunCheckOfLocalShards(t *testing.T) {
+	const vid = 7
+	rebuilder := startEcBalanceFakeServer(t, vid, 0, 1, 2, 3, 4)
+	b := startEcBalanceFakeServer(t, vid, 5, 6, 7, 8, 9)
+	stale := startEcBalanceFakeServer(t, vid, 0)
+	rebuilder.run, b.run, stale.run = 1000, 1000, 2000
+	nodeR := newEcNode("dc1", "rack1", rebuilder.nodeId(), 100).addEcVolumeAndShardsForTest(vid, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4})
+	nodeB := newEcNode("dc1", "rack1", b.nodeId(), 100).addEcVolumeAndShardsForTest(vid, "c1", []erasure_coding.ShardId{5, 6, 7, 8, 9})
+	nodeStale := newEcNode("dc1", "rack1", stale.nodeId(), 100).addEcVolumeAndShardsForTest(vid, "c1", []erasure_coding.ShardId{0})
+	locations := make(EcShardLocations, erasure_coding.MaxShardCount)
+	for i := 0; i < 10; i++ {
+		locations[i] = []*EcNode{nodeR}
+		if i >= 5 {
+			locations[i] = []*EcNode{nodeB}
+		}
+	}
+	locations[0] = []*EcNode{nodeStale, nodeR}
+	erb := &ecRebuilder{
+		env:          &Env{GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials())},
+		ecNodes:      []*EcNode{nodeR, nodeB, nodeStale},
+		writer:       &bytes.Buffer{},
+		applyChanges: true,
+	}
+
+	err := erb.rebuildOneEcVolume("c1", vid, locations, nodeR)
+	if err != nil && strings.Contains(err.Error(), "different encode runs") {
+		t.Fatalf("a replica of a shard the rebuilder holds is never read, so its run must not refuse the rebuild: %v", err)
+	}
+	if rebuilder.copies() != 5 {
+		t.Fatalf("expected the 5 shards the rebuilder lacks to be copied, got %d", rebuilder.copies())
 	}
 }

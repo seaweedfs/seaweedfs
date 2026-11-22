@@ -2517,6 +2517,7 @@ impl VolumeServer for VolumeGrpcService {
 
             // EC volume: search disk locations for the file
             let store = self.state.store.read().unwrap();
+            require_one_local_encode_run(&store, &req.collection, vid)?;
             let mut found_path = None;
             let ec_base = if req.collection.is_empty() {
                 format!("{}{}", vid.0, req.ext)
@@ -4629,23 +4630,19 @@ impl VolumeServer for VolumeGrpcService {
             .find_ec_volume(vid)
             .ok_or_else(|| Status::not_found(format!("ec volume {} not found", req.volume_id)))?;
 
+        // Every local disk's mounted shards, each id once, as Go reports them.
         let mut shard_infos = Vec::new();
-        for (i, shard) in ec_vol.shards.iter().enumerate() {
-            match shard {
-                Some(s) => {
+        let mut seen = std::collections::HashSet::new();
+        for ecv in store.find_all_ec_volumes(vid) {
+            for (i, shard) in ecv.shards.iter().enumerate() {
+                if let Some(s) = shard
+                    && seen.insert(i)
+                {
                     shard_infos.push(volume_server_pb::EcShardInfo {
                         shard_id: i as u32,
                         size: s.file_size(),
-                        collection: ec_vol.collection.clone(),
+                        collection: ecv.collection.clone(),
                         volume_id: req.volume_id,
-                    });
-                }
-                None => {
-                    shard_infos.push(volume_server_pb::EcShardInfo {
-                        shard_id: i as u32,
-                        collection: ec_vol.collection.clone(),
-                        volume_id: req.volume_id,
-                        ..Default::default()
                     });
                 }
             }
@@ -4660,10 +4657,28 @@ impl VolumeServer for VolumeGrpcService {
         // coordinator cannot otherwise tell a holder that understands the
         // uniform block layout from one that dropped the unknown .vif field
         // and mounted the volume as legacy.
+        let mut served_run = 0i64;
+        for ecv in store
+            .find_all_ec_volumes(vid)
+            .into_iter()
+            .filter(|ecv| ecv.encode_ts_ns != 0 && ecv.shards.iter().any(|s| s.is_some()))
+        {
+            if served_run == 0 {
+                served_run = ecv.encode_ts_ns;
+            } else if served_run != ecv.encode_ts_ns {
+                served_run = crate::storage::erasure_coding::ec_volume::MIXED_ENCODE_RUNS;
+            }
+        }
+        let encode_ts_ns =
+            if served_run == crate::storage::erasure_coding::ec_volume::MIXED_ENCODE_RUNS {
+                served_run
+            } else {
+                ec_vol.encode_ts_ns
+            };
         let ec_shard_config = Some(volume_server_pb::EcShardConfig {
             data_shards: ec_vol.data_shards,
             parity_shards: ec_vol.parity_shards,
-            encode_ts_ns: 0,
+            encode_ts_ns,
             block_size: ec_vol.block_size,
         });
 
@@ -6435,6 +6450,44 @@ impl VolumeGrpcService {
             drain_copy_stream_to_file(&mut stream, file, &file_path, &ext).await?;
         }
 
+        // The sidecars are staged too and committed with the index, so a failed
+        // copy cannot pair a new .vif with the index this disk keeps. The .vif
+        // is fetched even when not installed: it names the copied shards' run.
+        let mut staged_sidecars: Vec<(String, crate::server::store_ec::RemoveIncomplete)> =
+            Vec::new();
+        {
+            let copy_req = volume_server_pb::CopyFileRequest {
+                volume_id: req.volume_id,
+                collection: req.collection.clone(),
+                is_ec_volume: true,
+                ext: ".vif".to_string(),
+                compaction_revision: u32::MAX,
+                stop_offset: i64::MAX as u64,
+                ignore_source_file_not_found: true,
+                ..Default::default()
+            };
+            let mut stream = client
+                .copy_file(copy_req)
+                .await
+                .map_err(|e| {
+                    Status::internal(format!(
+                        "VolumeEcShardsCopy volume {} copy .vif: {}",
+                        vid, e
+                    ))
+                })?
+                .into_inner();
+
+            let file_path = format!("{}.vif", data_base);
+            let staging = format!("{}.copying", file_path);
+            let staged = crate::server::store_ec::RemoveIncomplete::new(&staging);
+            if drain_optional_copy_to_file(&mut stream, &staging, ".vif").await? > 0 {
+                require_mounted_encode_run(&self.state.store.read().unwrap(), vid, &staging)?;
+                if req.copy_vif_file {
+                    staged_sidecars.push((file_path, staged));
+                }
+            }
+        }
+
         // Copy .ecj file if requested. The journal is a *set* of ids: merge
         // the source's into the local one as a union, never append it whole,
         // or every balance round trip doubles it. A source without one
@@ -6477,40 +6530,6 @@ impl VolumeGrpcService {
                             vid, e
                         ))
                     })?;
-            }
-        }
-
-        // The sidecars are staged too and committed with the index, so a failed
-        // copy cannot pair a new .vif with the index this disk keeps.
-        let mut staged_sidecars: Vec<(String, crate::server::store_ec::RemoveIncomplete)> =
-            Vec::new();
-        if req.copy_vif_file {
-            let copy_req = volume_server_pb::CopyFileRequest {
-                volume_id: req.volume_id,
-                collection: req.collection.clone(),
-                is_ec_volume: true,
-                ext: ".vif".to_string(),
-                compaction_revision: u32::MAX,
-                stop_offset: i64::MAX as u64,
-                ignore_source_file_not_found: true,
-                ..Default::default()
-            };
-            let mut stream = client
-                .copy_file(copy_req)
-                .await
-                .map_err(|e| {
-                    Status::internal(format!(
-                        "VolumeEcShardsCopy volume {} copy .vif: {}",
-                        vid, e
-                    ))
-                })?
-                .into_inner();
-
-            let file_path = format!("{}.vif", data_base);
-            let staging = format!("{}.copying", file_path);
-            let staged = crate::server::store_ec::RemoveIncomplete::new(&staging);
-            if drain_optional_copy_to_file(&mut stream, &staging, ".vif").await? > 0 {
-                staged_sidecars.push((file_path, staged));
             }
         }
 
@@ -7309,6 +7328,72 @@ async fn drain_copy_stream_to_file(
             Err(e)
         }
     }
+}
+
+/// Refuses a copied .vif of another encode run than the one this server mounts
+/// for the volume: the mounted volume would keep reporting its run while
+/// serving the copied bytes.
+fn require_mounted_encode_run(
+    store: &crate::storage::store::Store,
+    vid: VolumeId,
+    staged_vif: &str,
+) -> Result<(), Status> {
+    let run = read_vif_encode_run(staged_vif);
+    if run == 0 {
+        return Ok(());
+    }
+    for loc in &store.locations {
+        if let Some(ecv) = loc.find_ec_volume(vid)
+            && ecv.encode_ts_ns != 0
+            && ecv.encode_ts_ns != run
+        {
+            return Err(Status::failed_precondition(format!(
+                "VolumeEcShardsCopy volume {}: copied shards are encode run {} but {} mounts run {}",
+                vid, run, loc.directory, ecv.encode_ts_ns
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn read_vif_encode_run(path: &str) -> i64 {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&s).ok())
+        .and_then(|vi| vi.ec_shard_config)
+        .map_or(0, |c| c.encode_ts_ns)
+}
+
+/// Refuse to serve the files of a volume whose disks here hold different
+/// encode runs: each copied file is looked up on its own, so a copy could pair
+/// one run's shards with another run's `.vif`.
+fn require_one_local_encode_run(
+    store: &crate::storage::store::Store,
+    collection: &str,
+    vid: VolumeId,
+) -> Result<(), Status> {
+    let vif = if collection.is_empty() {
+        format!("{}.vif", vid.0)
+    } else {
+        format!("{}_{}.vif", collection, vid.0)
+    };
+    let mut run = 0i64;
+    for loc in &store.locations {
+        for dir in [&loc.directory, &loc.idx_directory] {
+            let r = read_vif_encode_run(&format!("{}/{}", dir, vif));
+            if r == 0 {
+                continue;
+            }
+            if run != 0 && run != r {
+                return Err(Status::failed_precondition(format!(
+                    "ec volume {} holds encode runs {} and {} on this server",
+                    vid.0, run, r
+                )));
+            }
+            run = r;
+        }
+    }
+    Ok(())
 }
 
 /// Decode a CopyFile stream of an `.ecj` into its distinct ids without staging
@@ -10488,6 +10573,79 @@ mod tests {
         assert_eq!(sorted_dir_names(&dir), before);
         assert_eq!(std::fs::read(format!("{}/60.vif", dir)).unwrap(), vif);
         assert_eq!(std::fs::read(format!("{}/60.ecx", dir)).unwrap(), ecx);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_shards_copy_refuses_other_encode_run() {
+        let vif = |run: i64| {
+            serde_json::to_string(&crate::storage::volume::VifVolumeInfo {
+                version: 3,
+                ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                    data_shards: 10,
+                    parity_shards: 4,
+                    encode_ts_ns: run,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .unwrap()
+        };
+        for (src_run, copy_vif, want_err) in [
+            (1000i64, true, false),
+            (2000, true, true),
+            (2000, false, true),
+            (0, true, false),
+        ] {
+            let (source_service, source_tmp) = make_local_service_with_volume("", None);
+            let src = source_tmp.path().to_str().unwrap().to_string();
+            std::fs::write(
+                format!("{}/63.ecx", src),
+                vec![9u8; NEEDLE_MAP_ENTRY_SIZE as usize],
+            )
+            .unwrap();
+            std::fs::write(format!("{}/63.ec00", src), vec![1u8; 4096]).unwrap();
+            std::fs::write(format!("{}/63.vif", src), vif(src_run)).unwrap();
+            let (port, _shutdown) = serve_source(source_service).await;
+
+            let (dest, _dest_tmp, dir) = ec_copy_destination().await;
+            std::fs::write(
+                format!("{}/63.ecx", dir),
+                vec![0u8; NEEDLE_MAP_ENTRY_SIZE as usize],
+            )
+            .unwrap();
+            std::fs::write(format!("{}/63.ec05", dir), vec![5u8; 4096]).unwrap();
+            std::fs::write(format!("{}/63.vif", dir), vif(1000)).unwrap();
+            dest.state
+                .store
+                .write()
+                .unwrap()
+                .mount_ec_shards(VolumeId(63), "", &[5])
+                .unwrap();
+            let before = sorted_dir_names(&dir);
+
+            let result = dest
+                .volume_ec_shards_copy(Request::new(volume_server_pb::VolumeEcShardsCopyRequest {
+                    volume_id: 63,
+                    shard_ids: vec![0],
+                    copy_ecx_file: true,
+                    copy_ecj_file: true,
+                    copy_vif_file: copy_vif,
+                    source_data_node: format!("127.0.0.1:1.{}", port),
+                    ..Default::default()
+                }))
+                .await;
+            if !want_err {
+                result.expect("a copy of the mounted run or an unreported run");
+                continue;
+            }
+            let err = result.expect_err("a copy of another encode run");
+            assert_eq!(err.code(), tonic::Code::FailedPrecondition, "{}", err);
+            assert_eq!(sorted_dir_names(&dir), before);
+            assert_eq!(
+                std::fs::read_to_string(format!("{}/63.vif", dir)).unwrap(),
+                vif(1000)
+            );
+        }
     }
 
     // A caller that goes away mid-copy must not release the volume's lifecycle
@@ -15273,6 +15431,97 @@ mod tests {
         }
 
         (split_disk_grpc_service(store), tmp)
+    }
+
+    #[tokio::test]
+    async fn test_volume_ec_shards_info_lists_only_mounted_shards_of_every_disk() {
+        let (service, _tmp) = make_service_with_two_disk_complete_ec_volume(7062);
+        {
+            let mut store = service.state.store.write().unwrap();
+            for loc in store.locations.iter_mut() {
+                loc.unmount_ec_shards(VolumeId(7062), &[3, 10]);
+            }
+        }
+        let resp = service
+            .volume_ec_shards_info(Request::new(volume_server_pb::VolumeEcShardsInfoRequest {
+                volume_id: 7062,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        let mut ids: Vec<u32> = resp.ec_shard_infos.iter().map(|s| s.shard_id).collect();
+        ids.sort();
+        let want: Vec<u32> = (0..14).filter(|i| *i != 3 && *i != 10).collect();
+        assert_eq!(ids, want);
+        assert!(resp.ec_shard_infos.iter().all(|s| s.size > 0));
+    }
+
+    #[tokio::test]
+    async fn test_volume_ec_shards_info_reports_mixed_local_runs() {
+        for (run1, want) in [
+            (1000i64, 1000i64),
+            (
+                500,
+                crate::storage::erasure_coding::ec_volume::MIXED_ENCODE_RUNS,
+            ),
+        ] {
+            let (service, _tmp) = make_service_with_two_disk_complete_ec_volume(7061);
+            {
+                let mut store = service.state.store.write().unwrap();
+                let mut runtimes = store.find_all_ec_volumes_mut(VolumeId(7061));
+                assert_eq!(runtimes.len(), 2, "the vid must mount on both disks");
+                runtimes[0].encode_ts_ns = 1000;
+                runtimes[1].encode_ts_ns = run1;
+            }
+            let resp = service
+                .volume_ec_shards_info(Request::new(volume_server_pb::VolumeEcShardsInfoRequest {
+                    volume_id: 7061,
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            assert_eq!(resp.ec_shard_config.unwrap().encode_ts_ns, want);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_copy_file_refuses_source_with_mixed_local_runs() {
+        let vif = |run: i64| {
+            serde_json::to_string(&crate::storage::volume::VifVolumeInfo {
+                version: 3,
+                ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                    data_shards: 10,
+                    parity_shards: 4,
+                    encode_ts_ns: run,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .unwrap()
+        };
+        for (run1, want_err) in [(1000i64, false), (500, true), (0, false)] {
+            let (service, tmp) = make_service_with_two_disk_complete_ec_volume(7063);
+            for (dir, run) in [("data0", 1000), ("data1", run1)] {
+                std::fs::write(tmp.path().join(dir).join("7063.vif"), vif(run)).unwrap();
+            }
+            let result = service
+                .copy_file(Request::new(volume_server_pb::CopyFileRequest {
+                    volume_id: 7063,
+                    is_ec_volume: true,
+                    ext: ".ec00".to_string(),
+                    compaction_revision: u32::MAX,
+                    stop_offset: i64::MAX as u64,
+                    ..Default::default()
+                }))
+                .await;
+            match result {
+                Ok(_) => assert!(!want_err, "run {} served a mixed source", run1),
+                Err(e) => {
+                    assert!(want_err, "run {}: {}", run1, e);
+                    assert_eq!(e.code(), tonic::Code::FailedPrecondition, "{}", e);
+                }
+            }
+        }
     }
 
     /// The branch's newest production behavior, end to end: a mode 2 scrub of a

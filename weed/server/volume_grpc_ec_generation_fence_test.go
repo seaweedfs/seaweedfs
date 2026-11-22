@@ -6,6 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
@@ -268,4 +273,133 @@ func TestReadEcGenerationTsNs(t *testing.T) {
 	genC, readableC := readEcGenerationTsNs(corrupt, corrupt)
 	require.True(t, readableC)
 	require.Equal(t, int64(0), genC)
+}
+
+func TestVolumeEcShardsInfoReportsEncodeRun(t *testing.T) {
+	vid := needle.VolumeId(57)
+	store := buildEcStoreWithGeneration(t, t.TempDir(), "ec-info-run", vid, 4242, []erasure_coding.ShardId{0})
+	vs := &VolumeServer{store: store}
+	resp, err := vs.VolumeEcShardsInfo(context.Background(), &volume_server_pb.VolumeEcShardsInfoRequest{VolumeId: uint32(vid)})
+	require.NoError(t, err)
+	require.Equal(t, int64(4242), resp.GetEcShardConfig().GetEncodeTsNs())
+}
+
+func TestVolumeEcShardsInfoReportsMixedLocalRuns(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		runB    int64
+		wantRun int64
+	}{
+		{"same run on both disks", 1000, 1000},
+		{"different runs", 500, erasure_coding.MixedEncodeRuns},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			diskA, diskB := t.TempDir(), t.TempDir()
+			store := newMultiDiskEcScrubStore(t, diskA, diskB)
+			const vid = needle.VolumeId(902)
+			seedEcShardOnDisk(t, store, vid, "mixed", diskA, 0, 1000, 10, 4, 0)
+			seedEcShardOnDisk(t, store, vid, "mixed", diskB, 1, tc.runB, 10, 4, 0)
+
+			vs := &VolumeServer{store: store}
+			resp, err := vs.VolumeEcShardsInfo(context.Background(), &volume_server_pb.VolumeEcShardsInfoRequest{VolumeId: uint32(vid)})
+			require.NoError(t, err)
+			require.Len(t, resp.GetEcShardInfos(), 2)
+			require.Equal(t, tc.wantRun, resp.GetEcShardConfig().GetEncodeTsNs())
+
+			var bits erasure_coding.ShardBits
+			for _, s := range resp.GetEcShardInfos() {
+				bits = bits.Set(erasure_coding.ShardId(s.ShardId))
+			}
+			err = erasure_coding.RequireAgreedEncodeRun(uint32(vid), map[string]erasure_coding.ServerShardInventory{
+				"local": {Bits: bits, EncodeTsNs: resp.GetEcShardConfig().GetEncodeTsNs()},
+				"peer":  {Bits: erasure_coding.ShardBits(0).Set(2), EncodeTsNs: 1000},
+			})
+			require.Equal(t, tc.wantRun == erasure_coding.MixedEncodeRuns, err != nil, "agreement error: %v", err)
+		})
+	}
+}
+
+func TestVolumeEcShardsCopyRefusesOtherEncodeRun(t *testing.T) {
+	const collection = "ec-copy-run"
+	vid := needle.VolumeId(58)
+	for _, tc := range []struct {
+		name    string
+		srcRun  int64
+		copyVif bool
+		wantErr bool
+	}{
+		{"same run", 1000, true, false},
+		{"other run", 2000, true, true},
+		{"other run without .vif", 2000, false, true},
+		{"unreported run", 0, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := buildEcStoreWithGeneration(t, filepath.Join(t.TempDir(), "src"), collection, vid, tc.srcRun, []erasure_coding.ShardId{0})
+			source := serveEcCopySource(t, &VolumeServer{store: src})
+			dstDir := filepath.Join(t.TempDir(), "dst")
+			receiver := &VolumeServer{
+				store:                         buildEcStoreWithGeneration(t, dstDir, collection, vid, 1000, []erasure_coding.ShardId{5}),
+				grpcDialOption:                grpc.WithTransportCredentials(insecure.NewCredentials()),
+				AllowUntrustedRemoteEndpoints: true,
+			}
+			before := listDir(t, dstDir)
+
+			_, err := receiver.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
+				VolumeId:       uint32(vid),
+				Collection:     collection,
+				ShardIds:       []uint32{0},
+				CopyEcxFile:    true,
+				CopyEcjFile:    true,
+				CopyVifFile:    tc.copyVif,
+				SourceDataNode: source,
+			})
+			if !tc.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.Equal(t, codes.FailedPrecondition, status.Code(err), "%v", err)
+			require.Equal(t, before, listDir(t, dstDir))
+			gen, _ := readEcGenerationTsNs(erasure_coding.EcShardFileName(collection, dstDir, int(vid)), "")
+			require.Equal(t, int64(1000), gen)
+		})
+	}
+}
+
+func TestCopyFileRefusesSourceWithMixedLocalRuns(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		runB    int64
+		wantErr bool
+	}{
+		{"same run on both disks", 1000, false},
+		{"different runs", 500, true},
+		{"unreported run", 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			diskA, diskB := t.TempDir(), t.TempDir()
+			src := newMultiDiskEcScrubStore(t, diskA, diskB)
+			const vid = needle.VolumeId(903)
+			seedEcShardOnDisk(t, src, vid, "mixed-src", diskA, 0, 1000, 10, 4, 0)
+			seedEcShardOnDisk(t, src, vid, "mixed-src", diskB, 1, tc.runB, 10, 4, 0)
+			source := serveEcCopySource(t, &VolumeServer{store: src})
+
+			dstDir := t.TempDir()
+			receiver := newEcCopyReceiver(t, dstDir)
+			before := listDir(t, dstDir)
+			_, err := receiver.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
+				VolumeId:       uint32(vid),
+				Collection:     "mixed-src",
+				ShardIds:       []uint32{0},
+				CopyEcxFile:    true,
+				CopyVifFile:    true,
+				SourceDataNode: source,
+			})
+			if !tc.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, "holds encode runs")
+			require.Equal(t, before, listDir(t, dstDir))
+		})
+	}
 }

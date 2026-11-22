@@ -97,6 +97,10 @@ func (erb *ecRebuilder) matchesVolumeId(vid needle.VolumeId) bool {
 // Unions across all of the node's disks, like prepareDataToRecover, so slot
 // accounting matches what the rebuild will actually treat as local.
 func (erb *ecRebuilder) countLocalShards(node *EcNode, collection string, volumeId needle.VolumeId) int {
+	return localShardsOf(node, collection, volumeId).Count()
+}
+
+func localShardsOf(node *EcNode, collection string, volumeId needle.VolumeId) *erasure_coding.ShardsInfo {
 	localShardsInfo := erasure_coding.NewShardsInfo()
 	for _, diskInfo := range node.Info.DiskInfos {
 		for _, ecShardInfo := range diskInfo.EcShardInfos {
@@ -105,7 +109,7 @@ func (erb *ecRebuilder) countLocalShards(node *EcNode, collection string, volume
 			}
 		}
 	}
-	return localShardsInfo.Count()
+	return localShardsInfo
 }
 
 // selectAndReserveRebuilder atomically selects a rebuilder node with sufficient free slots
@@ -390,9 +394,17 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 
 	fmt.Printf("rebuildOneEcVolume %s %d\n", collection, volumeId)
 
+	var unchecked map[string]bool
+	if erb.applyChanges {
+		var err error
+		if unchecked, err = erb.requireAgreedEncodeRun(collection, volumeId, locations, rebuilder); err != nil {
+			return err
+		}
+	}
+
 	// collect shard files to rebuilder local disk
 	var generatedShardIds []erasure_coding.ShardId
-	copiedShardIds, _, err := erb.prepareDataToRecover(rebuilder, collection, volumeId, locations)
+	copiedShardIds, _, err := erb.prepareDataToRecover(rebuilder, collection, volumeId, locations, unchecked)
 	defer func() {
 		// Clean up the working copies this run actually made, even when the
 		// recoverability gate failed after some copies already succeeded:
@@ -452,6 +464,42 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 	return erb.removeCorruptCopies(collection, volumeId, rebuilder, generatedShardIds)
 }
 
+// requireAgreedEncodeRun refuses a rebuild whose rebuilder and copy sources
+// serve shards of different encode runs: the copies would land beside the
+// first run's .vif and .ecx, and the rebuild would regenerate from the mixed
+// set. The copy sources are the first holders of the shards the rebuilder
+// lacks, as prepareDataToRecover picks them. It returns the copy sources whose run could not be checked: a
+// rebuilder with nothing mounted has no run to check a copy against, so the
+// rebuild must not copy from them.
+func (erb *ecRebuilder) requireAgreedEncodeRun(collection string, volumeId needle.VolumeId, locations EcShardLocations, rebuilder *EcNode) (unchecked map[string]bool, err error) {
+	rebuilderAddress := string(pb.NewServerAddressFromDataNode(rebuilder.Info))
+	holders := []string{rebuilderAddress}
+	local := localShardsOf(rebuilder, collection, volumeId)
+	for i, ecNodes := range locations {
+		if len(ecNodes) == 0 || local.Has(erasure_coding.ShardId(i)) || ecNodes[0].Info.Id == rebuilder.Info.Id {
+			continue
+		}
+		holders = append(holders, string(pb.NewServerAddressFromDataNode(ecNodes[0].Info)))
+	}
+	perServer := make(map[string]erasure_coding.ServerShardInventory, len(holders))
+	for _, holder := range holders {
+		if _, seen := perServer[holder]; seen {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), ecShardVerifyTimeout)
+		_, inv := erasure_coding.VerifyShardsAcrossServers(ctx, uint32(volumeId), []string{holder}, erb.env.GrpcDialOption)
+		cancel()
+		perServer[holder] = inv[holder]
+		if inv[holder].QueryError != nil && holder != rebuilderAddress {
+			if unchecked == nil {
+				unchecked = make(map[string]bool)
+			}
+			unchecked[holder] = true
+		}
+	}
+	return unchecked, erasure_coding.RequireAgreedEncodeRun(uint32(volumeId), perServer)
+}
+
 func (erb *ecRebuilder) generateMissingShards(collection string, volumeId needle.VolumeId, sourceLocation pb.ServerAddress) (rebuiltShardIds []erasure_coding.ShardId, err error) {
 
 	err = operation.WithVolumeServerClient(false, sourceLocation, erb.env.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
@@ -479,7 +527,7 @@ func (erb *ecRebuilder) generateMissingShards(collection string, volumeId needle
 	return
 }
 
-func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection string, volumeId needle.VolumeId, locations EcShardLocations) (copiedShardIds []erasure_coding.ShardId, localShardIds []erasure_coding.ShardId, err error) {
+func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection string, volumeId needle.VolumeId, locations EcShardLocations, unchecked map[string]bool) (copiedShardIds []erasure_coding.ShardId, localShardIds []erasure_coding.ShardId, err error) {
 
 	needEcxFile := true
 	localShardsInfo := erasure_coding.NewShardsInfo()
@@ -532,6 +580,11 @@ func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection strin
 		if !erb.applyChanges {
 			recoverableRemoteShards++
 			erb.write("would copy %d.%d from %s\n", volumeId, shardId, ecNodes[0].Info.Id)
+			continue
+		}
+
+		if unchecked[string(pb.NewServerAddressFromDataNode(ecNodes[0].Info))] {
+			erb.write("%s skipped %d.%d from %s: its encode run could not be checked\n", rebuilder.Info.Id, volumeId, shardId, ecNodes[0].Info.Id)
 			continue
 		}
 

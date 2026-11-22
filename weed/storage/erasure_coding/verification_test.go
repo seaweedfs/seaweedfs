@@ -1,6 +1,7 @@
 package erasure_coding
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -140,3 +141,26 @@ func TestSummarizeShardInventory_IncludesError(t *testing.T) {
 type errStr string
 
 func (e errStr) Error() string { return string(e) }
+
+func TestRequireAgreedEncodeRun(t *testing.T) {
+	stale := ShardBits(0).Set(0).Set(8)
+	fresh := ShardBits(0x3FFF).Clear(0).Clear(8)
+	for _, tc := range []struct {
+		name      string
+		perServer map[string]ServerShardInventory
+		wantErr   bool
+	}{
+		{"one run", map[string]ServerShardInventory{"a": {Bits: stale, EncodeTsNs: 200}, "b": {Bits: fresh, EncodeTsNs: 200}}, false},
+		{"two runs", map[string]ServerShardInventory{"a": {Bits: stale, EncodeTsNs: 100}, "b": {Bits: fresh, EncodeTsNs: 200}}, true},
+		{"mixed holder alone", map[string]ServerShardInventory{"a": {Bits: stale | fresh, EncodeTsNs: MixedEncodeRuns}}, true},
+		{"mixed holder beside agreeing run", map[string]ServerShardInventory{"a": {Bits: stale, EncodeTsNs: MixedEncodeRuns}, "b": {Bits: fresh, EncodeTsNs: 200}}, true},
+		{"unreported run skipped", map[string]ServerShardInventory{"a": {Bits: stale}, "b": {Bits: fresh, EncodeTsNs: 200}}, false},
+		{"no shards skipped", map[string]ServerShardInventory{"a": {EncodeTsNs: 100}, "b": {Bits: fresh, EncodeTsNs: 200}}, false},
+		{"unreachable skipped", map[string]ServerShardInventory{"a": {Bits: stale, EncodeTsNs: 100, QueryError: errors.New("down")}, "b": {Bits: fresh, EncodeTsNs: 200}}, false},
+	} {
+		err := RequireAgreedEncodeRun(147, tc.perServer)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("%s: err = %v, want error %v", tc.name, err, tc.wantErr)
+		}
+	}
+}

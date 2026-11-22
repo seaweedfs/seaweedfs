@@ -19,6 +19,9 @@ type ServerShardInventory struct {
 	// layout drops the field off the wire and reports 0, which is how
 	// RequireAgreedBlockLayout tells such a holder from one that agrees.
 	BlockSize int64
+	// EncodeTsNs is the encode run this holder serves, 0 from a binary that
+	// does not report it.
+	EncodeTsNs int64
 }
 
 // Query errors are recorded per-server and treated as zero shards rather
@@ -56,6 +59,7 @@ func VerifyShardsAcrossServers(ctx context.Context, volumeID uint32,
 					inv.Bits = inv.Bits.Set(ShardId(s.ShardId))
 				}
 				inv.BlockSize = resp.GetEcShardConfig().GetBlockSize()
+				inv.EncodeTsNs = resp.GetEcShardConfig().GetEncodeTsNs()
 				return nil
 			})
 		if callErr != nil {
@@ -136,6 +140,39 @@ func RequireAgreedBlockLayout(volumeID uint32, encodedBlockSize int64, perServer
 	sort.Strings(disagreeing)
 	return fmt.Errorf("volume %d was encoded with shard block size %d but %v; upgrade every volume server to a build that understands the uniform shard block layout before encoding",
 		volumeID, encodedBlockSize, disagreeing)
+}
+
+// MixedEncodeRuns is the encode run a holder reports when its disks serve
+// shards of more than one encode run for the volume.
+const MixedEncodeRuns int64 = -1
+
+// RequireAgreedEncodeRun fails when the holders that answered serve shards of
+// different encode runs. A shard set mixing runs counts as complete by shard
+// ids alone, yet reconstructs wrong bytes wherever the runs' inputs differ.
+// Holders that could not be reached, report no shard, or do not report a run
+// are skipped.
+func RequireAgreedEncodeRun(volumeID uint32, perServer map[string]ServerShardInventory) error {
+	byRun := make(map[int64][]string)
+	for server, inv := range perServer {
+		if inv.QueryError != nil || inv.Bits.Count() == 0 || inv.EncodeTsNs == 0 {
+			continue
+		}
+		byRun[inv.EncodeTsNs] = append(byRun[inv.EncodeTsNs], server)
+	}
+	if _, mixed := byRun[MixedEncodeRuns]; !mixed && len(byRun) <= 1 {
+		return nil
+	}
+	runs := make([]string, 0, len(byRun))
+	for ts, servers := range byRun {
+		sort.Strings(servers)
+		if ts == MixedEncodeRuns {
+			runs = append(runs, fmt.Sprintf("more than one run on each of %v", servers))
+			continue
+		}
+		runs = append(runs, fmt.Sprintf("run %d on %v", ts, servers))
+	}
+	sort.Strings(runs)
+	return fmt.Errorf("volume %d holders serve shards of different encode runs: %v", volumeID, runs)
 }
 
 func SummarizeShardInventory(perServer map[string]ServerShardInventory) string {

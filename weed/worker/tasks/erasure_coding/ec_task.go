@@ -875,6 +875,14 @@ func (t *ErasureCodingTask) verifyEcShardsBeforeDelete(ctx context.Context) erro
 		}).Error("EC holders disagree on the shard block layout — source volume will be kept")
 		return err
 	}
+	if err := erasure_coding.RequireAgreedEncodeRun(t.volumeID, perServer); err != nil {
+		t.GetLogger().WithFields(map[string]interface{}{
+			"volume_id":  t.volumeID,
+			"per_server": summary,
+			"error":      err.Error(),
+		}).Error("EC holders serve shards of different encode runs — source volume will be kept")
+		return err
+	}
 
 	return nil
 }
