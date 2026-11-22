@@ -393,6 +393,13 @@ func detectDuplicateShards(vk volKey, nodes map[string]*Node, totalShards int) [
 	var moves []*move
 	for _, shardID := range sortedShardIDs(shardLocations) {
 		locs := shardLocations[shardID]
+		if len(locs) == 1 {
+			if _, ok := shardEncodeRun(locs[0], vk, shardID); !ok {
+				glog.Warningf("ec balance: volume %d shard %d has copies from different encode runs on node %s; leaving the volume as is", vk.vid, shardID, locs[0].id)
+				freezeVolume(vk, nodes)
+				return nil
+			}
+		}
 		if len(locs) <= 1 {
 			continue
 		}

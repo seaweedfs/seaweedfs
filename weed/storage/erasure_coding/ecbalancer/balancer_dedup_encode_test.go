@@ -74,6 +74,25 @@ func TestPlanDedupRefusesWhenUnreportedRunIsAlsoComplete(t *testing.T) {
 	}
 }
 
+// A node holding one shard on two disks of different runs has no duplicate on
+// another node, yet a move of that shard could take the stale copy and delete
+// the fresh one.
+func TestPlanDedupFreezesVolumeWithMixedRunsOnOneNode(t *testing.T) {
+	topo := NewTopology()
+	a := topo.AddNode("a", "dc1", "dc1:rack1", 50)
+	a.AddDisk(1, "", 50, 14)
+	a.AddDisk(2, "", 50, 1)
+	a.AddShards(100, "c", 1, allBits(14))
+	a.SetEncodeTs(100, "c", 1, 200)
+	a.AddShards(100, "c", 2, bits(0))
+	a.SetEncodeTs(100, "c", 2, 100)
+	addEmptyNode(topo, "e1", "dc1:rack2")
+	addEmptyNode(topo, "e2", "dc1:rack3")
+	if dedup, other := planVolume(topo, 100); len(dedup)+len(other) != 0 {
+		t.Fatalf("a volume whose shard copies on one node disagree must not be touched; got dedup %+v, moves %+v", dedup, other)
+	}
+}
+
 // Neither run is complete in the snapshot (a filter may hide the rest of
 // either), so no copy may be chosen, and no later phase may move a copy of the
 // shared shard onto the other.
