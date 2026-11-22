@@ -30,6 +30,7 @@ type ecBalanceFakeServer struct {
 	shards    map[uint32]map[uint32]bool // vid -> shardId -> present
 	full      bool                       // VolumeEcShardsCopy answers "no space left"
 	run       int64                      // encode run VolumeEcShardsInfo reports
+	stall     bool                       // VolumeEcShardsInfo never answers
 	copyCalls int
 	grpcAddr  string
 	stop      func()
@@ -56,6 +57,11 @@ func (f *ecBalanceFakeServer) VolumeEcShardsMount(ctx context.Context, req *volu
 
 func (f *ecBalanceFakeServer) VolumeEcShardsInfo(ctx context.Context, req *volume_server_pb.VolumeEcShardsInfoRequest) (*volume_server_pb.VolumeEcShardsInfoResponse, error) {
 	f.mu.Lock()
+	if f.stall {
+		f.mu.Unlock()
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	defer f.mu.Unlock()
 	resp := &volume_server_pb.VolumeEcShardsInfoResponse{}
 	if f.run != 0 {

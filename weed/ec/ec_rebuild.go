@@ -458,16 +458,16 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 	return erb.removeCorruptCopies(collection, volumeId, rebuilder, generatedShardIds)
 }
 
-// requireAgreedEncodeRun refuses a rebuild whose holders serve shards of
-// different encode runs: the copies would land beside the first run's .vif
-// and .ecx, and the rebuild would regenerate from the mixed set. A holder that
-// does not answer in time is skipped like an unreachable one; the copy itself
-// still checks the source's run against the mounted run.
+// requireAgreedEncodeRun refuses a rebuild whose rebuilder and copy sources
+// serve shards of different encode runs: the copies would land beside the
+// first run's .vif and .ecx, and the rebuild would regenerate from the mixed
+// set. A holder that does not answer in time is skipped like an unreachable
+// one; the copy itself still checks the source's run against the mounted run.
 func (erb *ecRebuilder) requireAgreedEncodeRun(volumeId needle.VolumeId, locations EcShardLocations, rebuilder *EcNode) error {
 	holders := []string{string(pb.NewServerAddressFromDataNode(rebuilder.Info))}
 	for _, ecNodes := range locations {
-		for _, node := range ecNodes {
-			holders = append(holders, string(pb.NewServerAddressFromDataNode(node.Info)))
+		if len(ecNodes) > 0 {
+			holders = append(holders, string(pb.NewServerAddressFromDataNode(ecNodes[0].Info)))
 		}
 	}
 	perServer := make(map[string]erasure_coding.ServerShardInventory, len(holders))

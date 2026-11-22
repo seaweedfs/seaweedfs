@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -370,5 +371,41 @@ func TestRebuildOneEcVolumeRefusesMixedEncodeRuns(t *testing.T) {
 				t.Fatalf("no shard may be copied from holders of different runs, copies=%d/%d", a.copies(), b.copies())
 			}
 		})
+	}
+}
+
+func TestRebuildOneEcVolumeSkipsExtraCopiesInRunCheck(t *testing.T) {
+	const vid = 7
+	a := startEcBalanceFakeServer(t, vid, 0, 1, 2, 3, 4)
+	b := startEcBalanceFakeServer(t, vid, 5, 6, 7, 8, 9)
+	extra := startEcBalanceFakeServer(t, vid, 5)
+	a.run, b.run, extra.stall = 1000, 1000, true
+	nodeA := newEcNode("dc1", "rack1", a.nodeId(), 100).addEcVolumeAndShardsForTest(vid, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4})
+	nodeB := newEcNode("dc1", "rack1", b.nodeId(), 100).addEcVolumeAndShardsForTest(vid, "c1", []erasure_coding.ShardId{5, 6, 7, 8, 9})
+	nodeExtra := newEcNode("dc1", "rack1", extra.nodeId(), 100).addEcVolumeAndShardsForTest(vid, "c1", []erasure_coding.ShardId{5})
+	locations := make(EcShardLocations, erasure_coding.MaxShardCount)
+	for i := 0; i < 10; i++ {
+		locations[i] = []*EcNode{nodeA}
+		if i >= 5 {
+			locations[i] = []*EcNode{nodeB}
+		}
+	}
+	locations[5] = append(locations[5], nodeExtra)
+	erb := &ecRebuilder{
+		env:          &Env{GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials())},
+		ecNodes:      []*EcNode{nodeA, nodeB, nodeExtra},
+		writer:       &bytes.Buffer{},
+		applyChanges: true,
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- erb.rebuildOneEcVolume("c1", vid, locations, nodeA) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a stalled extra copy the rebuild never reads must not block it")
+	}
+	if a.copies() == 0 {
+		t.Fatal("the rebuild must reach the copy step")
 	}
 }
