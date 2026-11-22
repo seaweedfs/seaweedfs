@@ -604,3 +604,58 @@ func TestRenameStressWithFlushes(t *testing.T) {
 		t.Fatal("after an even number of renames the file must be back in /checkpoints only")
 	}
 }
+
+// A chmod whose file is moved again each time it gets the name's lock gives
+// up with EAGAIN instead of writing a name the file has left.
+func TestChmodOfAFileThatKeepsMovingGivesUp(t *testing.T) {
+	wfs, fake, dirInode, _ := newRenameRaceWFS(t)
+	out := createDeferredFile(t, wfs, dirInode, "f0")
+	if st := flushHandle(wfs, out); st != fuse.OK {
+		t.Fatalf("Flush = %v, want OK", st)
+	}
+	writes := len(fake.recorded())
+	table := wfs.metadataPublicationTable()
+	// Held shared, a name's lock still stops the chmod, and a shared try
+	// fails only while the chmod is queued for it.
+	waitQueued := func(p util.FullPath) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			lock, acquired := table.TryAcquireLock("test probe", p, util.SharedLock)
+			if !acquired {
+				return
+			}
+			table.ReleaseLock(p, lock)
+			if time.Now().After(deadline) {
+				t.Fatalf("the chmod never waited for %s", p)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	path := util.FullPath("/checkpoints/f0")
+	held := table.AcquireLock("test", path, util.SharedLock)
+	chmodded := make(chan fuse.Status, 1)
+	go func() {
+		in := &fuse.SetAttrIn{}
+		in.NodeId, in.Fh, in.Valid, in.Mode = out.NodeId, out.Fh, fuse.FATTR_MODE|fuse.FATTR_FH, 0o640
+		in.Caller = fuse.Caller{Owner: fuse.Owner{Uid: 123, Gid: 456}}
+		chmodded <- wfs.SetAttr(make(chan struct{}), in, &fuse.AttrOut{})
+	}()
+	for i := 1; i <= 4; i++ {
+		waitQueued(path)
+		next := util.FullPath(fmt.Sprintf("/checkpoints/f%d", i))
+		wfs.inodeToPath.MovePath(path, next)
+		nextHeld := table.AcquireLock("test", next, util.SharedLock)
+		table.ReleaseLock(path, held)
+		path, held = next, nextHeld
+	}
+	st := waitStatus(t, "SetAttr", chmodded)
+	table.ReleaseLock(path, held)
+	if st != fuse.Status(syscall.EAGAIN) {
+		t.Fatalf("SetAttr = %v, want EAGAIN", st)
+	}
+	if got := fake.recorded(); len(got) != writes {
+		t.Fatalf("writes = %+v, want none after the flush", got[writes:])
+	}
+}
