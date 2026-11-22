@@ -1750,23 +1750,28 @@ impl EcVolume {
         cache.locations.clone()
     }
 
-    /// Take a partial reply's holders for the shards the cache does not know,
-    /// leaving every known shard and the refresh time alone. A partial is not
-    /// the volume's map, but a cold cache can still read those shards directly;
-    /// the map stays marked so the next read looks it up again.
-    pub(crate) fn fill_shard_location_gaps(
+    /// Put a partial reply's holders ahead of the cached ones for each shard it
+    /// places, keeping the cached addresses as fallback and every other shard
+    /// and the refresh time alone. A partial is not the volume's map, but a read
+    /// can still go straight to a shard it names; the map stays marked so the
+    /// next read looks it up again.
+    pub(crate) fn merge_partial_shard_locations(
         &self,
         locations: HashMap<ShardId, Vec<String>>,
     ) -> HashMap<ShardId, Vec<String>> {
         let mut cache = self.shard_locations.write().unwrap();
-        for (shard_id, addrs) in locations {
+        for (shard_id, mut addrs) in locations {
             if addrs.is_empty() {
                 continue;
             }
-            let known = cache.locations.entry(shard_id).or_default();
-            if known.is_empty() {
-                *known = addrs;
+            if let Some(known) = cache.locations.get(&shard_id) {
+                for addr in known {
+                    if !addrs.contains(addr) {
+                        addrs.push(addr.clone());
+                    }
+                }
             }
+            cache.locations.insert(shard_id, addrs);
         }
         cache.stale = true;
         cache.locations.clone()
@@ -5483,11 +5488,12 @@ mod tests {
     }
 
     #[test]
-    fn fill_shard_location_gaps_keeps_known_shards_and_refresh_time() {
+    fn merge_partial_shard_locations_keeps_known_holders_and_refresh_time() {
         let tmp = TempDir::new().unwrap();
         let vol = mount_bare_ec_volume(tmp.path().to_str().unwrap());
 
-        let filled = vol.fill_shard_location_gaps(HashMap::from([(0, vec!["a:1".to_string()])]));
+        let filled =
+            vol.merge_partial_shard_locations(HashMap::from([(0, vec!["a:1".to_string()])]));
         assert_eq!(filled.get(&0), Some(&vec!["a:1".to_string()]));
         assert!(
             vol.shard_locations_snapshot().1.is_none(),
@@ -5497,12 +5503,17 @@ mod tests {
         vol.merge_shard_locations(HashMap::from([(1, vec!["b:2".to_string()])]));
         let stamped = vol.shard_locations_snapshot().1;
         vol.claim_shard_locations_refresh(|_| true);
-        let filled = vol.fill_shard_location_gaps(HashMap::from([
+        let filled = vol.merge_partial_shard_locations(HashMap::from([
             (1, vec!["c:3".to_string()]),
             (2, vec!["d:4".to_string()]),
             (3, Vec::new()),
         ]));
-        assert_eq!(filled.get(&1), Some(&vec!["b:2".to_string()]));
+        assert_eq!(
+            filled.get(&1),
+            Some(&vec!["c:3".to_string(), "b:2".to_string()]),
+            "a holder the partial names goes first, the cached one stays as fallback"
+        );
+        assert_eq!(filled.get(&0), Some(&vec!["a:1".to_string()]));
         assert_eq!(filled.get(&2), Some(&vec!["d:4".to_string()]));
         assert!(!filled.contains_key(&3), "a partial reply's empty slot adds nothing");
         assert_eq!(vol.shard_locations_snapshot().1, stamped);

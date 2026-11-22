@@ -158,7 +158,7 @@ pub async fn read_ec_shard_needle_or_miss(
         match cached_lookup_ec_shard_locations(state, vid).await {
             Ok(fresh) => {
                 // A complete reply merges into the cache; an incomplete one
-                // (< data_shards) only fills shards the cache lacks.
+                // (< data_shards) only puts the holders it names first.
                 match write_back_shard_locations(
                     state,
                     vid,
@@ -1266,11 +1266,11 @@ fn located_shard_count(locations: &HashMap<ShardId, Vec<String>>) -> usize {
 ///
 /// Completeness guard (mirrors Go's `cachedLookupEcShardLocations`): a reply
 /// carrying fewer than `data_shards` shard locations is a master-mid-recovery
-/// partial, not ground truth. It only fills shards the cache does not know, and
-/// leaves the refresh time unadvanced with the map marked stale, so a
-/// previously-complete cache is never clobbered with a partial map. On a
-/// complete reply the write is a per-shard MERGE (see `merge_shard_locations`),
-/// not a full replace.
+/// partial, not ground truth. It only puts the holders it names ahead of the
+/// cached ones, and leaves the refresh time unadvanced with the map marked
+/// stale, so a previously-complete cache is never clobbered with a partial map.
+/// On a complete reply the write is a per-shard MERGE (see
+/// `merge_shard_locations`), not a full replace.
 fn write_back_shard_locations(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
@@ -1281,7 +1281,7 @@ fn write_back_shard_locations(
     let store = state.store.read().unwrap();
     let ecv = find_ec_volume_for_scrub(&store, vid, expected_encode_ts_ns)?;
     if located_shard_count(&locations) < data_shards {
-        return Some(ecv.fill_shard_location_gaps(locations));
+        return Some(ecv.merge_partial_shard_locations(locations));
     }
     Some(ecv.merge_shard_locations(locations))
 }
