@@ -3,6 +3,7 @@ package mount
 import (
 	"context"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
 
@@ -158,13 +159,17 @@ func TestRenameOverTargetLeavesOldInodeStale(t *testing.T) {
 		t.Fatalf("handle rename response: %v", err)
 	}
 
+	want := fuse.Status(syscall.ESTALE)
+	if runtime.GOOS != "linux" {
+		want = fuse.ENOENT
+	}
 	var attrOut fuse.AttrOut
-	if status := wfs.GetAttr(nil, &fuse.GetAttrIn{InHeader: fuse.InHeader{NodeId: oldTargetInode}}, &attrOut); status != fuse.Status(syscall.ESTALE) {
-		t.Fatalf("GetAttr on replaced inode = %v, want ESTALE", status)
+	if status := wfs.GetAttr(nil, &fuse.GetAttrIn{InHeader: fuse.InHeader{NodeId: oldTargetInode}}, &attrOut); status != want {
+		t.Fatalf("GetAttr on replaced inode = %v, want %v", status, want)
 	}
 	var openOut fuse.OpenOut
-	if status := wfs.Open(nil, &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: oldTargetInode}}, &openOut); status != fuse.Status(syscall.ESTALE) {
-		t.Fatalf("Open on replaced inode = %v, want ESTALE", status)
+	if status := wfs.Open(nil, &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: oldTargetInode}}, &openOut); status != want {
+		t.Fatalf("Open on replaced inode = %v, want %v", status, want)
 	}
 
 	// once the kernel forgets the old inode, it is unknown here
