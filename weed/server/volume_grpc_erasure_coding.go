@@ -473,7 +473,7 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		location = vs.store.FindEcShardTargetLocation(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.DataShardsCount, req.DiskType, shardIds...)
 		if location == nil {
 			if req.DiskType != "" {
-				return nil, status.Errorf(codes.ResourceExhausted, "no space left on a %s disk", req.DiskType)
+				return nil, status.Errorf(codes.ResourceExhausted, "no space left on a %s disk, or a disk of another type holds the shards", req.DiskType)
 			}
 			return nil, status.Error(codes.ResourceExhausted, "no space left")
 		}

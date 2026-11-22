@@ -319,4 +319,11 @@ func TestFindEcShardTargetLocation_RequiredDiskType(t *testing.T) {
 	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, "hdd", 2); got != nil {
 		t.Errorf("no hdd disk exists, want nil: got %s", got.Directory)
 	}
+	ssdBase := erasure_coding.EcShardFileName(collection, store.Locations[0].Directory, int(vid))
+	if err := os.WriteFile(ssdBase+erasure_coding.ToExt(3), []byte("s"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, "hdd_ht", 3); got != nil {
+		t.Errorf("an unmounted shard file on ssd would be mounted ahead of a hdd_ht copy: got %s", got.Directory)
+	}
 }

@@ -96,7 +96,9 @@ func (s *Store) FindEcShardTargetLocation(collection string, vid needle.VolumeId
 		if loc.readOnlyMount || (requiredDiskType != "" && loc.DiskType != types.ToDiskType(requiredDiskType)) {
 			// An owner that cannot take the copy still owns the shard:
 			// placing another copy on a sibling would register it on two disks.
-			if owned > 0 {
+			// A typed copy also yields to an unmounted file of the shard there,
+			// which a later mount would pick ahead of the copy.
+			if owned > 0 || (requiredDiskType != "" && hasEcShardFileOnDisk(loc, collection, vid, shardIds)) {
 				return nil
 			}
 			continue
@@ -177,6 +179,18 @@ func ownedEcShardCount(loc *DiskLocation, vid needle.VolumeId, shardIds []erasur
 		}
 	}
 	return owned
+}
+
+// hasEcShardFileOnDisk reports whether loc holds a file for one of shardIds of
+// vid, mounted or not.
+func hasEcShardFileOnDisk(loc *DiskLocation, collection string, vid needle.VolumeId, shardIds []erasure_coding.ShardId) bool {
+	base := erasure_coding.EcShardFileName(collection, loc.Directory, int(vid))
+	for _, shardId := range shardIds {
+		if _, err := os.Stat(base + erasure_coding.ToExt(int(shardId))); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // ecFreeShardCount returns the free EC shard capacity of loc, expressed
