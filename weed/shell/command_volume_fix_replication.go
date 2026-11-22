@@ -334,6 +334,42 @@ func checkOneVolume(a *VolumeReplica, b *VolumeReplica, writer io.Writer, comman
 	return
 }
 
+// countUncoveredNeedles counts the needles live on doomed that no other
+// replica holds, live or deleted. Each may be a missed write, so trimming
+// doomed could delete its only copy.
+func countUncoveredNeedles(commandEnv *CommandEnv, writer io.Writer, doomed *VolumeReplica, replicas []*VolumeReplica) (int, error) {
+	vcd := &volumeCheckDisk{writer: writer, commandEnv: commandEnv}
+	uncovered := needle_map.NewMemDb()
+	defer uncovered.Close()
+	if err := vcd.readIndexDatabase(uncovered, doomed.info.Collection, doomed.info.Id, pb.NewServerAddressFromDataNode(doomed.location.dataNode)); err != nil {
+		return 0, fmt.Errorf("readIndexDatabase %s volume %d: %v", doomed.location.dataNode.Id, doomed.info.Id, err)
+	}
+	for _, survivor := range replicas {
+		if survivor.location.dataNode == doomed.location.dataNode {
+			continue
+		}
+		survivorDB := needle_map.NewMemDb()
+		err := vcd.readIndexDatabase(survivorDB, survivor.info.Collection, survivor.info.Id, pb.NewServerAddressFromDataNode(survivor.location.dataNode))
+		if err == nil {
+			err = survivorDB.AscendingVisit(func(value needle_map.NeedleValue) error {
+				return uncovered.Delete(value.Key)
+			})
+		}
+		survivorDB.Close()
+		if err != nil {
+			return 0, fmt.Errorf("readIndexDatabase %s volume %d: %v", survivor.location.dataNode.Id, survivor.info.Id, err)
+		}
+	}
+	count := 0
+	err := uncovered.AscendingVisit(func(value needle_map.NeedleValue) error {
+		if !value.Size.IsDeleted() {
+			count++
+		}
+		return nil
+	})
+	return count, err
+}
+
 // deleteOneVolume trims one replica from each of the given volumes, and
 // reports how many replicas it actually deleted.
 func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, writer io.Writer, applyChanges bool, doCheck bool, volumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, selectOneVolumeFn SelectOneVolumeFunc) (deleted int, err error) {
@@ -380,6 +416,15 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 				if checkErr = checkOneVolume(replica, replicaB, writer, commandEnv, false); checkErr != nil {
 					fmt.Fprintf(writer, "sync volume %d on %s and %s: %v\n", replica.info.Id, replica.location.dataNode.Id, replicaB.location.dataNode.Id, checkErr)
 					break
+				}
+			}
+			if checkErr == nil {
+				var uncovered int
+				if uncovered, checkErr = countUncoveredNeedles(commandEnv, writer, replica, replicas); checkErr != nil {
+					fmt.Fprintf(writer, "skip deleting volume %d from %s: %v\n", replica.info.Id, replica.location.dataNode.Id, checkErr)
+				} else if uncovered > 0 {
+					checkErr = fmt.Errorf("%d uncovered needle(s)", uncovered)
+					fmt.Fprintf(writer, "skip trimming volume %d from %s: %d live needle(s) there are held by no other replica; reconcile with volume.check.disk first\n", replica.info.Id, replica.location.dataNode.Id, uncovered)
 				}
 			}
 			// A survivor can go away while the indexes are read.
