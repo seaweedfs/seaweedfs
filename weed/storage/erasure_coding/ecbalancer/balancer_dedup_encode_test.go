@@ -18,57 +18,99 @@ func staleDupTopology(staleTs, freshTs int64) *Topology {
 	return topo
 }
 
-func dedupMoves(topo *Topology) []Move {
-	var out []Move
+func planVolume(topo *Topology, vid uint32) (dedup, other []Move) {
 	for _, m := range Plan(topo, Options{ImbalanceThreshold: 0.01, Ratio: ratio(10, 4)}) {
-		if m.Phase == "dedup" {
-			out = append(out, m)
+		switch {
+		case m.VolumeID != vid:
+		case m.Phase == "dedup":
+			dedup = append(dedup, m)
+		default:
+			other = append(other, m)
 		}
 	}
-	return out
+	return dedup, other
 }
 
-func TestPlanDedupKeepsMajorityEncodeRun(t *testing.T) {
-	moves := dedupMoves(staleDupTopology(100, 200))
-	if len(moves) != 2 {
-		t.Fatalf("got %d dedup moves, want 2: %+v", len(moves), moves)
+func TestPlanDedupKeepsCompleteEncodeRun(t *testing.T) {
+	dedup, _ := planVolume(staleDupTopology(100, 200), 100)
+	if len(dedup) != 2 {
+		t.Fatalf("got %d dedup moves, want 2: %+v", len(dedup), dedup)
 	}
-	for _, m := range moves {
+	for _, m := range dedup {
 		if m.SourceNode != "stale" || m.KeepNode != "fresh" {
-			t.Errorf("dedup move %+v: want the stale run's copy deleted and the majority run's copy kept", m)
+			t.Errorf("dedup move %+v: want the stale run's copy deleted and the complete run's copy kept", m)
 		}
 	}
 }
 
 func TestPlanDedupSameEncodeRunUsesFreeSlots(t *testing.T) {
-	moves := dedupMoves(staleDupTopology(200, 200))
-	if len(moves) != 2 {
-		t.Fatalf("got %d dedup moves, want 2: %+v", len(moves), moves)
+	dedup, _ := planVolume(staleDupTopology(200, 200), 100)
+	if len(dedup) != 2 {
+		t.Fatalf("got %d dedup moves, want 2: %+v", len(dedup), dedup)
 	}
-	for _, m := range moves {
+	for _, m := range dedup {
 		if m.SourceNode != "fresh" || m.KeepNode != "stale" {
 			t.Errorf("dedup move %+v: copies of one run keep the node with more free slots", m)
 		}
 	}
 }
 
-func TestPlanDedupRefusesWithoutMajority(t *testing.T) {
-	topo := NewTopology()
-	a := topo.AddNode("a", "dc1", "dc1:rack1", 5)
-	a.AddDisk(1, "", 5, 7)
-	a.AddShards(100, "c", 1, bits(0, 1, 2, 3, 4, 5, 6))
-	a.SetEncodeTs(100, "c", 1, 100)
-	b := topo.AddNode("b", "dc1", "dc1:rack2", 50)
-	b.AddDisk(1, "", 50, 7)
-	b.AddShards(100, "c", 1, bits(0, 7, 8, 9, 10, 11, 12))
-	b.SetEncodeTs(100, "c", 1, 200)
-	if moves := dedupMoves(topo); len(moves) != 0 {
-		t.Fatalf("two runs tie for the majority, so no copy may be chosen; got %+v", moves)
+func TestPlanDedupRefusesWhenCompleteRunIsUnreported(t *testing.T) {
+	if dedup, other := planVolume(staleDupTopology(200, 0), 100); len(dedup)+len(other) != 0 {
+		t.Fatalf("the complete run carries no identity, so copies cannot be compared; got %+v %+v", dedup, other)
 	}
 }
 
-func TestPlanDedupRefusesWhenMajorityIsUnreported(t *testing.T) {
-	if moves := dedupMoves(staleDupTopology(200, 0)); len(moves) != 0 {
-		t.Fatalf("the majority run carries no identity, so copies cannot be compared; got %+v", moves)
+// Neither run is complete in the snapshot (a filter may hide the rest of
+// either), so no copy may be chosen, and no later phase may move a copy of the
+// shared shard onto the other.
+func TestPlanDedupFreezesVolumeWithoutCompleteRun(t *testing.T) {
+	topo := NewTopology()
+	a := topo.AddNode("a", "dc1", "dc1:rack1", 50)
+	a.AddDisk(1, "", 50, 7)
+	a.AddShards(100, "c", 1, bits(0, 1, 2, 3, 4, 5, 6))
+	a.SetEncodeTs(100, "c", 1, 100)
+	b := topo.AddNode("b", "dc1", "dc1:rack1", 50)
+	b.AddDisk(1, "", 50, 7)
+	b.AddShards(100, "c", 1, bits(0, 7, 8, 9, 10, 11, 12))
+	b.SetEncodeTs(100, "c", 1, 200)
+	addEmptyNode(topo, "e1", "dc1:rack2")
+	addEmptyNode(topo, "e2", "dc1:rack3")
+	if dedup, other := planVolume(topo, 100); len(dedup)+len(other) != 0 {
+		t.Fatalf("a volume with unresolved run conflicts must not be touched; got dedup %+v, moves %+v", dedup, other)
+	}
+}
+
+// A node holding the complete run on one disk and the stale run on another is
+// counted per disk, so the complete run is still found.
+func TestPlanDedupCountsRunsPerDisk(t *testing.T) {
+	topo := NewTopology()
+	a := topo.AddNode("a", "dc1", "dc1:rack1", 5)
+	a.AddDisk(1, "", 5, 12)
+	a.AddDisk(2, "", 5, 14)
+	a.AddShards(100, "c", 1, bits(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12))
+	a.SetEncodeTs(100, "c", 1, 100)
+	a.AddShards(100, "c", 2, bits(0, 13))
+	a.SetEncodeTs(100, "c", 2, 200)
+	b := topo.AddNode("b", "dc1", "dc1:rack2", 10)
+	b.AddDisk(1, "", 10, 12)
+	b.AddShards(100, "c", 1, bits(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12))
+	b.SetEncodeTs(100, "c", 1, 200)
+	c := topo.AddNode("c", "dc1", "dc1:rack3", 50)
+	c.AddDisk(1, "", 50, 1)
+	c.AddShards(100, "c", 1, bits(0))
+	c.SetEncodeTs(100, "c", 1, 100)
+	dedup, _ := planVolume(topo, 100)
+	for _, m := range dedup {
+		if m.ShardID == 0 && m.SourceNode != "c" {
+			t.Errorf("dedup move %+v: shard 0 must keep a's run-200 copy and drop c's run-100 copy", m)
+		}
+	}
+	var dropsC bool
+	for _, m := range dedup {
+		dropsC = dropsC || (m.ShardID == 0 && m.SourceNode == "c")
+	}
+	if !dropsC {
+		t.Errorf("want c's run-100 shard 0 removed, got %+v", dedup)
 	}
 }

@@ -61,6 +61,9 @@ type volumeShards struct {
 	shardBits     erasure_coding.ShardBits            // union across disks
 	diskShardBits map[uint32]erasure_coding.ShardBits // disk_id -> shards of this volume on that disk
 	diskEncodeTs  map[uint32]int64                    // disk_id -> encode-run identity from the disk's .vif
+	// frozen marks a volume whose duplicate shards come from conflicting
+	// encode runs; no phase moves its shards.
+	frozen bool
 }
 
 type rack struct {
@@ -303,16 +306,22 @@ func Plan(topo *Topology, opts Options) []Move {
 	var all []*move
 	for _, collection := range collections {
 		for _, vk := range byCollection[collection] {
-			m := detectDuplicateShards(vk, nodes)
+			m := detectDuplicateShards(vk, nodes, dataShardsByVolume[vk]+parityShardsByVolume[vk])
 			applyMovesToTopology(m, racks)
 			all = append(all, m...)
 		}
 		for _, vk := range byCollection[collection] {
+			if isFrozen(vk, nodes) {
+				continue
+			}
 			m := detectCrossRackImbalance(vk, nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShardsByVolume[vk], parityShardsByVolume[vk], opts.ReplicaPlacement, opts.RackTotalCapRaised)
 			applyMovesToTopology(m, racks)
 			all = append(all, m...)
 		}
 		for _, vk := range byCollection[collection] {
+			if isFrozen(vk, nodes) {
+				continue
+			}
 			m := detectWithinRackImbalance(vk, nodes, racks, opts.DiskType, opts.ImbalanceThreshold, dataShardsByVolume[vk], parityShardsByVolume[vk], opts.ReplicaPlacement)
 			applyMovesToTopology(m, racks)
 			all = append(all, m...)
@@ -356,11 +365,13 @@ func buildRacks(nodes map[string]*Node) map[string]*rack {
 
 // detectDuplicateShards finds shards present on more than one node and proposes
 // deleting all copies but one. When the copies come from different encode runs,
-// only a copy from the run that holds most of the volume's shards is kept; if no
-// run holds a clear majority, or no copy is from it, the shard is left alone.
-func detectDuplicateShards(vk volKey, nodes map[string]*Node) []*move {
+// only a copy from the one run that has a complete shard set is kept: filters can
+// hide shards but not add them, so that run is complete whatever the snapshot
+// leaves out. Without such a run the copies are left alone and the volume is
+// frozen, so later phases cannot move one copy onto another.
+func detectDuplicateShards(vk volKey, nodes map[string]*Node, totalShards int) []*move {
 	shardLocations := make(map[int][]*Node)
-	shardsByEncode := make(map[int64]erasure_coding.ShardBits)
+	runShards := make(map[int64]erasure_coding.ShardBits)
 	for _, node := range nodes {
 		info, ok := node.shards[vk]
 		if !ok {
@@ -368,32 +379,34 @@ func detectDuplicateShards(vk volKey, nodes map[string]*Node) []*move {
 		}
 		for sid := range info.shardBits.All() {
 			shardLocations[int(sid)] = append(shardLocations[int(sid)], node)
-			ts := shardEncodeTs(node, vk, int(sid))
-			shardsByEncode[ts] = shardsByEncode[ts].Set(sid)
+		}
+		for diskID, bits := range info.diskShardBits {
+			ts := info.diskEncodeTs[diskID]
+			runShards[ts] |= bits
 		}
 	}
-	majorityTs, hasMajority := majorityEncodeTs(shardsByEncode)
+	completeRun, hasCompleteRun := onlyCompleteRun(runShards, totalShards)
 
 	var moves []*move
-	for shardID, locs := range shardLocations {
+	for _, shardID := range sortedShardIDs(shardLocations) {
+		locs := shardLocations[shardID]
 		if len(locs) <= 1 {
 			continue
 		}
 		keepable := locs
-		if !sameEncodeTs(locs, vk, shardID) {
-			if !hasMajority || majorityTs == 0 {
-				glog.Warningf("ec balance: volume %d shard %d has copies from different encode runs and no majority run; not removing duplicates", vk.vid, shardID)
-				continue
-			}
+		if !sameEncodeRun(locs, vk, shardID) {
 			keepable = nil
-			for _, node := range locs {
-				if shardEncodeTs(node, vk, shardID) == majorityTs {
-					keepable = append(keepable, node)
+			if hasCompleteRun {
+				for _, node := range locs {
+					if ts, ok := shardEncodeRun(node, vk, shardID); ok && ts == completeRun {
+						keepable = append(keepable, node)
+					}
 				}
 			}
 			if len(keepable) == 0 {
-				glog.Warningf("ec balance: volume %d shard %d has no copy from the majority encode run %d; not removing duplicates", vk.vid, shardID, majorityTs)
-				continue
+				glog.Warningf("ec balance: volume %d shard %d has copies from different encode runs and no complete run to keep; leaving the volume as is", vk.vid, shardID)
+				freezeVolume(vk, nodes)
+				return nil
 			}
 		}
 		// Keep the copy on the node with the most free slots and delete the
@@ -428,40 +441,82 @@ func detectDuplicateShards(vk volKey, nodes map[string]*Node) []*move {
 	return moves
 }
 
-// shardEncodeTs is the encode-run identity of the node's copy of the shard,
-// 0 when unreported.
-func shardEncodeTs(node *Node, vk volKey, shardID int) int64 {
+// shardEncodeRun is the encode run of the node's copy of the shard (0 when
+// unreported), and false when the node holds it on disks of different runs.
+func shardEncodeRun(node *Node, vk volKey, shardID int) (int64, bool) {
 	info, ok := node.shards[vk]
 	if !ok {
-		return 0
+		return 0, false
 	}
-	return info.diskEncodeTs[shardDiskID(node, vk, shardID)]
+	sid := erasure_coding.ShardId(shardID)
+	run, found := int64(0), false
+	for diskID, bits := range info.diskShardBits {
+		if !bits.Has(sid) {
+			continue
+		}
+		ts := info.diskEncodeTs[diskID]
+		if found && ts != run {
+			return 0, false
+		}
+		run, found = ts, true
+	}
+	return run, found
 }
 
-func sameEncodeTs(locs []*Node, vk volKey, shardID int) bool {
-	first := shardEncodeTs(locs[0], vk, shardID)
+func sameEncodeRun(locs []*Node, vk volKey, shardID int) bool {
+	first, ok := shardEncodeRun(locs[0], vk, shardID)
+	if !ok {
+		return false
+	}
 	for _, node := range locs[1:] {
-		if shardEncodeTs(node, vk, shardID) != first {
+		if ts, ok := shardEncodeRun(node, vk, shardID); !ok || ts != first {
 			return false
 		}
 	}
 	return true
 }
 
-// majorityEncodeTs returns the encode run holding the most distinct shard ids,
-// and false when two runs tie for it.
-func majorityEncodeTs(shardsByEncode map[int64]erasure_coding.ShardBits) (int64, bool) {
-	var best int64
-	bestCount, tied := -1, false
-	for ts, bits := range shardsByEncode {
-		switch c := bits.Count(); {
-		case c > bestCount:
-			best, bestCount, tied = ts, c, false
-		case c == bestCount:
-			tied = true
+// onlyCompleteRun returns the reported encode run holding every shard id, and
+// false when no run or more than one does.
+func onlyCompleteRun(runShards map[int64]erasure_coding.ShardBits, totalShards int) (int64, bool) {
+	var complete int64
+	found := false
+	for ts, bits := range runShards {
+		if ts == 0 || totalShards <= 0 || bits.Count() < totalShards {
+			continue
+		}
+		if found {
+			return 0, false
+		}
+		complete, found = ts, true
+	}
+	return complete, found
+}
+
+func freezeVolume(vk volKey, nodes map[string]*Node) {
+	for _, node := range nodes {
+		if info, ok := node.shards[vk]; ok {
+			info.frozen = true
 		}
 	}
-	return best, bestCount > 0 && !tied
+}
+
+func isFrozen(vk volKey, nodes map[string]*Node) bool {
+	for _, node := range nodes {
+		if info, ok := node.shards[vk]; ok && info.frozen {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedShardIDs(m map[int][]*Node) []int {
+	ids := make([]int, 0, len(m))
+	for id := range m {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	return ids
 }
 
 // detectCrossRackImbalance spreads a volume's shards across racks in two passes
@@ -1143,6 +1198,9 @@ func pickGlobalShard(spread rackSpread, rackMachineCount int, source, target *No
 	for pass := 0; pass < 2; pass++ {
 		for _, vk := range sortedVolumeKeys(source.shards) {
 			info := source.shards[vk]
+			if info.frozen {
+				continue
+			}
 			targetInfo := target.shards[vk]
 			volumeOnTargetMachine := spread.machine[vk][target.host] > 0
 			if pass == 0 && volumeOnTargetMachine {
