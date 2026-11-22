@@ -10,6 +10,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
@@ -59,6 +60,7 @@ type volumeShards struct {
 	collection    string
 	shardBits     erasure_coding.ShardBits            // union across disks
 	diskShardBits map[uint32]erasure_coding.ShardBits // disk_id -> shards of this volume on that disk
+	diskEncodeTs  map[uint32]int64                    // disk_id -> encode-run identity from the disk's .vif
 }
 
 type rack struct {
@@ -223,6 +225,19 @@ func (n *Node) AddShards(vid uint32, collection string, diskID uint32, bits eras
 	vs.diskShardBits[diskID] |= bits
 }
 
+// SetEncodeTs records the encode-run identity (the heartbeat's encode_ts_ns)
+// of the volume's shards on diskID. Call it after AddShards for that disk.
+func (n *Node) SetEncodeTs(vid uint32, collection string, diskID uint32, encodeTsNs int64) {
+	vs, ok := n.shards[volKey{collection: collection, vid: vid}]
+	if !ok {
+		return
+	}
+	if vs.diskEncodeTs == nil {
+		vs.diskEncodeTs = make(map[uint32]int64)
+	}
+	vs.diskEncodeTs[diskID] = encodeTsNs
+}
+
 // Plan runs the full multi-phase EC balance policy and returns the proposed
 // moves: per collection it deduplicates, then spreads data and parity shards
 // across racks and within racks (two-pass, with anti-affinity), and finally
@@ -340,9 +355,12 @@ func buildRacks(nodes map[string]*Node) map[string]*rack {
 }
 
 // detectDuplicateShards finds shards present on more than one node and proposes
-// deleting all copies but the one on the node with the most free slots.
+// deleting all copies but one. When the copies come from different encode runs,
+// only a copy from the run that holds most of the volume's shards is kept; if no
+// run holds a clear majority, or no copy is from it, the shard is left alone.
 func detectDuplicateShards(vk volKey, nodes map[string]*Node) []*move {
 	shardLocations := make(map[int][]*Node)
+	shardsByEncode := make(map[int64]erasure_coding.ShardBits)
 	for _, node := range nodes {
 		info, ok := node.shards[vk]
 		if !ok {
@@ -350,26 +368,50 @@ func detectDuplicateShards(vk volKey, nodes map[string]*Node) []*move {
 		}
 		for sid := range info.shardBits.All() {
 			shardLocations[int(sid)] = append(shardLocations[int(sid)], node)
+			ts := shardEncodeTs(node, vk, int(sid))
+			shardsByEncode[ts] = shardsByEncode[ts].Set(sid)
 		}
 	}
+	majorityTs, hasMajority := majorityEncodeTs(shardsByEncode)
 
 	var moves []*move
 	for shardID, locs := range shardLocations {
 		if len(locs) <= 1 {
 			continue
 		}
+		keepable := locs
+		if !sameEncodeTs(locs, vk, shardID) {
+			if !hasMajority || majorityTs == 0 {
+				glog.Warningf("ec balance: volume %d shard %d has copies from different encode runs and no majority run; not removing duplicates", vk.vid, shardID)
+				continue
+			}
+			keepable = nil
+			for _, node := range locs {
+				if shardEncodeTs(node, vk, shardID) == majorityTs {
+					keepable = append(keepable, node)
+				}
+			}
+			if len(keepable) == 0 {
+				glog.Warningf("ec balance: volume %d shard %d has no copy from the majority encode run %d; not removing duplicates", vk.vid, shardID, majorityTs)
+				continue
+			}
+		}
 		// Keep the copy on the node with the most free slots and delete the
 		// duplicates from the more-constrained nodes, relieving capacity pressure
 		// where it is tightest. Sort ascending by free slots (tie-break on node id
 		// for determinism) and keep the last entry.
-		sort.Slice(locs, func(i, j int) bool {
-			if locs[i].freeSlots != locs[j].freeSlots {
-				return locs[i].freeSlots < locs[j].freeSlots
+		sort.Slice(keepable, func(i, j int) bool {
+			if keepable[i].freeSlots != keepable[j].freeSlots {
+				return keepable[i].freeSlots < keepable[j].freeSlots
 			}
-			return locs[i].id < locs[j].id
+			return keepable[i].id < keepable[j].id
 		})
-		keep := locs[len(locs)-1]
-		for _, node := range locs[:len(locs)-1] {
+		keep := keepable[len(keepable)-1]
+		sort.Slice(locs, func(i, j int) bool { return locs[i].id < locs[j].id })
+		for _, node := range locs {
+			if node == keep {
+				continue
+			}
 			moves = append(moves, &move{
 				volumeID:   vk.vid,
 				shardID:    shardID,
@@ -384,6 +426,42 @@ func detectDuplicateShards(vk volKey, nodes map[string]*Node) []*move {
 		}
 	}
 	return moves
+}
+
+// shardEncodeTs is the encode-run identity of the node's copy of the shard,
+// 0 when unreported.
+func shardEncodeTs(node *Node, vk volKey, shardID int) int64 {
+	info, ok := node.shards[vk]
+	if !ok {
+		return 0
+	}
+	return info.diskEncodeTs[shardDiskID(node, vk, shardID)]
+}
+
+func sameEncodeTs(locs []*Node, vk volKey, shardID int) bool {
+	first := shardEncodeTs(locs[0], vk, shardID)
+	for _, node := range locs[1:] {
+		if shardEncodeTs(node, vk, shardID) != first {
+			return false
+		}
+	}
+	return true
+}
+
+// majorityEncodeTs returns the encode run holding the most distinct shard ids,
+// and false when two runs tie for it.
+func majorityEncodeTs(shardsByEncode map[int64]erasure_coding.ShardBits) (int64, bool) {
+	var best int64
+	bestCount, tied := -1, false
+	for ts, bits := range shardsByEncode {
+		switch c := bits.Count(); {
+		case c > bestCount:
+			best, bestCount, tied = ts, c, false
+		case c == bestCount:
+			tied = true
+		}
+	}
+	return best, bestCount > 0 && !tied
 }
 
 // detectCrossRackImbalance spreads a volume's shards across racks in two passes
