@@ -199,7 +199,10 @@ func TestRequireCapacitySource_ThreeLocationsSourceFromCapacity(t *testing.T) {
 type writeMeta struct {
 	cookie, crc  uint32
 	lastModified uint64
+	appendAtNs   uint64
 }
+
+var tombstone = writeMeta{appendAtNs: 200}
 
 type replicaRows struct {
 	loc         wdclient.Location
@@ -228,14 +231,14 @@ func missedDeleteViews(t *testing.T, replicas []replicaRows, readErr error) ([]r
 		}
 		for id, m := range r.deleted {
 			row(id, types.Size(40), m)
-			row(id, types.TombstoneFileSize, writeMeta{})
+			row(id, types.TombstoneFileSize, tombstone)
 		}
 		for id, m := range r.zeroDeleted {
 			row(id, types.Size(40), m)
 			data = append(data, needle_map.ToBytes(id, types.Offset{}, types.TombstoneFileSize)...)
 		}
 		for _, id := range r.bare {
-			row(id, types.TombstoneFileSize, writeMeta{})
+			row(id, types.TombstoneFileSize, tombstone)
 		}
 		for id, m := range r.overwritten {
 			row(id, types.Size(40), m)
@@ -268,7 +271,7 @@ func missedDeleteViews(t *testing.T, replicas []replicaRows, readErr error) ([]r
 		if !ok {
 			return nil, fmt.Errorf("no record at %d on replica %d", nv.Offset.ToActualOffset(), i)
 		}
-		return &volume_server_pb.ReadNeedleMetaResponse{Cookie: m.cookie, Crc: m.crc, LastModified: m.lastModified}, nil
+		return &volume_server_pb.ReadNeedleMetaResponse{Cookie: m.cookie, Crc: m.crc, LastModified: m.lastModified, AppendAtNs: m.appendAtNs}, nil
 	})
 	if err != nil {
 		return nil, err
@@ -376,6 +379,26 @@ func TestMissedDeletes_OverwriteWithSameMetaStillRefuses(t *testing.T) {
 	}
 	if len(views[0].missed) != 0 {
 		t.Fatalf("A wrote the needle twice, so its live copy may postdate the delete: %v", views[0].missed)
+	}
+}
+
+func TestMissedDeletes_LiveWriteStampedAfterTheTombstoneStillRefuses(t *testing.T) {
+	for name, stamp := range map[string]uint64{"after": 300, "equal": 200} {
+		rewrite := write2
+		rewrite.appendAtNs = stamp
+		views, err := missedDeleteViews(t, []replicaRows{
+			{loc: replicaA, live: map[types.NeedleId]writeMeta{1: write1, 2: rewrite}},
+			{loc: replicaB, live: map[types.NeedleId]writeMeta{1: write1}, deleted: map[types.NeedleId]writeMeta{2: write2}},
+		}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(views[0].missed) != 0 {
+			t.Fatalf("%s: a compacted rewrite stamped no earlier than the delete is not a missed delete: %v", name, views[0].missed)
+		}
+		if _, err := chooseSourceFromLiveNeedles(7, views, "", io.Discard); err == nil || !strings.Contains(err.Error(), "no union") {
+			t.Fatalf("%s: got %v, want a no-union refusal", name, err)
+		}
 	}
 }
 

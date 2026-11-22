@@ -155,10 +155,12 @@ func loadIndexHistory(data []byte, latest, replaced *needle_map.MemDb) error {
 // replica holds as the same write (cookie, CRC, last-modified) followed by a
 // tombstone: deletes the replica missed. live holds each replica's sorted live
 // ids, latest its index with tombstone rows kept, replaced the last live row a
-// later row replaced, and readMeta reads a row's record on replica i. The order
-// comes from the replicas' own indexes, never from clocks across servers. A
+// later row replaced, and readMeta reads a row's record on replica i. The proof
+// comes from the replicas' own indexes; clocks across servers only refuse. A
 // replica whose index has an earlier row for the needle (an overwrite or its
-// own delete) may hold a rewrite, so it never counts.
+// own delete) may hold a rewrite, so it never counts, and since compaction
+// drops such rows, neither does a live write stamped no earlier than the
+// tombstone.
 func MissedDeletes(live [][]types.NeedleId, latest, replaced []*needle_map.MemDb, readMeta func(replica int, nv needle_map.NeedleValue) (*volume_server_pb.ReadNeedleMetaResponse, error)) ([][]types.NeedleId, error) {
 	missed := make([][]types.NeedleId, len(live))
 	for i := range live {
@@ -189,7 +191,8 @@ func MissedDeletes(live [][]types.NeedleId, latest, replaced []*needle_map.MemDb
 				if j == i {
 					continue
 				}
-				if row, found := latest[j].Get(id); !found || !row.Size.IsDeleted() {
+				tombstoneRow, found := latest[j].Get(id)
+				if !found || !tombstoneRow.Size.IsDeleted() {
 					continue
 				}
 				deletedWrite, found := replaced[j].Get(id)
@@ -207,8 +210,15 @@ func MissedDeletes(live [][]types.NeedleId, latest, replaced []*needle_map.MemDb
 				if err != nil {
 					return nil, err
 				}
-				if liveMeta.GetCookie() == deletedMeta.GetCookie() && liveMeta.GetCrc() == deletedMeta.GetCrc() &&
-					liveMeta.GetLastModified() == deletedMeta.GetLastModified() {
+				if liveMeta.GetCookie() != deletedMeta.GetCookie() || liveMeta.GetCrc() != deletedMeta.GetCrc() ||
+					liveMeta.GetLastModified() != deletedMeta.GetLastModified() {
+					continue
+				}
+				tombstoneMeta, err := readMeta(j, *tombstoneRow)
+				if err != nil {
+					return nil, err
+				}
+				if liveMeta.GetAppendAtNs() < tombstoneMeta.GetAppendAtNs() {
 					missed[i] = append(missed[i], id)
 					break
 				}
