@@ -365,7 +365,7 @@ func (f *Filer) logDayListStart(day, startDate, startHourMinute string) (startFi
 	if day != startDate {
 		return "", false
 	}
-	if fsw, ok := f.Store.(*FilerStoreWrapper); ok && !fsw.listsInNameOrder(SystemLogDir) {
+	if fsw, ok := f.Store.(*FilerStoreWrapper); ok && !fsw.listsInNameOrder(util.NewFullPath(SystemLogDir, day)) {
 		return "", false
 	}
 	return startHourMinute, true
