@@ -139,13 +139,13 @@ func SelectSourceIfIndexesMatch(grpcDialOption grpc.DialOption, vid needle.Volum
 // records in replaced, per key, the last live row that a later row replaced.
 func loadIndexHistory(data []byte, latest, replaced *needle_map.MemDb) error {
 	return idx.WalkIndexFile(bytes.NewReader(data), 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
-		if offset.IsZero() {
-			return latest.Delete(key)
-		}
 		if prev, found := latest.Get(key); found && !prev.Size.IsDeleted() && prev.Offset != offset {
 			if err := replaced.Set(key, prev.Offset, prev.Size); err != nil {
 				return err
 			}
+		}
+		if offset.IsZero() {
+			return latest.Delete(key)
 		}
 		return latest.Set(key, offset, size)
 	})
