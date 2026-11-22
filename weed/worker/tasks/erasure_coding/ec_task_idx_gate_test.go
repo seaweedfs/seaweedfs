@@ -100,8 +100,7 @@ func TestEcEncodeDropsDeleteOneReplicaMissed(t *testing.T) {
 	httpClient := framework.NewHTTPClient()
 	const volumeID = uint32(9614)
 
-	uploadNeedles(t, httpClient, cluster.VolumeAdminURL(0), volumeID, []uint64{1, 2, 3})
-	uploadNeedles(t, httpClient, cluster.VolumeAdminURL(1), volumeID, []uint64{1, 2, 3})
+	replicateNeedles(t, httpClient, []string{cluster.VolumeAdminURL(0), cluster.VolumeAdminURL(1)}, volumeID, []uint64{1, 2, 3})
 	deleteNeedles(t, httpClient, cluster.VolumeAdminURL(1), volumeID, []uint64{2})
 
 	require.NoError(t, task.Execute(ctx, params))
@@ -114,7 +113,7 @@ func TestEcEncodeDropsDeleteOneReplicaMissed(t *testing.T) {
 }
 
 // Runs against the Rust volume server with VOLUME_SERVER_IMPL=rust.
-func TestSelectSourceIfIndexesMatchOrdersTombstones(t *testing.T) {
+func TestSelectSourceIfIndexesMatchMissedDelete(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -130,21 +129,20 @@ func TestSelectSourceIfIndexesMatchOrdersTombstones(t *testing.T) {
 		framework.AllocateVolume(t, client, 9616, "ec-idx-order")
 	}
 
-	for i := 0; i < 2; i++ {
-		uploadNeedles(t, httpClient, cluster.VolumeAdminURL(i), 9615, []uint64{1, 2, 3})
-	}
-	deleteNeedles(t, httpClient, cluster.VolumeAdminURL(1), 9615, []uint64{2})
+	urls := []string{cluster.VolumeAdminURL(0), cluster.VolumeAdminURL(1)}
+	replicateNeedles(t, httpClient, urls, 9615, []uint64{1, 2, 3})
+	deleteNeedles(t, httpClient, urls[1], 9615, []uint64{2})
 	got, err := volume_replica.SelectSourceIfIndexesMatch(dialOption, 9615, "ec-idx-order", locs, locs[0].Url, &bytes.Buffer{})
 	require.NoError(t, err)
 	require.Equal(t, locs[1].Url, got.Url, "the replica that missed the delete must not be the source")
 
-	for i := 0; i < 2; i++ {
-		uploadNeedles(t, httpClient, cluster.VolumeAdminURL(i), 9616, []uint64{1, 2})
-		deleteNeedles(t, httpClient, cluster.VolumeAdminURL(i), 9616, []uint64{2})
-	}
-	uploadNeedles(t, httpClient, cluster.VolumeAdminURL(0), 9616, []uint64{2})
+	replicateNeedles(t, httpClient, urls, 9616, []uint64{1, 2})
+	deleteNeedles(t, httpClient, urls[1], 9616, []uint64{2})
+	resp := framework.UploadBytes(t, httpClient, urls[0], framework.NewFileID(9616, 2, cookieFor(2)), []byte("rewritten-2"))
+	_ = framework.ReadAllAndClose(t, resp)
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	_, err = volume_replica.SelectSourceIfIndexesMatch(dialOption, 9616, "ec-idx-order", locs, "", &bytes.Buffer{})
-	require.Error(t, err, "a write after the other replica's tombstone is a missed write, not a missed delete")
+	require.Error(t, err, "a write other than the one the replica deleted is a missed write, not a missed delete")
 	require.Contains(t, err.Error(), "no union")
 }
 
@@ -295,6 +293,20 @@ func uploadNeedles(t *testing.T, client *http.Client, volumeURL string, volumeID
 		resp := framework.UploadBytes(t, client, volumeURL, fid, []byte(fmt.Sprintf("payload-%d", id)))
 		_ = framework.ReadAllAndClose(t, resp)
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
+	}
+}
+
+// replicateNeedles writes each needle to every volume URL with one ts, as a
+// replicated write does.
+func replicateNeedles(t *testing.T, client *http.Client, volumeURLs []string, volumeID uint32, ids []uint64) {
+	t.Helper()
+	for _, id := range ids {
+		fid := framework.NewFileID(volumeID, id, cookieFor(id)) + "?ts=1700000000"
+		for _, volumeURL := range volumeURLs {
+			resp := framework.UploadBytes(t, client, volumeURL, fid, []byte(fmt.Sprintf("payload-%d", id)))
+			_ = framework.ReadAllAndClose(t, resp)
+			require.Equal(t, http.StatusCreated, resp.StatusCode)
+		}
 	}
 }
 

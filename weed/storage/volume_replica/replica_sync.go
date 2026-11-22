@@ -228,6 +228,14 @@ func (rub *unionBuilder) readIndexDatabase(db *needle_map.MemDb, server pb.Serve
 }
 
 func loadReplicaIndex(db *needle_map.MemDb, grpcDialOption grpc.DialOption, vid needle.VolumeId, collection string, server pb.ServerAddress) error {
+	data, err := copyReplicaIndex(grpcDialOption, vid, collection, server)
+	if err != nil {
+		return err
+	}
+	return db.LoadFilterFromReaderAt(bytes.NewReader(data), true, false)
+}
+
+func copyReplicaIndex(grpcDialOption grpc.DialOption, vid needle.VolumeId, collection string, server pb.ServerAddress) ([]byte, error) {
 	var buf bytes.Buffer
 
 	err := operation.WithVolumeServerClient(true, server, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
@@ -257,10 +265,9 @@ func loadReplicaIndex(db *needle_map.MemDb, grpcDialOption grpc.DialOption, vid 
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	return db.LoadFilterFromReaderAt(bytes.NewReader(buf.Bytes()), true, false)
+	return buf.Bytes(), nil
 }
 
 func (rub *unionBuilder) readNeedleBlob(server pb.ServerAddress, nv needle_map.NeedleValue) ([]byte, error) {

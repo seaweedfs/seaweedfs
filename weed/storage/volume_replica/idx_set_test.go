@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -195,187 +196,235 @@ func TestRequireCapacitySource_ThreeLocationsSourceFromCapacity(t *testing.T) {
 	}
 }
 
-type replicaRows struct {
-	loc        wdclient.Location
-	live       map[types.NeedleId]uint64
-	tombstones map[types.NeedleId]uint64
+type writeMeta struct {
+	cookie, crc  uint32
+	lastModified uint64
 }
 
-// missedDeleteViews builds views and index maps from replicas, keeping each
-// row's AppendAtNs for the fake meta reader.
-func missedDeleteViews(t *testing.T, replicas []replicaRows) ([]replicaLiveIdx, []*needle_map.MemDb, func(int, needle_map.NeedleValue) (uint64, error)) {
+type replicaRows struct {
+	loc     wdclient.Location
+	live    map[types.NeedleId]writeMeta
+	deleted map[types.NeedleId]writeMeta // written, then tombstoned
+	bare    []types.NeedleId             // tombstone with no earlier write
+}
+
+// missedDeleteViews writes each replica's rows as raw .idx bytes, loads them
+// with loadIndexHistory and runs MissedDeletes with a fake meta reader.
+func missedDeleteViews(t *testing.T, replicas []replicaRows, readErr error) ([]replicaLiveIdx, error) {
 	t.Helper()
-	ts := make(map[string]uint64)
-	views := make([]replicaLiveIdx, 0, len(replicas))
-	dbs := make([]*needle_map.MemDb, 0, len(replicas))
-	for _, r := range replicas {
-		db := needle_map.NewMemDb()
-		t.Cleanup(db.Close)
+	metas := make([]map[int64]writeMeta, len(replicas))
+	views := make([]replicaLiveIdx, len(replicas))
+	var latest, deletedWrites []*needle_map.MemDb
+	for i, r := range replicas {
+		metas[i] = make(map[int64]writeMeta)
+		var data []byte
 		offset := int64(8)
-		for id, at := range r.live {
-			db.Set(id, types.ToOffset(offset), types.Size(40))
-			ts[fmt.Sprintf("%s/%d", r.loc.Url, id)] = at
+		row := func(id types.NeedleId, size types.Size, m writeMeta) {
+			data = append(data, needle_map.ToBytes(id, types.ToOffset(offset), size)...)
+			metas[i][offset] = m
 			offset += 64
 		}
-		for id, at := range r.tombstones {
-			db.Set(id, types.ToOffset(offset), types.TombstoneFileSize)
-			ts[fmt.Sprintf("%s/%d", r.loc.Url, id)] = at
-			offset += 64
+		for id, m := range r.deleted {
+			row(id, types.Size(40), m)
+			row(id, types.TombstoneFileSize, writeMeta{})
+		}
+		for _, id := range r.bare {
+			row(id, types.TombstoneFileSize, writeMeta{})
+		}
+		for id, m := range r.live {
+			row(id, types.Size(40), m)
+		}
+		db, writes := needle_map.NewMemDb(), needle_map.NewMemDb()
+		t.Cleanup(db.Close)
+		t.Cleanup(writes.Close)
+		if err := loadIndexHistory(data, db, writes); err != nil {
+			t.Fatal(err)
 		}
 		live, err := LiveNeedlesFromIndex(db)
 		if err != nil {
 			t.Fatal(err)
 		}
-		views = append(views, replicaLiveIdx{loc: r.loc, live: live})
-		dbs = append(dbs, db)
+		views[i] = replicaLiveIdx{loc: r.loc, live: live}
+		latest, deletedWrites = append(latest, db), append(deletedWrites, writes)
 	}
-	return views, dbs, func(i int, nv needle_map.NeedleValue) (uint64, error) {
-		at, ok := ts[fmt.Sprintf("%s/%d", views[i].loc.Url, nv.Key)]
-		if !ok {
-			return 0, fmt.Errorf("no row for %d on %s", nv.Key, views[i].loc.Url)
-		}
-		return at, nil
-	}
-}
-
-func findMissedDeletes(views []replicaLiveIdx, dbs []*needle_map.MemDb, appendAtNs func(int, needle_map.NeedleValue) (uint64, error)) error {
 	lives := make([][]types.NeedleId, len(views))
 	for i := range views {
 		lives[i] = views[i].live
 	}
-	missed, err := MissedDeletes(lives, dbs, appendAtNs)
+	missed, err := MissedDeletes(lives, latest, deletedWrites, func(i int, nv needle_map.NeedleValue) (*volume_server_pb.ReadNeedleMetaResponse, error) {
+		if readErr != nil {
+			return nil, readErr
+		}
+		m, ok := metas[i][nv.Offset.ToActualOffset()]
+		if !ok {
+			return nil, fmt.Errorf("no record at %d on replica %d", nv.Offset.ToActualOffset(), i)
+		}
+		return &volume_server_pb.ReadNeedleMetaResponse{Cookie: m.cookie, Crc: m.crc, LastModified: m.lastModified}, nil
+	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for i := range views {
 		views[i].missed = missed[i]
 	}
-	return nil
+	return views, nil
 }
 
-func TestFindMissedDeletes_NewerTombstoneSkipsLaggingReplica(t *testing.T) {
-	a := wdclient.Location{Url: "127.0.0.1:8080"}
-	b := wdclient.Location{Url: "127.0.0.1:8081"}
-	views, dbs, appendAtNs := missedDeleteViews(t, []replicaRows{
-		{loc: a, live: map[types.NeedleId]uint64{1: 10, 2: 20, 3: 30}},
-		{loc: b, live: map[types.NeedleId]uint64{1: 11, 3: 31}, tombstones: map[types.NeedleId]uint64{2: 50}},
-	})
-	if err := findMissedDeletes(views, dbs, appendAtNs); err != nil {
+var (
+	replicaA = wdclient.Location{Url: "127.0.0.1:8080"}
+	replicaB = wdclient.Location{Url: "127.0.0.1:8081"}
+	replicaC = wdclient.Location{Url: "127.0.0.1:8082"}
+	write1   = writeMeta{cookie: 0x11, crc: 0xa1, lastModified: 100}
+	write2   = writeMeta{cookie: 0x22, crc: 0xa2, lastModified: 100}
+	write3   = writeMeta{cookie: 0x33, crc: 0xa3, lastModified: 100}
+)
+
+func TestMissedDeletes_SameWriteThenTombstoneSkipsLaggingReplica(t *testing.T) {
+	views, err := missedDeleteViews(t, []replicaRows{
+		{loc: replicaA, live: map[types.NeedleId]writeMeta{1: write1, 2: write2, 3: write3}},
+		{loc: replicaB, live: map[types.NeedleId]writeMeta{1: write1, 3: write3}, deleted: map[types.NeedleId]writeMeta{2: write2}},
+	}, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if len(views[0].missed) != 1 || views[0].missed[0] != 2 || len(views[1].missed) != 0 {
 		t.Fatalf("missed a=%v b=%v, want a=[2] b=[]", views[0].missed, views[1].missed)
 	}
 	var buf bytes.Buffer
-	got, err := chooseSourceFromLiveNeedles(7, views, a.Url, &buf)
+	got, err := chooseSourceFromLiveNeedles(7, views, replicaA.Url, &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Url != b.Url {
-		t.Fatalf("source %s, want %s: the preferred replica still holds a deleted needle", got.Url, b.Url)
+	if got.Url != replicaB.Url {
+		t.Fatalf("source %s, want %s: the preferred replica still holds a deleted needle", got.Url, replicaB.Url)
 	}
 	if !strings.Contains(buf.String(), "missed 1 delete(s)") {
 		t.Fatalf("log %q must report the missed delete", buf.String())
 	}
 }
 
-func TestFindMissedDeletes_WriteAfterTombstoneStillRefuses(t *testing.T) {
-	a := wdclient.Location{Url: "127.0.0.1:8080"}
-	b := wdclient.Location{Url: "127.0.0.1:8081"}
-	views, dbs, appendAtNs := missedDeleteViews(t, []replicaRows{
-		{loc: a, live: map[types.NeedleId]uint64{1: 10, 2: 90}},
-		{loc: b, live: map[types.NeedleId]uint64{1: 11}, tombstones: map[types.NeedleId]uint64{2: 50}},
-	})
-	if err := findMissedDeletes(views, dbs, appendAtNs); err != nil {
-		t.Fatal(err)
+func TestMissedDeletes_DifferentWriteStillRefuses(t *testing.T) {
+	for name, rewrite := range map[string]writeMeta{
+		"content":      {cookie: 0x22, crc: 0xb2, lastModified: 100},
+		"lastModified": {cookie: 0x22, crc: 0xa2, lastModified: 105},
+		"cookie":       {cookie: 0x23, crc: 0xa2, lastModified: 100},
+	} {
+		views, err := missedDeleteViews(t, []replicaRows{
+			{loc: replicaA, live: map[types.NeedleId]writeMeta{1: write1, 2: rewrite}},
+			{loc: replicaB, live: map[types.NeedleId]writeMeta{1: write1}, deleted: map[types.NeedleId]writeMeta{2: write2}},
+		}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(views[0].missed) != 0 {
+			t.Fatalf("%s: a write other than the deleted one is not a missed delete: %v", name, views[0].missed)
+		}
+		if _, err := chooseSourceFromLiveNeedles(7, views, "", io.Discard); err == nil || !strings.Contains(err.Error(), "no union") {
+			t.Fatalf("%s: got %v, want a no-union refusal", name, err)
+		}
 	}
-	if len(views[0].missed) != 0 {
-		t.Fatalf("a write newer than the tombstone is not a missed delete: %v", views[0].missed)
+}
+
+func TestMissedDeletes_AbsentElsewhereStillRefuses(t *testing.T) {
+	views, err := missedDeleteViews(t, []replicaRows{
+		{loc: replicaA, live: map[types.NeedleId]writeMeta{1: write1, 2: write2}},
+		{loc: replicaB, live: map[types.NeedleId]writeMeta{1: write1}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if _, err := chooseSourceFromLiveNeedles(7, views, "", io.Discard); err == nil || !strings.Contains(err.Error(), "no union") {
 		t.Fatalf("got %v, want a no-union refusal", err)
 	}
 }
 
-func TestFindMissedDeletes_AbsentElsewhereStillRefuses(t *testing.T) {
-	a := wdclient.Location{Url: "127.0.0.1:8080"}
-	b := wdclient.Location{Url: "127.0.0.1:8081"}
-	views, dbs, appendAtNs := missedDeleteViews(t, []replicaRows{
-		{loc: a, live: map[types.NeedleId]uint64{1: 10, 2: 20}},
-		{loc: b, live: map[types.NeedleId]uint64{1: 11}},
-	})
-	if err := findMissedDeletes(views, dbs, appendAtNs); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := chooseSourceFromLiveNeedles(7, views, "", io.Discard); err == nil || !strings.Contains(err.Error(), "no union") {
-		t.Fatalf("got %v, want a no-union refusal", err)
-	}
-}
-
-func TestFindMissedDeletes_NoAppendAtNsStillRefuses(t *testing.T) {
-	a := wdclient.Location{Url: "127.0.0.1:8080"}
-	b := wdclient.Location{Url: "127.0.0.1:8081"}
-	views, dbs, appendAtNs := missedDeleteViews(t, []replicaRows{
-		{loc: a, live: map[types.NeedleId]uint64{1: 0, 2: 0}},
-		{loc: b, live: map[types.NeedleId]uint64{1: 0}, tombstones: map[types.NeedleId]uint64{2: 0}},
-	})
-	if err := findMissedDeletes(views, dbs, appendAtNs); err != nil {
+func TestMissedDeletes_TombstoneWithoutWriteStillRefuses(t *testing.T) {
+	views, err := missedDeleteViews(t, []replicaRows{
+		{loc: replicaA, live: map[types.NeedleId]writeMeta{1: write1, 2: write2}},
+		{loc: replicaB, live: map[types.NeedleId]writeMeta{1: write1}, bare: []types.NeedleId{2}},
+	}, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if len(views[0].missed) != 0 {
-		t.Fatalf("without AppendAtNs nothing is proven: %v", views[0].missed)
+		t.Fatalf("a tombstone whose write is gone proves nothing: %v", views[0].missed)
 	}
 }
 
-func TestFindMissedDeletes_EveryReplicaMissedOneRefuses(t *testing.T) {
-	a := wdclient.Location{Url: "127.0.0.1:8080"}
-	b := wdclient.Location{Url: "127.0.0.1:8081"}
-	views, dbs, appendAtNs := missedDeleteViews(t, []replicaRows{
-		{loc: a, live: map[types.NeedleId]uint64{1: 10, 2: 20}, tombstones: map[types.NeedleId]uint64{4: 60}},
-		{loc: b, live: map[types.NeedleId]uint64{1: 11, 4: 41}, tombstones: map[types.NeedleId]uint64{2: 50}},
-	})
-	if err := findMissedDeletes(views, dbs, appendAtNs); err != nil {
+func TestMissedDeletes_EveryReplicaMissedOneRefuses(t *testing.T) {
+	views, err := missedDeleteViews(t, []replicaRows{
+		{loc: replicaA, live: map[types.NeedleId]writeMeta{1: write1, 2: write2}, deleted: map[types.NeedleId]writeMeta{3: write3}},
+		{loc: replicaB, live: map[types.NeedleId]writeMeta{1: write1, 3: write3}, deleted: map[types.NeedleId]writeMeta{2: write2}},
+	}, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	_, err := chooseSourceFromLiveNeedles(7, views, "", io.Discard)
+	_, err = chooseSourceFromLiveNeedles(7, views, "", io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "every replica missed a delete") {
 		t.Fatalf("got %v, want refusal when no replica is clean", err)
 	}
 }
 
-func TestFindMissedDeletes_ThreeReplicasPicksTheOneWithTombstones(t *testing.T) {
-	a := wdclient.Location{Url: "127.0.0.1:8080"}
-	b := wdclient.Location{Url: "127.0.0.1:8081"}
-	c := wdclient.Location{Url: "127.0.0.1:8082"}
-	views, dbs, appendAtNs := missedDeleteViews(t, []replicaRows{
-		{loc: a, live: map[types.NeedleId]uint64{1: 10, 2: 20}},
-		{loc: b, live: map[types.NeedleId]uint64{1: 11, 2: 21}},
-		{loc: c, live: map[types.NeedleId]uint64{1: 12}, tombstones: map[types.NeedleId]uint64{2: 50}},
-	})
-	if err := findMissedDeletes(views, dbs, appendAtNs); err != nil {
-		t.Fatal(err)
-	}
-	got, err := chooseSourceFromLiveNeedles(7, views, b.Url, io.Discard)
+func TestMissedDeletes_ThreeReplicasPicksTheOneThatDeleted(t *testing.T) {
+	views, err := missedDeleteViews(t, []replicaRows{
+		{loc: replicaA, live: map[types.NeedleId]writeMeta{1: write1, 2: write2}},
+		{loc: replicaB, live: map[types.NeedleId]writeMeta{1: write1, 2: write2}},
+		{loc: replicaC, live: map[types.NeedleId]writeMeta{1: write1}, deleted: map[types.NeedleId]writeMeta{2: write2}},
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Url != c.Url {
-		t.Fatalf("source %s, want %s", got.Url, c.Url)
+	got, err := chooseSourceFromLiveNeedles(7, views, replicaB.Url, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Url != replicaC.Url {
+		t.Fatalf("source %s, want %s", got.Url, replicaC.Url)
 	}
 }
 
-func TestFindMissedDeletes_MetaReadErrorAborts(t *testing.T) {
-	a := wdclient.Location{Url: "127.0.0.1:8080"}
-	b := wdclient.Location{Url: "127.0.0.1:8081"}
-	views, dbs, _ := missedDeleteViews(t, []replicaRows{
-		{loc: a, live: map[types.NeedleId]uint64{1: 10, 2: 20}},
-		{loc: b, live: map[types.NeedleId]uint64{1: 11}, tombstones: map[types.NeedleId]uint64{2: 50}},
-	})
-	failing := func(int, needle_map.NeedleValue) (uint64, error) {
-		return 0, fmt.Errorf("unavailable")
-	}
-	if err := findMissedDeletes(views, dbs, failing); err == nil {
+func TestMissedDeletes_MetaReadErrorAborts(t *testing.T) {
+	_, err := missedDeleteViews(t, []replicaRows{
+		{loc: replicaA, live: map[types.NeedleId]writeMeta{1: write1, 2: write2}},
+		{loc: replicaB, live: map[types.NeedleId]writeMeta{1: write1}, deleted: map[types.NeedleId]writeMeta{2: write2}},
+	}, fmt.Errorf("unavailable"))
+	if err == nil {
 		t.Fatal("a meta read error must abort")
+	}
+}
+
+func TestLoadIndexHistory(t *testing.T) {
+	var data []byte
+	row := func(id types.NeedleId, offset int64, size types.Size) {
+		data = append(data, needle_map.ToBytes(id, types.ToOffset(offset), size)...)
+	}
+	row(1, 8, 40)
+	row(1, 64, types.TombstoneFileSize)
+	row(2, 128, 40)
+	row(2, 192, types.TombstoneFileSize)
+	row(2, 256, 50)
+	row(3, 320, 40)
+	row(3, 384, types.TombstoneFileSize)
+	row(3, 448, types.TombstoneFileSize)
+	row(4, 512, 40)
+	row(4, 0, types.TombstoneFileSize)
+
+	latest, writes := needle_map.NewMemDb(), needle_map.NewMemDb()
+	defer latest.Close()
+	defer writes.Close()
+	if err := loadIndexHistory(data, latest, writes); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[types.NeedleId]int64{1: 8, 3: 320} {
+		if nv, found := writes.Get(id); !found || nv.Offset.ToActualOffset() != want {
+			t.Fatalf("deleted write of %d = %+v, want offset %d", id, nv, want)
+		}
+	}
+	if nv, found := latest.Get(2); !found || nv.Size != 50 {
+		t.Fatalf("latest row of 2 = %+v, want the rewrite", nv)
+	}
+	if _, found := latest.Get(4); found {
+		t.Fatal("an offset-0 row drops the key, as LoadFilterFromReaderAt does")
 	}
 }
 
