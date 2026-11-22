@@ -242,11 +242,18 @@ impl EcJournal {
     }
 }
 
+/// Takes a `.ecj` path's append lock, ahead of any holder's journal lock.
+pub(crate) fn lock_path(lock: &Option<Arc<Mutex<()>>>) -> Option<MutexGuard<'_, ()>> {
+    lock.as_ref()
+        .map(|l| l.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 /// A mounted volume's deletion journal, usable after the store lock that found
 /// the volume is released, so the append's fsync stalls only this volume.
 pub struct EcJournalAppender {
     volume_id: VolumeId,
     ecj_path: String,
+    path_lock: Option<Arc<Mutex<()>>>,
     ecj: Arc<Mutex<EcJournal>>,
     deleted_needles: Arc<RwLock<HashSet<NeedleId>>>,
 }
@@ -262,6 +269,7 @@ impl EcJournalAppender {
         needle_id: NeedleId,
         must_wait: impl FnOnce() -> bool,
     ) -> io::Result<()> {
+        let _path = lock_path(&self.path_lock);
         let mut journal = self.ecj.lock().unwrap_or_else(|e| e.into_inner());
         if journal.closed {
             return Err(io::Error::new(
@@ -962,6 +970,10 @@ impl EcVolume {
         // the tail repair and the handle below see the final inode, and it
         // stops any compaction from replacing the file under this handle.
         vol.ecj_hold = Some(EcjHold::acquire(&ecj_path));
+        // Another disk's runtime may be appending to this file: repair and
+        // load only settled records.
+        let path_lock = vol.journal_path_lock();
+        let path_guard = lock_path(&path_lock);
 
         // Repair a torn tail BEFORE the append handle exists.
         //
@@ -1010,6 +1022,7 @@ impl EcVolume {
 
         // Seed the in-memory deleted set from the journal.
         vol.load_deleted_needles_from_ecj(ecj_ops.read_at)?;
+        drop(path_guard);
 
         // Load the generation-0 EC bitrot checksum sidecar. Optional, except
         // when it contradicts the volume's own geometry — see
@@ -2320,9 +2333,16 @@ impl EcVolume {
         EcJournalAppender {
             volume_id: self.volume_id,
             ecj_path: self.ecj_file_name(),
+            path_lock: self.journal_path_lock(),
             ecj: self.ecj.clone(),
             deleted_needles: self.deleted_needles.clone(),
         }
+    }
+
+    /// The append lock of this volume's `.ecj` path, shared with every other
+    /// disk's runtime journaling into the same file.
+    pub(crate) fn journal_path_lock(&self) -> Option<Arc<Mutex<()>>> {
+        self.ecj_hold.as_ref().map(EcjHold::append_lock)
     }
 
     /// Takes this volume's journal lock, waiting out an append in flight.
@@ -2332,6 +2352,8 @@ impl EcVolume {
 
     fn append_journal(&mut self, records: &[u8]) -> io::Result<()> {
         let ecj_path = self.ecj_file_name();
+        let path_lock = self.journal_path_lock();
+        let _path = lock_path(&path_lock);
         self.journal().append(records, self.volume_id, &ecj_path)
     }
 
@@ -3609,6 +3631,44 @@ mod tests {
         let deleted = vol.read_deleted_needles().unwrap();
         assert_eq!(deleted.len(), ids.len() + 1);
         assert!(deleted.contains(&NeedleId(7)));
+    }
+
+    /// Disks sharing one `.ecj` share its append lock: a delete through one
+    /// disk's handle waits while another disk's runtime reads or replaces the
+    /// file, so a fold or a mount never sees an append half done.
+    #[test]
+    fn test_sibling_holders_share_the_append_lock() {
+        let tmp = TempDir::new().unwrap();
+        let a_dir = tmp.path().join("a");
+        let b_dir = tmp.path().join("b");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        std::fs::create_dir_all(&b_dir).unwrap();
+        let (a, b) = (a_dir.to_str().unwrap(), b_dir.to_str().unwrap());
+        let vid = VolumeId(49);
+        write_ecx_file(
+            a,
+            "",
+            vid,
+            &[(NeedleId(7), Offset::from_actual_offset(8), Size(10))],
+        );
+
+        let on_a = EcVolume::new(a, a, "", vid).unwrap();
+        let on_b = EcVolume::new(b, a, "", vid).unwrap();
+        assert_eq!(on_b.ecj_file_name(), on_a.ecj_file_name());
+
+        let path_lock = on_a.journal_path_lock();
+        let held = lock_path(&path_lock);
+        let appender = on_b.journal_appender();
+        let delete = std::thread::spawn(move || appender.journal_delete(NeedleId(7), || false));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(
+            !delete.is_finished(),
+            "a sibling's append must wait for the path lock"
+        );
+        drop(held);
+        delete.join().unwrap().unwrap();
+        assert!(on_b.is_needle_deleted(NeedleId(7)));
+        assert_eq!(on_a.read_deleted_needles().unwrap(), vec![NeedleId(7)]);
     }
 
     /// A copy appending to the journal by path must not have its bytes

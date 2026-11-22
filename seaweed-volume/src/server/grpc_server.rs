@@ -3775,6 +3775,11 @@ impl VolumeServer for VolumeGrpcService {
             if let Some(loc_idx) = loc_idx {
                 if let Some(ev) = store.locations[loc_idx].find_ec_volume_mut(vid) {
                     let journal_path = ev.ecj_file_name();
+                    // Held through the siblings' adoption: a delete through
+                    // another disk's handle must land before the fold reads
+                    // the file or after that handle is repointed.
+                    let path_lock = ev.journal_path_lock();
+                    let _path = crate::storage::erasure_coding::ec_volume::lock_path(&path_lock);
                     ev.rebuild_ecx_from_journal().map_err(|e| {
                         status_internal_with_rebuild_ids(
                             format!("RebuildEcxFile: {}", e),
