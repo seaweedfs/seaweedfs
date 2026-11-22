@@ -1,6 +1,8 @@
 package balancer
 
 import (
+	"slices"
+
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
@@ -91,6 +93,12 @@ func PickSmallestReplica(replicas []Replica) int {
 // writable if none keeps placement (a later misplaced cycle then
 // re-balances).
 func PickOneReplicaToDelete(replicas []Replica, rp *super_block.ReplicaPlacement) int {
+	return firstOrNone(ReplicasToDelete(replicas, rp))
+}
+
+// ReplicasToDelete lists the replicas PickOneReplicaToDelete chooses from,
+// best first, so a caller that refuses one can try the next.
+func ReplicasToDelete(replicas []Replica, rp *super_block.ReplicaPlacement) []int {
 	var writable []int
 	for i, r := range replicas {
 		if !r.ReadOnly {
@@ -98,7 +106,7 @@ func PickOneReplicaToDelete(replicas []Replica, rp *super_block.ReplicaPlacement
 		}
 	}
 	if len(writable) < 2 {
-		return -1
+		return nil
 	}
 	var placementSafe []int
 	for _, i := range writable {
@@ -107,9 +115,9 @@ func PickOneReplicaToDelete(replicas []Replica, rp *super_block.ReplicaPlacement
 		}
 	}
 	if len(placementSafe) > 0 {
-		return pickSmallestAmong(replicas, placementSafe)
+		return smallestFirst(replicas, placementSafe)
 	}
-	return pickSmallestAmong(replicas, writable)
+	return smallestFirst(replicas, writable)
 }
 
 // PickOneMisplacedVolume selects the replica to delete and recreate at a
@@ -119,26 +127,44 @@ func PickOneReplicaToDelete(replicas []Replica, rp *super_block.ReplicaPlacement
 // prefers a replica whose removal leaves the others well placed, and falls
 // back to the smallest replica.
 func PickOneMisplacedVolume(replicas []Replica, rp *super_block.ReplicaPlacement) int {
+	return firstOrNone(MisplacedVolumesToDelete(replicas, rp))
+}
+
+// MisplacedVolumesToDelete lists the replicas PickOneMisplacedVolume chooses
+// from, best first.
+func MisplacedVolumesToDelete(replicas []Replica, rp *super_block.ReplicaPlacement) []int {
 	var deletionCandidates []int
 	for i := range replicas {
 		if !IsMisplaced(otherThan(replicas, i), rp) {
 			deletionCandidates = append(deletionCandidates, i)
 		}
 	}
-	if smallest := pickSmallestAmong(replicas, deletionCandidates); smallest >= 0 {
-		return smallest
-	}
-	return PickSmallestReplica(replicas)
-}
-
-func pickSmallestAmong(replicas []Replica, candidates []int) int {
-	smallest := -1
-	for _, i := range candidates {
-		if smallest < 0 || lessReplica(replicas[i], replicas[smallest]) {
-			smallest = i
+	if len(deletionCandidates) == 0 {
+		for i := range replicas {
+			deletionCandidates = append(deletionCandidates, i)
 		}
 	}
-	return smallest
+	return smallestFirst(replicas, deletionCandidates)
+}
+
+func smallestFirst(replicas []Replica, candidates []int) []int {
+	slices.SortStableFunc(candidates, func(a, b int) int {
+		switch {
+		case lessReplica(replicas[a], replicas[b]):
+			return -1
+		case lessReplica(replicas[b], replicas[a]):
+			return 1
+		}
+		return 0
+	})
+	return candidates
+}
+
+func firstOrNone(candidates []int) int {
+	if len(candidates) == 0 {
+		return -1
+	}
+	return candidates[0]
 }
 
 func lessReplica(a, b Replica) bool {
