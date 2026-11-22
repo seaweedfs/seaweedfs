@@ -141,6 +141,7 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 				return fmt.Errorf("%s is not directory", targetDir)
 			}
 			if entries, _, _ := fs.filer.ListDirectoryEntries(context.Background(), targetDir, "", false, 1, "", "", ""); len(entries) > 0 {
+				fs.filer.RollbackTransaction(ctx)
 				return fmt.Errorf("%s is not empty", targetDir)
 			}
 		}
