@@ -305,6 +305,13 @@ func TestIsPublicPolicy(t *testing.T) {
 		{`{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*","Condition":{"StringLike":{"aws:SourceVpce":"vpce-*"}}}`, true},
 		{`{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*","Condition":{"StringEqualsIfExists":{"aws:SourceVpce":"vpce-1a2b3c4d"}}}`, true},
 		{`{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*","Condition":{"StringEquals":{"s3:prefix":"home/"}}}`, true},
+		{`{"Effect":"Allow","Principal":[],"Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}`, true},
+		{`{"Effect":"Allow","Principal":{"AWS":"${aws:username}"},"Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}`, true},
+		{`{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*","Condition":{"IpAddress":{"aws:SourceIp":"10.0.0.0/7"}}}`, true},
+		{`{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*","Condition":{"IpAddress":{"aws:SourceIp":"2001:db8::/31"}}}`, true},
+		{`{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*","Condition":{"IpAddress":{"aws:SourceIp":"2001:db8::/32"}}}`, false},
+		{`{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*","Condition":{"StringLike":{"s3:DataAccessPointArn":"arn:aws:s3:us-east-1:123456789012:accesspoint/*"}}}`, false},
+		{`{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*","Condition":{"StringLike":{"s3:DataAccessPointArn":"arn:aws:s3:us-east-1:*:accesspoint/*"}}}`, true},
 	} {
 		var doc policy_engine.PolicyDocument
 		require.NoError(t, json.Unmarshal([]byte(`{"Version":"2012-10-17","Statement":[`+tc.statement+`]}`), &doc))

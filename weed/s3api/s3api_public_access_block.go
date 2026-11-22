@@ -120,16 +120,23 @@ func isPublicPolicy(doc *policy_engine.PolicyDocument) bool {
 }
 
 func hasPublicPrincipal(principals []string) bool {
+	if len(principals) == 0 {
+		return true
+	}
 	for _, principal := range principals {
-		if !strings.ContainsAny(principal, "*?") {
-			continue
-		}
-		if parts := strings.SplitN(principal, ":", 6); len(parts) == 6 && parts[0] == "arn" && !strings.ContainsAny(parts[4], "*?") {
+		if !strings.ContainsAny(principal, "*?$") || hasFixedAccount(principal) {
 			continue
 		}
 		return true
 	}
 	return false
+}
+
+// hasFixedAccount reports whether an ARN names one account, whatever
+// wildcards its resource part holds.
+func hasFixedAccount(arn string) bool {
+	parts := strings.SplitN(arn, ":", 6)
+	return len(parts) == 6 && parts[0] == "arn" && parts[4] != "" && !strings.ContainsAny(parts[4], "*?$")
 }
 
 func hasRestrictingCondition(conditions policy_engine.PolicyConditions) bool {
@@ -162,7 +169,8 @@ func fixedConditionValues(operator, key string, values []string) bool {
 				return false
 			}
 			if _, network, err := net.ParseCIDR(value); err == nil {
-				if ones, _ := network.Mask.Size(); ones == 0 {
+				ones, bits := network.Mask.Size()
+				if (bits == 32 && ones < 8) || (bits == 128 && ones < 32) {
 					return false
 				}
 			} else if net.ParseIP(value) == nil {
@@ -173,7 +181,7 @@ func fixedConditionValues(operator, key string, values []string) bool {
 		if !strings.HasPrefix(operator, "string") && !strings.HasPrefix(operator, "arn") {
 			return false
 		}
-		if value == "" || strings.ContainsAny(value, "*?$") {
+		if value == "" || (strings.ContainsAny(value, "*?$") && !hasFixedAccount(value)) {
 			return false
 		}
 	}
