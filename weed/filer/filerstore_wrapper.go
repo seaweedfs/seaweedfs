@@ -465,6 +465,14 @@ func (fsw *FilerStoreWrapper) transactionCovers(paths ...util.FullPath) bool {
 	return true
 }
 
+// overwritesAtOnce reports whether an entry inserted at path replaces what is
+// stored there at once and whole: the default store says that its inserts do
+// (OverwritingStore), and it holds the entry.
+func (fsw *FilerStoreWrapper) overwritesAtOnce(path util.FullPath) bool {
+	overwriting, ok := fsw.defaultStore.(OverwritingStore)
+	return ok && overwriting.OverwritesAtOnce() && fsw.getActualStore(path) == fsw.defaultStore
+}
+
 func (fsw *FilerStoreWrapper) BeginTransaction(ctx context.Context) (context.Context, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

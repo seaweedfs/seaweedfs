@@ -485,6 +485,14 @@ func (f *Filer) TransactionCovers(ctx context.Context, paths ...util.FullPath) b
 	return ok && fsw.transactionCovers(paths...)
 }
 
+// OverwritesAtOnce reports whether an entry inserted at path replaces what is
+// stored there at once and whole: the default store says that its inserts do,
+// and it holds the entry.
+func (f *Filer) OverwritesAtOnce(path util.FullPath) bool {
+	fsw, ok := f.Store.(*FilerStoreWrapper)
+	return ok && fsw.overwritesAtOnce(path)
+}
+
 func (f *Filer) CommitTransaction(ctx context.Context) error {
 	return f.Store.CommitTransaction(ctx)
 }
@@ -663,6 +671,55 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 
 	glog.V(4).InfofCtx(ctx, "CreateEntry %s: created", entry.FullPath)
 
+	return nil
+}
+
+// ReplaceFileForRename stores a file renamed over an existing file at the
+// target's path with one store write, on a store whose insert replaces an
+// entry at once and whole (OverwritesAtOnce). Deleting the target first would
+// leave the path empty there for anyone reading it until the new entry lands.
+// Apart from that it does what CreateEntry does for a new entry: it refuses a
+// name the filer would not create, and it creates missing parents after the
+// write. The store drops the replaced entry's hard link, if it had one, after
+// the write.
+//
+// The target was a file when the rename looked it up. Another filer may have
+// turned it into a directory since, by creating a child under it, and writing
+// over that would strand its children; or it may have deleted the target's
+// directory. So the target is read again right before the write and a
+// directory is refused, as the lookup would have refused it. Such a store has
+// no conditional write: this leaves the window that a delete-first rename has
+// between its own read of the target and its delete.
+func (f *Filer) ReplaceFileForRename(ctx context.Context, entry *Entry, maxFilenameLength uint32) error {
+	ctx = f.syncWriteContext(ctx, entry.FullPath)
+	if entry.FullPath.IsLongerFileName(maxFilenameLength) {
+		return filer_pb.ErrEntryNameTooLong
+	}
+	if entry.FullPath.HasDotSegment() {
+		return fmt.Errorf("invalid path %s", entry.FullPath)
+	}
+	current, findErr := f.FindEntry(context.WithValue(ctx, lazyFetchContextKey{}, true), entry.FullPath)
+	if findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
+		return fmt.Errorf("find entry %s: %w", entry.FullPath, findErr)
+	}
+	if current != nil && current.IsDirectory() {
+		return fmt.Errorf("%s: %w", entry.FullPath, filer_pb.ErrExistingIsDirectory)
+	}
+	if entry.Attr.Atime.IsZero() {
+		entry.Attr.Atime = entryInitialAtime(entry.Attr)
+	}
+	f.ensureEntryInode(entry)
+	if err := f.Store.InsertEntry(ctx, entry); err != nil {
+		glog.ErrorfCtx(ctx, "replace entry %s: %v", entry.FullPath, err)
+		return fmt.Errorf("replace entry %s: %w", entry.FullPath, err)
+	}
+	// as in CreateEntry, parents go after the entry
+	dirParts := strings.Split(string(entry.FullPath), "/")
+	if err := f.ensureParentDirectoryEntry(ctx, entry, dirParts, len(dirParts)-1, false); err != nil {
+		glog.ErrorfCtx(ctx, "create parent directories of %s: %v", entry.FullPath, err)
+		return err
+	}
+	stats.FilerObjectSizeBytesHistogram.Observe(float64(entry.Size()))
 	return nil
 }
 

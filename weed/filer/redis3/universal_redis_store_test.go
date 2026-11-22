@@ -194,3 +194,40 @@ func TestKeyPrefixScopesAllKeys(t *testing.T) {
 		t.Fatalf("no prefixed keys should remain after cleanup: keys=%v err=%v", keys, err)
 	}
 }
+
+// What OverwritesAtOnce declares: an InsertEntry over an existing entry
+// replaces the stored entry together with its expiry, and leaves the name
+// listed once.
+func TestInsertEntryOverAnExistingEntryReplacesIt(t *testing.T) {
+	store, dir := newTestStore(t)
+	if !store.OverwritesAtOnce() {
+		t.Fatal("OverwritesAtOnce = false")
+	}
+	ctx := context.Background()
+	path := dir.Child("replaced")
+	now := time.Now()
+	if err := store.InsertEntry(ctx, &filer.Entry{
+		FullPath: path,
+		Attr:     filer.Attr{Crtime: now, Mtime: now, Mode: 0644, TtlSec: 3600},
+	}); err != nil {
+		t.Fatalf("InsertEntry %s: %v", path, err)
+	}
+
+	if err := store.InsertEntry(ctx, &filer.Entry{
+		FullPath: path,
+		Attr:     filer.Attr{Crtime: now, Mtime: now, Mode: 0600, Inode: 4242},
+	}); err != nil {
+		t.Fatalf("InsertEntry over %s: %v", path, err)
+	}
+
+	got, err := store.FindEntry(ctx, path)
+	if err != nil || got.Attr.Inode != 4242 || got.Attr.TtlSec != 0 {
+		t.Fatalf("FindEntry = %+v, %v; want the second entry", got, err)
+	}
+	if ttl, err := store.Client.TTL(ctx, store.getKey(string(path))).Result(); err != nil || ttl != -1 {
+		t.Fatalf("TTL of the stored entry = %v, %v; want none left from the first entry", ttl, err)
+	}
+	if names := listNames(t, store, dir); len(names) != 1 || names[0] != "replaced" {
+		t.Fatalf("listed %v, want [replaced]", names)
+	}
+}

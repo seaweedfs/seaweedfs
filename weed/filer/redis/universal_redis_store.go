@@ -23,6 +23,15 @@ type UniversalRedisStore struct {
 	Client redis.UniversalClient
 }
 
+// OverwritesAtOnce: Redis keeps no transaction here, the SET of an insert
+// replaces the stored entry together with its expiry, and the insert lists the
+// name whether or not it was listed before.
+func (store *UniversalRedisStore) OverwritesAtOnce() bool {
+	return true
+}
+
+var _ filer.OverwritingStore = (*UniversalRedisStore)(nil)
+
 func (store *UniversalRedisStore) BeginTransaction(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }
