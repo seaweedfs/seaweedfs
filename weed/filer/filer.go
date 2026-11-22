@@ -742,7 +742,7 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 			}
 		} else if !metadataEventsSuppressed(ctx) && !strings.HasPrefix("/"+util.Join(dirParts[:]...), SystemLogDir) {
 			f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
-		} else if !recordCreatedParent(ctx, nil, dirEntry) {
+		} else if !recordCreatedParent(ctx, dirEntry) {
 			// No event adopts this stamp: a suppressing caller covers only its
 			// own entry, unless it collects the parents created on the way.
 			f.releaseEntryCommitTsNs(dirEntry.CommitTsNs)
@@ -754,7 +754,6 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 		// existing file to a directory, preserving its content/chunks so
 		// the original object data remains accessible.
 		glog.V(2).InfofCtx(ctx, "promoting %s from file to directory for %s", dirPath, entry.FullPath)
-		prePromotion := dirEntry.ShallowClone()
 		dirEntry.Attr.Mode |= os.ModeDir | 0111
 		// Expiring the entry now deletes the directory row and strands the keys under
 		// it, so the prefix object gives up its lazy TTL. The lifecycle worker still
@@ -772,11 +771,11 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 			return fmt.Errorf("promote %s to directory: %v", dirPath, updateErr)
 		}
 		if metadataEventsSuppressed(ctx) {
-			if !recordCreatedParent(ctx, prePromotion, dirEntry) {
+			if !recordCreatedParent(ctx, dirEntry) {
 				f.releaseEntryCommitTsNs(dirEntry.CommitTsNs)
 			}
 		} else {
-			f.NotifyUpdateEvent(ctx, prePromotion, dirEntry, false, isFromOtherCluster, nil)
+			f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
 		}
 	}
 

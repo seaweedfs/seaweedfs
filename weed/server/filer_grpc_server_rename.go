@@ -460,11 +460,13 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 			return fmt.Errorf("insert entry %s: %v", newEntry.FullPath, createErr)
 		}
 	} else {
-		// Peers replay events into their own store, so a new or promoted parent
-		// only reaches them through its own event, published before the move.
-		createErr := fs.filer.CreateEntry(filer.WithCreatedParents(ctx, func(oldEntry, newEntry *filer.Entry) {
-			*metadataEvents = append(*metadataEvents, metadataEvent{oldEntry: oldEntry, newEntry: newEntry})
-		}), newEntry, nil, false, false, signatures, false, fs.filer.MaxFilenameLength)
+		var createdParents []*filer.Entry
+		createErr := fs.filer.CreateEntry(filer.WithCreatedParents(ctx, &createdParents), newEntry, nil, false, false, signatures, false, fs.filer.MaxFilenameLength)
+		// Peers replay events into their own store, so a new parent only
+		// reaches them through its own create event, published before the move.
+		for _, parent := range createdParents {
+			*metadataEvents = append(*metadataEvents, metadataEvent{newEntry: parent})
+		}
 		if createErr != nil {
 			return createErr
 		}
