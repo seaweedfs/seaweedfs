@@ -114,3 +114,30 @@ func TestPlanDedupCountsRunsPerDisk(t *testing.T) {
 		t.Errorf("want c's run-100 shard 0 removed, got %+v", dedup)
 	}
 }
+
+// A frozen volume's shards stay out of every move but still count toward the
+// node's load: B holds 4 movable plus 8 frozen shards against A's 10, so the
+// global phase must not move A's shards onto B.
+func TestPlanFrozenShardsCountTowardLoad(t *testing.T) {
+	topo := NewTopology()
+	a := topo.AddNode("a", "dc1", "dc1:rack1", 20)
+	a.AddDisk(1, "", 20, 10)
+	b := topo.AddNode("b", "dc1", "dc1:rack1", 18)
+	b.AddDisk(1, "", 18, 12)
+	for vid := uint32(1); vid <= 10; vid++ {
+		a.AddShards(vid, "c", 1, bits(0))
+	}
+	for vid := uint32(11); vid <= 14; vid++ {
+		b.AddShards(vid, "c", 1, bits(0))
+	}
+	b.AddShards(100, "c", 1, bits(0, 1, 2, 3, 4, 5, 6, 7))
+	b.Freeze(100, "c")
+	for _, m := range Plan(topo, Options{ImbalanceThreshold: 0.01, Ratio: ratio(10, 4), GlobalUtilizationBased: true}) {
+		if m.VolumeID == 100 {
+			t.Errorf("frozen volume moved: %+v", m)
+		}
+		if m.SourceNode == "a" && m.TargetNode == "b" {
+			t.Errorf("moved %+v onto the node whose frozen shards make it the fuller one", m)
+		}
+	}
+}

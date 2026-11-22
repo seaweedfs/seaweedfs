@@ -306,6 +306,9 @@ func Plan(topo *Topology, opts Options) []Move {
 	var all []*move
 	for _, collection := range collections {
 		for _, vk := range byCollection[collection] {
+			if isFrozen(vk, nodes) {
+				continue
+			}
 			m := detectDuplicateShards(vk, nodes, dataShardsByVolume[vk]+parityShardsByVolume[vk])
 			applyMovesToTopology(m, racks)
 			all = append(all, m...)
@@ -491,6 +494,14 @@ func onlyCompleteRun(runShards map[int64]erasure_coding.ShardBits, totalShards i
 		complete, found = ts, true
 	}
 	return complete, found
+}
+
+// Freeze keeps the volume's shards on this node out of every phase while still
+// counting them toward the node's load. Call it after AddShards.
+func (n *Node) Freeze(vid uint32, collection string) {
+	if info, ok := n.shards[volKey{collection: collection, vid: vid}]; ok {
+		info.frozen = true
+	}
 }
 
 func freezeVolume(vk volKey, nodes map[string]*Node) {
