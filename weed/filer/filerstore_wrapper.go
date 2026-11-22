@@ -436,12 +436,26 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 	return
 }
 
+type isolatingTransactionKey struct{}
+
+// IsolatingTransaction reports whether ctx carries a transaction the store
+// began for real, whose writes no other reader sees before its commit (SQL,
+// TiKV). A store without transactions hands its context back unchanged.
+func IsolatingTransaction(ctx context.Context) bool {
+	isolating, _ := ctx.Value(isolatingTransactionKey{}).(bool)
+	return isolating
+}
+
 func (fsw *FilerStoreWrapper) BeginTransaction(ctx context.Context) (context.Context, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	ctx = context.WithoutCancel(ctx)
-	return fsw.getDefaultStore().BeginTransaction(ctx)
+	txCtx, err := fsw.getDefaultStore().BeginTransaction(ctx)
+	if err == nil && txCtx != ctx {
+		txCtx = context.WithValue(txCtx, isolatingTransactionKey{}, true)
+	}
+	return txCtx, err
 }
 
 func (fsw *FilerStoreWrapper) CommitTransaction(ctx context.Context) error {

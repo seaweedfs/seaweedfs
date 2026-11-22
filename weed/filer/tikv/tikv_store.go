@@ -371,9 +371,19 @@ func (store *TikvStore) BeginTransaction(ctx context.Context) (context.Context, 
 
 func (store *TikvStore) CommitTransaction(ctx context.Context) error {
 	if tx, ok := ctx.Value("tx").(*txnkv.KVTxn); ok {
-		return tx.Commit(context.Background())
+		return commitError(tx.Commit(context.Background()))
 	}
 	return nil
+}
+
+// commitError marks a write conflict as a transaction conflict: another writer
+// committed a key this optimistic transaction wrote after it began, so the
+// transaction can succeed when run again.
+func commitError(err error) error {
+	if tikverr.IsErrWriteConflict(err) {
+		return fmt.Errorf("%w: %w", filer.ErrTransactionConflict, err)
+	}
+	return err
 }
 
 func (store *TikvStore) RollbackTransaction(ctx context.Context) error {

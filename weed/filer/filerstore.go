@@ -15,6 +15,10 @@ var (
 	ErrUnsupportedSuperLargeDirectoryListing = errors.New("unsupported super large directory listing")
 	ErrKvNotImplemented                      = errors.New("kv not implemented yet")
 	ErrKvNotFound                            = errors.New("kv: not found")
+	// ErrTransactionConflict marks a commit the store refused because another
+	// writer changed a key the transaction wrote after it began. Running the
+	// transaction again reads that write.
+	ErrTransactionConflict = errors.New("transaction conflict")
 )
 
 type ListEachEntryFunc func(entry *Entry) (bool, error)

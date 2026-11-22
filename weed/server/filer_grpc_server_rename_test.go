@@ -300,7 +300,7 @@ func swapNotificationQueue(t *testing.T, q notification.MessageQueue) {
 // each, and its loop goroutines keep the whole filer reachable, so the tens of
 // filers this package builds would otherwise pin gigabytes for the rest of the
 // run - fatal on 32-bit, where that exhausts the address space.
-func newRenameTestFiler(t *testing.T, store *renameTestStore) *filer.Filer {
+func newRenameTestFiler(t *testing.T, store filer.FilerStore) *filer.Filer {
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
 	masterClient := wdclient.NewMasterClient(
 		dialOption,
