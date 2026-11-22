@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -608,5 +609,98 @@ func TestAtomicRenameEntryRejectsDotSegmentTarget(t *testing.T) {
 		if len(store.entries) != 1 {
 			t.Fatalf("rename to %s/%s left entries %v", tc.dir, tc.name, store.entries)
 		}
+	}
+}
+
+// A peer filer with its own store applies only the events it is sent, so the
+// directories a rename creates at its destination need events of their own.
+func TestAtomicRenameEntryAnnouncesCreatedParents(t *testing.T) {
+	store := newRenameTestStore()
+	store.entries["/buckets"] = newDirectoryEntry("/buckets", 100)
+	store.entries["/buckets/arc"] = newDirectoryEntry("/buckets/arc", 101)
+	store.entries["/buckets/arc/xxx"] = newDirectoryEntry("/buckets/arc/xxx", 102)
+	store.entries["/buckets/arc/xxx/rate_data"] = newFileEntry("/buckets/arc/xxx/rate_data", 103)
+
+	queue := &captureQueue{}
+	swapNotificationQueue(t, queue)
+
+	f := newRenameTestFiler(t, store)
+	server := &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()}
+	_, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+		OldDirectory: "/buckets/arc/xxx",
+		OldName:      "rate_data",
+		NewDirectory: "/buckets/arc/keep/2026/xxx",
+		NewName:      "rate_data",
+	})
+	if err != nil {
+		t.Fatalf("AtomicRenameEntry: %v", err)
+	}
+
+	var keys []string
+	peer := newRenameTestFiler(t, newRenameTestStore())
+	for _, event := range queue.snapshot() {
+		keys = append(keys, event.key)
+		dir, _ := util.FullPath(event.key).DirAndName()
+		if err := peer.Replay(&filer_pb.SubscribeMetadataResponse{
+			Directory:         dir,
+			EventNotification: event.notification,
+			TsNs:              time.Now().UnixNano(),
+		}); err != nil {
+			t.Fatalf("replay %s: %v", event.key, err)
+		}
+	}
+	wantKeys := []string{"/buckets/arc/keep", "/buckets/arc/keep/2026", "/buckets/arc/keep/2026/xxx", "/buckets/arc/xxx/rate_data"}
+	if !slices.Equal(keys, wantKeys) {
+		t.Fatalf("event keys = %v, want %v", keys, wantKeys)
+	}
+
+	for dir, name := range map[string]string{
+		"/buckets/arc":               "keep",
+		"/buckets/arc/keep":          "2026",
+		"/buckets/arc/keep/2026":     "xxx",
+		"/buckets/arc/keep/2026/xxx": "rate_data",
+	} {
+		var listed []string
+		if _, err := peer.Store.ListDirectoryEntries(context.Background(), util.FullPath(dir), "", false, 100, func(entry *filer.Entry) (bool, error) {
+			listed = append(listed, entry.Name())
+			return true, nil
+		}); err != nil {
+			t.Fatalf("list %s on the peer: %v", dir, err)
+		}
+		if !slices.Contains(listed, name) {
+			t.Fatalf("peer lists %v under %s, want %s", listed, dir, name)
+		}
+	}
+
+	now := time.Now().UnixNano()
+	if got := f.LocalDeliveredThroughTsNs(now); got != now {
+		t.Fatalf("LocalDeliveredThroughTsNs = %d, want %d: a parent's stamp was never adopted", got, now)
+	}
+}
+
+func TestAtomicRenameReleasesCreatedParentStampsOnCommitFailure(t *testing.T) {
+	store := newRenameTestStore()
+	store.entries["/src.txt"] = newFileEntry("/src.txt", 101)
+	store.commitErr = errors.New("commit failed")
+
+	queue := &captureQueue{}
+	swapNotificationQueue(t, queue)
+
+	f := newRenameTestFiler(t, store)
+	server := &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()}
+	if _, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+		OldDirectory: "/",
+		OldName:      "src.txt",
+		NewDirectory: "/a/b",
+		NewName:      "dst.txt",
+	}); err == nil {
+		t.Fatal("expected commit failure")
+	}
+	if events := queue.snapshot(); len(events) != 0 {
+		t.Fatalf("a failed rename published %d events", len(events))
+	}
+	now := time.Now().UnixNano()
+	if got := f.LocalDeliveredThroughTsNs(now); got != now {
+		t.Fatalf("LocalDeliveredThroughTsNs = %d, want %d: a leaked parent stamp still caps the claim", got, now)
 	}
 }
