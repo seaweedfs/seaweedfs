@@ -118,12 +118,27 @@ type UpdateNamespaceRequest struct {
 	TableBucketARN string            `json:"tableBucketARN"`
 	Namespace      []string          `json:"namespace"`
 	Properties     map[string]string `json:"properties,omitempty"`
+	// PropertyChanges, when set, is applied to the properties the namespace
+	// holds at the write, and Properties is ignored. A caller that read the
+	// properties, merged its change and sent the result back as Properties
+	// would write over any change that landed in between.
+	PropertyChanges *NamespacePropertyChanges `json:"propertyChanges,omitempty"`
+}
+
+// NamespacePropertyChanges sets Updates and removes Removals.
+type NamespacePropertyChanges struct {
+	Updates  map[string]string `json:"updates,omitempty"`
+	Removals []string          `json:"removals,omitempty"`
 }
 
 type UpdateNamespaceResponse struct {
 	Namespace      []string          `json:"namespace"`
 	TableBucketARN string            `json:"tableBucketARN"`
 	Properties     map[string]string `json:"properties,omitempty"`
+	// Removed and Missing report, for a request with PropertyChanges, the
+	// removals that found their key at the write and those that did not.
+	Removed []string `json:"removed,omitempty"`
+	Missing []string `json:"missing,omitempty"`
 }
 
 type GetNamespaceResponse struct {
