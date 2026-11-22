@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -112,7 +113,7 @@ func (s *Store) scrubEcVolumeWalk(ecv *erasure_coding.EcVolume, mode volume_serv
 			ecv.ShardLocationsLock.RUnlock()
 			readErr := errors.New("no known shard locations")
 			if ok {
-				if _, _, readErr = s.readRemoteEcShardInterval(sourceDataNodes, id, ecv.VolumeId, shardId, chunk, offset, ecv.EncodeTsNs); readErr == nil {
+				if _, _, readErr = s.readRemoteEcShardInterval(context.Background(), sourceDataNodes, id, ecv.VolumeId, shardId, chunk, offset, ecv.EncodeTsNs); readErr == nil {
 					data = append(data, chunk...)
 					continue
 				}

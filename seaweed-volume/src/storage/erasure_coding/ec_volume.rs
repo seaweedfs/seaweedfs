@@ -31,6 +31,12 @@ pub(crate) struct ShardLocationCache {
     /// Maps shard ID -> list of server addresses where that shard exists.
     /// Used for distributed EC reads across the cluster.
     locations: HashMap<ShardId, Vec<String>>,
+    /// Holders a complete lookup stopped placing a shard on (Go's
+    /// `ShardReadHints`). Reads ask them before reconstructing, for a delete only
+    /// such a holder journaled, but take nothing else from them: a delete made
+    /// since went to a listed holder, which reconstruction asks. Deletes never
+    /// use them.
+    read_hints: HashMap<ShardId, Vec<String>>,
     /// Wall-clock timestamp of the most recent successful `LookupEcVolume`
     /// refresh of `locations`. `None` until the first refresh. Drives the
     /// staleness heuristic in `cached_lookup_ec_shard_locations` (mirrors Go's
@@ -1741,8 +1747,13 @@ impl EcVolume {
         let mut cache = self.shard_locations.write().unwrap();
         for (shard_id, addrs) in locations {
             if addrs.is_empty() {
-                cache.locations.remove(&shard_id);
+                if let Some(known) = cache.locations.remove(&shard_id)
+                    && !known.is_empty()
+                {
+                    cache.read_hints.insert(shard_id, known);
+                }
             } else {
+                cache.read_hints.remove(&shard_id);
                 cache.locations.insert(shard_id, addrs);
             }
         }
@@ -1785,6 +1796,20 @@ impl EcVolume {
     ) -> (HashMap<ShardId, Vec<String>>, Option<Instant>) {
         let cache = self.shard_locations.read().unwrap();
         (cache.locations.clone(), cache.refreshed_at)
+    }
+
+    pub(crate) fn shard_read_hints(&self, shard_id: ShardId) -> Option<Vec<String>> {
+        let cache = self.shard_locations.read().unwrap();
+        cache.read_hints.get(&shard_id).cloned()
+    }
+
+    /// Drops the shard's hint only if it is still `used`: a lookup may have
+    /// replaced it while the read that failed was in flight.
+    pub(crate) fn forget_shard_read_hints(&self, shard_id: ShardId, used: &[String]) {
+        let mut cache = self.shard_locations.write().unwrap();
+        if cache.read_hints.get(&shard_id).is_some_and(|h| h == used) {
+            cache.read_hints.remove(&shard_id);
+        }
     }
 
     /// Mark the cached map for a prompt re-check after a read failed against one
@@ -5482,9 +5507,27 @@ mod tests {
         );
 
         // A shard the master places nowhere is dropped, not kept at an address
-        // a delete would trust.
+        // a delete would trust; its holder stays a place a read can ask first.
         let merged = vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
         assert_eq!(merged, HashMap::from([(1, vec!["c:3".to_string()])]));
+        assert_eq!(vol.shard_read_hints(0), Some(vec!["a:1".to_string()]));
+        vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
+        assert_eq!(
+            vol.shard_read_hints(0),
+            Some(vec!["a:1".to_string()]),
+            "a later reply placing the shard nowhere keeps the hint"
+        );
+        vol.merge_shard_locations(HashMap::from([(0, vec!["d:4".to_string()])]));
+        assert_eq!(vol.shard_read_hints(0), None);
+        vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
+        vol.forget_shard_read_hints(0, &["a:1".to_string()]);
+        assert_eq!(
+            vol.shard_read_hints(0),
+            Some(vec!["d:4".to_string()]),
+            "a failed read of an older hint keeps its replacement"
+        );
+        vol.forget_shard_read_hints(0, &["d:4".to_string()]);
+        assert_eq!(vol.shard_read_hints(0), None);
     }
 
     #[test]

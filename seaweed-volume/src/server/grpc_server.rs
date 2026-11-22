@@ -14027,17 +14027,13 @@ mod tests {
             .unwrap();
     }
 
-    /// Leaves `service` holding `local_shards` of EC volume 1, with shard 0 (the
-    /// one with needle 11's bytes) also served by a peer; `peer_deletes`
-    /// journals the needle's delete on the peer alone.
-    async fn put_ec_1_needle_shard_on_a_peer(
-        service: &VolumeGrpcService,
+    /// Serves `shard_ids` of the EC volume 1 generated in `tmp` from a new peer;
+    /// `deletes` journals needle 11's delete on that peer alone.
+    async fn serve_ec_1_shards_from_a_peer(
         tmp: &TempDir,
-        local_shards: Vec<u32>,
-        peer_deletes: bool,
-    ) -> (TempDir, tokio::sync::oneshot::Sender<()>) {
-        generate_and_mount_ec_1(service, local_shards).await;
-
+        shard_ids: Vec<u32>,
+        deletes: bool,
+    ) -> (String, TempDir, tokio::sync::oneshot::Sender<()>) {
         let (peer, peer_tmp) = make_local_service_with_volume("", None);
         peer.state
             .store
@@ -14051,8 +14047,8 @@ mod tests {
                 std::fs::copy(tmp.path().join(&name), peer_tmp.path().join(&name)).unwrap();
             }
         }
-        mount_ec_1(&peer, vec![0]).await;
-        if peer_deletes {
+        mount_ec_1(&peer, shard_ids).await;
+        if deletes {
             peer.state
                 .store
                 .write()
@@ -14063,6 +14059,21 @@ mod tests {
                 .unwrap();
         }
         let (port, shutdown) = serve_source(peer).await;
+        (format!("127.0.0.1:{port}.{port}"), peer_tmp, shutdown)
+    }
+
+    /// Leaves `service` holding `local_shards` of EC volume 1, with shard 0 (the
+    /// one with needle 11's bytes) also served by a peer; `peer_deletes`
+    /// journals the needle's delete on the peer alone.
+    async fn put_ec_1_needle_shard_on_a_peer(
+        service: &VolumeGrpcService,
+        tmp: &TempDir,
+        local_shards: Vec<u32>,
+        peer_deletes: bool,
+    ) -> (TempDir, tokio::sync::oneshot::Sender<()>) {
+        generate_and_mount_ec_1(service, local_shards).await;
+        let (peer_addr, peer_tmp, shutdown) =
+            serve_ec_1_shards_from_a_peer(tmp, vec![0], peer_deletes).await;
 
         {
             let mut store = service.state.store.write().unwrap();
@@ -14074,7 +14085,7 @@ mod tests {
                     (0u8..14)
                         .map(|sid| {
                             let addr = if sid == 0 {
-                                format!("127.0.0.1:{port}.{port}")
+                                peer_addr.clone()
                             } else {
                                 "127.0.0.1:255.1".to_string()
                             };
@@ -14110,6 +14121,110 @@ mod tests {
         let err = needle_status(&service, 11).await.unwrap_err();
         assert_eq!(err.code(), tonic::Code::Unknown, "{err}");
         assert_eq!(err.message(), "already deleted");
+    }
+
+    /// A complete lookup places shard 0 nowhere and every other shard on an
+    /// unreachable holder.
+    fn delist_ec_1_shard_0(service: &VolumeGrpcService) {
+        service
+            .state
+            .store
+            .read()
+            .unwrap()
+            .find_ec_volume(VolumeId(1))
+            .unwrap()
+            .merge_shard_locations(
+                (0u8..14)
+                    .map(|sid| {
+                        let addrs = if sid == 0 {
+                            Vec::new()
+                        } else {
+                            vec!["127.0.0.1:255.1".to_string()]
+                        };
+                        (sid, addrs)
+                    })
+                    .collect(),
+            );
+    }
+
+    /// The local shards could rebuild needle 11, but the delisted holder of
+    /// shard 0 still answers and journaled its delete.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_read_asks_a_delisted_holder_before_rebuilding() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, (1..14).collect(), true).await;
+        delist_ec_1_shard_0(&service);
+
+        let err = needle_status(&service, 11).await.unwrap_err();
+        assert_eq!(err.message(), "already deleted", "{err}");
+    }
+
+    /// A delete made after the delisting went to a listed holder, so the
+    /// delisted holder still answers live; the read must not take that answer
+    /// over the reconstruction that asks the listed holder.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_read_does_not_take_a_live_answer_from_a_delisted_holder() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        generate_and_mount_ec_1(&service, (1..10).collect()).await;
+        let (delisted, _delisted_tmp, _delisted_stop) =
+            serve_ec_1_shards_from_a_peer(&tmp, vec![0], false).await;
+        let (journaled, _journaled_tmp, _journaled_stop) =
+            serve_ec_1_shards_from_a_peer(&tmp, vec![10], true).await;
+        {
+            let mut store = service.state.store.write().unwrap();
+            store.unmount_volume(VolumeId(1)).unwrap();
+            let ecv = store.find_ec_volume(VolumeId(1)).unwrap();
+            ecv.merge_shard_locations(std::collections::HashMap::from([(0, vec![delisted])]));
+            ecv.merge_shard_locations(std::collections::HashMap::from([
+                (0, Vec::new()),
+                (10, vec![journaled]),
+            ]));
+        }
+
+        let err = needle_status(&service, 11).await.unwrap_err();
+        assert_eq!(err.message(), "already deleted", "{err}");
+        let store = service.state.store.read().unwrap();
+        assert!(
+            store
+                .find_ec_volume(VolumeId(1))
+                .unwrap()
+                .shard_read_hints(0)
+                .is_some(),
+            "a read hint that answered was dropped"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_read_drops_an_unreachable_read_hint_and_rebuilds() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let want = needle_status(&service, 11).await.unwrap();
+        generate_and_mount_ec_1(&service, (1..14).collect()).await;
+        {
+            let mut store = service.state.store.write().unwrap();
+            store.unmount_volume(VolumeId(1)).unwrap();
+            store
+                .find_ec_volume(VolumeId(1))
+                .unwrap()
+                .merge_shard_locations(
+                    (0u8..14)
+                        .map(|sid| (sid, vec!["127.0.0.1:255.1".to_string()]))
+                        .collect(),
+                );
+        }
+        delist_ec_1_shard_0(&service);
+
+        let got = needle_status(&service, 11)
+            .await
+            .expect("the local shards rebuild shard 0");
+        assert_eq!(got, want);
+        let store = service.state.store.read().unwrap();
+        assert_eq!(
+            store
+                .find_ec_volume(VolumeId(1))
+                .unwrap()
+                .shard_read_hints(0),
+            None
+        );
     }
 
     fn quarantine_ec_1(service: &VolumeGrpcService) {

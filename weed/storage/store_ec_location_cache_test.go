@@ -3,7 +3,9 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"slices"
@@ -445,5 +447,217 @@ func TestCachedLookupEcShardLocationsKeepsTheMarkWhenTheLookupFails(t *testing.T
 	}
 	if got := master.lookups.Load(); got != 3 {
 		t.Errorf("asked the master %d times, want 3: a failed lookup must not leave the disproved map trusted", got)
+	}
+}
+
+// A complete reply that places a shard nowhere takes it out of the map a delete
+// routes by, but its former holder stays a place a read can ask first.
+func TestCachedLookupEcShardLocationsKeepsADelistedHolderForReads(t *testing.T) {
+	const delisted = erasure_coding.ShardId(13)
+	master, masterAddr := startCountingMaster(t)
+	master.located.Store(13)
+	store := &Store{
+		MasterFn:       func() pb.ServerAddress { return masterAddr },
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
+	ecVolume := &erasure_coding.EcVolume{
+		VolumeId:       9,
+		ShardLocations: map[erasure_coding.ShardId][]pb.ServerAddress{delisted: {partialHolder(5)}},
+	}
+	if err := store.cachedLookupEcShardLocations(ecVolume); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	ecVolume.ShardLocationsLock.RLock()
+	_, listed := ecVolume.ShardLocations[delisted]
+	hints := maps.Clone(ecVolume.ShardReadHints)
+	ecVolume.ShardLocationsLock.RUnlock()
+	if listed {
+		t.Error("shard 13 is still in the map after the master placed it nowhere")
+	}
+	if want := map[erasure_coding.ShardId][]pb.ServerAddress{delisted: {partialHolder(5)}}; !maps.EqualFunc(hints, want, slices.Equal) {
+		t.Errorf("read hints %v, want %v", hints, want)
+	}
+	if err := store.doDeleteNeedleFromRemoteEcShardServers(delisted, ecVolume, 1); !errors.Is(err, errEcShardMissing) {
+		t.Errorf("a delete for shard 13 got %v, want it routed elsewhere", err)
+	}
+
+	master.located.Store(14)
+	rewindShardLocationsRefresh(ecVolume, time.Hour)
+	if err := store.cachedLookupEcShardLocations(ecVolume); err != nil {
+		t.Fatalf("second lookup: %v", err)
+	}
+	ecVolume.ShardLocationsLock.RLock()
+	_, hinted := ecVolume.ShardReadHints[delisted]
+	ecVolume.ShardLocationsLock.RUnlock()
+	if hinted {
+		t.Error("the read hint outlived the master placing shard 13 again")
+	}
+}
+
+// deletedNeedlePeer answers every shard read as the holder that journaled the
+// needle's delete.
+type deletedNeedlePeer struct {
+	volume_server_pb.UnimplementedVolumeServerServer
+}
+
+func (deletedNeedlePeer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardReadRequest, stream volume_server_pb.VolumeServer_VolumeEcShardReadServer) error {
+	return stream.Send(&volume_server_pb.VolumeEcShardReadResponse{IsDeleted: true, EncodeTsNs: req.EncodeTsNs})
+}
+
+// The other shards rebuild a delisted shard's bytes but know nothing of a delete
+// its holder journaled, so a read asks that holder before rebuilding.
+func TestReadOneEcShardIntervalAsksADelistedHolderBeforeRebuilding(t *testing.T) {
+	const delisted = erasure_coding.ShardId(3)
+	baseFileName, n := writeEcVolumeFiles(t, t.TempDir(), 7)
+	others := startEcShardPeer(t, &oneBadShardPeer{baseFileName: baseFileName, badShard: delisted})
+	journaled := startEcShardPeer(t, deletedNeedlePeer{})
+
+	store := &Store{grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials())}
+	ecVolume := &erasure_coding.EcVolume{
+		VolumeId:       7,
+		ShardLocations: make(map[erasure_coding.ShardId][]pb.ServerAddress),
+	}
+	seedShardLocations(ecVolume, others)
+	delete(ecVolume.ShardLocations, delisted)
+	ecVolume.ShardReadHints = map[erasure_coding.ShardId][]pb.ServerAddress{delisted: {journaled}}
+
+	interval := erasure_coding.Interval{BlockIndex: int(delisted), Size: 4096, IsLargeBlock: true}
+	got := make([]byte, interval.Size)
+	isDeleted, err := store.readOneEcShardInterval(n.Id, ecVolume, interval, got)
+	if err != nil || !isDeleted {
+		t.Fatalf("read interval: deleted=%v err=%v, want the delisted holder's delete", isDeleted, err)
+	}
+
+	// A hint that no longer answers is dropped, and the read rebuilds the shard.
+	ecVolume.ShardReadHints[delisted] = []pb.ServerAddress{others}
+	isDeleted, err = store.readOneEcShardInterval(n.Id, ecVolume, interval, got)
+	if err != nil || isDeleted {
+		t.Fatalf("read interval: deleted=%v err=%v, want it rebuilt", isDeleted, err)
+	}
+	ecVolume.ShardLocationsLock.RLock()
+	_, hinted := ecVolume.ShardReadHints[delisted]
+	ecVolume.ShardLocationsLock.RUnlock()
+	if hinted {
+		t.Error("a read hint that failed is still kept")
+	}
+	want := make([]byte, len(got))
+	f, err := os.Open(baseFileName + erasure_coding.ToExt(int(delisted)))
+	if err != nil {
+		t.Fatalf("open shard %d: %v", delisted, err)
+	}
+	defer f.Close()
+	if _, err := f.ReadAt(want, 0); err != nil {
+		t.Fatalf("read shard %d: %v", delisted, err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Error("the rebuilt interval does not match the shard on disk")
+	}
+}
+
+// A delete made after the delisting went to a listed holder, so the delisted
+// holder still answers live; the read must not take that answer over the
+// reconstruction that asks the listed holders.
+func TestReadOneEcShardIntervalDoesNotTakeALiveAnswerFromADelistedHolder(t *testing.T) {
+	const delisted = erasure_coding.ShardId(3)
+	baseFileName, n := writeEcVolumeFiles(t, t.TempDir(), 7)
+	live := startEcShardPeer(t, &oneBadShardPeer{baseFileName: baseFileName, badShard: 13})
+	journaled := startEcShardPeer(t, deletedNeedlePeer{})
+
+	store := &Store{grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials())}
+	ecVolume := &erasure_coding.EcVolume{
+		VolumeId:       7,
+		ShardLocations: map[erasure_coding.ShardId][]pb.ServerAddress{0: {journaled}},
+		ShardReadHints: map[erasure_coding.ShardId][]pb.ServerAddress{delisted: {live}},
+	}
+	for shardId := erasure_coding.ShardId(4); shardId < 13; shardId++ {
+		ecVolume.ShardLocations[shardId] = []pb.ServerAddress{live}
+	}
+	ecVolume.ShardLocationsRefreshTime = time.Now()
+
+	interval := erasure_coding.Interval{BlockIndex: int(delisted), Size: 4096, IsLargeBlock: true}
+	isDeleted, err := store.readOneEcShardInterval(n.Id, ecVolume, interval, make([]byte, interval.Size))
+	if !isDeleted {
+		t.Fatalf("read interval: deleted=%v err=%v, want the listed holder's delete", isDeleted, err)
+	}
+	ecVolume.ShardLocationsLock.RLock()
+	_, hinted := ecVolume.ShardReadHints[delisted]
+	ecVolume.ShardLocationsLock.RUnlock()
+	if !hinted {
+		t.Error("a read hint that answered was dropped")
+	}
+}
+
+// stalledPeer accepts a shard read and never answers it.
+type stalledPeer struct {
+	volume_server_pb.UnimplementedVolumeServerServer
+}
+
+func (stalledPeer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardReadRequest, stream volume_server_pb.VolumeServer_VolumeEcShardReadServer) error {
+	<-stream.Context().Done()
+	return stream.Context().Err()
+}
+
+// hintReplacingPeer fails a read after a lookup has replaced the hint it used.
+type hintReplacingPeer struct {
+	volume_server_pb.UnimplementedVolumeServerServer
+	replace func()
+}
+
+func (p hintReplacingPeer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardReadRequest, stream volume_server_pb.VolumeServer_VolumeEcShardReadServer) error {
+	p.replace()
+	return status.Error(codes.Unavailable, "holder went away")
+}
+
+// A delisted holder that stops answering costs a read only the hint's deadline,
+// and a failed hinted read drops only the hint it used.
+func TestReadOneEcShardIntervalBoundsAndScopesAFailedReadHint(t *testing.T) {
+	const delisted = erasure_coding.ShardId(3)
+	baseFileName, n := writeEcVolumeFiles(t, t.TempDir(), 7)
+	others := startEcShardPeer(t, &oneBadShardPeer{baseFileName: baseFileName, badShard: delisted})
+	stalled := startEcShardPeer(t, stalledPeer{})
+
+	store := &Store{grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials())}
+	ecVolume := &erasure_coding.EcVolume{
+		VolumeId:       7,
+		ShardLocations: make(map[erasure_coding.ShardId][]pb.ServerAddress),
+	}
+	seedShardLocations(ecVolume, others)
+	delete(ecVolume.ShardLocations, delisted)
+	ecVolume.ShardReadHints = map[erasure_coding.ShardId][]pb.ServerAddress{delisted: {stalled}}
+	defer func(old time.Duration) { ecReadHintTimeout = old }(ecReadHintTimeout)
+	ecReadHintTimeout = 200 * time.Millisecond
+
+	interval := erasure_coding.Interval{BlockIndex: int(delisted), Size: 4096, IsLargeBlock: true}
+	read := func() {
+		t.Helper()
+		if isDeleted, err := store.readOneEcShardInterval(n.Id, ecVolume, interval, make([]byte, interval.Size)); err != nil || isDeleted {
+			t.Fatalf("read interval: deleted=%v err=%v, want it rebuilt", isDeleted, err)
+		}
+	}
+	hint := func() []pb.ServerAddress {
+		ecVolume.ShardLocationsLock.RLock()
+		defer ecVolume.ShardLocationsLock.RUnlock()
+		return ecVolume.ShardReadHints[delisted]
+	}
+
+	start := time.Now()
+	read()
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("the read waited %v on a holder that never answers", elapsed)
+	}
+	if got := hint(); got != nil {
+		t.Errorf("a hint that timed out is still kept: %v", got)
+	}
+
+	replacement := []pb.ServerAddress{others}
+	replacing := startEcShardPeer(t, hintReplacingPeer{replace: func() {
+		ecVolume.ShardLocationsLock.Lock()
+		ecVolume.ShardReadHints[delisted] = replacement
+		ecVolume.ShardLocationsLock.Unlock()
+	}})
+	ecVolume.ShardReadHints[delisted] = []pb.ServerAddress{replacing}
+	read()
+	if got := hint(); !slices.Equal(got, replacement) {
+		t.Errorf("read hint %v, want the replacement %v kept", got, replacement)
 	}
 }

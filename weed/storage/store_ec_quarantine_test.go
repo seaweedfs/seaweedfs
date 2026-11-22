@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -133,7 +134,7 @@ func TestReadRemoteEcShardIntervalKeepsDeletionWhenTheStreamFails(t *testing.T) 
 		startEcShardPeer(t, &volume_server_pb.UnimplementedVolumeServerServer{}),
 	}
 
-	_, isDeleted, err := store.readRemoteEcShardInterval(sources, 42, 7, 0, make([]byte, 64), 0, 0)
+	_, isDeleted, err := store.readRemoteEcShardInterval(context.Background(), sources, 42, 7, 0, make([]byte, 64), 0, 0)
 	if err != nil || !isDeleted {
 		t.Errorf("read got deleted=%v err=%v, want deleted and no error", isDeleted, err)
 	}
