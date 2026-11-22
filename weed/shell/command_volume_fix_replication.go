@@ -179,12 +179,12 @@ func (c *commandVolumeFixReplication) Do(args []string, commandEnv *CommandEnv, 
 		})
 		if *doDelete {
 			ewg.Add(func() error {
-				deleted, err := c.deleteOneVolume(commandEnv, writer, *applyChanges, *doCheck, overReplicatedVolumeIds, volumeReplicas, pickOneReplicaToDelete)
+				deleted, err := c.deleteOneVolume(commandEnv, writer, *applyChanges, *doCheck, overReplicatedVolumeIds, volumeReplicas, replicasToDelete)
 				deletedVolumeReplicas.Add(int64(deleted))
 				return err
 			})
 			ewg.Add(func() error {
-				deleted, err := c.deleteOneVolume(commandEnv, writer, *applyChanges, *doCheck, misplacedVolumeIds, volumeReplicas, pickOneMisplacedVolume)
+				deleted, err := c.deleteOneVolume(commandEnv, writer, *applyChanges, *doCheck, misplacedVolumeIds, volumeReplicas, misplacedVolumesToDelete)
 				deletedVolumeReplicas.Add(int64(deleted))
 				return err
 			})
@@ -298,7 +298,8 @@ func collectVolumeReplicaLocations(topologyInfo *master_pb.TopologyInfo) (map[ui
 	return volumeReplicas, allLocations
 }
 
-type SelectOneVolumeFunc func(replicas []*VolumeReplica, replicaPlacement *super_block.ReplicaPlacement) *VolumeReplica
+// SelectVolumesFunc lists the replicas a trim may delete, best first.
+type SelectVolumesFunc func(replicas []*VolumeReplica, replicaPlacement *super_block.ReplicaPlacement) []*VolumeReplica
 
 // checkOneVolume compares the index of replica a against b. With
 // applyChanges=false it is a read-only divergence check; the over-replication
@@ -400,7 +401,7 @@ func countUncoveredNeedles(commandEnv *CommandEnv, writer io.Writer, doomed *Vol
 
 // deleteOneVolume trims one replica from each of the given volumes, and
 // reports how many replicas it actually deleted.
-func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, writer io.Writer, applyChanges bool, doCheck bool, volumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, selectOneVolumeFn SelectOneVolumeFunc) (deleted int, err error) {
+func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, writer io.Writer, applyChanges bool, doCheck bool, volumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, selectVolumesFn SelectVolumesFunc) (deleted int, err error) {
 	if len(volumeIds) == 0 {
 		// nothing to do
 		return 0, nil
@@ -410,16 +411,17 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 		replicas := volumeReplicas[vid]
 		replicaPlacement, _ := super_block.NewReplicaPlacementFromByte(byte(replicas[0].info.ReplicaPlacement))
 
-		replica := selectOneVolumeFn(replicas, replicaPlacement)
-		if replica == nil {
+		candidates := selectVolumesFn(replicas, replicaPlacement)
+		if len(candidates) == 0 {
 			fmt.Fprintf(writer, "skip trimming volume %d: no safe replica to delete (would leave only read-only survivors)\n", vid)
 			continue
 		}
+		first := candidates[0]
 
 		collectionIsMismatch := false
 		for _, volumeReplica := range replicas {
-			if volumeReplica.info.Collection != replica.info.Collection {
-				fmt.Fprintf(writer, "skip delete volume %d as collection %s is mismatch: %s\n", replica.info.Id, replica.info.Collection, volumeReplica.info.Collection)
+			if volumeReplica.info.Collection != first.info.Collection {
+				fmt.Fprintf(writer, "skip delete volume %d as collection %s is mismatch: %s\n", first.info.Id, first.info.Collection, volumeReplica.info.Collection)
 				collectionIsMismatch = true
 			}
 		}
@@ -427,62 +429,70 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 			continue
 		}
 
-		fmt.Fprintf(writer, "deleting volume %d from %s ...\n", replica.info.Id, replica.location.dataNode.Id)
-
 		if !applyChanges {
+			fmt.Fprintf(writer, "deleting volume %d from %s ...\n", first.info.Id, first.location.dataNode.Id)
 			break
 		}
 
-		if doCheck {
-			var checkErr error
-			for _, replicaB := range replicas {
-				if replicaB.location.dataNode == replica.location.dataNode {
+		for _, replica := range candidates {
+			fmt.Fprintf(writer, "deleting volume %d from %s ...\n", replica.info.Id, replica.location.dataNode.Id)
+			if doCheck {
+				uncovered, checkErr := verifyTrim(commandEnv, writer, replica, replicas, replicaPlacement.GetCopyCount())
+				if uncovered > 0 {
 					continue
 				}
-				// Read-only divergence check only: never write the doomed
-				// replica's needles into a survivor while trimming.
-				if checkErr = checkOneVolume(replica, replicaB, writer, commandEnv, false); checkErr != nil {
-					fmt.Fprintf(writer, "sync volume %d on %s and %s: %v\n", replica.info.Id, replica.location.dataNode.Id, replicaB.location.dataNode.Id, checkErr)
-					break
-				}
-			}
-			if checkErr == nil {
-				var uncovered int
-				if uncovered, checkErr = countUncoveredNeedles(commandEnv, writer, replica, replicas, replicaPlacement.GetCopyCount()); checkErr != nil {
-					fmt.Fprintf(writer, "skip deleting volume %d from %s: %v\n", replica.info.Id, replica.location.dataNode.Id, checkErr)
-				} else if uncovered > 0 {
-					checkErr = fmt.Errorf("%d uncovered needle(s)", uncovered)
-					fmt.Fprintf(writer, "skip trimming volume %d from %s: %d live needle(s) there would be left short of copies; reconcile with volume.check.disk first\n", replica.info.Id, replica.location.dataNode.Id, uncovered)
-				}
-			}
-			// A survivor can go away while the indexes are read.
-			for _, replicaB := range replicas {
 				if checkErr != nil {
 					break
 				}
-				if replicaB.location.dataNode == replica.location.dataNode {
-					continue
-				}
-				if _, checkErr = readVolumeStatus(commandEnv.option.GrpcDialOption, pb.NewServerAddressFromDataNode(replicaB.location.dataNode), needle.VolumeId(replicaB.info.Id)); checkErr != nil {
-					fmt.Fprintf(writer, "skip deleting volume %d from %s: %s no longer serves it: %v\n", replica.info.Id, replica.location.dataNode.Id, replicaB.location.dataNode.Id, checkErr)
-				}
 			}
-			if checkErr != nil {
-				continue
+
+			// Surplus replica being trimmed; keep the remote object since other
+			// replicas of the same .vif still reference it.
+			if err := deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, needle.VolumeId(replica.info.Id),
+				pb.NewServerAddressFromDataNode(replica.location.dataNode), false, false, true); err != nil {
+				fmt.Fprintf(writer, "deleting volume %d from %s : %v", replica.info.Id, replica.location.dataNode.Id, err)
+			} else {
+				deleted++
 			}
+			break
 		}
-
-		// Surplus replica being trimmed; keep the remote object since other
-		// replicas of the same .vif still reference it.
-		if err := deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, needle.VolumeId(replica.info.Id),
-			pb.NewServerAddressFromDataNode(replica.location.dataNode), false, false, true); err != nil {
-			fmt.Fprintf(writer, "deleting volume %d from %s : %v", replica.info.Id, replica.location.dataNode.Id, err)
-		} else {
-			deleted++
-		}
-
 	}
 	return deleted, nil
+}
+
+// verifyTrim checks that deleting doomed loses nothing. A positive uncovered
+// count refuses only this replica; an error refuses the volume.
+func verifyTrim(commandEnv *CommandEnv, writer io.Writer, doomed *VolumeReplica, replicas []*VolumeReplica, copyCount int) (uncovered int, err error) {
+	for _, replicaB := range replicas {
+		if replicaB.location.dataNode == doomed.location.dataNode {
+			continue
+		}
+		// Read-only divergence check only: never write the doomed
+		// replica's needles into a survivor while trimming.
+		if err = checkOneVolume(doomed, replicaB, writer, commandEnv, false); err != nil {
+			fmt.Fprintf(writer, "sync volume %d on %s and %s: %v\n", doomed.info.Id, doomed.location.dataNode.Id, replicaB.location.dataNode.Id, err)
+			return 0, err
+		}
+	}
+	if uncovered, err = countUncoveredNeedles(commandEnv, writer, doomed, replicas, copyCount); err != nil {
+		fmt.Fprintf(writer, "skip deleting volume %d from %s: %v\n", doomed.info.Id, doomed.location.dataNode.Id, err)
+		return 0, err
+	}
+	if uncovered > 0 {
+		fmt.Fprintf(writer, "skip trimming volume %d from %s: %d live needle(s) there would be left short of copies; reconcile with volume.check.disk first\n", doomed.info.Id, doomed.location.dataNode.Id, uncovered)
+		return uncovered, nil
+	}
+	// A survivor can go away while the indexes are read.
+	for _, replicaB := range replicas {
+		if replicaB.location.dataNode == doomed.location.dataNode {
+			continue
+		}
+		if _, err = readVolumeStatus(commandEnv.option.GrpcDialOption, pb.NewServerAddressFromDataNode(replicaB.location.dataNode), needle.VolumeId(replicaB.info.Id)); err != nil {
+			fmt.Fprintf(writer, "skip deleting volume %d from %s: %s no longer serves it: %v\n", doomed.info.Id, doomed.location.dataNode.Id, replicaB.location.dataNode.Id, err)
+			return 0, err
+		}
+	}
+	return 0, nil
 }
 
 func (c *commandVolumeFixReplication) fixUnderReplicatedVolumes(commandEnv *CommandEnv, writer io.Writer, applyChanges bool, volumeIds []uint32, volumeReplicas map[uint32][]*VolumeReplica, allLocations []location, retryCount int, volumesPerStep int, maxParallelization int, maxParallelizationPerServer int) (fixedVolumes map[string]int, err error) {
@@ -754,15 +764,12 @@ func pickOneReplicaToCopyFrom(replicas []*VolumeReplica) *VolumeReplica {
 	return nil
 }
 
-// pickOneReplicaToDelete selects the replica to trim when over-replicated;
-// see balancer.PickOneReplicaToDelete for the survivor-safety rules.
+// replicasToDelete lists the replicas to trim when over-replicated; see
+// balancer.PickOneReplicaToDelete for the survivor-safety rules.
 // VolumeStatus file_count>0 alone cannot prove the survivors' .dat is
 // readable, so we do not over-claim survivor health.
-func pickOneReplicaToDelete(replicas []*VolumeReplica, replicaPlacement *super_block.ReplicaPlacement) *VolumeReplica {
-	if i := balancer.PickOneReplicaToDelete(toBalancerReplicas(replicas), replicaPlacement); i >= 0 {
-		return replicas[i]
-	}
-	return nil
+func replicasToDelete(replicas []*VolumeReplica, replicaPlacement *super_block.ReplicaPlacement) []*VolumeReplica {
+	return replicasAt(replicas, balancer.ReplicasToDelete(toBalancerReplicas(replicas), replicaPlacement))
 }
 
 // check and fix misplaced volumes
@@ -771,9 +778,14 @@ func isMisplaced(replicas []*VolumeReplica, replicaPlacement *super_block.Replic
 	return balancer.IsMisplaced(toBalancerReplicas(replicas), replicaPlacement)
 }
 
-func pickOneMisplacedVolume(replicas []*VolumeReplica, replicaPlacement *super_block.ReplicaPlacement) *VolumeReplica {
-	if i := balancer.PickOneMisplacedVolume(toBalancerReplicas(replicas), replicaPlacement); i >= 0 {
-		return replicas[i]
+func misplacedVolumesToDelete(replicas []*VolumeReplica, replicaPlacement *super_block.ReplicaPlacement) []*VolumeReplica {
+	return replicasAt(replicas, balancer.MisplacedVolumesToDelete(toBalancerReplicas(replicas), replicaPlacement))
+}
+
+func replicasAt(replicas []*VolumeReplica, indexes []int) []*VolumeReplica {
+	picked := make([]*VolumeReplica, len(indexes))
+	for i, j := range indexes {
+		picked[i] = replicas[j]
 	}
-	return nil
+	return picked
 }
