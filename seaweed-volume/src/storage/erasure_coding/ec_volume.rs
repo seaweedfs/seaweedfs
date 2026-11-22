@@ -181,9 +181,9 @@ fn read_ecj_ids_with(
 }
 
 /// A volume's `.ecj` append handle and on-disk size, under the volume's own
-/// journal lock (Go's `EcVolume.ecjFileAccessLock`). The size is the rollback
-/// point for a failed append and what mount-time compaction compares against
-/// the id set; the runtime delete count comes from `deleted_needles`.
+/// journal lock (Go's `EcVolume.ecjFileAccessLock`). The size is what
+/// mount-time compaction compares against the id set; the runtime delete count
+/// comes from `deleted_needles`.
 #[derive(Default)]
 pub(crate) struct EcJournal {
     file: Option<File>,
@@ -198,20 +198,20 @@ impl EcJournal {
     /// truncated back to the pre-append length so the on-disk journal and
     /// `deleted_needles` cannot drift.
     fn append(&mut self, records: &[u8], volume_id: VolumeId, ecj_path: &str) -> io::Result<()> {
-        let prev_ecj_size = self.size;
-        let append_result: io::Result<()> = {
-            let ecj_file = self
-                .file
-                .as_mut()
-                .ok_or_else(|| io::Error::other("ecj file not open"))?;
-            ecj_file
-                .write_all(records)
-                .and_then(|_| ecj_file.sync_all())
-        };
+        let ecj_file = self
+            .file
+            .as_mut()
+            .ok_or_else(|| io::Error::other("ecj file not open"))?;
+        // The file's own length, not this handle's cached size: another disk
+        // holding the same journal may have appended since.
+        let prev_ecj_size = ecj_file.metadata()?.len() as i64;
+        let append_result = ecj_file
+            .write_all(records)
+            .and_then(|_| ecj_file.sync_all());
 
         match append_result {
             Ok(()) => {
-                self.size += records.len() as i64;
+                self.size = prev_ecj_size + records.len() as i64;
                 Ok(())
             }
             Err(e) => {
