@@ -22,18 +22,18 @@ func metadataEventsSuppressed(ctx context.Context) bool {
 }
 
 // WithCreatedParents suppresses events like WithSuppressedMetadataEvents and
-// collects the parent directories created, or promoted from files, on the way.
-// No event of the caller covers them, so it announces them once its change
-// commits.
-func WithCreatedParents(ctx context.Context, created *[]*Entry) context.Context {
-	return context.WithValue(WithSuppressedMetadataEvents(ctx), createdParentsKey{}, created)
+// hands record the parent directories created, or promoted from files, on the
+// way. No event of the caller covers them, so it announces them once its
+// change commits.
+func WithCreatedParents(ctx context.Context, record func(oldEntry, newEntry *Entry)) context.Context {
+	return context.WithValue(WithSuppressedMetadataEvents(ctx), createdParentsKey{}, record)
 }
 
-func recordCreatedParent(ctx context.Context, dirEntry *Entry) bool {
-	created, _ := ctx.Value(createdParentsKey{}).(*[]*Entry)
-	if created == nil {
+func recordCreatedParent(ctx context.Context, oldEntry, dirEntry *Entry) bool {
+	record, _ := ctx.Value(createdParentsKey{}).(func(oldEntry, newEntry *Entry))
+	if record == nil {
 		return false
 	}
-	*created = append(*created, dirEntry)
+	record(oldEntry, dirEntry)
 	return true
 }

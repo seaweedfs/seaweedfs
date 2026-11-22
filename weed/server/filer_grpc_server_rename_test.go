@@ -34,6 +34,7 @@ type renameTestStore struct {
 	findDelay time.Duration // optional: widen check-then-act windows in tests
 	findErr   error         // simulates a failing entry lookup
 	strictTx  bool          // like a SQL store: calls through a committed transaction fail
+	noUpsert  bool          // like a SQL store without upsert: InsertEntry refuses an existing row
 
 	kv        map[string][]byte // optional KV (hard links); nil: every key is absent
 	kvGetErrs int               // fail this many KvGet calls before answering
@@ -113,6 +114,9 @@ func (s *renameTestStore) InsertEntry(ctx context.Context, entry *filer.Entry) e
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, exists := s.entries[string(entry.FullPath)]; exists && s.noUpsert {
+		return errors.New("insert " + string(entry.FullPath) + ": duplicate key")
+	}
 	s.entries[string(entry.FullPath)] = entry.ShallowClone()
 	return nil
 }
@@ -708,7 +712,14 @@ func TestAtomicRenameEntryAnnouncesPromotedParent(t *testing.T) {
 		t.Fatalf("AtomicRenameEntry: %v", err)
 	}
 
-	peer := newRenameTestFiler(t, seed())
+	promotion := queue.snapshot()[0].notification
+	if promotion.OldEntry == nil || promotion.OldEntry.IsDirectory || !promotion.NewEntry.IsDirectory {
+		t.Fatalf("promotion event old=%v new=%v, want the file replaced by the directory", promotion.OldEntry, promotion.NewEntry)
+	}
+
+	peerStore := seed()
+	peerStore.noUpsert = true
+	peer := newRenameTestFiler(t, peerStore)
 	keys := replayCapturedEvents(t, peer, queue)
 	if wantKeys := []string{"/buckets/arc/report", "/buckets/arc/rate_data"}; !slices.Equal(keys, wantKeys) {
 		t.Fatalf("event keys = %v, want %v", keys, wantKeys)
