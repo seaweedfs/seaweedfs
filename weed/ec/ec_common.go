@@ -1207,6 +1207,7 @@ func toBalancerTopology(ecNodes []*EcNode, collections []string, diskType types.
 				}
 				selected[eci.Id] = true
 				node.AddShards(eci.Id, eci.Collection, eci.DiskId, erasure_coding.ShardBits(eci.EcIndexBits))
+				node.SetEncodeTs(eci.Id, eci.Collection, eci.DiskId, eci.EncodeTsNs)
 				if d, p := ecbalancer.VolumeShardRatio(eci); d > 0 || p > 0 {
 					volRatios[volRatioKey{eci.Collection, eci.Id}] = [2]int{d, p}
 				}

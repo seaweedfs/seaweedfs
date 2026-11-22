@@ -100,6 +100,31 @@ func TestBuildBalancerTopologyGroupsByHost(t *testing.T) {
 	}
 }
 
+// TestBuildBalancerTopologyCarriesEncodeIdentity: node2 keeps shards 0 and 8
+// from an earlier encode run and has more free slots. The dedup must still keep
+// node1's copies, which come from the run that holds the whole shard set.
+func TestBuildBalancerTopologyCarriesEncodeIdentity(t *testing.T) {
+	topoInfo := ecTopo("col1")
+	topoInfo.DataCenterInfos[0].RackInfos[0].DataNodeInfos[0].DiskInfos[""].EcShardInfos[0].EncodeTsNs = 200
+	topoInfo.DataCenterInfos[0].RackInfos[1].DataNodeInfos[0].DiskInfos[""].EcShardInfos = []*master_pb.VolumeEcShardInformationMessage{
+		{Id: 100, FileCount: 1, Collection: "col1", DiskId: 0, EcIndexBits: 0x0101, EncodeTsNs: 100},
+	}
+	topo, _, _ := buildBalancerTopology(topoInfo, NewDefaultConfig(), nil)
+	dedup := 0
+	for _, m := range ecbalancer.Plan(topo, ecbalancer.Options{ImbalanceThreshold: 0.01}) {
+		if m.Phase != "dedup" {
+			continue
+		}
+		dedup++
+		if m.SourceNode != "node2" || m.KeepNode != "node1" {
+			t.Errorf("dedup move %+v: want node2's earlier-run copy removed", m)
+		}
+	}
+	if dedup != 2 {
+		t.Errorf("got %d dedup moves, want 2", dedup)
+	}
+}
+
 func TestBuildBalancerTopologyCollectionFilter(t *testing.T) {
 	config := NewDefaultConfig()
 	config.CollectionFilter = "other" // does not match the volume's collection
