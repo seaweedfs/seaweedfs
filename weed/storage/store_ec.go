@@ -1267,15 +1267,17 @@ var ecReadHintTimeout = 5 * time.Second
 // askEcShardReadHints reports whether a delisted holder of the shard journaled
 // the needle's delete. Each holder is asked, since any one of them may hold the
 // delete; only a deleted answer is taken, so one byte is enough. Holders that
-// fail are forgotten unless a lookup changed the hints meanwhile.
-func (s *Store) askEcShardReadHints(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, shardId erasure_coding.ShardId, hints []pb.ServerAddress, revision uint64, probe []byte, offset int64) bool {
+// failed are forgotten, even when a later one answers deleted, unless a lookup
+// changed the hints meanwhile.
+func (s *Store) askEcShardReadHints(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, shardId erasure_coding.ShardId, hints []pb.ServerAddress, revision uint64, probe []byte, offset int64) (deleted bool) {
 	var failed []pb.ServerAddress
 	for _, hint := range hints {
 		ctx, cancel := context.WithTimeout(context.Background(), ecReadHintTimeout)
 		_, isDeleted, err := s.doReadRemoteEcShardInterval(ctx, hint, needleId, ecVolume.VolumeId, shardId, probe, offset, ecVolume.EncodeTsNs)
 		cancel()
 		if err == nil && isDeleted {
-			return true
+			deleted = true
+			break
 		}
 		if err != nil {
 			glog.V(1).Infof("read ec shard %d.%d from delisted holder %s: %v", ecVolume.VolumeId, shardId, hint, err)
@@ -1283,12 +1285,12 @@ func (s *Store) askEcShardReadHints(needleId types.NeedleId, ecVolume *erasure_c
 		}
 	}
 	if len(failed) == 0 {
-		return false
+		return
 	}
 	ecVolume.ShardLocationsLock.Lock()
 	defer ecVolume.ShardLocationsLock.Unlock()
 	if ecVolume.ShardReadHintsRevision != revision {
-		return false
+		return
 	}
 	kept := slices.DeleteFunc(slices.Clone(hints), func(hint pb.ServerAddress) bool { return slices.Contains(failed, hint) })
 	if len(kept) == 0 {
@@ -1297,7 +1299,7 @@ func (s *Store) askEcShardReadHints(needleId types.NeedleId, ecVolume *erasure_c
 		ecVolume.ShardReadHints[shardId] = kept
 	}
 	ecVolume.ShardReadHintsRevision++
-	return false
+	return
 }
 
 // readLocalEcShardInterval refuses a shard whose disk is quarantined unless

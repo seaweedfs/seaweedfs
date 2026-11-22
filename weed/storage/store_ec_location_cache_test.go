@@ -529,6 +529,19 @@ func TestReadOneEcShardIntervalAsksADelistedHolderBeforeRebuilding(t *testing.T)
 		t.Fatalf("read interval: deleted=%v err=%v, want the delisted holder's delete after another answered live", isDeleted, err)
 	}
 
+	// A holder that failed before another answered deleted is dropped all the same.
+	ecVolume.ShardReadHints[delisted] = []pb.ServerAddress{others, journaled}
+	isDeleted, err = store.readOneEcShardInterval(n.Id, ecVolume, interval, got)
+	if err != nil || !isDeleted {
+		t.Fatalf("read interval: deleted=%v err=%v, want the delete after a failed holder", isDeleted, err)
+	}
+	ecVolume.ShardLocationsLock.RLock()
+	hints := slices.Clone(ecVolume.ShardReadHints[delisted])
+	ecVolume.ShardLocationsLock.RUnlock()
+	if want := []pb.ServerAddress{journaled}; !slices.Equal(hints, want) {
+		t.Errorf("read hints %v, want only the holder that answered %v", hints, want)
+	}
+
 	// A holder that no longer answers is dropped, and the read rebuilds the shard.
 	ecVolume.ShardReadHints[delisted] = []pb.ServerAddress{others, live}
 	isDeleted, err = store.readOneEcShardInterval(n.Id, ecVolume, interval, got)
@@ -536,7 +549,7 @@ func TestReadOneEcShardIntervalAsksADelistedHolderBeforeRebuilding(t *testing.T)
 		t.Fatalf("read interval: deleted=%v err=%v, want it rebuilt", isDeleted, err)
 	}
 	ecVolume.ShardLocationsLock.RLock()
-	hints := ecVolume.ShardReadHints[delisted]
+	hints = ecVolume.ShardReadHints[delisted]
 	ecVolume.ShardLocationsLock.RUnlock()
 	if want := []pb.ServerAddress{live}; !slices.Equal(hints, want) {
 		t.Errorf("read hints %v, want only the holder that answered %v", hints, want)
