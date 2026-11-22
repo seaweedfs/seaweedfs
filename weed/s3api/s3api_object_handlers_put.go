@@ -598,6 +598,8 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	if !s3_constants.IsValidBucketName(bucket) || (object != "" && !s3_constants.IsValidObjectKey(object)) {
 		return "", s3err.ErrInvalidRequest, SSEResponseMetadata{}
 	}
+	stages := newPutStages(r)
+	defer stages.record()
 
 	tagSet, headerCode := validatePutHeaders(r)
 	if headerCode != s3err.ErrNone {
@@ -764,7 +766,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// Upload with auto-chunking
 	// Use context.Background() to ensure chunk uploads complete even if HTTP request is cancelled
 	// This prevents partial uploads and data corruption
-	chunkResult, err := operation.UploadReaderInChunks(context.Background(), dataReader, &operation.ChunkedUploadOption{
+	chunkResult, err := stages.upload(context.Background(), dataReader, &operation.ChunkedUploadOption{
 		ChunkSize:       chunkSize,
 		SmallFileLimit:  smallFileLimit,
 		Collection:      collection,

@@ -1,9 +1,14 @@
 package s3api
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
@@ -69,4 +74,68 @@ func BucketTrafficSent(bytesTransferred int64, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	stats_collect.RecordBucketActiveTime(bucket)
 	stats_collect.S3BucketTrafficSentBytesCounter.WithLabelValues(bucket).Add(float64(bytesTransferred))
+}
+
+// putStages times one object write's stages for S3PutStageHistogram.
+type putStages struct {
+	operation string
+	bodyRead  time.Duration
+	assign    atomic.Int64
+	uploading time.Duration
+	uploaded  time.Time
+}
+
+func newPutStages(r *http.Request) *putStages {
+	op := "PutObject"
+	if isMultipartPartRequest(r) {
+		op = "UploadPart"
+	}
+	return &putStages{operation: op}
+}
+
+// upload runs UploadReaderInChunks, timing body reads and volume assigns.
+func (p *putStages) upload(ctx context.Context, reader io.Reader, opt *operation.ChunkedUploadOption) (*operation.ChunkedUploadResult, error) {
+	if assign := opt.AssignFunc; assign != nil {
+		opt.AssignFunc = func(ctx context.Context, count int, expectedDataSize uint64) (*operation.VolumeAssignRequest, *operation.AssignResult, error) {
+			start := time.Now()
+			defer func() { p.assign.Add(int64(time.Since(start))) }()
+			return assign(ctx, count, expectedDataSize)
+		}
+	}
+	start := time.Now()
+	result, err := operation.UploadReaderInChunks(ctx, &timedReader{Reader: reader, elapsed: &p.bodyRead}, opt)
+	p.uploading = time.Since(start)
+	if err == nil {
+		p.uploaded = time.Now()
+	}
+	return result, err
+}
+
+// record observes the stages reached; metadata only after a successful upload.
+func (p *putStages) record() {
+	if p.uploading == 0 {
+		return
+	}
+	observe := func(stage string, d time.Duration) {
+		stats_collect.S3PutStageHistogram.WithLabelValues(p.operation, stage).Observe(d.Seconds())
+	}
+	observe("body_read", p.bodyRead)
+	observe("assign", time.Duration(p.assign.Load()))
+	observe("chunk_upload", max(p.uploading-p.bodyRead, 0))
+	if !p.uploaded.IsZero() {
+		observe("metadata", time.Since(p.uploaded))
+	}
+}
+
+// timedReader adds the time spent in Read to elapsed.
+type timedReader struct {
+	io.Reader
+	elapsed *time.Duration
+}
+
+func (t *timedReader) Read(b []byte) (int, error) {
+	start := time.Now()
+	n, err := t.Reader.Read(b)
+	*t.elapsed += time.Since(start)
+	return n, err
 }
