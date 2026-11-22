@@ -479,13 +479,13 @@ func sameEncodeRun(locs []*Node, vk volKey, shardID int) bool {
 	return true
 }
 
-// onlyCompleteRun returns the reported encode run holding every shard id, and
-// false when no run or more than one does.
+// onlyCompleteRun returns the encode run holding every shard id, and false when
+// no run or more than one does, or when the only complete one is unreported.
 func onlyCompleteRun(runShards map[int64]erasure_coding.ShardBits, totalShards int) (int64, bool) {
 	var complete int64
 	found := false
 	for ts, bits := range runShards {
-		if ts == 0 || totalShards <= 0 || bits.Count() < totalShards {
+		if totalShards <= 0 || bits.Count() < totalShards {
 			continue
 		}
 		if found {
@@ -493,7 +493,7 @@ func onlyCompleteRun(runShards map[int64]erasure_coding.ShardBits, totalShards i
 		}
 		complete, found = ts, true
 	}
-	return complete, found
+	return complete, found && complete != 0
 }
 
 // Freeze keeps the volume's shards on this node out of every phase while still

@@ -61,6 +61,19 @@ func TestPlanDedupRefusesWhenCompleteRunIsUnreported(t *testing.T) {
 	}
 }
 
+// An unreported copy may be the newer one, so a second complete run that does
+// carry an identity cannot win over it.
+func TestPlanDedupRefusesWhenUnreportedRunIsAlsoComplete(t *testing.T) {
+	topo := staleDupTopology(200, 0)
+	stale := topo.nodes["stale"]
+	stale.AddDisk(2, "", 50, 14)
+	stale.AddShards(100, "c", 2, allBits(14))
+	stale.SetEncodeTs(100, "c", 2, 200)
+	if dedup, other := planVolume(topo, 100); len(dedup)+len(other) != 0 {
+		t.Fatalf("two complete runs, one unreported, must leave the volume alone; got %+v %+v", dedup, other)
+	}
+}
+
 // Neither run is complete in the snapshot (a filter may hide the rest of
 // either), so no copy may be chosen, and no later phase may move a copy of the
 // shared shard onto the other.
