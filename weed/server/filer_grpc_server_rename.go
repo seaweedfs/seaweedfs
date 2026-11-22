@@ -463,7 +463,17 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		remoteEntry = copiedRemote
 	}
 
-	if existingTarget != nil {
+	// A file renamed over a file is written over the target in one store write
+	// on a store without transactions: deleting the target first leaves its
+	// path empty for anyone reading it through another filer until the new
+	// entry lands, since the rename's path locks fence this filer only. A
+	// transaction hides that gap, and fails cleanly if the target went
+	// meanwhile, so stores with one keep delete-then-create, as do setups with
+	// path-specific stores, directories and entries with a remote object.
+	inPlace := existingTarget != nil && !entry.IsDirectory() && !existingTarget.IsDirectory() &&
+		entry.Remote == nil && existingTarget.Remote == nil && filer.WithoutTransactions(ctx)
+
+	if existingTarget != nil && !inPlace {
 		targetCtx := filer.WithSuppressedMetadataEvents(ctx)
 		if copiedRemote != nil || deferredCopy {
 			// the copy has replaced or still needs the target's object; keep it
@@ -520,7 +530,13 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		newEntry.Extended = maps.Clone(newEntry.Extended)
 		delete(newEntry.Extended, filer.ExtRemoteRenameSourceKey)
 	}
-	if skipTargetLookup {
+	if inPlace {
+		fs.filer.StampEntryCommitTsNs(newEntry)
+		if replaceErr := fs.filer.ReplaceFileForRename(ctx, newEntry); replaceErr != nil {
+			fs.filer.ReleaseEntryCommitTsNs(newEntry.CommitTsNs)
+			return replaceErr
+		}
+	} else if skipTargetLookup {
 		if newEntry.FullPath.IsLongerFileName(fs.filer.MaxFilenameLength) {
 			return filer_pb.ErrEntryNameTooLong
 		}

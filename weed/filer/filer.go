@@ -654,6 +654,25 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 	return nil
 }
 
+// ReplaceFileForRename stores a file renamed over an existing file at the
+// target's path in one store write. Deleting the target first would leave the
+// path empty, on a store without transactions, for anyone reading it until the
+// new entry lands. The store drops the target's hard link, if it had one,
+// after the write.
+func (f *Filer) ReplaceFileForRename(ctx context.Context, entry *Entry) error {
+	ctx = f.syncWriteContext(ctx, entry.FullPath)
+	if entry.Attr.Atime.IsZero() {
+		entry.Attr.Atime = entryInitialAtime(entry.Attr)
+	}
+	f.ensureEntryInode(entry)
+	if err := f.Store.InsertEntry(ctx, entry); err != nil {
+		glog.ErrorfCtx(ctx, "replace entry %s: %v", entry.FullPath, err)
+		return fmt.Errorf("replace entry %s: %w", entry.FullPath, err)
+	}
+	stats.FilerObjectSizeBytesHistogram.Observe(float64(entry.Size()))
+	return nil
+}
+
 // lockDirectoryCreate holds the path's directoryCreateLock; the returned
 // unlock may be called more than once. A store transaction keeps its
 // connection until it commits, and a holder may need that connection, so

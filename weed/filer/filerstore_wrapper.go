@@ -448,14 +448,29 @@ func IsolatingTransaction(ctx context.Context) bool {
 	return isolating
 }
 
+type noTransactionKey struct{}
+
+// WithoutTransactions reports whether ctx comes from a BeginTransaction the
+// store answered without a transaction of its own, with no path-specific
+// store configured: every write under ctx shows at once, and the store keeps
+// it as written, an insert over an existing entry included.
+func WithoutTransactions(ctx context.Context) bool {
+	none, _ := ctx.Value(noTransactionKey{}).(bool)
+	return none
+}
+
 func (fsw *FilerStoreWrapper) BeginTransaction(ctx context.Context) (context.Context, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	ctx = context.WithoutCancel(ctx)
 	txCtx, err := fsw.getDefaultStore().BeginTransaction(ctx)
-	if err == nil && txCtx != ctx && !fsw.hasPathSpecificStore {
-		txCtx = context.WithValue(txCtx, isolatingTransactionKey{}, true)
+	if err == nil && !fsw.hasPathSpecificStore {
+		if txCtx != ctx {
+			txCtx = context.WithValue(txCtx, isolatingTransactionKey{}, true)
+		} else {
+			txCtx = context.WithValue(txCtx, noTransactionKey{}, true)
+		}
 	}
 	return txCtx, err
 }

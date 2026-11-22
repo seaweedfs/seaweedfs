@@ -37,6 +37,17 @@ type renameTestStore struct {
 
 	kv        map[string][]byte // optional KV (hard links); nil: every key is absent
 	kvGetErrs int               // fail this many KvGet calls before answering
+
+	afterOp   func(op string, p util.FullPath) // optional: runs after each insert, update or delete
+	afterFind func(p util.FullPath)            // optional: runs after each lookup
+	listing   map[string]bool                  // optional: directory listing kept the way Redis keeps it
+}
+
+// noteOp runs the afterOp hook after a write, outside the store's lock.
+func (s *renameTestStore) noteOp(op string, p util.FullPath) {
+	if s.afterOp != nil {
+		s.afterOp(op, p)
+	}
 }
 
 type renameTestTxKey struct{}
@@ -112,18 +123,24 @@ func (s *renameTestStore) InsertEntry(ctx context.Context, entry *filer.Entry) e
 		return err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.entries[string(entry.FullPath)] = entry.ShallowClone()
+	if s.listing != nil {
+		s.listing[string(entry.FullPath)] = true
+	}
+	s.mu.Unlock()
+	s.noteOp("insert", entry.FullPath)
 	return nil
 }
 
+// UpdateEntry rewrites the entry and leaves the listing alone, as Redis does.
 func (s *renameTestStore) UpdateEntry(ctx context.Context, entry *filer.Entry) error {
 	if err := s.txDone(ctx); err != nil {
 		return err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.entries[string(entry.FullPath)] = entry.ShallowClone()
+	s.mu.Unlock()
+	s.noteOp("update", entry.FullPath)
 	return nil
 }
 
@@ -133,6 +150,9 @@ func (s *renameTestStore) FindEntry(ctx context.Context, p util.FullPath) (*file
 	}
 	if s.findDelay > 0 {
 		time.Sleep(s.findDelay)
+	}
+	if s.afterFind != nil {
+		defer s.afterFind(p)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -155,8 +175,12 @@ func (s *renameTestStore) DeleteEntry(ctx context.Context, p util.FullPath) erro
 		return s.deleteErr
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	delete(s.entries, string(p))
+	if s.listing != nil {
+		delete(s.listing, string(p))
+	}
+	s.mu.Unlock()
+	s.noteOp("delete", p)
 	return nil
 }
 
