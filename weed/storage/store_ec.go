@@ -736,7 +736,9 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 		if err != nil {
 			glog.V(1).Infof("read ec shard %d.%d from delisted holders %v: %v", ecVolume.VolumeId, shardId, readHints, err)
 			ecVolume.ShardLocationsLock.Lock()
-			delete(ecVolume.ShardReadHints, shardId)
+			if slices.Equal(ecVolume.ShardReadHints[shardId], readHints) {
+				delete(ecVolume.ShardReadHints, shardId)
+			}
 			ecVolume.ShardLocationsLock.Unlock()
 		}
 	}
