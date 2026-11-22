@@ -390,6 +390,12 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 
 	fmt.Printf("rebuildOneEcVolume %s %d\n", collection, volumeId)
 
+	if erb.applyChanges {
+		if err := erb.requireAgreedEncodeRun(volumeId, locations, rebuilder); err != nil {
+			return err
+		}
+	}
+
 	// collect shard files to rebuilder local disk
 	var generatedShardIds []erasure_coding.ShardId
 	copiedShardIds, _, err := erb.prepareDataToRecover(rebuilder, collection, volumeId, locations)
@@ -450,6 +456,20 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 	erb.ecNodesMu.Unlock()
 
 	return erb.removeCorruptCopies(collection, volumeId, rebuilder, generatedShardIds)
+}
+
+// requireAgreedEncodeRun refuses a rebuild whose holders serve shards of
+// different encode runs: the copies would land beside the first run's .vif
+// and .ecx, and the rebuild would regenerate from the mixed set.
+func (erb *ecRebuilder) requireAgreedEncodeRun(volumeId needle.VolumeId, locations EcShardLocations, rebuilder *EcNode) error {
+	holders := []string{string(pb.NewServerAddressFromDataNode(rebuilder.Info))}
+	for _, ecNodes := range locations {
+		for _, node := range ecNodes {
+			holders = append(holders, string(pb.NewServerAddressFromDataNode(node.Info)))
+		}
+	}
+	_, perServer := erasure_coding.VerifyShardsAcrossServers(context.Background(), uint32(volumeId), holders, erb.env.GrpcDialOption)
+	return erasure_coding.RequireAgreedEncodeRun(uint32(volumeId), perServer)
 }
 
 func (erb *ecRebuilder) generateMissingShards(collection string, volumeId needle.VolumeId, sourceLocation pb.ServerAddress) (rebuiltShardIds []erasure_coding.ShardId, err error) {

@@ -29,6 +29,7 @@ type ecBalanceFakeServer struct {
 	mu        sync.Mutex
 	shards    map[uint32]map[uint32]bool // vid -> shardId -> present
 	full      bool                       // VolumeEcShardsCopy answers "no space left"
+	run       int64                      // encode run VolumeEcShardsInfo reports
 	copyCalls int
 	grpcAddr  string
 	stop      func()
@@ -57,6 +58,9 @@ func (f *ecBalanceFakeServer) VolumeEcShardsInfo(ctx context.Context, req *volum
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	resp := &volume_server_pb.VolumeEcShardsInfoResponse{}
+	if f.run != 0 {
+		resp.EcShardConfig = &volume_server_pb.EcShardConfig{EncodeTsNs: f.run}
+	}
 	for sid := range f.shards[req.VolumeId] {
 		resp.EcShardInfos = append(resp.EcShardInfos, &volume_server_pb.EcShardInfo{
 			VolumeId: req.VolumeId,
@@ -88,6 +92,12 @@ func (f *ecBalanceFakeServer) nodeId() string {
 		return f.grpcAddr
 	}
 	return fmt.Sprintf("%s:1.%s", host, port)
+}
+
+func (f *ecBalanceFakeServer) copies() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.copyCalls
 }
 
 func (f *ecBalanceFakeServer) shardCount(vid uint32) int {

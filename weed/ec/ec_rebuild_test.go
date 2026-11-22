@@ -9,6 +9,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // TestEcShardMapRegister tests that EC shards are properly registered
@@ -318,6 +320,54 @@ func TestRebuilderVolumeIdMatches(t *testing.T) {
 
 			if got, want := ecb.matchesVolumeId(tc.volumeId), tc.want; got != want {
 				t.Errorf("Expected %v, got %v", want, got)
+			}
+		})
+	}
+}
+
+func TestRebuildOneEcVolumeRefusesMixedEncodeRuns(t *testing.T) {
+	const vid = 7
+	for _, tc := range []struct {
+		name    string
+		runB    int64
+		wantErr bool
+	}{
+		{"same run", 1000, false},
+		{"different runs", 2000, true},
+		{"unreported run", 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := startEcBalanceFakeServer(t, vid, 0, 1, 2, 3, 4)
+			b := startEcBalanceFakeServer(t, vid, 5, 6, 7, 8, 9)
+			a.run, b.run = 1000, tc.runB
+			nodeA := newEcNode("dc1", "rack1", a.nodeId(), 100).addEcVolumeAndShardsForTest(vid, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4})
+			nodeB := newEcNode("dc1", "rack1", b.nodeId(), 100).addEcVolumeAndShardsForTest(vid, "c1", []erasure_coding.ShardId{5, 6, 7, 8, 9})
+			locations := make(EcShardLocations, erasure_coding.MaxShardCount)
+			for i := 0; i < 10; i++ {
+				locations[i] = []*EcNode{nodeA}
+				if i >= 5 {
+					locations[i] = []*EcNode{nodeB}
+				}
+			}
+			erb := &ecRebuilder{
+				env:          &Env{GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials())},
+				ecNodes:      []*EcNode{nodeA, nodeB},
+				writer:       &bytes.Buffer{},
+				applyChanges: true,
+			}
+
+			err := erb.rebuildOneEcVolume("c1", vid, locations, nodeA)
+			if !tc.wantErr {
+				if a.copies() == 0 {
+					t.Fatalf("holders of one run must be copied from, err=%v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "different encode runs") {
+				t.Fatalf("expected a mixed-run refusal, got %v", err)
+			}
+			if a.copies() != 0 || b.copies() != 0 {
+				t.Fatalf("no shard may be copied from holders of different runs, copies=%d/%d", a.copies(), b.copies())
 			}
 		})
 	}
