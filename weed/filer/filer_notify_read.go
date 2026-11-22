@@ -193,7 +193,12 @@ func (f *Filer) CollectLogFileRefs(ctx context.Context, startPosition log_buffer
 			break
 		}
 
-		hourMinuteEntries, _, listErr := f.ListDirectoryEntries(ctx, util.NewFullPath(SystemLogDir, dayEntry.Name()), "", false, math.MaxInt32, "", "", "")
+		// as in collectMore: list the start day from the scan start's minute
+		listFrom, inclusive := "", false
+		if dayEntry.Name() == startDate {
+			listFrom, inclusive = startHourMinute, true
+		}
+		hourMinuteEntries, _, listErr := f.ListDirectoryEntries(ctx, util.NewFullPath(SystemLogDir, dayEntry.Name()), listFrom, inclusive, math.MaxInt32, "", "", "")
 		if listErr != nil {
 			return nil, 0, fmt.Errorf("fail to list log %s: %w", dayEntry.Name(), listErr)
 		}
@@ -409,7 +414,14 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 		}
 	}
 
-	hourMinuteEntries, _, listHourMinuteErr := c.f.ListDirectoryEntries(context.Background(), util.NewFullPath(SystemLogDir, dayEntry.Name()), "", false, math.MaxInt32, "", "", "")
+	// On the start day the files before startHourMinute are skipped below
+	// anyway. Listing from it keeps a pass from reading the whole day, up to
+	// 1440 files per filer, to find the few after the scan start.
+	listFrom, inclusive := "", false
+	if dayEntry.Name() == c.startDate {
+		listFrom, inclusive = c.startHourMinute, true
+	}
+	hourMinuteEntries, _, listHourMinuteErr := c.f.ListDirectoryEntries(context.Background(), util.NewFullPath(SystemLogDir, dayEntry.Name()), listFrom, inclusive, math.MaxInt32, "", "", "")
 	if listHourMinuteErr != nil {
 		return fmt.Errorf("fail to list log %s by day: %v", dayEntry.Name(), listHourMinuteErr)
 	}
