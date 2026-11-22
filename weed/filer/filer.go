@@ -742,9 +742,9 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 			}
 		} else if !metadataEventsSuppressed(ctx) && !strings.HasPrefix("/"+util.Join(dirParts[:]...), SystemLogDir) {
 			f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
-		} else {
-			// No event adopts this stamp: a suppressing caller (rename) covers
-			// only its own entry, not the parents created on the way.
+		} else if !recordCreatedParent(ctx, dirEntry) {
+			// No event adopts this stamp: a suppressing caller covers only its
+			// own entry, unless it collects the parents created on the way.
 			f.releaseEntryCommitTsNs(dirEntry.CommitTsNs)
 		}
 
