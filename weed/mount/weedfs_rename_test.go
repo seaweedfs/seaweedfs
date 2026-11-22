@@ -3,7 +3,11 @@ package mount
 import (
 	"context"
 	"path/filepath"
+	"runtime"
+	"syscall"
 	"testing"
+
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -87,5 +91,90 @@ func TestHandleRenameResponseLeavesUncachedTargetOutOfCache(t *testing.T) {
 	}
 	if updatedInode != sourceInode {
 		t.Fatalf("target inode = %d, want %d", updatedInode, sourceInode)
+	}
+}
+
+// A reader may resolve the target name to its old inode just before a rename
+// replaces it, then send OPEN/GETATTR for that inode after MovePath dropped
+// its path. Those must fail with ESTALE, so the kernel redoes the path walk
+// and opens the new file, not with ENOENT while the name exists. Once the
+// kernel forgets the old inode, the answer is ENOENT again.
+func TestRenameOverTargetLeavesOldInodeStale(t *testing.T) {
+	uidGidMapper, err := meta_cache.NewUidGidMapper("", "")
+	if err != nil {
+		t.Fatalf("create uid/gid mapper: %v", err)
+	}
+
+	root := util.FullPath("/")
+	inodeToPath := NewInodeToPath(root, 1)
+
+	mc := meta_cache.NewMetaCache(
+		filepath.Join(t.TempDir(), "meta"),
+		uidGidMapper,
+		root,
+		false,
+		func(path util.FullPath) {
+			inodeToPath.MarkChildrenCached(path)
+		},
+		func(path util.FullPath) bool {
+			return inodeToPath.IsChildrenCached(path)
+		},
+		func(meta_cache.EntryInvalidation) {},
+		nil,
+	)
+	defer mc.Shutdown()
+
+	parentPath := util.FullPath("/run/shards/gpu0")
+	sourcePath := parentPath.Child("active.json.tmp")
+	targetPath := parentPath.Child("active.json")
+
+	inodeToPath.Lookup(parentPath, 1, true, false, 0, true)
+	sourceInode := inodeToPath.Lookup(sourcePath, 1, false, false, 0, true)
+	oldTargetInode := inodeToPath.Lookup(targetPath, 1, false, false, 0, true)
+
+	wfs := &WFS{
+		metaCache:   mc,
+		inodeToPath: inodeToPath,
+		fhMap:       NewFileHandleToInode(),
+	}
+
+	resp := &filer_pb.StreamRenameEntryResponse{
+		Directory: string(parentPath),
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{Name: "active.json.tmp"},
+			NewEntry: &filer_pb.Entry{
+				Name: "active.json",
+				Attributes: &filer_pb.FuseAttributes{
+					Crtime:   1,
+					Mtime:    1,
+					FileMode: 0100644,
+					FileSize: 17,
+					Inode:    sourceInode,
+				},
+			},
+			NewParentPath: string(parentPath),
+		},
+	}
+	if err := wfs.handleRenameResponse(context.Background(), resp, targetPath, nil); err != nil {
+		t.Fatalf("handle rename response: %v", err)
+	}
+
+	want := fuse.Status(syscall.ESTALE)
+	if runtime.GOOS != "linux" {
+		want = fuse.ENOENT
+	}
+	var attrOut fuse.AttrOut
+	if status := wfs.GetAttr(nil, &fuse.GetAttrIn{InHeader: fuse.InHeader{NodeId: oldTargetInode}}, &attrOut); status != want {
+		t.Fatalf("GetAttr on replaced inode = %v, want %v", status, want)
+	}
+	var openOut fuse.OpenOut
+	if status := wfs.Open(nil, &fuse.OpenIn{InHeader: fuse.InHeader{NodeId: oldTargetInode}}, &openOut); status != want {
+		t.Fatalf("Open on replaced inode = %v, want %v", status, want)
+	}
+
+	// once the kernel forgets the old inode, it is unknown here
+	inodeToPath.Forget(oldTargetInode, 1, nil, nil)
+	if status := wfs.GetAttr(nil, &fuse.GetAttrIn{InHeader: fuse.InHeader{NodeId: oldTargetInode}}, &attrOut); status != fuse.ENOENT {
+		t.Fatalf("GetAttr on forgotten inode = %v, want ENOENT", status)
 	}
 }

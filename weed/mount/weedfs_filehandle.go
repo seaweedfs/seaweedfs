@@ -28,7 +28,7 @@ func (wfs *WFS) AcquireHandle(ctx context.Context, inode uint64, flags, uid, gid
 		var pathStatus fuse.Status
 		path, pathStatus = wfs.inodeToPath.GetPath(inode)
 		if pathStatus != fuse.OK {
-			return nil, 0, pathStatus
+			return nil, 0, wfs.pathlessInodeStatus(inode, pathStatus)
 		}
 
 		// A fresh lookup returns the entry with the filer log position it

@@ -8,8 +8,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
@@ -571,10 +573,25 @@ func (wfs *WFS) maybeReadEntry(ctx context.Context, inode uint64) (path util.Ful
 		if entry = wfs.removedDirEntry(inode); entry != nil {
 			return "", nil, entry, fuse.OK
 		}
-		return
+		return "", nil, nil, wfs.pathlessInodeStatus(inode, status)
 	}
 	entry, _, status = wfs.maybeLoadEntry(ctx, path)
 	return
+}
+
+// pathlessInodeStatus answers an operation on an inode that has no path here.
+// While the kernel still holds the inode (no Forget yet), its name was
+// replaced or removed under it, as by a rename over it after the kernel
+// resolved the old name: ESTALE makes open, stat, access and xattr calls redo
+// the path walk and reach the current entry (as on NFS), where ENOENT would
+// fail them although the name exists. A forgotten inode keeps status. Only
+// Linux redoes the walk: FUSE on macOS and FreeBSD purges the name cache on
+// ENOENT instead, and WinFsp has neither, so they keep ENOENT.
+func (wfs *WFS) pathlessInodeStatus(inode uint64, status fuse.Status) fuse.Status {
+	if runtime.GOOS == "linux" && wfs.inodeToPath.HasInode(inode) {
+		return fuse.Status(syscall.ESTALE)
+	}
+	return status
 }
 
 // isLocalOnlyEntry reports whether entry holds local-only state not yet on the
