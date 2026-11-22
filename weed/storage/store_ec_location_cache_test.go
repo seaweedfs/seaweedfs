@@ -586,3 +586,55 @@ func TestReadOneEcShardIntervalDoesNotTakeALiveAnswerFromADelistedHolder(t *test
 		t.Error("a read hint that answered was dropped")
 	}
 }
+
+// stalledPeer accepts a shard read and never answers it.
+type stalledPeer struct {
+	volume_server_pb.UnimplementedVolumeServerServer
+}
+
+func (stalledPeer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardReadRequest, stream volume_server_pb.VolumeServer_VolumeEcShardReadServer) error {
+	<-stream.Context().Done()
+	return stream.Context().Err()
+}
+
+// A delisted holder that stops answering costs a read only the hint's deadline.
+func TestReadOneEcShardIntervalBoundsAFailedReadHint(t *testing.T) {
+	const delisted = erasure_coding.ShardId(3)
+	baseFileName, n := writeEcVolumeFiles(t, t.TempDir(), 7)
+	others := startEcShardPeer(t, &oneBadShardPeer{baseFileName: baseFileName, badShard: delisted})
+	stalled := startEcShardPeer(t, stalledPeer{})
+
+	store := &Store{grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials())}
+	ecVolume := &erasure_coding.EcVolume{
+		VolumeId:       7,
+		ShardLocations: make(map[erasure_coding.ShardId][]pb.ServerAddress),
+	}
+	seedShardLocations(ecVolume, others)
+	delete(ecVolume.ShardLocations, delisted)
+	ecVolume.ShardReadHints = map[erasure_coding.ShardId][]pb.ServerAddress{delisted: {stalled}}
+	defer func(old time.Duration) { ecReadHintTimeout = old }(ecReadHintTimeout)
+	ecReadHintTimeout = 200 * time.Millisecond
+
+	interval := erasure_coding.Interval{BlockIndex: int(delisted), Size: 4096, IsLargeBlock: true}
+	read := func() {
+		t.Helper()
+		if isDeleted, err := store.readOneEcShardInterval(n.Id, ecVolume, interval, make([]byte, interval.Size)); err != nil || isDeleted {
+			t.Fatalf("read interval: deleted=%v err=%v, want it rebuilt", isDeleted, err)
+		}
+	}
+	hint := func() []pb.ServerAddress {
+		ecVolume.ShardLocationsLock.RLock()
+		defer ecVolume.ShardLocationsLock.RUnlock()
+		return ecVolume.ShardReadHints[delisted]
+	}
+
+	start := time.Now()
+	read()
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("the read waited %v on a holder that never answers", elapsed)
+	}
+	if got := hint(); got != nil {
+		t.Errorf("a hint that timed out is still kept: %v", got)
+	}
+
+}
