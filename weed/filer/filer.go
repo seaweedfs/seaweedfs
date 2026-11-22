@@ -771,7 +771,9 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 			return fmt.Errorf("promote %s to directory: %v", dirPath, updateErr)
 		}
 		if metadataEventsSuppressed(ctx) {
-			f.releaseEntryCommitTsNs(dirEntry.CommitTsNs)
+			if !recordCreatedParent(ctx, dirEntry) {
+				f.releaseEntryCommitTsNs(dirEntry.CommitTsNs)
+			}
 		} else {
 			f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
 		}

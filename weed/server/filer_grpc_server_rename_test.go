@@ -636,19 +636,8 @@ func TestAtomicRenameEntryAnnouncesCreatedParents(t *testing.T) {
 		t.Fatalf("AtomicRenameEntry: %v", err)
 	}
 
-	var keys []string
 	peer := newRenameTestFiler(t, newRenameTestStore())
-	for _, event := range queue.snapshot() {
-		keys = append(keys, event.key)
-		dir, _ := util.FullPath(event.key).DirAndName()
-		if err := peer.Replay(&filer_pb.SubscribeMetadataResponse{
-			Directory:         dir,
-			EventNotification: event.notification,
-			TsNs:              time.Now().UnixNano(),
-		}); err != nil {
-			t.Fatalf("replay %s: %v", event.key, err)
-		}
-	}
+	keys := replayCapturedEvents(t, peer, queue)
 	wantKeys := []string{"/buckets/arc/keep", "/buckets/arc/keep/2026", "/buckets/arc/keep/2026/xxx", "/buckets/arc/xxx/rate_data"}
 	if !slices.Equal(keys, wantKeys) {
 		t.Fatalf("event keys = %v, want %v", keys, wantKeys)
@@ -675,6 +664,69 @@ func TestAtomicRenameEntryAnnouncesCreatedParents(t *testing.T) {
 	now := time.Now().UnixNano()
 	if got := f.LocalDeliveredThroughTsNs(now); got != now {
 		t.Fatalf("LocalDeliveredThroughTsNs = %d, want %d: a parent's stamp was never adopted", got, now)
+	}
+}
+
+func replayCapturedEvents(t *testing.T, peer *filer.Filer, queue *captureQueue) (keys []string) {
+	t.Helper()
+	for _, event := range queue.snapshot() {
+		keys = append(keys, event.key)
+		dir, _ := util.FullPath(event.key).DirAndName()
+		if err := peer.Replay(&filer_pb.SubscribeMetadataResponse{
+			Directory:         dir,
+			EventNotification: event.notification,
+			TsNs:              time.Now().UnixNano(),
+		}); err != nil {
+			t.Fatalf("replay %s: %v", event.key, err)
+		}
+	}
+	return keys
+}
+
+func TestAtomicRenameEntryAnnouncesPromotedParent(t *testing.T) {
+	seed := func() *renameTestStore {
+		store := newRenameTestStore()
+		store.entries["/buckets"] = newDirectoryEntry("/buckets", 100)
+		store.entries["/buckets/arc"] = newDirectoryEntry("/buckets/arc", 101)
+		store.entries["/buckets/arc/report"] = newFileEntry("/buckets/arc/report", 102)
+		return store
+	}
+	store := seed()
+	store.entries["/buckets/arc/rate_data"] = newFileEntry("/buckets/arc/rate_data", 103)
+
+	queue := &captureQueue{}
+	swapNotificationQueue(t, queue)
+
+	f := newRenameTestFiler(t, store)
+	server := &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()}
+	if _, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+		OldDirectory: "/buckets/arc",
+		OldName:      "rate_data",
+		NewDirectory: "/buckets/arc/report",
+		NewName:      "rate_data",
+	}); err != nil {
+		t.Fatalf("AtomicRenameEntry: %v", err)
+	}
+
+	peer := newRenameTestFiler(t, seed())
+	keys := replayCapturedEvents(t, peer, queue)
+	if wantKeys := []string{"/buckets/arc/report", "/buckets/arc/rate_data"}; !slices.Equal(keys, wantKeys) {
+		t.Fatalf("event keys = %v, want %v", keys, wantKeys)
+	}
+	report, err := peer.Store.FindEntry(context.Background(), "/buckets/arc/report")
+	if err != nil {
+		t.Fatalf("find the promoted parent on the peer: %v", err)
+	}
+	if !report.IsDirectory() {
+		t.Fatalf("peer keeps %s as a file, mode %v", report.FullPath, report.Mode)
+	}
+	if _, err := peer.Store.FindEntry(context.Background(), "/buckets/arc/report/rate_data"); err != nil {
+		t.Fatalf("find the moved entry on the peer: %v", err)
+	}
+
+	now := time.Now().UnixNano()
+	if got := f.LocalDeliveredThroughTsNs(now); got != now {
+		t.Fatalf("LocalDeliveredThroughTsNs = %d, want %d: the promotion stamp was never adopted", got, now)
 	}
 }
 

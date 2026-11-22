@@ -22,8 +22,9 @@ func metadataEventsSuppressed(ctx context.Context) bool {
 }
 
 // WithCreatedParents suppresses events like WithSuppressedMetadataEvents and
-// collects the parent directories created on the way. No event of the caller
-// covers them, so it announces them once its change commits.
+// collects the parent directories created, or promoted from files, on the way.
+// No event of the caller covers them, so it announces them once its change
+// commits.
 func WithCreatedParents(ctx context.Context, created *[]*Entry) context.Context {
 	return context.WithValue(WithSuppressedMetadataEvents(ctx), createdParentsKey{}, created)
 }
