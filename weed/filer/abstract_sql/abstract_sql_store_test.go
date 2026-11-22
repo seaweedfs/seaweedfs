@@ -214,3 +214,58 @@ func TestListDirectoryEntriesStoppedByCallbackWithCanceledContext(t *testing.T) 
 		t.Fatalf("ListDirectoryEntries error = %v, want nil", err)
 	}
 }
+
+type writeGen struct{ SqlGenerator }
+
+func (writeGen) GetSqlInsert(string) string { return "INSERT entry" }
+func (writeGen) GetSqlDelete(string) string { return "DELETE entry" }
+
+// What IsolatesTransactions declares: an entry write, an entry delete and a KV
+// write under a transaction's context all go through that transaction, the KV
+// write too when KV has a pool of its own, and a rollback ends it.
+func TestWritesUnderATransactionGoThroughIt(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// nothing is expected of the KV pool: a call to it fails the write
+	kvDB, kvMock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer kvDB.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT entry").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE entry").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT entry").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectRollback()
+
+	store := &AbstractSqlStore{SqlGenerator: writeGen{}, DB: db, KvDB: kvDB}
+	if !store.IsolatesTransactions() {
+		t.Fatal("IsolatesTransactions = false")
+	}
+	txCtx, err := store.BeginTransaction(context.Background())
+	if err != nil {
+		t.Fatalf("BeginTransaction: %v", err)
+	}
+	if err := store.InsertEntry(txCtx, &filer.Entry{FullPath: "/dir/new.txt"}); err != nil {
+		t.Fatalf("InsertEntry: %v", err)
+	}
+	if err := store.DeleteEntry(txCtx, "/dir/old.txt"); err != nil {
+		t.Fatalf("DeleteEntry: %v", err)
+	}
+	if err := store.KvPut(txCtx, []byte("hard-link-id"), []byte("record")); err != nil {
+		t.Fatalf("KvPut: %v", err)
+	}
+	if err := store.RollbackTransaction(txCtx); err != nil {
+		t.Fatalf("RollbackTransaction: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Error(err)
+	}
+	if err := kvMock.ExpectationsWereMet(); err != nil {
+		t.Error(err)
+	}
+}
