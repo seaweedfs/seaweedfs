@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/require"
@@ -248,4 +250,60 @@ func TestBlockPublicAclsRejectsPublicBucketAndObjectAcls(t *testing.T) {
 		require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
 		require.Empty(t, filer.txnSeen)
 	})
+}
+
+func TestPutBucketPolicyHonorsBlockPublicPolicy(t *testing.T) {
+	const bucket = "pab-policy"
+	blockPolicy := `<PublicAccessBlockConfiguration><BlockPublicPolicy>true</BlockPublicPolicy></PublicAccessBlockConfiguration>`
+	public := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::pab-policy/*"}]}`
+	sourceIP := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::pab-policy/*","Condition":{"IpAddress":{"aws:SourceIp":"10.0.0.0/8"}}}]}`
+	account := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::123456789012:user/alice"},"Action":"s3:GetObject","Resource":"arn:aws:s3:::pab-policy/*"}]}`
+	for _, tc := range []struct {
+		name   string
+		pab    string
+		policy string
+		status int
+	}{
+		{"public policy blocked", blockPolicy, public, http.StatusForbidden},
+		{"public policy blocked by unreadable setting", "<PublicAccessBlockConfiguration><BlockPublicPolicy>", public, http.StatusForbidden},
+		{"public policy without block", testPublicAccessBlockXML, public, http.StatusNoContent},
+		{"source ip restricted policy", blockPolicy, sourceIP, http.StatusNoContent},
+		{"named principal policy", blockPolicy, account, http.StatusNoContent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			filerImpl := &ambiguousPutFiler{entries: map[string]*filer_pb.Entry{
+				"/buckets/" + bucket: {Name: bucket, IsDirectory: true, Extended: map[string][]byte{s3_constants.ExtPublicAccessBlockKey: []byte(tc.pab)}},
+			}}
+			s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+			r := mux.SetURLVars(httptest.NewRequest(http.MethodPut, "/"+bucket+"?policy", strings.NewReader(tc.policy)), map[string]string{"bucket": bucket})
+			rr := httptest.NewRecorder()
+			s3a.PutBucketPolicyHandler(rr, r)
+			require.Equal(t, tc.status, rr.Code, rr.Body.String())
+			_, stored := filerImpl.entries["/buckets/"+bucket].Extended[BUCKET_POLICY_METADATA_KEY]
+			require.Equal(t, tc.status == http.StatusNoContent, stored)
+		})
+	}
+}
+
+func TestIsPublicPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		statement string
+		public    bool
+	}{
+		{`{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}`, true},
+		{`{"Effect":"Allow","Principal":{"AWS":"*"},"Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}`, true},
+		{`{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::*:root"},"Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}`, true},
+		{`{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::123456789012:user/*"},"Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}`, false},
+		{`{"Effect":"Deny","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*"}`, false},
+		{`{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*","Condition":{"IpAddress":{"aws:SourceIp":"0.0.0.0/0"}}}`, true},
+		{`{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*","Condition":{"NotIpAddress":{"aws:SourceIp":"10.0.0.0/8"}}}`, true},
+		{`{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*","Condition":{"StringEquals":{"aws:SourceVpce":"vpce-1a2b3c4d"}}}`, false},
+		{`{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*","Condition":{"StringLike":{"aws:SourceVpce":"vpce-*"}}}`, true},
+		{`{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*","Condition":{"StringEqualsIfExists":{"aws:SourceVpce":"vpce-1a2b3c4d"}}}`, true},
+		{`{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::b/*","Condition":{"StringEquals":{"s3:prefix":"home/"}}}`, true},
+	} {
+		var doc policy_engine.PolicyDocument
+		require.NoError(t, json.Unmarshal([]byte(`{"Version":"2012-10-17","Statement":[`+tc.statement+`]}`), &doc))
+		require.Equal(t, tc.public, isPublicPolicy(&doc), tc.statement)
+	}
 }

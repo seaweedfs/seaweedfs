@@ -116,6 +116,8 @@ func (s3a *S3ApiServer) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 	if err := s3a.setBucketPolicy(bucket, &policyDoc); err != nil {
 		if errors.Is(err, ErrBucketNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+		} else if errors.Is(err, errPublicPolicyBlocked) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		} else {
 			glog.Errorf("Failed to store bucket policy for %s: %v", bucket, err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -263,6 +265,9 @@ func (s3a *S3ApiServer) setBucketPolicy(bucket string, policyDoc *policy_engine.
 		}
 
 		entry := resp.Entry
+		if storedPublicAccessBlock(bucket, entry.Extended).blocksPublicPolicy() && isPublicPolicy(policyDoc) {
+			return errPublicPolicyBlocked
+		}
 		if entry.Extended == nil {
 			entry.Extended = make(map[string][]byte)
 		}
