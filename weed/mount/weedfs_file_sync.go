@@ -281,30 +281,11 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	if len(publications) > 0 {
 		publication = publications[0]
 	}
-	fileFullPath, dir, name := wfs.flushTarget(fh, dir, name)
-	var unlock func()
-	var fhActiveLock *util.ActiveLock
-	// An unlink or rename can land while the flush waits for its locks.
-	for attempt := 0; ; attempt++ {
-		// Attribute acknowledgement and local retention must complete before a
-		// whole-entry flush can publish. Take this before the handle's active lock.
-		unlock = wfs.lockMetadataPublication(fileFullPath)
-		fhActiveLock = fh.wfs.fhLockTable.AcquireLock("doFlush", fh.fh, util.ExclusiveLock)
-		nowPath, nowDir, nowName := wfs.flushTarget(fh, dir, name)
-		if nowPath == fileFullPath && nowDir == dir && nowName == name {
-			break
-		}
-		fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
-		unlock()
-		if attempt == 3 {
-			return fmt.Errorf("flush %s: name changed while waiting for its locks, now %s", fileFullPath, nowPath)
-		}
-		fileFullPath, dir, name = nowPath, nowDir, nowName
+	fileFullPath, dir, name, release, err := wfs.lockFlushTarget(fh, "doFlush", dir, name)
+	if err != nil {
+		return err
 	}
-	defer func() {
-		fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
-		unlock()
-	}()
+	defer release()
 
 	glog.V(4).Infof("flushMetadataToFiler %s/%s inode %d fh %d", dir, name, fh.inode, fh.fh)
 
@@ -313,6 +294,13 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	// the delete removed it.
 	if fh.isDeleted {
 		glog.V(3).Infof("flushMetadataToFiler %s fh %d: file was unlinked, skipping", fileFullPath, fh.fh)
+		return nil
+	}
+	// The callers look at the flag before they wait for these locks, so a
+	// flush queued behind another one finds its changes already published.
+	// Sending the entry again would rewrite the stored copy for nothing, and
+	// a rename moving the file at that moment fails on that write.
+	if !fh.dirtyMetadata {
 		return nil
 	}
 	if fh.linkRefresh != nil {
@@ -460,6 +448,32 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	}
 
 	return err
+}
+
+// lockFlushTarget takes the publication lock of the name a flush of fh
+// publishes through, then the handle's lock, and returns that name once both
+// are held: an unlink or a rename can land while the flush waits for them.
+// Attribute acknowledgement, local retention and a rename's filer call hold
+// the publication lock, so it comes before the handle's active lock.
+func (wfs *WFS) lockFlushTarget(fh *FileHandle, intention, dir, name string) (util.FullPath, string, string, func(), error) {
+	fileFullPath, dir, name := wfs.flushTarget(fh, dir, name)
+	for attempt := 0; ; attempt++ {
+		unlock := wfs.lockMetadataPublication(fileFullPath)
+		fhActiveLock := wfs.fhLockTable.AcquireLock(intention, fh.fh, util.ExclusiveLock)
+		nowPath, nowDir, nowName := wfs.flushTarget(fh, dir, name)
+		if nowPath == fileFullPath && nowDir == dir && nowName == name {
+			return fileFullPath, dir, name, func() {
+				wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+				unlock()
+			}, nil
+		}
+		wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+		unlock()
+		if attempt == 3 {
+			return "", "", "", nil, fmt.Errorf("flush %s: name changed while waiting for its locks, now %s", fileFullPath, nowPath)
+		}
+		fileFullPath, dir, name = nowPath, nowDir, nowName
+	}
 }
 
 // flushTarget returns the lock path and the name a flush of fh publishes

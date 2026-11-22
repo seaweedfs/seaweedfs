@@ -162,3 +162,23 @@ func (wfs *WFS) lockMetadataPublication(path util.FullPath) func() {
 	lock := table.AcquireLock("metadata publication", path, util.ExclusiveLock)
 	return func() { table.ReleaseLock(path, lock) }
 }
+
+// lockNodePublication takes the publication lock of the node's entry, which
+// maybeReadEntry found at path. A rename holds the locks of both its names
+// until it has moved the node here, so an attribute change that waited for
+// one finds the node under its new name, or under none when the rename
+// replaced it: it reads the node again and locks the name it has now instead
+// of writing the old one.
+func (wfs *WFS) lockNodePublication(ctx context.Context, nodeId uint64, path util.FullPath, fh *FileHandle, entry *filer_pb.Entry) (util.FullPath, *FileHandle, *filer_pb.Entry, func(), fuse.Status) {
+	for attempt := 0; ; attempt++ {
+		unlock := wfs.lockMetadataPublication(path)
+		if now, st := wfs.inodeToPath.GetPath(nodeId); st == fuse.OK && now == path || attempt == 3 {
+			return path, fh, entry, unlock, fuse.OK
+		}
+		unlock()
+		var st fuse.Status
+		if path, fh, entry, st = wfs.maybeReadEntry(ctx, nodeId); st != fuse.OK || entry == nil || path == "" {
+			return path, fh, entry, func() {}, st
+		}
+	}
+}
