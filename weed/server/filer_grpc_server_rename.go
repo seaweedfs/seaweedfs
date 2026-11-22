@@ -482,10 +482,12 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 	// A file renamed over a file is written over the target in one store write
 	// on a store without transactions: deleting the target first leaves its
 	// path empty for anyone reading it through another filer until the new
-	// entry lands, since the rename's path locks fence this filer only. A
-	// transaction hides that gap, and fails cleanly if the target went
-	// meanwhile, so stores with one keep delete-then-create, as do targets in
-	// a path-specific store, directories and entries with a remote object.
+	// entry lands, since the rename's path locks fence this filer only. What
+	// keeps delete-then-create:
+	//   - a store with transactions, or one that may have them: a transaction
+	//     hides the gap and fails cleanly if the target went meanwhile;
+	//   - a target in a path-specific store;
+	//   - directories, and entries with a remote object.
 	inPlace := existingTarget != nil && !entry.IsDirectory() && !existingTarget.IsDirectory() &&
 		entry.Remote == nil && existingTarget.Remote == nil && fs.filer.WritesAtOnce(ctx, newPath)
 
@@ -547,8 +549,15 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		delete(newEntry.Extended, filer.ExtRemoteRenameSourceKey)
 	}
 	if inPlace {
+		var createdParents []*filer.Entry
 		fs.filer.StampEntryCommitTsNs(newEntry)
-		if replaceErr := fs.filer.ReplaceFileForRename(ctx, newEntry); replaceErr != nil {
+		replaceErr := fs.filer.ReplaceFileForRename(filer.WithCreatedParents(ctx, &createdParents), newEntry, fs.filer.MaxFilenameLength)
+		// as for a create below: a parent the write had to create again
+		// reaches peers through its own event, published before the move
+		for _, parent := range createdParents {
+			*metadataEvents = append(*metadataEvents, metadataEvent{newEntry: parent})
+		}
+		if replaceErr != nil {
 			fs.filer.ReleaseEntryCommitTsNs(newEntry.CommitTsNs)
 			return replaceErr
 		}

@@ -2,7 +2,9 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -297,5 +299,95 @@ func TestAtomicRenameEntryOverHardLinkWhoseOtherLinkGoesMeanwhile(t *testing.T) 
 	}
 	if _, found := store.kv[string(id)]; found {
 		t.Fatal("hard link record kept after its last link was replaced")
+	}
+}
+
+// Another filer turns the target into a directory right after this filer
+// looked it up, by storing a child under it. Writing the renamed file over it
+// would strand the child, so the rename is refused, as it is when the lookup
+// already finds a directory.
+func TestAtomicRenameEntryOverATargetThatBecameADirectory(t *testing.T) {
+	store := newInPlaceRenameStore()
+	store.entries["/dir/dst.txt"] = fileEntryWithChunk("/dir/dst.txt", 202, "2,0b02")
+	onLookup(store, "/dir/dst.txt", 1, func() {
+		store.mu.Lock()
+		defer store.mu.Unlock()
+		store.entries["/dir/dst.txt"] = newDirectoryEntry("/dir/dst.txt", 202)
+		store.entries["/dir/dst.txt/child"] = fileEntryWithChunk("/dir/dst.txt/child", 203, "4,0d04")
+	})
+
+	queue := &captureQueue{}
+	swapNotificationQueue(t, queue)
+	f := newRenameTestFiler(t, store)
+	server := &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()}
+	_, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+		OldDirectory: "/dir", OldName: "src.txt", NewDirectory: "/dir", NewName: "dst.txt",
+	})
+	if !errors.Is(err, filer_pb.ErrExistingIsDirectory) && (err == nil || !strings.Contains(err.Error(), filer_pb.ErrExistingIsDirectory.Error())) {
+		t.Fatalf("AtomicRenameEntry = %v, want %v", err, filer_pb.ErrExistingIsDirectory)
+	}
+	if dst, err := store.FindEntry(context.Background(), "/dir/dst.txt"); err != nil || !dst.IsDirectory() {
+		t.Fatalf("/dir/dst.txt = %+v, %v; want the directory left as it is", dst, err)
+	}
+	if _, err := store.FindEntry(context.Background(), "/dir/dst.txt/child"); err != nil {
+		t.Fatalf("the directory's child: %v", err)
+	}
+	if _, err := store.FindEntry(context.Background(), "/dir/src.txt"); err != nil {
+		t.Fatalf("source after the refused rename: %v", err)
+	}
+	if got := queuedDeletions(f); len(got) != 0 {
+		t.Fatalf("queued chunk deletions = %v for a rename that did not happen", got)
+	}
+	if events := queue.snapshot(); len(events) != 0 {
+		t.Fatalf("events = %+v for a rename that did not happen", events)
+	}
+}
+
+// Another filer deletes the target and its directory right after this filer
+// looked the target up. The renamed file must not be left under a directory
+// that does not exist: the directory is created again, as a create does, and
+// announced before the rename.
+func TestAtomicRenameEntryOverATargetWhoseDirectoryWentMeanwhile(t *testing.T) {
+	store := newInPlaceRenameStore()
+	store.entries["/dir/sub"] = newDirectoryEntry("/dir/sub", 300)
+	store.entries["/dir/sub/dst.txt"] = fileEntryWithChunk("/dir/sub/dst.txt", 202, "2,0b02")
+	onLookup(store, "/dir/sub/dst.txt", 1, func() {
+		for _, p := range []util.FullPath{"/dir/sub/dst.txt", "/dir/sub"} {
+			if err := store.DeleteEntry(context.Background(), p); err != nil {
+				t.Errorf("delete %s as another filer: %v", p, err)
+			}
+		}
+	})
+
+	queue := &captureQueue{}
+	swapNotificationQueue(t, queue)
+	f := newRenameTestFiler(t, store)
+	server := &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()}
+	if _, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+		OldDirectory: "/dir", OldName: "src.txt", NewDirectory: "/dir/sub", NewName: "dst.txt",
+	}); err != nil {
+		t.Fatalf("AtomicRenameEntry: %v", err)
+	}
+
+	if dir, err := store.FindEntry(context.Background(), "/dir/sub"); err != nil || !dir.IsDirectory() {
+		t.Fatalf("/dir/sub = %+v, %v; want the directory created again", dir, err)
+	}
+	if dst, err := store.FindEntry(context.Background(), "/dir/sub/dst.txt"); err != nil || dst.Attr.Inode != 101 {
+		t.Fatalf("/dir/sub/dst.txt = %+v, %v; want the renamed file (inode 101)", dst, err)
+	}
+	if _, err := store.FindEntry(context.Background(), "/dir/src.txt"); err != filer_pb.ErrNotFound {
+		t.Fatalf("source after rename: %v, want %v", err, filer_pb.ErrNotFound)
+	}
+	createdAt, renamedAt := -1, -1
+	for i, event := range queue.snapshot() {
+		switch {
+		case event.notification.OldEntry == nil && event.notification.NewEntry.GetName() == "sub":
+			createdAt = i
+		case event.notification.OldEntry.GetName() == "src.txt" && event.notification.NewEntry.GetName() == "dst.txt":
+			renamedAt = i
+		}
+	}
+	if createdAt < 0 || renamedAt < 0 || createdAt > renamedAt {
+		t.Fatalf("events = %+v, want /dir/sub's create before the rename", queue.snapshot())
 	}
 }
