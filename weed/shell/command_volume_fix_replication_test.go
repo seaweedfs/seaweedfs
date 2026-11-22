@@ -742,10 +742,11 @@ func TestClassifyReplicaSet(t *testing.T) {
 
 type trimTestVolumeServer struct {
 	volume_server_pb.UnimplementedVolumeServerServer
-	afterIndex func()
-	index      []byte
-	gone       atomic.Bool
-	deletes    atomic.Int32
+	afterIndex   func()
+	index        []byte
+	gone         atomic.Bool
+	deletes      atomic.Int32
+	statusChecks atomic.Int32
 }
 
 func (s *trimTestVolumeServer) CopyFile(_ *volume_server_pb.CopyFileRequest, stream volume_server_pb.VolumeServer_CopyFileServer) error {
@@ -766,6 +767,7 @@ func (s *trimTestVolumeServer) CopyFile(_ *volume_server_pb.CopyFileRequest, str
 }
 
 func (s *trimTestVolumeServer) VolumeStatus(context.Context, *volume_server_pb.VolumeStatusRequest) (*volume_server_pb.VolumeStatusResponse, error) {
+	s.statusChecks.Add(1)
 	if s.gone.Load() {
 		return nil, status.Error(codes.NotFound, "volume not found")
 	}
@@ -789,7 +791,13 @@ func TestDeleteOneVolumeRechecksSurvivorsBeforeDelete(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			doomed, survivor := &trimTestVolumeServer{}, &trimTestVolumeServer{}
 			if tc.survivorGoes {
-				survivor.afterIndex = func() { survivor.gone.Store(true) }
+				// Gone after the coverage check, its second index read.
+				var indexReads atomic.Int32
+				survivor.afterIndex = func() {
+					if indexReads.Add(1) == 2 {
+						survivor.gone.Store(true)
+					}
+				}
 			}
 			commandEnv, _ := configureReplicationTestEnv()
 			replicas := []*VolumeReplica{
@@ -805,6 +813,9 @@ func TestDeleteOneVolumeRechecksSurvivorsBeforeDelete(t *testing.T) {
 			}
 			if tc.survivorGoes && !survivor.gone.Load() {
 				t.Fatal("the survivor never served its index")
+			}
+			if survivor.statusChecks.Load() == 0 {
+				t.Fatal("the final survivor check never ran")
 			}
 			if deleted != tc.wantDeleted || int(doomed.deletes.Load()) != tc.wantDeleted {
 				t.Fatalf("deleted=%d VolumeDelete calls=%d, want %d", deleted, doomed.deletes.Load(), tc.wantDeleted)
