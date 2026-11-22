@@ -86,7 +86,7 @@ func TestEmbeddedSourceAddressValidated(t *testing.T) {
 			return m.TailVolume(context.Background(), 7, bad, dstAddr, 0, time.Second)
 		},
 		"CopyAndMountEcShards": func(m *Mover) error {
-			return m.CopyAndMountEcShards(context.Background(), 7, "c1", []erasure_coding.ShardId{3}, bad, dstAddr, 0, 0, nil)
+			return m.CopyAndMountEcShards(context.Background(), 7, "c1", []erasure_coding.ShardId{3}, bad, dstAddr, 0, "", 0, nil)
 		},
 		"MoveEcShards": func(m *Mover) error {
 			move := ecMove(3)

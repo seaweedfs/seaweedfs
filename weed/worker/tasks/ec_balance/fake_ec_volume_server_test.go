@@ -36,8 +36,9 @@ type fakeEcVolumeServer struct {
 	// pinning that disk id with "no space left" — a full disk; a request with
 	// DiskId 0 (server picks) still succeeds.
 	refuseCopyOnDisk uint32
-	// copyDiskIds records the DiskId each copy request carried.
-	copyDiskIds []uint32
+	// copyDiskIds and copyDiskTypes record what each copy request carried.
+	copyDiskIds   []uint32
+	copyDiskTypes []string
 	// grpcAddr is host:port; the code under test dials by address string.
 	grpcAddr string
 	stop     func()
@@ -64,6 +65,7 @@ func (f *fakeEcVolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.copyDiskIds = append(f.copyDiskIds, req.DiskId)
+	f.copyDiskTypes = append(f.copyDiskTypes, req.DiskType)
 	if f.refuseCopyOnDisk != 0 && req.DiskId == f.refuseCopyOnDisk {
 		return nil, fmt.Errorf("disk %d: no space left", req.DiskId)
 	}

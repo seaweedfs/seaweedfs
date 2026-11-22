@@ -21,6 +21,8 @@ type EcShardMove struct {
 	Target     pb.ServerAddress
 	// TargetDisk picks the destination disk (0 lets the server pick).
 	TargetDisk uint32
+	// TargetDiskType limits the server's pick to disks of this type.
+	TargetDiskType string
 }
 
 // EcMoveOptions control MoveEcShards.
@@ -58,7 +60,7 @@ func (m *Mover) MoveEcShards(ctx context.Context, move EcShardMove, opts EcMoveO
 	}
 
 	progress(10, fmt.Sprintf("copying EC shard(s) %d.%v from %s to %s", move.VolumeId, move.ShardIds, move.Source, move.Target))
-	if err := m.CopyAndMountEcShards(ctx, move.VolumeId, move.Collection, move.ShardIds, move.Source, move.Target, move.TargetDisk, opts.IoBytePerSecond, writer); err != nil {
+	if err := m.CopyAndMountEcShards(ctx, move.VolumeId, move.Collection, move.ShardIds, move.Source, move.Target, move.TargetDisk, move.TargetDiskType, opts.IoBytePerSecond, writer); err != nil {
 		return err
 	}
 
@@ -87,7 +89,7 @@ func (m *Mover) MoveEcShards(ctx context.Context, move EcShardMove, opts EcMoveO
 // .vif/.ecsum sidecars) from source and mount them. A same-address call skips
 // the copy and just mounts — ec.encode uses that to bring freshly generated
 // shards online in place.
-func (m *Mover) CopyAndMountEcShards(ctx context.Context, volumeId needle.VolumeId, collection string, shardIds []erasure_coding.ShardId, source, target pb.ServerAddress, targetDisk uint32, ioBytePerSecond int64, writer io.Writer) error {
+func (m *Mover) CopyAndMountEcShards(ctx context.Context, volumeId needle.VolumeId, collection string, shardIds []erasure_coding.ShardId, source, target pb.ServerAddress, targetDisk uint32, targetDiskType string, ioBytePerSecond int64, writer io.Writer) error {
 	if writer == nil {
 		writer = io.Discard
 	}
@@ -111,6 +113,7 @@ func (m *Mover) CopyAndMountEcShards(ctx context.Context, volumeId needle.Volume
 				CopyEcsumFile:   true, // propagate the bitrot sidecar with the shards (no-op if the source has none)
 				SourceDataNode:  string(source),
 				DiskId:          targetDisk,
+				DiskType:        targetDiskType,
 				IoBytePerSecond: ioBytePerSecond,
 			})
 			if copyErr != nil {

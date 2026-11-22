@@ -126,7 +126,7 @@ func TestRemoveEcShards(t *testing.T) {
 func TestCopyAndMountEcShardsSameAddressMountsOnly(t *testing.T) {
 	cluster := newFakeCluster()
 
-	err := cluster.mover().CopyAndMountEcShards(context.Background(), 7, "c1", []erasure_coding.ShardId{3}, srcAddr, srcAddr, 0, 0, nil)
+	err := cluster.mover().CopyAndMountEcShards(context.Background(), 7, "c1", []erasure_coding.ShardId{3}, srcAddr, srcAddr, 0, "", 0, nil)
 	if err != nil {
 		t.Fatalf("CopyAndMountEcShards: %v", err)
 	}
