@@ -1558,8 +1558,12 @@ impl EcVolume {
     /// Sync the EC volume's journal and index files to disk (matching Go's ecv.Sync()).
     /// Go flushes both .ecj and .ecx to ensure in-place deletion marks are persisted.
     pub fn sync_to_disk(&self) -> io::Result<()> {
-        if let Some(ref ecj_file) = self.journal().file {
-            ecj_file.sync_all()?;
+        // Every append syncs its own record, so one in flight is not waited
+        // for: callers such as CopyFile hold the store lock here.
+        if let Ok(journal) = self.ecj.try_lock() {
+            if let Some(ref ecj_file) = journal.file {
+                ecj_file.sync_all()?;
+            }
         }
         if let Some(ref ecx_file) = self.ecx_file {
             ecx_file.sync_all()?;
