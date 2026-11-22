@@ -436,7 +436,7 @@ func TestPickingMisplacedVolumeToDelete(t *testing.T) {
 	for _, tt := range tests {
 		replicaPlacement, _ := super_block.NewReplicaPlacementFromString(tt.replication)
 		println("replication:", tt.replication, "name:", tt.name)
-		if x := pickOneMisplacedVolume(tt.replicas, replicaPlacement); x.location.dataNode.Id != tt.possibleLocation.dataNode.Id {
+		if x := misplacedVolumesToDelete(tt.replicas, replicaPlacement)[0]; x.location.dataNode.Id != tt.possibleLocation.dataNode.Id {
 			t.Errorf("%s: picked %+v for replication %v",
 				tt.name, x.location.dataNode.Id, tt.replication)
 		} else {
@@ -465,8 +465,8 @@ func TestPickOneReplicaToDeleteSkipsReadOnlySurvivor(t *testing.T) {
 				info:     &master_pb.VolumeInformationMessage{Size: 100, ReadOnly: true},
 			},
 		}
-		if got := pickOneReplicaToDelete(replicas, replicaPlacement); got != nil {
-			t.Fatalf("expected no replica to delete, got %s", got.location.dataNode.Id)
+		if got := replicasToDelete(replicas, replicaPlacement); len(got) != 0 {
+			t.Fatalf("expected no replica to delete, got %s", got[0].location.dataNode.Id)
 		}
 	})
 
@@ -482,8 +482,8 @@ func TestPickOneReplicaToDeleteSkipsReadOnlySurvivor(t *testing.T) {
 				info:     &master_pb.VolumeInformationMessage{Size: 100, ReadOnly: true},
 			},
 		}
-		if got := pickOneReplicaToDelete(replicas, replicaPlacement); got != nil {
-			t.Fatalf("expected no replica to delete, got %s", got.location.dataNode.Id)
+		if got := replicasToDelete(replicas, replicaPlacement); len(got) != 0 {
+			t.Fatalf("expected no replica to delete, got %s", got[0].location.dataNode.Id)
 		}
 	})
 
@@ -504,12 +504,12 @@ func TestPickOneReplicaToDeleteSkipsReadOnlySurvivor(t *testing.T) {
 				info:     &master_pb.VolumeInformationMessage{Size: 80, ReadOnly: true},
 			},
 		}
-		got := pickOneReplicaToDelete(replicas, replicaPlacement)
-		if got == nil {
-			t.Fatalf("expected a writable replica to delete, got nil")
+		got := replicasToDelete(replicas, replicaPlacement)
+		if len(got) != 2 {
+			t.Fatalf("expected the two writable replicas as candidates, got %d", len(got))
 		}
-		if got.location.dataNode.Id != "dn-small" {
-			t.Fatalf("expected to delete smallest writable dn-small, got %s", got.location.dataNode.Id)
+		if got[0].location.dataNode.Id != "dn-small" {
+			t.Fatalf("expected to delete smallest writable dn-small, got %s", got[0].location.dataNode.Id)
 		}
 	})
 }
@@ -530,12 +530,12 @@ func TestPickOneMisplacedVolumeRelocatesReadOnlyReplicas(t *testing.T) {
 			info:     &master_pb.VolumeInformationMessage{Size: 99, ReadOnly: true},
 		},
 	}
-	got := pickOneMisplacedVolume(replicas, replicaPlacement)
-	if got == nil {
+	got := misplacedVolumesToDelete(replicas, replicaPlacement)
+	if len(got) == 0 {
 		t.Fatal("misplaced read-only volume must still be relocated, got nil")
 	}
-	if got.location.dataNode.Id != "dn2" {
-		t.Fatalf("expected to relocate smallest replica dn2, got %s", got.location.dataNode.Id)
+	if got[0].location.dataNode.Id != "dn2" {
+		t.Fatalf("expected to relocate smallest replica dn2, got %s", got[0].location.dataNode.Id)
 	}
 }
 
@@ -559,12 +559,12 @@ func TestPickOneReplicaToDeletePreservesPlacement(t *testing.T) {
 			info:     &master_pb.VolumeInformationMessage{Size: 100, ReadOnly: false},
 		},
 	}
-	got := pickOneReplicaToDelete(replicas, replicaPlacement)
-	if got == nil {
-		t.Fatal("expected a replica to delete")
+	got := replicasToDelete(replicas, replicaPlacement)
+	if len(got) != 1 {
+		t.Fatalf("expected only dc2-writable as a candidate, got %d", len(got))
 	}
-	if got.location.dataNode.Id != "dc2-writable" {
-		t.Fatalf("expected to delete dc2-writable to preserve placement, got %s", got.location.dataNode.Id)
+	if got[0].location.dataNode.Id != "dc2-writable" {
+		t.Fatalf("expected to delete dc2-writable to preserve placement, got %s", got[0].location.dataNode.Id)
 	}
 }
 
@@ -804,7 +804,7 @@ func TestDeleteOneVolumeRechecksSurvivorsBeforeDelete(t *testing.T) {
 				{location: &location{dataNode: startConfigureReplicationTestVolumeServer(t, doomed, 1)}, info: &master_pb.VolumeInformationMessage{Id: 1}},
 				{location: &location{dataNode: startConfigureReplicationTestVolumeServer(t, survivor, 1)}, info: &master_pb.VolumeInformationMessage{Id: 1}},
 			}
-			pickDoomed := func([]*VolumeReplica, *super_block.ReplicaPlacement) *VolumeReplica { return replicas[0] }
+			pickDoomed := func([]*VolumeReplica, *super_block.ReplicaPlacement) []*VolumeReplica { return replicas[:1] }
 
 			c := &commandVolumeFixReplication{}
 			deleted, err := c.deleteOneVolume(commandEnv, io.Discard, true, true, []uint32{1}, map[uint32][]*VolumeReplica{1: replicas}, pickDoomed)
@@ -841,6 +841,7 @@ func TestDeleteOneVolumeRefusesTrimOfUncoveredNeedles(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name        string
+		replication string
 		doomed      []needle_map.NeedleValue
 		survivors   [][]needle_map.NeedleValue
 		wantDeleted int
@@ -875,18 +876,71 @@ func TestDeleteOneVolumeRefusesTrimOfUncoveredNeedles(t *testing.T) {
 			survivors:   [][]needle_map.NeedleValue{{live(1)}},
 			wantDeleted: 1,
 		},
+		{
+			name:        "needle left on one of two required copies",
+			replication: "001",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(1), live(2)}, {live(1)}},
+			wantDeleted: 0,
+		},
+		{
+			name:        "every needle kept on two copies",
+			replication: "001",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(1), live(2)}, {live(2), live(1)}},
+			wantDeleted: 1,
+		},
+		{
+			name:        "delete on one survivor covers a needle short of copies",
+			replication: "001",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(1), live(2)}, {live(1), deleted(2)}},
+			wantDeleted: 1,
+		},
+		{
+			name:        "needle rewritten after a delete on a survivor",
+			replication: "001",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(1), live(2)}, {live(1), deleted(2), live(2)}},
+			wantDeleted: 1,
+		},
+		{
+			name:        "needle rewritten after a delete is short of copies",
+			replication: "001",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(1)}, {live(1), deleted(2), live(2)}},
+			wantDeleted: 0,
+		},
+		{
+			name:        "short volume keeps every needle on its only survivor",
+			replication: "002",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(2), live(1)}},
+			wantDeleted: 1,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			commandEnv, _ := configureReplicationTestEnv()
+			var placement byte
+			if tc.replication != "" {
+				rp, err := super_block.NewReplicaPlacementFromString(tc.replication)
+				if err != nil {
+					t.Fatal(err)
+				}
+				placement = rp.Byte()
+			}
+			info := func() *master_pb.VolumeInformationMessage {
+				return &master_pb.VolumeInformationMessage{Id: 1, ReplicaPlacement: uint32(placement)}
+			}
 			doomed := &trimTestVolumeServer{index: trimTestIndex(tc.doomed...)}
 			replicas := []*VolumeReplica{
-				{location: &location{dataNode: startConfigureReplicationTestVolumeServer(t, doomed, 1)}, info: &master_pb.VolumeInformationMessage{Id: 1}},
+				{location: &location{dataNode: startConfigureReplicationTestVolumeServer(t, doomed, 1)}, info: info()},
 			}
 			for _, entries := range tc.survivors {
 				survivor := &trimTestVolumeServer{index: trimTestIndex(entries...)}
-				replicas = append(replicas, &VolumeReplica{location: &location{dataNode: startConfigureReplicationTestVolumeServer(t, survivor, 1)}, info: &master_pb.VolumeInformationMessage{Id: 1}})
+				replicas = append(replicas, &VolumeReplica{location: &location{dataNode: startConfigureReplicationTestVolumeServer(t, survivor, 1)}, info: info()})
 			}
-			pickDoomed := func([]*VolumeReplica, *super_block.ReplicaPlacement) *VolumeReplica { return replicas[0] }
+			pickDoomed := func([]*VolumeReplica, *super_block.ReplicaPlacement) []*VolumeReplica { return replicas[:1] }
 
 			c := &commandVolumeFixReplication{}
 			got, err := c.deleteOneVolume(commandEnv, io.Discard, true, true, []uint32{1}, map[uint32][]*VolumeReplica{1: replicas}, pickDoomed)
@@ -895,6 +949,62 @@ func TestDeleteOneVolumeRefusesTrimOfUncoveredNeedles(t *testing.T) {
 			}
 			if got != tc.wantDeleted || int(doomed.deletes.Load()) != tc.wantDeleted {
 				t.Fatalf("deleted=%d VolumeDelete calls=%d, want %d", got, doomed.deletes.Load(), tc.wantDeleted)
+			}
+		})
+	}
+}
+
+func TestDeleteOneVolumeTrimsTheNextCandidateWhenThePickIsShort(t *testing.T) {
+	live := func(keys ...types.NeedleId) []byte {
+		var index []byte
+		for _, key := range keys {
+			index = append(index, needle_map.ToBytes(key, types.ToOffset(int64(key)*8), 4)...)
+		}
+		return index
+	}
+	rp, _ := super_block.NewReplicaPlacementFromString("001")
+	for _, tc := range []struct {
+		name        string
+		indexes     [][]byte
+		wantDeletes []int32
+	}{
+		{
+			name:        "smallest replica holds a write the next one missed",
+			indexes:     [][]byte{live(1, 2), live(1), live(1, 2)},
+			wantDeletes: []int32{0, 1, 0},
+		},
+		{
+			name:        "every replica holds a write another missed",
+			indexes:     [][]byte{live(1, 2), live(1, 3), live(1, 2, 3)},
+			wantDeletes: []int32{0, 0, 0},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			commandEnv, _ := configureReplicationTestEnv()
+			var servers []*trimTestVolumeServer
+			var replicas []*VolumeReplica
+			for i, index := range tc.indexes {
+				server := &trimTestVolumeServer{index: index}
+				servers = append(servers, server)
+				// The first replica is the smallest, as after a compaction.
+				size := uint64(100)
+				if i == 0 {
+					size = 50
+				}
+				replicas = append(replicas, &VolumeReplica{
+					location: &location{"dc1", "r1", startConfigureReplicationTestVolumeServer(t, server, 1)},
+					info:     &master_pb.VolumeInformationMessage{Id: 1, ReplicaPlacement: uint32(rp.Byte()), Size: size},
+				})
+			}
+
+			c := &commandVolumeFixReplication{}
+			if _, err := c.deleteOneVolume(commandEnv, io.Discard, true, true, []uint32{1}, map[uint32][]*VolumeReplica{1: replicas}, replicasToDelete); err != nil {
+				t.Fatalf("deleteOneVolume: %v", err)
+			}
+			for i, server := range servers {
+				if got := server.deletes.Load(); got != tc.wantDeletes[i] {
+					t.Errorf("replica %d: VolumeDelete calls=%d, want %d", i, got, tc.wantDeletes[i])
+				}
 			}
 		})
 	}
