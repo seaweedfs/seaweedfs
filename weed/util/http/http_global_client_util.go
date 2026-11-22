@@ -538,15 +538,23 @@ func ReadUrlAsReaderCloser(fileUrl string, jwt string, rangeHeader string) (*htt
 }
 
 // StatusError adds the message a server writes into the body of a failed
-// request, such as a volume server CRC mismatch, to the status line.
+// request, such as a volume server CRC mismatch, to the status line. It waits
+// at most unwantedBodyTimeout for that message and otherwise returns the
+// status alone.
 func StatusError(fileUrl string, r *http.Response) error {
-	var reader io.Reader = r.Body
-	if r.Header.Get("Content-Encoding") == "gzip" {
-		if gz, err := gzip.NewReader(r.Body); err == nil {
-			reader = gz
+	var body []byte
+	read := func() {
+		var reader io.Reader = r.Body
+		if r.Header.Get("Content-Encoding") == "gzip" {
+			if gz, err := gzip.NewReader(r.Body); err == nil {
+				reader = gz
+			}
 		}
+		body, _ = io.ReadAll(io.LimitReader(reader, 1024))
 	}
-	body, _ := io.ReadAll(io.LimitReader(reader, 1024))
+	if !readUnwantedBody(r, read) {
+		return fmt.Errorf("%s: %s", fileUrl, r.Status)
+	}
 	msg := strings.TrimSpace(string(body))
 	var m struct {
 		Error string `json:"error"`
@@ -560,12 +568,53 @@ func StatusError(fileUrl string, r *http.Response) error {
 	return fmt.Errorf("%s: %s: %s", fileUrl, r.Status, msg)
 }
 
+// unwantedBodyTimeout is how long CloseResponse and StatusError wait for a
+// response body. A server can send its headers and then stop sending the body.
+// The client has no deadline of its own for that, so a read on such a body
+// blocks until the request's context ends, and many callers never end it.
+var unwantedBodyTimeout = 5 * time.Second
+
+// readUnwantedBody runs read, which reads from the response body, and reports
+// whether it finished within unwantedBodyTimeout. When it did not, the body is
+// closed, which drops the connection, and what read collected must not be used.
+func readUnwantedBody(resp *http.Response, read func()) bool {
+	if !resp.Uncompressed {
+		// closing the body fails a read blocked on it
+		timer := time.AfterFunc(unwantedBodyTimeout, func() { resp.Body.Close() })
+		read()
+		return timer.Stop()
+	}
+	// The transport is decoding gzip, and closing that body does not always
+	// fail a read: up to Go 1.26 the decoder reads the gzip header under a
+	// lock that Close also takes, so a response stalled there keeps both
+	// waiting until the connection dies. Leave them behind in that case.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		read()
+	}()
+	timer := time.NewTimer(unwantedBodyTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		go resp.Body.Close()
+		return false
+	}
+}
+
+// CloseResponse reads what is left of the body, so that the connection can be
+// reused, and closes it. It gives up on a body that does not end within
+// unwantedBodyTimeout: the connection is then closed instead of reused.
 func CloseResponse(resp *http.Response) {
 	if resp == nil || resp.Body == nil {
 		return
 	}
 	reader := &CountingReader{reader: resp.Body}
-	io.Copy(io.Discard, reader)
+	if !readUnwantedBody(resp, func() { io.Copy(io.Discard, reader) }) {
+		return
+	}
 	resp.Body.Close()
 	if reader.BytesRead > 0 {
 		glog.V(1).Infof("response leftover %d bytes", reader.BytesRead)
