@@ -523,19 +523,20 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		}
 
 		// The sidecars are staged too and committed with the index, so a failed
-		// copy cannot pair a new .vif with the index this disk keeps.
+		// copy cannot pair a new .vif with the index this disk keeps. The .vif
+		// is fetched even when not installed: it names the copied shards' run.
 		var stagedSidecars []string
-		if req.CopyVifFile {
-			staged, err := vs.stageEcCopyFile(client, req.Collection, req.VolumeId, ".vif", dataBaseFileName+".vif", true, throttler)
-			if err != nil {
+		stagedVif, err := vs.stageEcCopyFile(client, req.Collection, req.VolumeId, ".vif", dataBaseFileName+".vif", true, throttler)
+		if err != nil {
+			return err
+		}
+		if stagedVif != "" {
+			defer os.Remove(stagedVif)
+			if err := vs.requireMountedEncodeRun(needle.VolumeId(req.VolumeId), stagedVif); err != nil {
 				return err
 			}
-			if staged != "" {
-				defer os.Remove(staged)
+			if req.CopyVifFile {
 				stagedSidecars = append(stagedSidecars, dataBaseFileName+".vif")
-				if err := vs.requireMountedEncodeRun(needle.VolumeId(req.VolumeId), staged); err != nil {
-					return err
-				}
 			}
 		}
 

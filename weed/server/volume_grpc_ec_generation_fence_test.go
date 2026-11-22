@@ -325,11 +325,13 @@ func TestVolumeEcShardsCopyRefusesOtherEncodeRun(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		srcRun  int64
+		copyVif bool
 		wantErr bool
 	}{
-		{"same run", 1000, false},
-		{"other run", 2000, true},
-		{"unreported run", 0, false},
+		{"same run", 1000, true, false},
+		{"other run", 2000, true, true},
+		{"other run without .vif", 2000, false, true},
+		{"unreported run", 0, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := buildEcStoreWithGeneration(t, filepath.Join(t.TempDir(), "src"), collection, vid, tc.srcRun, []erasure_coding.ShardId{0})
@@ -348,7 +350,7 @@ func TestVolumeEcShardsCopyRefusesOtherEncodeRun(t *testing.T) {
 				ShardIds:       []uint32{0},
 				CopyEcxFile:    true,
 				CopyEcjFile:    true,
-				CopyVifFile:    true,
+				CopyVifFile:    tc.copyVif,
 				SourceDataNode: source,
 			})
 			if !tc.wantErr {

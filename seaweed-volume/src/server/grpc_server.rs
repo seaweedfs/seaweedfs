@@ -6450,10 +6450,11 @@ impl VolumeGrpcService {
         }
 
         // The sidecars are staged too and committed with the index, so a failed
-        // copy cannot pair a new .vif with the index this disk keeps.
+        // copy cannot pair a new .vif with the index this disk keeps. The .vif
+        // is fetched even when not installed: it names the copied shards' run.
         let mut staged_sidecars: Vec<(String, crate::server::store_ec::RemoveIncomplete)> =
             Vec::new();
-        if req.copy_vif_file {
+        {
             let copy_req = volume_server_pb::CopyFileRequest {
                 volume_id: req.volume_id,
                 collection: req.collection.clone(),
@@ -6480,7 +6481,9 @@ impl VolumeGrpcService {
             let staged = crate::server::store_ec::RemoveIncomplete::new(&staging);
             if drain_optional_copy_to_file(&mut stream, &staging, ".vif").await? > 0 {
                 require_mounted_encode_run(&self.state.store.read().unwrap(), vid, &staging)?;
-                staged_sidecars.push((file_path, staged));
+                if req.copy_vif_file {
+                    staged_sidecars.push((file_path, staged));
+                }
             }
         }
 
@@ -10550,7 +10553,12 @@ mod tests {
             })
             .unwrap()
         };
-        for (src_run, want_err) in [(1000i64, false), (2000, true), (0, false)] {
+        for (src_run, copy_vif, want_err) in [
+            (1000i64, true, false),
+            (2000, true, true),
+            (2000, false, true),
+            (0, true, false),
+        ] {
             let (source_service, source_tmp) = make_local_service_with_volume("", None);
             let src = source_tmp.path().to_str().unwrap().to_string();
             std::fs::write(
@@ -10584,7 +10592,7 @@ mod tests {
                     shard_ids: vec![0],
                     copy_ecx_file: true,
                     copy_ecj_file: true,
-                    copy_vif_file: true,
+                    copy_vif_file: copy_vif,
                     source_data_node: format!("127.0.0.1:1.{}", port),
                     ..Default::default()
                 }))
