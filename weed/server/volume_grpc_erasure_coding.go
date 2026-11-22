@@ -439,6 +439,9 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 
 		// Use the specific disk location
 		location = vs.store.Locations[req.DiskId]
+		if req.DiskType != "" && location.DiskType != types.ToDiskType(req.DiskType) {
+			return nil, status.Errorf(codes.InvalidArgument, "disk %d is %s, not %s", req.DiskId, location.DiskType.ReadableString(), req.DiskType)
+		}
 		glog.V(1).Infof("Using disk %d for EC shard copy: %s", req.DiskId, location.Directory)
 	} else {
 		// Auto-select the target disk: prefer a disk that already owns one
@@ -467,8 +470,11 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			}
 			return nil, fmt.Errorf("volume %d shards %v are already owned by multiple local disks %v: no single destination; copy per shard or pass disk_id", req.VolumeId, req.ShardIds, dirs)
 		}
-		location = vs.store.FindEcShardTargetLocation(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.DataShardsCount, shardIds...)
+		location = vs.store.FindEcShardTargetLocation(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.DataShardsCount, req.DiskType, shardIds...)
 		if location == nil {
+			if req.DiskType != "" {
+				return nil, status.Errorf(codes.ResourceExhausted, "no space left on a %s disk", req.DiskType)
+			}
 			return nil, status.Error(codes.ResourceExhausted, "no space left")
 		}
 	}
