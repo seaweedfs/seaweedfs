@@ -14112,6 +14112,75 @@ mod tests {
         assert_eq!(err.message(), "already deleted");
     }
 
+    /// A complete lookup places shard 0 nowhere and every other shard on an
+    /// unreachable holder.
+    fn delist_ec_1_shard_0(service: &VolumeGrpcService) {
+        service
+            .state
+            .store
+            .read()
+            .unwrap()
+            .find_ec_volume(VolumeId(1))
+            .unwrap()
+            .merge_shard_locations(
+                (0u8..14)
+                    .map(|sid| {
+                        let addrs = if sid == 0 {
+                            Vec::new()
+                        } else {
+                            vec!["127.0.0.1:255.1".to_string()]
+                        };
+                        (sid, addrs)
+                    })
+                    .collect(),
+            );
+    }
+
+    /// The local shards could rebuild needle 11, but the delisted holder of
+    /// shard 0 still answers and journaled its delete.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_read_asks_a_delisted_holder_before_rebuilding() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        let _peer = put_ec_1_needle_shard_on_a_peer(&service, &tmp, (1..14).collect(), true).await;
+        delist_ec_1_shard_0(&service);
+
+        let err = needle_status(&service, 11).await.unwrap_err();
+        assert_eq!(err.message(), "already deleted", "{err}");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_read_drops_an_unreachable_read_hint_and_rebuilds() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        let want = needle_status(&service, 11).await.unwrap();
+        generate_and_mount_ec_1(&service, (1..14).collect()).await;
+        {
+            let mut store = service.state.store.write().unwrap();
+            store.unmount_volume(VolumeId(1)).unwrap();
+            store
+                .find_ec_volume(VolumeId(1))
+                .unwrap()
+                .merge_shard_locations(
+                    (0u8..14)
+                        .map(|sid| (sid, vec!["127.0.0.1:255.1".to_string()]))
+                        .collect(),
+                );
+        }
+        delist_ec_1_shard_0(&service);
+
+        let got = needle_status(&service, 11)
+            .await
+            .expect("the local shards rebuild shard 0");
+        assert_eq!(got, want);
+        let store = service.state.store.read().unwrap();
+        assert_eq!(
+            store
+                .find_ec_volume(VolumeId(1))
+                .unwrap()
+                .shard_read_hints(0),
+            None
+        );
+    }
+
     fn quarantine_ec_1(service: &VolumeGrpcService) {
         service
             .state
