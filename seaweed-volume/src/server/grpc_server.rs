@@ -4629,23 +4629,19 @@ impl VolumeServer for VolumeGrpcService {
             .find_ec_volume(vid)
             .ok_or_else(|| Status::not_found(format!("ec volume {} not found", req.volume_id)))?;
 
+        // Every local disk's mounted shards, each id once, as Go reports them.
         let mut shard_infos = Vec::new();
-        for (i, shard) in ec_vol.shards.iter().enumerate() {
-            match shard {
-                Some(s) => {
+        let mut seen = std::collections::HashSet::new();
+        for ecv in store.find_all_ec_volumes(vid) {
+            for (i, shard) in ecv.shards.iter().enumerate() {
+                if let Some(s) = shard
+                    && seen.insert(i)
+                {
                     shard_infos.push(volume_server_pb::EcShardInfo {
                         shard_id: i as u32,
                         size: s.file_size(),
-                        collection: ec_vol.collection.clone(),
+                        collection: ecv.collection.clone(),
                         volume_id: req.volume_id,
-                    });
-                }
-                None => {
-                    shard_infos.push(volume_server_pb::EcShardInfo {
-                        shard_id: i as u32,
-                        collection: ec_vol.collection.clone(),
-                        volume_id: req.volume_id,
-                        ..Default::default()
                     });
                 }
             }
@@ -15390,6 +15386,29 @@ mod tests {
         }
 
         (split_disk_grpc_service(store), tmp)
+    }
+
+    #[tokio::test]
+    async fn test_volume_ec_shards_info_lists_only_mounted_shards_of_every_disk() {
+        let (service, _tmp) = make_service_with_two_disk_complete_ec_volume(7062);
+        {
+            let mut store = service.state.store.write().unwrap();
+            for loc in store.locations.iter_mut() {
+                loc.unmount_ec_shards(VolumeId(7062), &[3, 10]);
+            }
+        }
+        let resp = service
+            .volume_ec_shards_info(Request::new(volume_server_pb::VolumeEcShardsInfoRequest {
+                volume_id: 7062,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        let mut ids: Vec<u32> = resp.ec_shard_infos.iter().map(|s| s.shard_id).collect();
+        ids.sort();
+        let want: Vec<u32> = (0..14).filter(|i| *i != 3 && *i != 10).collect();
+        assert_eq!(ids, want);
+        assert!(resp.ec_shard_infos.iter().all(|s| s.size > 0));
     }
 
     #[tokio::test]
