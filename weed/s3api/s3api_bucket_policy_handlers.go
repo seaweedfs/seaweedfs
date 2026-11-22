@@ -15,6 +15,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Bucket policy metadata key for storing policies in filer.
@@ -252,40 +254,48 @@ func (s3a *S3ApiServer) setBucketPolicy(bucket string, policyDoc *policy_engine.
 	}
 
 	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		// First, get the current entry to preserve other attributes
-		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: s3a.bucketRoot(bucket),
-			Name:      bucket,
-		})
-		if err != nil {
-			if errors.Is(err, filer_pb.ErrNotFound) {
+		for attempt := 1; ; attempt++ {
+			// First, get the current entry to preserve other attributes
+			resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
+				Directory: s3a.bucketRoot(bucket),
+				Name:      bucket,
+			})
+			if err != nil {
+				if errors.Is(err, filer_pb.ErrNotFound) {
+					return fmt.Errorf("%w: %v", ErrBucketNotFound, err)
+				}
+				return err
+			}
+
+			entry := resp.Entry
+			if storedPublicAccessBlock(bucket, entry.Extended).blocksPublicPolicy() && isPublicPolicy(policyDoc) {
+				return errPublicPolicyBlocked
+			}
+			// The write must not land over a public access block set after the check above.
+			expected := filer_pb.SnapshotExtended(entry.Extended, s3_constants.ExtPublicAccessBlockKey)
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+
+			// Set the bucket policy metadata
+			entry.Extended[BUCKET_POLICY_METADATA_KEY] = policyJSON
+
+			// Update the entry with new metadata; a bucket deleted between the
+			// lookup above and this write surfaces as a filer NotFound.
+			_, err = client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+				Directory:        s3a.bucketRoot(bucket),
+				Entry:            entry,
+				ExpectedExtended: expected,
+			})
+			if status.Code(err) == codes.FailedPrecondition && attempt < 3 {
+				continue
+			}
+			if err != nil && isBucketNotFoundErr(err) {
 				return fmt.Errorf("%w: %v", ErrBucketNotFound, err)
 			}
+
 			return err
 		}
-
-		entry := resp.Entry
-		if storedPublicAccessBlock(bucket, entry.Extended).blocksPublicPolicy() && isPublicPolicy(policyDoc) {
-			return errPublicPolicyBlocked
-		}
-		if entry.Extended == nil {
-			entry.Extended = make(map[string][]byte)
-		}
-
-		// Set the bucket policy metadata
-		entry.Extended[BUCKET_POLICY_METADATA_KEY] = policyJSON
-
-		// Update the entry with new metadata; a bucket deleted between the
-		// lookup above and this write surfaces as a filer NotFound.
-		_, err = client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
-			Directory: s3a.bucketRoot(bucket),
-			Entry:     entry,
-		})
-		if err != nil && isBucketNotFoundErr(err) {
-			return fmt.Errorf("%w: %v", ErrBucketNotFound, err)
-		}
-
-		return err
 	})
 }
 

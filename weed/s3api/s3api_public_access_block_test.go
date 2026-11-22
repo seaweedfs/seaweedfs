@@ -1,6 +1,8 @@
 package s3api
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +16,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const testPublicAccessBlockXML = `<PublicAccessBlockConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">` +
@@ -358,4 +362,42 @@ func TestRestrictsPublicBucketsReadsBucketConfig(t *testing.T) {
 		s3a, _ := newPublicAccessBlockTestServer(t, entry)
 		require.Equal(t, tc.want, s3a.restrictsPublicBuckets(bucket), tc.pab)
 	}
+}
+
+type racingPublicAccessBlockFiler struct {
+	*ambiguousPutFiler
+	raced bool
+}
+
+func (f *racingPublicAccessBlockFiler) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	f.mu.Lock()
+	current := f.entries[req.Directory+"/"+req.Entry.Name]
+	if !f.raced {
+		f.raced = true
+		current.Extended[s3_constants.ExtPublicAccessBlockKey] = []byte(`<PublicAccessBlockConfiguration><BlockPublicPolicy>true</BlockPublicPolicy></PublicAccessBlockConfiguration>`)
+	}
+	for k, v := range req.ExpectedExtended {
+		if !bytes.Equal(current.Extended[k], v) {
+			f.mu.Unlock()
+			return nil, status.Error(codes.FailedPrecondition, "extended attribute changed")
+		}
+	}
+	f.mu.Unlock()
+	return f.ambiguousPutFiler.UpdateEntry(ctx, req)
+}
+
+func TestPutBucketPolicyKeepsConcurrentPublicAccessBlock(t *testing.T) {
+	const bucket = "pab-policy-race"
+	public := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::pab-policy-race/*"}]}`
+	filerImpl := &racingPublicAccessBlockFiler{ambiguousPutFiler: &ambiguousPutFiler{entries: map[string]*filer_pb.Entry{
+		"/buckets/" + bucket: {Name: bucket, IsDirectory: true, Extended: map[string][]byte{}},
+	}}}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+	r := mux.SetURLVars(httptest.NewRequest(http.MethodPut, "/"+bucket+"?policy", strings.NewReader(public)), map[string]string{"bucket": bucket})
+	rr := httptest.NewRecorder()
+	s3a.PutBucketPolicyHandler(rr, r)
+	require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
+	stored := filerImpl.entries["/buckets/"+bucket].Extended
+	require.NotContains(t, stored, BUCKET_POLICY_METADATA_KEY)
+	require.Contains(t, stored, s3_constants.ExtPublicAccessBlockKey)
 }
