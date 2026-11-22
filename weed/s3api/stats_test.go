@@ -163,6 +163,18 @@ func TestPutStagesRecordBodyReadOncePerRequest(t *testing.T) {
 	assert.Equal(t, uploadsBefore+3, uploadsAfter)
 }
 
+func TestPutStagesRecordBodyReadForEmptyBody(t *testing.T) {
+	r := timeBodyReads(httptest.NewRequest(http.MethodPut, "/bucket/empty", http.NoBody))
+	assert.Equal(t, http.NoBody, r.Body)
+	before, _ := putStageSamples(t, "PutObject", "body_read")
+	stages := newPutStages(r)
+	_, err := stages.upload(context.Background(), r.Body, stagedUploadOption(0, nil))
+	require.NoError(t, err)
+	stages.record()
+	after, _ := putStageSamples(t, "PutObject", "body_read")
+	assert.Equal(t, before+1, after)
+}
+
 func TestPutStagesRecordNothingBeforeUpload(t *testing.T) {
 	before, _ := putStageSamples(t, "PutObject", "body_read")
 	newPutStages(httptest.NewRequest(http.MethodPut, "/bucket/object", nil)).record()

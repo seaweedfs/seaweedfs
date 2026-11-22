@@ -143,12 +143,11 @@ type bodyReads struct {
 
 // timeBodyReads makes r count the time its body reads block, for bodyReadTime.
 func timeBodyReads(r *http.Request) *http.Request {
-	if r.Body == nil || r.Body == http.NoBody {
-		return r
-	}
 	reads := new(bodyReads)
 	r = r.WithContext(context.WithValue(r.Context(), bodyReadTimeKey{}, reads))
-	r.Body = &timedBody{ReadCloser: r.Body, reads: reads}
+	if r.Body != nil && r.Body != http.NoBody {
+		r.Body = &timedBody{ReadCloser: r.Body, reads: reads}
+	}
 	return r
 }
 
