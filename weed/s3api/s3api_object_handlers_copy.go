@@ -2327,6 +2327,13 @@ func (s3a *S3ApiServer) downloadChunkDataFrom(srcUrl, fileId string, offset, siz
 	if len(cipherKey) == 0 && int64(len(chunkData)) < size {
 		return nil, fmt.Errorf("download chunk %s: got %d of %d bytes", srcUrl, len(chunkData), size)
 	}
+	// A compressed ciphertext has no expected length; the GCM tag catches a
+	// truncated or diverged needle instead.
+	if len(cipherKey) > 0 && offset == 0 {
+		if _, err := util.Decrypt(chunkData, util.CipherKey(cipherKey)); err != nil {
+			return nil, fmt.Errorf("download chunk %s: %d encrypted bytes do not decrypt: %w", srcUrl, len(chunkData), err)
+		}
+	}
 	return chunkData, nil
 }
 
