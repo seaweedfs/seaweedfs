@@ -1347,6 +1347,10 @@ struct EcShardMap<'a> {
 
 /// Try direct peer read; on failure, reconstruct via Reed-Solomon
 /// from the other shards. Mirrors `readOneEcShardInterval`'s tail.
+/// Bounds asking a delisted holder, which may have stopped answering, before
+/// the read reconstructs the shard (Go's `ecReadHintTimeout`).
+const EC_READ_HINT_TIMEOUT: Duration = Duration::from_secs(5);
+
 async fn fetch_one_interval(
     state: &Arc<VolumeServerState>,
     iv: EcInterval,
@@ -1356,7 +1360,20 @@ async fn fetch_one_interval(
     if map.locations.get(&shard_id).is_none_or(Vec::is_empty)
         && let Some(hints) = shard_read_hints(state, vid, shard_id)
     {
-        match read_remote_ec_shard_interval(state, &hints, iv).await {
+        // Only a deleted answer is taken from a hint, so one byte is enough.
+        let probe = EcInterval { size: 1, ..iv };
+        let read = tokio::time::timeout(
+            EC_READ_HINT_TIMEOUT,
+            read_remote_ec_shard_interval(state, &hints, probe),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "read hint timed out",
+            ))
+        });
+        match read {
             Ok((buf, true)) => return Ok((buf, true)),
             Ok(_) => {}
             Err(e) => {
