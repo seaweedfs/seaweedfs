@@ -1182,8 +1182,37 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 		if err != nil {
 			return fmt.Errorf("lookup ec volume %d: %v", ecVolume.VolumeId, err)
 		}
-		if len(resp.ShardIdLocations) < ecCtx.DataShards {
-			return fmt.Errorf("only %d shards found but %d required", len(resp.ShardIdLocations), ecCtx.DataShards)
+		// The master answers every shard slot it tracks; only the shards it
+		// places on a server count toward a usable map.
+		located := 0
+		for _, shardIdLocations := range resp.ShardIdLocations {
+			if len(shardIdLocations.Locations) > 0 {
+				located++
+			}
+		}
+		if located < ecCtx.DataShards {
+			// Too few to trust as the volume's map, but a read can still go
+			// straight to a shard it names: put those holders first, keep the
+			// cached ones as fallback, and leave the refresh time alone.
+			ecVolume.ShardLocationsLock.Lock()
+			for _, shardIdLocations := range resp.ShardIdLocations {
+				if len(shardIdLocations.Locations) == 0 {
+					continue
+				}
+				shardId := erasure_coding.ShardId(shardIdLocations.ShardId)
+				var holders []pb.ServerAddress
+				for _, loc := range shardIdLocations.Locations {
+					holders = append(holders, pb.NewServerAddressFromLocation(loc))
+				}
+				for _, known := range ecVolume.ShardLocations[shardId] {
+					if !slices.Contains(holders, known) {
+						holders = append(holders, known)
+					}
+				}
+				ecVolume.ShardLocations[shardId] = holders
+			}
+			ecVolume.ShardLocationsLock.Unlock()
+			return fmt.Errorf("only %d shards found but %d required", located, ecCtx.DataShards)
 		}
 
 		ecVolume.ShardLocationsLock.Lock()

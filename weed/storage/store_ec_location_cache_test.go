@@ -3,8 +3,10 @@ package storage
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net"
 	"os"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,6 +32,22 @@ type countingMaster struct {
 	onLookup func()
 	// failLookup answers with an error instead of a shard map.
 	failLookup atomic.Bool
+	// located, when set, answers every shard slot as the master does but
+	// places only the first located shards on a server.
+	located atomic.Int64
+	// partialPort is the port of the server those shards are placed on; 0 is 1.
+	partialPort atomic.Int64
+}
+
+func partialLocation(port int64) *master_pb.Location {
+	if port == 0 {
+		port = 1
+	}
+	return &master_pb.Location{Url: fmt.Sprintf("127.0.0.1:%d", port), GrpcPort: 2}
+}
+
+func partialHolder(port int64) pb.ServerAddress {
+	return pb.NewServerAddressFromLocation(partialLocation(port))
 }
 
 func (m *countingMaster) LookupEcVolume(_ context.Context, req *master_pb.LookupEcVolumeRequest) (*master_pb.LookupEcVolumeResponse, error) {
@@ -41,6 +59,16 @@ func (m *countingMaster) LookupEcVolume(_ context.Context, req *master_pb.Lookup
 		return nil, status.Error(codes.Unavailable, "master is having a moment")
 	}
 	resp := &master_pb.LookupEcVolumeResponse{VolumeId: req.VolumeId}
+	if located := int(m.located.Load()); located > 0 {
+		for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
+			entry := &master_pb.LookupEcVolumeResponse_EcShardIdLocation{ShardId: uint32(shardId)}
+			if shardId < located {
+				entry.Locations = []*master_pb.Location{partialLocation(m.partialPort.Load())}
+			}
+			resp.ShardIdLocations = append(resp.ShardIdLocations, entry)
+		}
+		return resp, nil
+	}
 	for shardId := 0; shardId < erasure_coding.TotalShardsCount; shardId++ {
 		resp.ShardIdLocations = append(resp.ShardIdLocations, &master_pb.LookupEcVolumeResponse_EcShardIdLocation{
 			ShardId:   uint32(shardId),
@@ -149,6 +177,97 @@ func TestCachedLookupEcShardLocationsSettlesAfterRefresh(t *testing.T) {
 	}
 	if got := master.lookups.Load(); got != 2 {
 		t.Errorf("asked the master %d times, want 2: one cold, one after the failed read", got)
+	}
+}
+
+// The master answers every shard slot, so a reply naming 32 shards can still
+// place fewer than the data shards on a server, as while several holders are
+// down. That reply is a partial and must leave a complete cache as it was.
+func TestCachedLookupEcShardLocationsRefusesAReplyWithFewLocatedShards(t *testing.T) {
+	master, masterAddr := startCountingMaster(t)
+	store := &Store{
+		MasterFn:       func() pb.ServerAddress { return masterAddr },
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
+	ecVolume := &erasure_coding.EcVolume{
+		VolumeId:       9,
+		ShardLocations: make(map[erasure_coding.ShardId][]pb.ServerAddress),
+	}
+	if err := store.cachedLookupEcShardLocations(ecVolume); err != nil {
+		t.Fatalf("first lookup: %v", err)
+	}
+
+	master.located.Store(7)
+	master.partialPort.Store(3)
+	rewindShardLocationsRefresh(ecVolume, 12*time.Second)
+	ecVolume.ShardLocationsLock.Lock()
+	ecVolume.ShardLocationsStale = true
+	refreshedAt := ecVolume.ShardLocationsRefreshTime
+	ecVolume.ShardLocationsLock.Unlock()
+	if err := store.cachedLookupEcShardLocations(ecVolume); err == nil {
+		t.Error("a reply placing 7 of 14 shards was accepted")
+	}
+	ecVolume.ShardLocationsLock.RLock()
+	cached := len(ecVolume.ShardLocations)
+	named := ecVolume.ShardLocations[0]
+	unnamed := ecVolume.ShardLocations[7]
+	refreshed := ecVolume.ShardLocationsRefreshTime
+	ecVolume.ShardLocationsLock.RUnlock()
+	if cached != erasure_coding.TotalShardsCount {
+		t.Errorf("the cache holds %d shards after the partial reply, want all %d kept", cached, erasure_coding.TotalShardsCount)
+	}
+	if want := []pb.ServerAddress{partialHolder(3), partialHolder(1)}; !slices.Equal(named, want) {
+		t.Errorf("a shard the partial reply places holds %v, want its new holder first and the cached one kept: %v", named, want)
+	}
+	if want := []pb.ServerAddress{partialHolder(1)}; !slices.Equal(unnamed, want) {
+		t.Errorf("a shard the partial reply places nowhere holds %v, want its cached %v", unnamed, want)
+	}
+	if !refreshed.Equal(refreshedAt) {
+		t.Errorf("the partial reply moved the refresh time from %v to %v", refreshedAt, refreshed)
+	}
+}
+
+// A partial reply is no map to trust, but the cache takes the holders it names,
+// so a read can still go straight to a shard whose holder is up, including one
+// that moved while the replies stayed partial.
+func TestCachedLookupEcShardLocationsFillsAColdCacheFromAPartialReply(t *testing.T) {
+	master, masterAddr := startCountingMaster(t)
+	master.located.Store(7)
+	store := &Store{
+		MasterFn:       func() pb.ServerAddress { return masterAddr },
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
+	ecVolume := &erasure_coding.EcVolume{
+		VolumeId:       9,
+		ShardLocations: make(map[erasure_coding.ShardId][]pb.ServerAddress),
+	}
+	if err := store.cachedLookupEcShardLocations(ecVolume); err == nil {
+		t.Error("a reply placing 7 of 14 shards was accepted")
+	}
+	ecVolume.ShardLocationsLock.RLock()
+	cached := len(ecVolume.ShardLocations)
+	refreshed := !ecVolume.ShardLocationsRefreshTime.IsZero()
+	stale := ecVolume.ShardLocationsStale
+	ecVolume.ShardLocationsLock.RUnlock()
+	if cached != 7 {
+		t.Errorf("the cold cache holds %d shards after the partial reply, want the 7 it placed", cached)
+	}
+	if refreshed || !stale {
+		t.Errorf("a partial reply must leave the map due a lookup: refreshed=%v stale=%v", refreshed, stale)
+	}
+
+	master.partialPort.Store(4)
+	if err := store.cachedLookupEcShardLocations(ecVolume); err == nil {
+		t.Error("a second reply placing 7 of 14 shards was accepted")
+	}
+	if got := master.lookups.Load(); got != 2 {
+		t.Fatalf("asked the master %d times, want 2: a partial reply leaves the map due", got)
+	}
+	ecVolume.ShardLocationsLock.RLock()
+	moved := ecVolume.ShardLocations[0]
+	ecVolume.ShardLocationsLock.RUnlock()
+	if want := []pb.ServerAddress{partialHolder(4), partialHolder(1)}; !slices.Equal(moved, want) {
+		t.Errorf("after the shard moved, the cache holds %v, want %v", moved, want)
 	}
 }
 

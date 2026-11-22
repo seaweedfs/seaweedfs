@@ -158,7 +158,7 @@ pub async fn read_ec_shard_needle_or_miss(
         match cached_lookup_ec_shard_locations(state, vid).await {
             Ok(fresh) => {
                 // A complete reply merges into the cache; an incomplete one
-                // (< data_shards) is left unwritten — keep the prior cache.
+                // (< data_shards) only puts the holders it names first.
                 match write_back_shard_locations(
                     state,
                     vid,
@@ -167,8 +167,6 @@ pub async fn read_ec_shard_needle_or_miss(
                     snapshot.encode_ts_ns,
                 ) {
                     Some(merged) => shard_locations = merged,
-                    // An incomplete reply leaves the cache unwritten and its refresh
-                    // time unadvanced, so the mark this refresh consumed goes back.
                     None => mark_shard_locations_stale(state, vid),
                 }
             }
@@ -714,8 +712,10 @@ pub async fn scrub_ec_volume_distributed(
     ) {
         match cached_lookup_ec_shard_locations(state, vid).await {
             Ok(fresh) => {
+                let partial = located_shard_count(&fresh) < data_shards;
                 if write_back_shard_locations(state, vid, fresh, data_shards, expected_encode_ts_ns)
                     .is_none()
+                    || partial
                 {
                     mark_shard_locations_stale(state, vid);
                     return (
@@ -1232,35 +1232,44 @@ async fn cached_lookup_ec_shard_locations(
         .lookup_ec_volume(Request::new(LookupEcVolumeRequest { volume_id: vid.0 }))
         .await
         .map_err(|e| io::Error::other(format!("lookup_ec_volume: {}", e)))?;
-    let resp = resp.into_inner();
+    Ok(shard_locations_from_reply(resp.into_inner()))
+}
 
+/// The shard slots of a `LookupEcVolume` reply. The master answers every slot
+/// it tracks, so a shard whose holders are all down comes back with no
+/// addresses: it does not count toward the reply's completeness, and a complete
+/// reply drops it from the cache, as Go's `cachedLookupEcShardLocations` does.
+fn shard_locations_from_reply(
+    resp: master_pb::LookupEcVolumeResponse,
+) -> HashMap<ShardId, Vec<String>> {
     let mut out = HashMap::new();
     for entry in resp.shard_id_locations {
+        let Ok(sid) = shard_id_try_from(entry.shard_id) else {
+            continue;
+        };
         let addrs: Vec<String> = entry
             .locations
             .iter()
             .map(format_location_as_server_address)
             .collect();
-        // Defensive: skip out-of-range shard ids from the master instead of
-        // truncating (256 would alias 0). Valid replies are unaffected.
-        let Ok(sid) = shard_id_try_from(entry.shard_id) else {
-            continue;
-        };
         out.insert(sid, addrs);
     }
-    Ok(out)
+    out
+}
+
+fn located_shard_count(locations: &HashMap<ShardId, Vec<String>>) -> usize {
+    locations.values().filter(|addrs| !addrs.is_empty()).count()
 }
 
 /// Merge a fresh `LookupEcVolume` reply into the per-EcVolume shard-location
-/// cache. Returns the merged map on success, or `None` when the reply is
-/// incomplete (and was therefore NOT written) or the volume is gone.
+/// cache. Returns the resulting map, or `None` when the volume is gone.
 ///
 /// Completeness guard (mirrors Go's `cachedLookupEcShardLocations`): a reply
 /// carrying fewer than `data_shards` shard locations is a master-mid-recovery
-/// partial, not ground truth — Go aborts the lookup with a retryable error and
-/// leaves the cache + refresh time untouched. Returning `None` without writing
-/// does the same, so a previously-complete cache is never clobbered with a
-/// partial map. On a complete reply the write is a per-shard MERGE (see
+/// partial, not ground truth. It only puts the holders it names ahead of the
+/// cached ones, and leaves the refresh time unadvanced with the map marked
+/// stale, so a previously-complete cache is never clobbered with a partial map.
+/// On a complete reply the write is a per-shard MERGE (see
 /// `merge_shard_locations`), not a full replace.
 fn write_back_shard_locations(
     state: &Arc<VolumeServerState>,
@@ -1269,11 +1278,11 @@ fn write_back_shard_locations(
     data_shards: usize,
     expected_encode_ts_ns: i64,
 ) -> Option<HashMap<ShardId, Vec<String>>> {
-    if locations.len() < data_shards {
-        return None;
-    }
     let store = state.store.read().unwrap();
     let ecv = find_ec_volume_for_scrub(&store, vid, expected_encode_ts_ns)?;
+    if located_shard_count(&locations) < data_shards {
+        return Some(ecv.merge_partial_shard_locations(locations));
+    }
     Some(ecv.merge_shard_locations(locations))
 }
 
@@ -2780,6 +2789,38 @@ mod tests {
         corrupt(&mut shards, &[0, 1, 2, 3, 4], &metas);
 
         assert!(search(&shards, &metas, &n, dat_offset).is_none());
+    }
+
+    // The master answers all 32 shard slots, located or not. While 7 of a 10+4
+    // volume's shards have a holder up, the reply must count as 7 shards, short
+    // of the data shards.
+    #[test]
+    fn a_lookup_reply_counts_only_located_shards() {
+        use master_pb::lookup_ec_volume_response::EcShardIdLocation;
+        let located = [0u32, 3, 4, 6, 7, 9, 12];
+        let reply = master_pb::LookupEcVolumeResponse {
+            volume_id: 136,
+            shard_id_locations: (0..32u32)
+                .map(|sid| EcShardIdLocation {
+                    shard_id: sid,
+                    locations: if located.contains(&sid) {
+                        vec![master_pb::Location {
+                            url: "10.0.0.5:8180".to_string(),
+                            grpc_port: 18180,
+                            ..Default::default()
+                        }]
+                    } else {
+                        Vec::new()
+                    },
+                    ..Default::default()
+                })
+                .collect(),
+        };
+        let got = shard_locations_from_reply(reply);
+        assert_eq!(got.len(), 32);
+        assert_eq!(located_shard_count(&got), 7);
+        assert!(got[&1].is_empty());
+        assert_eq!(got[&3], vec!["10.0.0.5:8180.18180".to_string()]);
     }
 
     fn locations(count: usize) -> HashMap<ShardId, Vec<String>> {
