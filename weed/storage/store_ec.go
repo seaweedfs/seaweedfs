@@ -727,13 +727,15 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 
 	if !hasShardIdLocation && len(readHints) > 0 {
 		_, is_deleted, err = s.readRemoteEcShardInterval(readHints, needleId, ecVolume.VolumeId, shardId, data, actualOffset, ecVolume.EncodeTsNs)
-		if err == nil {
+		if err == nil && is_deleted {
 			return
 		}
-		glog.V(1).Infof("read ec shard %d.%d from delisted holders %v: %v", ecVolume.VolumeId, shardId, readHints, err)
-		ecVolume.ShardLocationsLock.Lock()
-		delete(ecVolume.ShardReadHints, shardId)
-		ecVolume.ShardLocationsLock.Unlock()
+		if err != nil {
+			glog.V(1).Infof("read ec shard %d.%d from delisted holders %v: %v", ecVolume.VolumeId, shardId, readHints, err)
+			ecVolume.ShardLocationsLock.Lock()
+			delete(ecVolume.ShardReadHints, shardId)
+			ecVolume.ShardLocationsLock.Unlock()
+		}
 	}
 
 	// try reading directly

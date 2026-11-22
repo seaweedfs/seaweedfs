@@ -553,3 +553,36 @@ func TestReadOneEcShardIntervalAsksADelistedHolderBeforeRebuilding(t *testing.T)
 		t.Error("the rebuilt interval does not match the shard on disk")
 	}
 }
+
+// A delete made after the delisting went to a listed holder, so the delisted
+// holder still answers live; the read must not take that answer over the
+// reconstruction that asks the listed holders.
+func TestReadOneEcShardIntervalDoesNotTakeALiveAnswerFromADelistedHolder(t *testing.T) {
+	const delisted = erasure_coding.ShardId(3)
+	baseFileName, n := writeEcVolumeFiles(t, t.TempDir(), 7)
+	live := startEcShardPeer(t, &oneBadShardPeer{baseFileName: baseFileName, badShard: 13})
+	journaled := startEcShardPeer(t, deletedNeedlePeer{})
+
+	store := &Store{grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials())}
+	ecVolume := &erasure_coding.EcVolume{
+		VolumeId:       7,
+		ShardLocations: map[erasure_coding.ShardId][]pb.ServerAddress{0: {journaled}},
+		ShardReadHints: map[erasure_coding.ShardId][]pb.ServerAddress{delisted: {live}},
+	}
+	for shardId := erasure_coding.ShardId(4); shardId < 13; shardId++ {
+		ecVolume.ShardLocations[shardId] = []pb.ServerAddress{live}
+	}
+	ecVolume.ShardLocationsRefreshTime = time.Now()
+
+	interval := erasure_coding.Interval{BlockIndex: int(delisted), Size: 4096, IsLargeBlock: true}
+	isDeleted, err := store.readOneEcShardInterval(n.Id, ecVolume, interval, make([]byte, interval.Size))
+	if !isDeleted {
+		t.Fatalf("read interval: deleted=%v err=%v, want the listed holder's delete", isDeleted, err)
+	}
+	ecVolume.ShardLocationsLock.RLock()
+	_, hinted := ecVolume.ShardReadHints[delisted]
+	ecVolume.ShardLocationsLock.RUnlock()
+	if !hinted {
+		t.Error("a read hint that answered was dropped")
+	}
+}
