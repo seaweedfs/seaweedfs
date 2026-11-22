@@ -18,6 +18,9 @@ type BucketPolicyEngine struct {
 	// Returns "" when the upload had no SSE or when the entry cannot be found.
 	// Set by S3ApiServer after construction to give the engine filer access.
 	MultipartSSELookup func(bucket, object, uploadID string) string
+	// RestrictsPublicBuckets reports whether a bucket's public access block
+	// sets RestrictPublicBuckets. Set by S3ApiServer after construction.
+	RestrictsPublicBuckets func(bucket string) bool
 }
 
 // NewBucketPolicyEngine creates a new bucket policy engine
@@ -122,6 +125,10 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 		return false, false, fmt.Errorf("action cannot be empty")
 	}
 
+	if principal == "*" && bpe.restrictsPublicPolicy(bucket) {
+		return false, true, nil
+	}
+
 	// Convert action to S3 action format
 	// ResolveS3Action handles nil request internally (falls back to mapBaseActionToS3Format)
 	s3Action := ResolveS3Action(r, action, bucket, object)
@@ -180,6 +187,9 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 	switch result {
 	case policy_engine.PolicyResultAllow:
 		// glog.V(4).Infof("EvaluatePolicy [Wrapper]: ALLOW - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
+		if principal == "*" && bpe.restrictsPublicPolicy(bucket) {
+			return false, true, nil
+		}
 		return true, true, nil
 	case policy_engine.PolicyResultDeny:
 		// glog.V(4).Infof("EvaluatePolicy [Wrapper]: DENY - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
@@ -191,6 +201,18 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 	default:
 		return false, false, fmt.Errorf("unknown policy result: %v", result)
 	}
+}
+
+// restrictsPublicPolicy reports whether RestrictPublicBuckets denies the
+// bucket to anonymous callers, which it does while the bucket has a public
+// policy. It is checked before and after evaluation, so a policy replaced
+// in between cannot slip an anonymous grant past it.
+func (bpe *BucketPolicyEngine) restrictsPublicPolicy(bucket string) bool {
+	doc, err := bpe.engine.GetBucketPolicy(bucket)
+	if err != nil || !isPublicPolicy(doc) {
+		return false
+	}
+	return bpe.RestrictsPublicBuckets != nil && bpe.RestrictsPublicBuckets(bucket)
 }
 
 // principalVariables resolves the policy variables of a principal. A role

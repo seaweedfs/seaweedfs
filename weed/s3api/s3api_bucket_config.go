@@ -434,14 +434,7 @@ func (s3a *S3ApiServer) newBucketConfigFromEntry(bucket string, entry *filer_pb.
 			config.Ownership = string(ownership)
 		}
 		config.OwnershipDeleted = len(entry.Extended[s3_constants.ExtOwnershipDeletedKey]) > 0
-		if data, exists := entry.Extended[s3_constants.ExtPublicAccessBlockKey]; exists && len(data) > 0 {
-			if pab, err := parsePublicAccessBlock(data); err == nil {
-				config.PublicAccessBlock = pab
-			} else {
-				glog.Errorf("newBucketConfigFromEntry: bucket %s public access block, blocking all public access: %v", bucket, err)
-				config.PublicAccessBlock = &PublicAccessBlockConfiguration{BlockPublicAcls: true, IgnorePublicAcls: true, BlockPublicPolicy: true, RestrictPublicBuckets: true}
-			}
-		}
+		config.PublicAccessBlock = storedPublicAccessBlock(bucket, entry.Extended)
 		if acl, exists := entry.Extended[s3_constants.ExtAmzAclKey]; exists {
 			config.ACL = acl
 			// Parse ACL once and cache public-read status.

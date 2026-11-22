@@ -410,6 +410,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// stored at CreateMultipartUpload time, so that UploadPart/UploadPartCopy
 	// policy conditions on s3:x-amz-server-side-encryption evaluate correctly.
 	policyEngine.MultipartSSELookup = s3ApiServer.getMultipartSSEAlgorithm
+	policyEngine.RestrictsPublicBuckets = s3ApiServer.restrictsPublicBuckets
 
 	// Advanced-IAM authorization evaluates the bucket-policy:<bucket> mirror
 	// before any handler runs, so the auth path has to be what triggers the

@@ -15,6 +15,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // Bucket policy metadata key for storing policies in filer.
@@ -116,6 +119,8 @@ func (s3a *S3ApiServer) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 	if err := s3a.setBucketPolicy(bucket, &policyDoc); err != nil {
 		if errors.Is(err, ErrBucketNotFound) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchBucket)
+		} else if errors.Is(err, errPublicPolicyBlocked) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		} else {
 			glog.Errorf("Failed to store bucket policy for %s: %v", bucket, err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
@@ -250,37 +255,52 @@ func (s3a *S3ApiServer) setBucketPolicy(bucket string, policyDoc *policy_engine.
 	}
 
 	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		// First, get the current entry to preserve other attributes
-		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: s3a.bucketRoot(bucket),
-			Name:      bucket,
-		})
-		if err != nil {
-			if errors.Is(err, filer_pb.ErrNotFound) {
+		for attempt := 1; ; attempt++ {
+			// First, get the current entry to preserve other attributes
+			resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
+				Directory: s3a.bucketRoot(bucket),
+				Name:      bucket,
+			})
+			if err != nil {
+				if errors.Is(err, filer_pb.ErrNotFound) {
+					return fmt.Errorf("%w: %v", ErrBucketNotFound, err)
+				}
+				return err
+			}
+
+			entry := resp.Entry
+			if storedPublicAccessBlock(bucket, entry.Extended).blocksPublicPolicy() && isPublicPolicy(policyDoc) {
+				return errPublicPolicyBlocked
+			}
+			// The write lands only over the entry checked above, so neither a public
+			// access block nor any other bucket setting written since is lost.
+			expected := proto.Clone(entry).(*filer_pb.Entry)
+			if entry.Extended == nil {
+				entry.Extended = make(map[string][]byte)
+			}
+
+			// Set the bucket policy metadata
+			entry.Extended[BUCKET_POLICY_METADATA_KEY] = policyJSON
+
+			// Update the entry with new metadata; a bucket deleted between the
+			// lookup above and this write surfaces as a filer NotFound.
+			_, err = client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+				Directory: s3a.bucketRoot(bucket),
+				Entry:     entry,
+				Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+					Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+					ExpectedEntry: expected,
+				}}},
+			})
+			if status.Code(err) == codes.FailedPrecondition && attempt < 3 {
+				continue
+			}
+			if err != nil && isBucketNotFoundErr(err) {
 				return fmt.Errorf("%w: %v", ErrBucketNotFound, err)
 			}
+
 			return err
 		}
-
-		entry := resp.Entry
-		if entry.Extended == nil {
-			entry.Extended = make(map[string][]byte)
-		}
-
-		// Set the bucket policy metadata
-		entry.Extended[BUCKET_POLICY_METADATA_KEY] = policyJSON
-
-		// Update the entry with new metadata; a bucket deleted between the
-		// lookup above and this write surfaces as a filer NotFound.
-		_, err = client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
-			Directory: s3a.bucketRoot(bucket),
-			Entry:     entry,
-		})
-		if err != nil && isBucketNotFoundErr(err) {
-			return fmt.Errorf("%w: %v", ErrBucketNotFound, err)
-		}
-
-		return err
 	})
 }
 
