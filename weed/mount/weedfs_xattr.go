@@ -119,8 +119,14 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 		return fuse.ENOENT
 	}
 	if path != "" {
-		unlock := wfs.lockMetadataPublication(path)
+		var unlock func()
+		if path, fh, entry, unlock, status = wfs.lockNodePublication(ctx, input.NodeId, path, fh, entry); status != fuse.OK {
+			return status
+		}
 		defer unlock()
+		if entry == nil {
+			return fuse.ENOENT
+		}
 	}
 	if snapshot, ok := wfs.attributeEntrySnapshot(fh, entry); ok && path != "" {
 		_, code := wfs.saveEntryAttributes(ctx, path, snapshot, 0, func(next *filer_pb.Entry) fuse.Status {
@@ -216,8 +222,14 @@ func (wfs *WFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr 
 		return fuse.OK
 	}
 	if path != "" {
-		unlock := wfs.lockMetadataPublication(path)
+		var unlock func()
+		if path, fh, entry, unlock, status = wfs.lockNodePublication(ctx, header.NodeId, path, fh, entry); status != fuse.OK {
+			return status
+		}
 		defer unlock()
+		if entry == nil {
+			return fuse.OK
+		}
 	}
 	if snapshot, ok := wfs.attributeEntrySnapshot(fh, entry); ok && path != "" {
 		_, code := wfs.saveEntryAttributes(ctx, path, snapshot, 0, func(next *filer_pb.Entry) fuse.Status {
