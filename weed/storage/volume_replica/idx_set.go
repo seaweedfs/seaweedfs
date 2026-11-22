@@ -155,11 +155,12 @@ func loadIndexHistory(data []byte, latest, deletedWrites *needle_map.MemDb) erro
 
 // MissedDeletes returns, per replica, the needles live there that another
 // replica holds as the same write (cookie, CRC, last-modified) followed by a
-// tombstone: deletes the replica missed. live holds each replica's sorted live
-// ids, latest its index with tombstone rows kept, deletedWrites the live row
-// each tombstone replaced, and readMeta reads a row's record on replica i. The
-// order comes from one replica's own index, never from clocks across servers,
-// so a needle written again after its delete stays live.
+// tombstone, and that this replica never deleted itself: deletes the replica
+// missed. live holds each replica's sorted live ids, latest its index with
+// tombstone rows kept, deletedWrites the live row each tombstone replaced, and
+// readMeta reads a row's record on replica i. The order comes from the replicas'
+// own indexes, never from clocks across servers, so a needle written again
+// after its delete stays live.
 func MissedDeletes(live [][]types.NeedleId, latest, deletedWrites []*needle_map.MemDb, readMeta func(replica int, nv needle_map.NeedleValue) (*volume_server_pb.ReadNeedleMetaResponse, error)) ([][]types.NeedleId, error) {
 	missed := make([][]types.NeedleId, len(live))
 	for i := range live {
@@ -176,6 +177,9 @@ func MissedDeletes(live [][]types.NeedleId, latest, deletedWrites []*needle_map.
 		}
 		for _, id := range live[i] {
 			if !notLiveSomewhere[id] {
+				continue
+			}
+			if _, deletedHere := deletedWrites[i].Get(id); deletedHere {
 				continue
 			}
 			liveRow, found := latest[i].Get(id)

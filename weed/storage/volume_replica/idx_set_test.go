@@ -325,6 +325,22 @@ func TestMissedDeletes_DifferentWriteStillRefuses(t *testing.T) {
 	}
 }
 
+func TestMissedDeletes_IdenticalRewriteAfterOwnDeleteStillRefuses(t *testing.T) {
+	views, err := missedDeleteViews(t, []replicaRows{
+		{loc: replicaA, live: map[types.NeedleId]writeMeta{1: write1, 2: write2}, deleted: map[types.NeedleId]writeMeta{2: write2}},
+		{loc: replicaB, live: map[types.NeedleId]writeMeta{1: write1}, deleted: map[types.NeedleId]writeMeta{2: write2}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views[0].missed) != 0 {
+		t.Fatalf("A deleted the needle too, so its live copy is a rewrite: %v", views[0].missed)
+	}
+	if _, err := chooseSourceFromLiveNeedles(7, views, "", io.Discard); err == nil || !strings.Contains(err.Error(), "no union") {
+		t.Fatalf("got %v, want a no-union refusal", err)
+	}
+}
+
 func TestMissedDeletes_AbsentElsewhereStillRefuses(t *testing.T) {
 	views, err := missedDeleteViews(t, []replicaRows{
 		{loc: replicaA, live: map[types.NeedleId]writeMeta{1: write1, 2: write2}},

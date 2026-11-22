@@ -127,6 +127,7 @@ func TestSelectSourceIfIndexesMatchMissedDelete(t *testing.T) {
 		t.Cleanup(func() { conn.Close() })
 		framework.AllocateVolume(t, client, 9615, "ec-idx-order")
 		framework.AllocateVolume(t, client, 9616, "ec-idx-order")
+		framework.AllocateVolume(t, client, 9617, "ec-idx-order")
 	}
 
 	urls := []string{cluster.VolumeAdminURL(0), cluster.VolumeAdminURL(1)}
@@ -143,6 +144,14 @@ func TestSelectSourceIfIndexesMatchMissedDelete(t *testing.T) {
 	require.Equal(t, http.StatusCreated, resp.StatusCode)
 	_, err = volume_replica.SelectSourceIfIndexesMatch(dialOption, 9616, "ec-idx-order", locs, "", &bytes.Buffer{})
 	require.Error(t, err, "a write other than the one the replica deleted is a missed write, not a missed delete")
+	require.Contains(t, err.Error(), "no union")
+
+	replicateNeedles(t, httpClient, urls, 9617, []uint64{1, 2})
+	deleteNeedles(t, httpClient, urls[0], 9617, []uint64{2})
+	deleteNeedles(t, httpClient, urls[1], 9617, []uint64{2})
+	replicateNeedles(t, httpClient, urls[:1], 9617, []uint64{2})
+	_, err = volume_replica.SelectSourceIfIndexesMatch(dialOption, 9617, "ec-idx-order", locs, "", &bytes.Buffer{})
+	require.Error(t, err, "an identical upload after both replicas deleted the needle is a missed write")
 	require.Contains(t, err.Error(), "no union")
 }
 
