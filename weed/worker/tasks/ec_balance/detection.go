@@ -173,6 +173,7 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config, all
 	}
 	volRatios := make(map[volRatioKey][2]int)
 	emptyIndex := emptyIndexEcVolumes(topoInfo)
+	plainVolumes := plainReplicaVolumes(topoInfo)
 
 	// Normalize the disk-type filter: "hdd" (and the default "") map to the
 	// HardDriveType, which the topology reports under the empty-string key. Keep a
@@ -286,6 +287,9 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config, all
 						continue
 					}
 					for _, eci := range diskInfo.EcShardInfos {
+						if plainVolumes[ecVolumeKey{eci.Collection, eci.Id}] {
+							continue
+						}
 						if !allowedCollections.Matches(eci.Collection) {
 							continue
 						}
@@ -343,6 +347,26 @@ func emptyIndexEcVolumes(topoInfo *master_pb.TopologyInfo) map[ecVolumeKey]bool 
 		}
 	}
 	return empty
+}
+
+// plainReplicaVolumes are the volumes with a plain replica registered. An EC
+// volume among them belongs to an encode that has not finished, or to one whose
+// source cleanup is pending, and the encoder owns its shards until the plain
+// replicas are gone. Those shards still count toward disk occupancy.
+func plainReplicaVolumes(topoInfo *master_pb.TopologyInfo) map[ecVolumeKey]bool {
+	plain := make(map[ecVolumeKey]bool)
+	for _, dc := range topoInfo.GetDataCenterInfos() {
+		for _, rack := range dc.GetRackInfos() {
+			for _, dn := range rack.GetDataNodeInfos() {
+				for _, diskInfo := range dn.GetDiskInfos() {
+					for _, vi := range diskInfo.GetVolumeInfos() {
+						plain[ecVolumeKey{vi.Collection, vi.Id}] = true
+					}
+				}
+			}
+		}
+	}
+	return plain
 }
 
 // resolveECRatio returns the (dataShards, parityShards) for a collection from the

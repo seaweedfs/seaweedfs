@@ -440,3 +440,30 @@ func TestEmptyIndexVolumeIsNotMoved(t *testing.T) {
 		t.Error("expected moves for a volume one of whose holders reports needles")
 	}
 }
+
+// TestVolumeWithPlainReplicaIsNotMoved: a concentrated volume that still has a
+// plain replica registered is an encode in progress, so balance leaves its
+// shards to the encoder. A plain volume with the same id in another collection
+// is a different volume and does not hold it back.
+func TestVolumeWithPlainReplicaIsNotMoved(t *testing.T) {
+	cfg := NewDefaultConfig()
+	cfg.ImbalanceThreshold = 0.0
+	specs := []nodeSpec{
+		{id: "n1", rack: "rack1", disks: map[uint32][]int{0: {0, 1, 2}, 1: {3, 4, 5}, 2: {6, 7}, 3: {8, 9}, 4: {10, 11}, 5: {12}}},
+		{id: "n2", rack: "rack2", disks: map[uint32][]int{0: {13}}},
+		{id: "n3", rack: "rack3", disks: map[uint32][]int{}},
+	}
+	withPlainReplica := func(collection string) *master_pb.TopologyInfo {
+		topo := buildMasterTopology("col1", 28, 50, specs)
+		dn := topo.DataCenterInfos[0].RackInfos[2].DataNodeInfos[0]
+		dn.DiskInfos[""].VolumeInfos = append(dn.DiskInfos[""].VolumeInfos, &master_pb.VolumeInformationMessage{Id: 28, Collection: collection})
+		return topo
+	}
+
+	if results := runDetection(t, withPlainReplica("col1"), cfg); len(results) != 0 {
+		t.Errorf("moved %d shards of a volume that still has a plain replica", len(results))
+	}
+	if len(runDetection(t, withPlainReplica("other"), cfg)) == 0 {
+		t.Error("expected moves when the plain volume belongs to another collection")
+	}
+}
