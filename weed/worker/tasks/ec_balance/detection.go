@@ -293,6 +293,7 @@ func buildBalancerTopology(topoInfo *master_pb.TopologyInfo, config *Config, all
 							continue
 						}
 						node.AddShards(eci.Id, eci.Collection, eci.DiskId, erasure_coding.ShardBits(eci.EcIndexBits))
+						node.SetEncodeTs(eci.Id, eci.Collection, eci.DiskId, eci.EncodeTsNs)
 						if d, p := ecbalancer.VolumeShardRatio(eci); d > 0 || p > 0 {
 							volRatios[volRatioKey{eci.Collection, eci.Id}] = [2]int{d, p}
 						}
