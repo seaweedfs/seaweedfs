@@ -91,7 +91,7 @@ func TestPrepareDataToRecover_DryRunRecoverableNoSideEffects(t *testing.T) {
 		locations[i] = []*EcNode{remote}
 	}
 
-	copied, local, err := erb.prepareDataToRecover(rebuilder, "c1", needle.VolumeId(1), locations)
+	copied, local, err := erb.prepareDataToRecover(rebuilder, "c1", needle.VolumeId(1), locations, nil)
 	if err != nil {
 		t.Fatalf("dry-run on a recoverable volume must not error: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestPrepareDataToRecover_UnionsLocalShardsAcrossDisks(t *testing.T) {
 	locations[1] = []*EcNode{rebuilder}
 	locations[5] = []*EcNode{rebuilder}
 
-	copied, local, err := erb.prepareDataToRecover(rebuilder, "c1", needle.VolumeId(1), locations)
+	copied, local, err := erb.prepareDataToRecover(rebuilder, "c1", needle.VolumeId(1), locations, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestPrepareDataToRecover_SelfSourceNotCopied(t *testing.T) {
 	}
 	locations[5] = []*EcNode{rebuilder} // sole holder is the rebuilder, not in its reported shards
 
-	copied, local, err := erb.prepareDataToRecover(rebuilder, "c1", needle.VolumeId(1), locations)
+	copied, local, err := erb.prepareDataToRecover(rebuilder, "c1", needle.VolumeId(1), locations, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestPrepareDataToRecover_ApplyCopyFailureDoesNotCountAsRecoverable(t *testi
 	}
 	locations[9] = []*EcNode{remote}
 
-	copied, local, err := erb.prepareDataToRecover(rebuilder, "c1", needle.VolumeId(1), locations)
+	copied, local, err := erb.prepareDataToRecover(rebuilder, "c1", needle.VolumeId(1), locations, nil)
 	if err == nil {
 		t.Fatalf("copy failure must leave only 9 usable shards and fail recoverability gate; copied=%v local=%v log:\n%s", copied, local, log.String())
 	}

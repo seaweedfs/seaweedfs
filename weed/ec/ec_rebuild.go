@@ -390,15 +390,17 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 
 	fmt.Printf("rebuildOneEcVolume %s %d\n", collection, volumeId)
 
+	var unchecked map[string]bool
 	if erb.applyChanges {
-		if err := erb.requireAgreedEncodeRun(volumeId, locations, rebuilder); err != nil {
+		var err error
+		if unchecked, err = erb.requireAgreedEncodeRun(volumeId, locations, rebuilder); err != nil {
 			return err
 		}
 	}
 
 	// collect shard files to rebuilder local disk
 	var generatedShardIds []erasure_coding.ShardId
-	copiedShardIds, _, err := erb.prepareDataToRecover(rebuilder, collection, volumeId, locations)
+	copiedShardIds, _, err := erb.prepareDataToRecover(rebuilder, collection, volumeId, locations, unchecked)
 	defer func() {
 		// Clean up the working copies this run actually made, even when the
 		// recoverability gate failed after some copies already succeeded:
@@ -461,10 +463,12 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 // requireAgreedEncodeRun refuses a rebuild whose rebuilder and copy sources
 // serve shards of different encode runs: the copies would land beside the
 // first run's .vif and .ecx, and the rebuild would regenerate from the mixed
-// set. A holder that does not answer in time is skipped like an unreachable
-// one; the copy itself still checks the source's run against the mounted run.
-func (erb *ecRebuilder) requireAgreedEncodeRun(volumeId needle.VolumeId, locations EcShardLocations, rebuilder *EcNode) error {
-	holders := []string{string(pb.NewServerAddressFromDataNode(rebuilder.Info))}
+// set. It returns the copy sources whose run could not be checked: a
+// rebuilder with nothing mounted has no run to check a copy against, so the
+// rebuild must not copy from them.
+func (erb *ecRebuilder) requireAgreedEncodeRun(volumeId needle.VolumeId, locations EcShardLocations, rebuilder *EcNode) (unchecked map[string]bool, err error) {
+	rebuilderAddress := string(pb.NewServerAddressFromDataNode(rebuilder.Info))
+	holders := []string{rebuilderAddress}
 	for _, ecNodes := range locations {
 		if len(ecNodes) > 0 {
 			holders = append(holders, string(pb.NewServerAddressFromDataNode(ecNodes[0].Info)))
@@ -479,8 +483,14 @@ func (erb *ecRebuilder) requireAgreedEncodeRun(volumeId needle.VolumeId, locatio
 		_, inv := erasure_coding.VerifyShardsAcrossServers(ctx, uint32(volumeId), []string{holder}, erb.env.GrpcDialOption)
 		cancel()
 		perServer[holder] = inv[holder]
+		if inv[holder].QueryError != nil && holder != rebuilderAddress {
+			if unchecked == nil {
+				unchecked = make(map[string]bool)
+			}
+			unchecked[holder] = true
+		}
 	}
-	return erasure_coding.RequireAgreedEncodeRun(uint32(volumeId), perServer)
+	return unchecked, erasure_coding.RequireAgreedEncodeRun(uint32(volumeId), perServer)
 }
 
 func (erb *ecRebuilder) generateMissingShards(collection string, volumeId needle.VolumeId, sourceLocation pb.ServerAddress) (rebuiltShardIds []erasure_coding.ShardId, err error) {
@@ -510,7 +520,7 @@ func (erb *ecRebuilder) generateMissingShards(collection string, volumeId needle
 	return
 }
 
-func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection string, volumeId needle.VolumeId, locations EcShardLocations) (copiedShardIds []erasure_coding.ShardId, localShardIds []erasure_coding.ShardId, err error) {
+func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection string, volumeId needle.VolumeId, locations EcShardLocations, unchecked map[string]bool) (copiedShardIds []erasure_coding.ShardId, localShardIds []erasure_coding.ShardId, err error) {
 
 	needEcxFile := true
 	localShardsInfo := erasure_coding.NewShardsInfo()
@@ -563,6 +573,11 @@ func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection strin
 		if !erb.applyChanges {
 			recoverableRemoteShards++
 			erb.write("would copy %d.%d from %s\n", volumeId, shardId, ecNodes[0].Info.Id)
+			continue
+		}
+
+		if unchecked[string(pb.NewServerAddressFromDataNode(ecNodes[0].Info))] {
+			erb.write("%s skipped %d.%d from %s: its encode run could not be checked\n", rebuilder.Info.Id, volumeId, shardId, ecNodes[0].Info.Id)
 			continue
 		}
 

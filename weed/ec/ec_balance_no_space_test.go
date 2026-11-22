@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -31,7 +32,9 @@ type ecBalanceFakeServer struct {
 	full      bool                       // VolumeEcShardsCopy answers "no space left"
 	run       int64                      // encode run VolumeEcShardsInfo reports
 	stall     bool                       // VolumeEcShardsInfo never answers
+	infoErr   error                      // VolumeEcShardsInfo answers this error
 	copyCalls int
+	sources   []string // SourceDataNode of each VolumeEcShardsCopy
 	grpcAddr  string
 	stop      func()
 }
@@ -40,6 +43,7 @@ func (f *ecBalanceFakeServer) VolumeEcShardsCopy(ctx context.Context, req *volum
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.copyCalls++
+	f.sources = append(f.sources, req.SourceDataNode)
 	if f.full {
 		return nil, fmt.Errorf("no space left")
 	}
@@ -63,6 +67,9 @@ func (f *ecBalanceFakeServer) VolumeEcShardsInfo(ctx context.Context, req *volum
 		return nil, ctx.Err()
 	}
 	defer f.mu.Unlock()
+	if f.infoErr != nil {
+		return nil, f.infoErr
+	}
 	resp := &volume_server_pb.VolumeEcShardsInfoResponse{}
 	if f.run != 0 {
 		resp.EcShardConfig = &volume_server_pb.EcShardConfig{EncodeTsNs: f.run}
@@ -104,6 +111,12 @@ func (f *ecBalanceFakeServer) copies() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.copyCalls
+}
+
+func (f *ecBalanceFakeServer) copySources() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.sources)
 }
 
 func (f *ecBalanceFakeServer) shardCount(vid uint32) int {
