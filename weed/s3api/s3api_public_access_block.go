@@ -124,7 +124,7 @@ func hasPublicPrincipal(principals []string) bool {
 		return true
 	}
 	for _, principal := range principals {
-		if !strings.ContainsAny(principal, "*?$") || hasFixedAccount(principal) {
+		if principal != "" && (!strings.ContainsAny(principal, "*?$") || hasFixedAccount(principal)) {
 			continue
 		}
 		return true
