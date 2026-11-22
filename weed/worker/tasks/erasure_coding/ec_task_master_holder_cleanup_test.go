@@ -32,6 +32,14 @@ type fakeEcTeardownServer struct {
 	mu        sync.Mutex
 	unmounted []uint32
 	deleted   []uint32
+	noVolume  bool
+}
+
+func (f *fakeEcTeardownServer) ReadVolumeFileStatus(_ context.Context, req *volume_server_pb.ReadVolumeFileStatusRequest) (*volume_server_pb.ReadVolumeFileStatusResponse, error) {
+	if f.noVolume {
+		return nil, fmt.Errorf("not found volume id %d", req.VolumeId)
+	}
+	return &volume_server_pb.ReadVolumeFileStatusResponse{VolumeId: req.VolumeId, DatFileSize: 8, IdxFileSize: 16}, nil
 }
 
 func (f *fakeEcTeardownServer) VolumeEcShardsUnmount(_ context.Context, req *volume_server_pb.VolumeEcShardsUnmountRequest) (*volume_server_pb.VolumeEcShardsUnmountResponse, error) {
@@ -155,6 +163,26 @@ func TestEnsureCleanEcStartClearsMasterListedHolderOutsidePlan(t *testing.T) {
 		require.Equal(t, []uint32{147}, deleted, name)
 	}
 	require.Equal(t, 1, master.lookupCount())
+}
+
+// A replayed job whose earlier run committed the EC copy and deleted the
+// source must not wipe the shards, wherever they moved since.
+func TestEnsureCleanEcStartRefusesWhenSourceReplicaIsGone(t *testing.T) {
+	source, sourceLocation := startFakeEcTeardownServer(t)
+	source.noVolume = true
+	relocated, relocatedLocation := startFakeEcTeardownServer(t)
+	master := &fakeEcLookupMaster{holders: []*master_pb.Location{relocatedLocation}}
+	task := newFakeMasterHolderCleanupTask(sourceLocation, startFakeEcLookupMaster(t, master))
+
+	err := task.ensureCleanEcStart(context.Background())
+	require.ErrorContains(t, err, "refusing to clear EC shards")
+
+	for name, server := range map[string]*fakeEcTeardownServer{"source": source, "relocated holder": relocated} {
+		unmounted, deleted := server.calls()
+		require.Empty(t, unmounted, name)
+		require.Empty(t, deleted, name)
+	}
+	require.Zero(t, master.lookupCount())
 }
 
 // Detection may have reached the leader through a later entry of the master

@@ -1082,7 +1082,28 @@ func (t *ErasureCodingTask) ensureCleanEcStart(ctx context.Context) error {
 	if t.server == "" && len(t.getReplicas()) == 0 {
 		return fmt.Errorf("no source replica for volume %d", t.volumeID)
 	}
+	if err := t.checkReplicasPresent(ctx); err != nil {
+		return err
+	}
 	return t.cleanupStaleEcShards(ctx)
+}
+
+// checkReplicasPresent refuses a plan whose regular replica is gone, as in a
+// replayed job whose earlier run already committed the EC copy and deleted
+// the source: wiping the shards then would destroy the only copy.
+func (t *ErasureCodingTask) checkReplicasPresent(ctx context.Context) error {
+	for _, loc := range t.replicaLocations() {
+		addr := loc.ServerAddress()
+		err := operation.WithVolumeServerClient(false, addr, t.grpcDialOption,
+			func(client volume_server_pb.VolumeServerClient) error {
+				_, e := client.ReadVolumeFileStatus(ctx, &volume_server_pb.ReadVolumeFileStatusRequest{VolumeId: t.volumeID})
+				return e
+			})
+		if err != nil {
+			return fmt.Errorf("regular replica of volume %d on %s: %w; refusing to clear EC shards", t.volumeID, addr, err)
+		}
+	}
+	return nil
 }
 
 // rollbackDistribute undoes a failed attempt that had already begun writing EC
