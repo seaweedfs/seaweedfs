@@ -193,7 +193,8 @@ func (f *Filer) CollectLogFileRefs(ctx context.Context, startPosition log_buffer
 			break
 		}
 
-		hourMinuteEntries, _, listErr := f.ListDirectoryEntries(ctx, util.NewFullPath(SystemLogDir, dayEntry.Name()), "", false, math.MaxInt32, "", "", "")
+		listFrom, inclusive := f.logDayListStart(dayEntry.Name(), startDate, startHourMinute)
+		hourMinuteEntries, _, listErr := f.ListDirectoryEntries(ctx, util.NewFullPath(SystemLogDir, dayEntry.Name()), listFrom, inclusive, math.MaxInt32, "", "", "")
 		if listErr != nil {
 			return nil, 0, fmt.Errorf("fail to list log %s: %w", dayEntry.Name(), listErr)
 		}
@@ -355,6 +356,21 @@ func getFilerId(name string) string {
 	return name[idx+1:]
 }
 
+// logDayListStart returns where a pass lists the log directory of day from.
+// On the scan's start day the files before its start minute are skipped
+// anyway, so listing from that minute keeps a pass from reading the whole
+// day, up to 1440 files per filer, to find the few after it. A store whose
+// listings are not in name order cannot start there and lists the whole day.
+func (f *Filer) logDayListStart(day, startDate, startHourMinute string) (startFileName string, inclusive bool) {
+	if day != startDate {
+		return "", false
+	}
+	if fsw, ok := f.Store.(*FilerStoreWrapper); ok && !fsw.listsInNameOrder(util.NewFullPath(SystemLogDir, day)) {
+		return "", false
+	}
+	return startHourMinute, true
+}
+
 // ----------
 
 type LogFileEntryCollector struct {
@@ -409,7 +425,8 @@ func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 		}
 	}
 
-	hourMinuteEntries, _, listHourMinuteErr := c.f.ListDirectoryEntries(context.Background(), util.NewFullPath(SystemLogDir, dayEntry.Name()), "", false, math.MaxInt32, "", "", "")
+	listFrom, inclusive := c.f.logDayListStart(dayEntry.Name(), c.startDate, c.startHourMinute)
+	hourMinuteEntries, _, listHourMinuteErr := c.f.ListDirectoryEntries(context.Background(), util.NewFullPath(SystemLogDir, dayEntry.Name()), listFrom, inclusive, math.MaxInt32, "", "", "")
 	if listHourMinuteErr != nil {
 		return fmt.Errorf("fail to list log %s by day: %v", dayEntry.Name(), listHourMinuteErr)
 	}

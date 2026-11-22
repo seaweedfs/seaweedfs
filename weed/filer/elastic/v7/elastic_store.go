@@ -57,6 +57,12 @@ func (store *ElasticStore) GetName() string {
 	return "elastic7"
 }
 
+// ListsUnordered reports that listings page by a hash of the entry path, not
+// by name.
+func (store *ElasticStore) ListsUnordered() bool {
+	return true
+}
+
 // Elastic8Store sorts listings on an indexed Id field since Elasticsearch 8 disallows _id fielddata.
 type Elastic8Store struct {
 	ElasticStore

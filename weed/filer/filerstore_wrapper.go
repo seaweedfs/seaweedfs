@@ -110,6 +110,17 @@ func (fsw *FilerStoreWrapper) getActualStore(path util.FullPath) (store FilerSto
 	return
 }
 
+// listsInNameOrder reports whether a listing of dirPath can start at a file
+// name the store did not hand out itself.
+func (fsw *FilerStoreWrapper) listsInNameOrder(dirPath util.FullPath) bool {
+	store := fsw.getActualStore(dirPath + "/")
+	if t, ok := store.(*FilerStorePathTranslator); ok {
+		store = t.actualStore
+	}
+	u, ok := store.(UnorderedListingStore)
+	return !ok || !u.ListsUnordered()
+}
+
 // SameActualStore reports whether two paths resolve to the same underlying
 // store. When path-specific stores are configured, different subtrees may
 // be served by different backends.

@@ -74,7 +74,10 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		return status
 	}
 	if input.Valid&fuse.FATTR_SIZE == 0 && path != "" {
-		unlock := wfs.lockMetadataPublication(path)
+		var unlock func()
+		if path, fh, entry, unlock, status = wfs.lockNodePublication(ctx, input.NodeId, path, fh, entry); status != fuse.OK || entry == nil {
+			return status
+		}
 		defer unlock()
 	}
 	if snapshot, ok := wfs.attributeEntrySnapshot(fh, entry); ok && input.Valid&fuse.FATTR_SIZE == 0 && path != "" {

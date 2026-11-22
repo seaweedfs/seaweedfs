@@ -263,7 +263,7 @@ func (i *InodeToPath) AllocateInode(path util.FullPath, unixTime int64) uint64 {
 	defer i.Unlock()
 	inode := path.AsInode(unixTime)
 	for _, found := i.inode2path[inode]; found; inode++ {
-		_, found = i.inode2path[inode]
+		_, found = i.inode2path[inode+1]
 	}
 	return inode
 }
