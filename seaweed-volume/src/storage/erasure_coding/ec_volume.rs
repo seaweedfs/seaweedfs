@@ -1726,10 +1726,11 @@ impl EcVolume {
     /// stamp the refresh time, returning a clone of the resulting map.
     ///
     /// Per-shard upsert (mirrors Go's `cachedLookupEcShardLocations`): each shard
-    /// id present in the reply overwrites its cached entry, while shard ids absent
-    /// from the reply keep their previously-cached locations — so a reply that
-    /// passes the data-shard completeness guard but omits a shard already in cache
-    /// does not drop that shard's known location (unlike a full replace).
+    /// id present in the reply overwrites its cached entry, and one the reply
+    /// places nowhere is dropped, while shard ids absent from the reply keep
+    /// their previously-cached locations — so a reply that passes the data-shard
+    /// completeness guard but omits a shard already in cache does not drop that
+    /// shard's known location (unlike a full replace).
     ///
     /// Map and refresh time advance in one write section, so no reader can pair
     /// the merged map with the previous lookup's timestamp.
@@ -1739,7 +1740,11 @@ impl EcVolume {
     ) -> HashMap<ShardId, Vec<String>> {
         let mut cache = self.shard_locations.write().unwrap();
         for (shard_id, addrs) in locations {
-            cache.locations.insert(shard_id, addrs);
+            if addrs.is_empty() {
+                cache.locations.remove(&shard_id);
+            } else {
+                cache.locations.insert(shard_id, addrs);
+            }
         }
         cache.refreshed_at = Some(Instant::now());
         cache.locations.clone()
@@ -1755,6 +1760,9 @@ impl EcVolume {
     ) -> HashMap<ShardId, Vec<String>> {
         let mut cache = self.shard_locations.write().unwrap();
         for (shard_id, addrs) in locations {
+            if addrs.is_empty() {
+                continue;
+            }
             let known = cache.locations.entry(shard_id).or_default();
             if known.is_empty() {
                 *known = addrs;
@@ -5467,6 +5475,11 @@ mod tests {
             later.unwrap() >= before,
             "the second merge re-stamped the refresh time"
         );
+
+        // A shard the master places nowhere is dropped, not kept at an address
+        // a delete would trust.
+        let merged = vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
+        assert_eq!(merged, HashMap::from([(1, vec!["c:3".to_string()])]));
     }
 
     #[test]
@@ -5487,9 +5500,11 @@ mod tests {
         let filled = vol.fill_shard_location_gaps(HashMap::from([
             (1, vec!["c:3".to_string()]),
             (2, vec!["d:4".to_string()]),
+            (3, Vec::new()),
         ]));
         assert_eq!(filled.get(&1), Some(&vec!["b:2".to_string()]));
         assert_eq!(filled.get(&2), Some(&vec!["d:4".to_string()]));
+        assert!(!filled.contains_key(&3), "a partial reply's empty slot adds nothing");
         assert_eq!(vol.shard_locations_snapshot().1, stamped);
         assert!(
             vol.claim_shard_locations_refresh(|stale| stale),
