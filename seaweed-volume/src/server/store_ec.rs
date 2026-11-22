@@ -1357,7 +1357,8 @@ async fn fetch_one_interval(
         && let Some(hints) = shard_read_hints(state, vid, shard_id)
     {
         match read_remote_ec_shard_interval(state, &hints, iv).await {
-            Ok(read) => return Ok(read),
+            Ok((buf, true)) => return Ok((buf, true)),
+            Ok(_) => {}
             Err(e) => {
                 tracing::debug!(
                     "read ec shard {}.{} from delisted holders {:?} failed: {}",

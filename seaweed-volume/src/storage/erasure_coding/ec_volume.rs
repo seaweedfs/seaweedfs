@@ -32,9 +32,10 @@ pub(crate) struct ShardLocationCache {
     /// Used for distributed EC reads across the cluster.
     locations: HashMap<ShardId, Vec<String>>,
     /// Holders a complete lookup stopped placing a shard on (Go's
-    /// `ShardReadHints`). Only reads consult them, before reconstructing: such a
-    /// holder may still answer, and may be the one that journaled a delete.
-    /// Deletes never do.
+    /// `ShardReadHints`). Reads ask them before reconstructing, for a delete only
+    /// such a holder journaled, but take nothing else from them: a delete made
+    /// since went to a listed holder, which reconstruction asks. Deletes never
+    /// use them.
     read_hints: HashMap<ShardId, Vec<String>>,
     /// Wall-clock timestamp of the most recent successful `LookupEcVolume`
     /// refresh of `locations`. `None` until the first refresh. Drives the
