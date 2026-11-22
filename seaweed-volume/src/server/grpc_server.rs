@@ -6306,7 +6306,7 @@ impl VolumeGrpcService {
                     && loc.disk_type != DiskType::from_string(&req.disk_type)
                 {
                     return Err(Status::invalid_argument(format!(
-                        "disk {} is {}, not {}",
+                        "disk {} is {}, not the requested disk type {}",
                         req.disk_id,
                         loc.disk_type.readable_string(),
                         req.disk_type
@@ -10487,6 +10487,12 @@ mod tests {
 
         let err = copy(63, 1, "ssd").await.expect_err("disk 1 is hdd_ht");
         assert_eq!(err.code(), tonic::Code::InvalidArgument, "{}", err);
+        // Movers match this wording to let the server pick a disk of the type.
+        assert!(
+            err.message().contains("not the requested disk type"),
+            "{}",
+            err
+        );
         let err = copy(63, 0, "ssd").await.expect_err("no ssd disk");
         assert_eq!(err.code(), tonic::Code::ResourceExhausted, "{}", err);
     }
