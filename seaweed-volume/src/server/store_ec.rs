@@ -461,12 +461,12 @@ async fn delete_on_ec_shard_holders(
     let mut last_err = None;
     if local_shards.contains(&shard_id) {
         // A decode in its publishing tail must not miss this delete. The
-        // tail membership is verified again under the store write lock
-        // inside journal_delete_local — WouldBlock means the decode claimed
-        // it in the gap after this wait — so wait and retry.
+        // tail membership is verified again under the journal lock inside
+        // journal_delete_local — WouldBlock means the decode claimed it in
+        // the gap after this wait — so wait and retry.
         loop {
             crate::server::grpc_server::wait_ec_decode_tail(state, target.vid).await;
-            match journal_delete_local(state, target.vid, target.needle_id) {
+            match journal_delete_local(state, target.vid, target.needle_id).await {
                 Ok(()) => return Ok(true),
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                 // Nothing was committed — the volume unmounted or remounted
@@ -533,38 +533,42 @@ async fn delete_on_remote_ec_shard(
 /// no-op: `journal_delete` would accept it silently, but here it means the
 /// volume remounted as a different generation mid-delete and the tombstone
 /// should go to a replica that still has the needle.
-fn journal_delete_local(
+async fn journal_delete_local(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
     needle_id: NeedleId,
 ) -> io::Result<()> {
-    let mut store = state.store.write().unwrap();
-    // Membership is read under the write lock: a decode can claim the
-    // publishing tail while this call waited for the decoder's read lock,
-    // so a check taken earlier would be stale by commit time.
-    if crate::server::grpc_server::ec_decode_tail_contains(state, vid) {
-        return Err(io::Error::new(
-            io::ErrorKind::WouldBlock,
-            format!("ec volume {} is in decode publishing tail", vid.0),
-        ));
-    }
-    let ecv = store.find_ec_volume_mut(vid).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("ec volume {} unmounted", vid.0),
-        )
-    })?;
-    match ecv.find_needle_from_ecx(needle_id)? {
-        None => {
-            return Err(io::Error::new(
+    let appender = {
+        let store = state.store.read().unwrap();
+        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
+            io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("needle {} not in local ecx", needle_id),
-            ));
+                format!("ec volume {} unmounted", vid.0),
+            )
+        })?;
+        match ecv.find_needle_from_ecx(needle_id)? {
+            None => {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("needle {} not in local ecx", needle_id),
+                ));
+            }
+            Some((_, size)) if size.is_deleted() => return Ok(()),
+            Some(_) => {}
         }
-        Some((_, size)) if size.is_deleted() => return Ok(()),
-        Some(_) => {}
-    }
-    ecv.journal_delete(needle_id)
+        ecv.journal_appender()
+    };
+    // Membership is read under the journal lock: a decode claims the
+    // publishing tail before it takes that lock for its catch-up, so a check
+    // taken earlier would be stale by commit time.
+    let state = state.clone();
+    tokio::task::spawn_blocking(move || {
+        appender.journal_delete(needle_id, || {
+            crate::server::grpc_server::ec_decode_tail_contains(&state, vid)
+        })
+    })
+    .await
+    .map_err(io::Error::other)?
 }
 
 fn local_shard_ids(ecv: &crate::storage::erasure_coding::EcVolume) -> HashSet<ShardId> {

@@ -32,7 +32,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Condvar, LazyLock, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard};
 
 #[derive(Default)]
 struct PathState {
@@ -42,6 +42,10 @@ struct PathState {
     /// Writers that have started on the path. Lives as long as the entry,
     /// which a registered holder keeps.
     write_gen: u64,
+    /// Serializes appends through every holder's handle with anything that
+    /// reads or replaces the file under a holder, as one disk's journal lock
+    /// covers only its own handle.
+    append_lock: Arc<Mutex<()>>,
 }
 
 impl PathState {
@@ -69,7 +73,7 @@ fn lock() -> MutexGuard<'static, HashMap<PathBuf, PathState>> {
 /// Canonical key for `path`: its resolved parent directory joined with the
 /// file name. The file itself may not exist yet (a copy creates it), so only
 /// the directory is resolved.
-fn key_for(path: &str) -> PathBuf {
+pub(crate) fn key_for(path: &str) -> PathBuf {
     let p = Path::new(path);
     let (Some(parent), Some(name)) = (p.parent(), p.file_name()) else {
         return std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
@@ -118,6 +122,7 @@ pub(crate) struct EcjHold {
     /// so they cover every write the load might have missed.
     write_gen: u64,
     writer_at_start: bool,
+    append_lock: Arc<Mutex<()>>,
 }
 
 impl EcjHold {
@@ -125,15 +130,21 @@ impl EcjHold {
     /// progress so the handle opened afterwards is on the final inode.
     pub(crate) fn acquire(ecj_path: &str) -> Self {
         let key = key_for(ecj_path);
-        let (write_gen, writer_at_start) = update_when_not_compacting(&key, |s| {
+        let (write_gen, writer_at_start, append_lock) = update_when_not_compacting(&key, |s| {
             s.holders += 1;
-            (s.write_gen, s.writers > 0)
+            (s.write_gen, s.writers > 0, s.append_lock.clone())
         });
         EcjHold {
             key,
             write_gen,
             writer_at_start,
+            append_lock,
         }
+    }
+
+    /// The path's append lock, shared by every holder of the path.
+    pub(crate) fn append_lock(&self) -> Arc<Mutex<()>> {
+        self.append_lock.clone()
     }
 
     /// Reserve the path for a compaction, or `None` when another holder or an

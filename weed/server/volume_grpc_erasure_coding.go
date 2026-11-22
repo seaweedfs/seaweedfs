@@ -296,16 +296,19 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 		// handle is repointed: otherwise RebuildEcxFile's unlink strands later
 		// appends on the detached inode.
 		indexBaseFileName = ev.EcIndexBaseFileName()
+		folded := false
 		unlockJournal := ev.LockDeletionJournal()
 		err := erasure_coding.RebuildEcxFile(indexBaseFileName)
 		if err == nil {
+			folded = true
 			err = ev.ReopenDeletionJournal()
 		}
 		unlockJournal()
-		if err == nil {
+		if folded {
 			// Mounts on sibling disks can journal into the same .ecj — the
 			// fold unlinked it, so repoint their handles too or their next
-			// append lands on the detached inode.
+			// append lands on the detached inode, even when this mount's own
+			// reopen failed, and past a sibling that fails.
 			for _, location := range vs.store.Locations {
 				if location == rebuildLocation {
 					continue
@@ -314,9 +317,8 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 					unlockSibling := sibling.LockDeletionJournal()
 					serr := sibling.ReopenDeletionJournal()
 					unlockSibling()
-					if serr != nil {
+					if serr != nil && err == nil {
 						err = fmt.Errorf("reopen shared ec journal on %s: %v", location.Directory, serr)
-						break
 					}
 				}
 			}

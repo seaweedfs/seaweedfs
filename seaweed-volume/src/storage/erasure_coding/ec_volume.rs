@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Write};
-use std::sync::RwLock;
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::pb::master_pb;
@@ -180,6 +180,136 @@ fn read_ecj_ids_with(
     Ok(())
 }
 
+/// A volume's `.ecj` append handle and on-disk size, under the volume's own
+/// journal lock (Go's `EcVolume.ecjFileAccessLock`). The size is what
+/// mount-time compaction compares against the id set; the runtime delete count
+/// comes from `deleted_needles`.
+#[derive(Default)]
+pub(crate) struct EcJournal {
+    file: Option<File>,
+    size: i64,
+    /// Set once the volume is closed or dropped: an appender that resolved the
+    /// volume before that must re-resolve rather than write a detached file.
+    closed: bool,
+}
+
+impl EcJournal {
+    /// Append whole records and sync them. On any failure the file is
+    /// truncated back to the pre-append length so the on-disk journal and
+    /// `deleted_needles` cannot drift.
+    fn append(&mut self, records: &[u8], volume_id: VolumeId, ecj_path: &str) -> io::Result<()> {
+        let ecj_file = self
+            .file
+            .as_mut()
+            .ok_or_else(|| io::Error::other("ecj file not open"))?;
+        // The file's own length, not this handle's cached size: another disk
+        // holding the same journal may have appended since.
+        let prev_ecj_size = ecj_file.metadata()?.len() as i64;
+        let append_result = ecj_file
+            .write_all(records)
+            .and_then(|_| ecj_file.sync_all());
+
+        match append_result {
+            Ok(()) => {
+                self.size = prev_ecj_size + records.len() as i64;
+                Ok(())
+            }
+            Err(e) => {
+                // write_all may have extended the file on disk before
+                // sync_all failed; truncate back to the known-good size so
+                // the on-disk journal never drifts past `deleted_needles`.
+                // Uses its own write handle: on Windows the append handle
+                // lacks FILE_WRITE_DATA, so set_len through it fails with
+                // ERROR_ACCESS_DENIED and the rollback would silently not
+                // happen.
+                let rollback = open_volume_file(OpenOptions::new().write(true), ecj_path)
+                    .and_then(|f| f.set_len(prev_ecj_size as u64).and_then(|_| f.sync_all()));
+                // Bumped on attempt, not success: a failed rollback leaves the
+                // bytes in place and a decode re-reading for the epoch change
+                // simply sees them — harmless — while a successful one must
+                // never go unnoticed by an unlocked journal read.
+                ECJ_ROLLBACK_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if let Err(trunc_err) = rollback {
+                    tracing::error!(
+                        volume_id = volume_id.0,
+                        truncate_error = %trunc_err,
+                        "failed to truncate ecj after append failure"
+                    );
+                }
+                Err(e)
+            }
+        }
+    }
+}
+
+/// Takes a `.ecj` path's append lock, ahead of any holder's journal lock.
+pub(crate) fn lock_path(lock: &Option<Arc<Mutex<()>>>) -> Option<MutexGuard<'_, ()>> {
+    lock.as_ref()
+        .map(|l| l.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
+/// A mounted volume's deletion journal, usable after the store lock that found
+/// the volume is released, so the append's fsync stalls only this volume.
+pub struct EcJournalAppender {
+    volume_id: VolumeId,
+    ecj_path: String,
+    path_lock: Option<Arc<Mutex<()>>>,
+    ecj: Arc<Mutex<EcJournal>>,
+    deleted_needles: Arc<RwLock<HashSet<NeedleId>>>,
+}
+
+impl EcJournalAppender {
+    /// Journal a delete of a needle the caller found live in `.ecx`.
+    /// `must_wait` runs under the journal lock, which a decode takes for its
+    /// catch-up, so a `true` answer (the decode publishing tail) is current
+    /// when the append would commit; it gives `WouldBlock`. A volume closed
+    /// since it was resolved gives `NotFound` with nothing written.
+    pub fn journal_delete(
+        &self,
+        needle_id: NeedleId,
+        must_wait: impl FnOnce() -> bool,
+    ) -> io::Result<()> {
+        let _path = lock_path(&self.path_lock);
+        let mut journal = self.ecj.lock().unwrap_or_else(|e| e.into_inner());
+        if journal.closed {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("ec volume {} closed", self.volume_id.0),
+            ));
+        }
+        if self
+            .deleted_needles
+            .read()
+            .map(|s| s.contains(&needle_id))
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        if must_wait() {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                format!(
+                    "ec volume {} is in decode publishing tail",
+                    self.volume_id.0
+                ),
+            ));
+        }
+        let mut buf = [0u8; NEEDLE_ID_SIZE];
+        needle_id.to_bytes(&mut buf);
+        journal.append(&buf, self.volume_id, &self.ecj_path)?;
+        if let Ok(mut set) = self.deleted_needles.write() {
+            set.insert(needle_id);
+        }
+        Ok(())
+    }
+
+    /// Holds the journal lock, standing in for an append stuck in its fsync.
+    #[cfg(test)]
+    pub(crate) fn lock_journal(&self) -> MutexGuard<'_, EcJournal> {
+        self.ecj.lock().unwrap()
+    }
+}
+
 /// An erasure-coded volume managing its local shards and index.
 pub struct EcVolume {
     pub volume_id: VolumeId,
@@ -196,22 +326,17 @@ pub struct EcVolume {
     pub block_size: i64,
     ecx_file: Option<File>,
     ecx_file_size: i64,
-    ecj_file: Option<File>,
+    ecj: Arc<Mutex<EcJournal>>,
     /// This volume's registration as a holder of its `.ecj` path. Held for as
-    /// long as `ecj_file` may be open; see `ecj_registry`.
+    /// long as the journal handle may be open; see `ecj_registry`.
     ecj_hold: Option<EcjHold>,
-    /// On-disk size of the .ecj deletion journal: the rollback point for a
-    /// failed append, and the size mount-time compaction compares against the
-    /// id set and re-checks on disk before replacing the file. The runtime
-    /// delete count comes from `deleted_needles.len()`, not from this.
-    ecj_file_size: i64,
     /// In-memory set of needle ids that have been deleted since the volume
     /// was encoded. .ecx is immutable at runtime — it only stores the
     /// sorted (id, offset, size) index written at encode time — and runtime
     /// deletes are journaled to .ecj + tracked here. Reads consult this
     /// set to mask out deleted needles on top of the sealed .ecx lookup.
     /// Seeded from .ecj in `new()` and updated by `journal_delete`.
-    deleted_needles: RwLock<HashSet<NeedleId>>,
+    deleted_needles: Arc<RwLock<HashSet<NeedleId>>>,
     pub disk_type: DiskType,
     /// Directory where .ecx/.ecj were actually found (may differ from dir_idx after fallback).
     ecx_actual_dir: String,
@@ -755,10 +880,9 @@ impl EcVolume {
             block_size,
             ecx_file: None,
             ecx_file_size: 0,
-            ecj_file: None,
+            ecj: Arc::default(),
             ecj_hold: None,
-            ecj_file_size: 0,
-            deleted_needles: RwLock::new(HashSet::new()),
+            deleted_needles: Arc::default(),
             disk_type: DiskType::default(),
             ecx_actual_dir: dir_idx.to_string(),
             shard_locations: RwLock::new(ShardLocationCache::default()),
@@ -846,6 +970,10 @@ impl EcVolume {
         // the tail repair and the handle below see the final inode, and it
         // stops any compaction from replacing the file under this handle.
         vol.ecj_hold = Some(EcjHold::acquire(&ecj_path));
+        // Another disk's runtime may be appending to this file: repair and
+        // load only settled records.
+        let path_lock = vol.journal_path_lock();
+        let path_guard = lock_path(&path_lock);
 
         // Repair a torn tail BEFORE the append handle exists.
         //
@@ -886,11 +1014,15 @@ impl EcVolume {
         }
 
         let ecj_file = open_ecj_append(&ecj_path)?;
-        vol.ecj_file_size = ecj_file.metadata()?.len() as i64;
-        vol.ecj_file = Some(ecj_file);
+        {
+            let mut journal = vol.journal();
+            journal.size = ecj_file.metadata()?.len() as i64;
+            journal.file = Some(ecj_file);
+        }
 
         // Seed the in-memory deleted set from the journal.
         vol.load_deleted_needles_from_ecj(ecj_ops.read_at)?;
+        drop(path_guard);
 
         // Load the generation-0 EC bitrot checksum sidecar. Optional, except
         // when it contradicts the volume's own geometry — see
@@ -1129,11 +1261,12 @@ impl EcVolume {
         &mut self,
         read_at: fn(&File, &mut [u8], u64) -> io::Result<()>,
     ) -> io::Result<()> {
-        let ecj_file = match self.ecj_file.as_ref() {
+        let journal = self.journal();
+        let ecj_file = match journal.file.as_ref() {
             Some(f) => f,
             None => return Ok(()),
         };
-        if self.ecj_file_size < NEEDLE_ID_SIZE as i64 {
+        if journal.size < NEEDLE_ID_SIZE as i64 {
             return Ok(());
         }
 
@@ -1141,7 +1274,8 @@ impl EcVolume {
         // held the `deleted_needles` write lock for the whole scan, which on a
         // bloated journal is the entire (unbounded) startup.
         let mut loaded: HashSet<NeedleId> = HashSet::new();
-        read_ecj_ids_with(read_at, ecj_file, 0, self.ecj_file_size as u64, &mut loaded)?;
+        read_ecj_ids_with(read_at, ecj_file, 0, journal.size as u64, &mut loaded)?;
+        drop(journal);
 
         let mut set = self
             .deleted_needles
@@ -1231,7 +1365,7 @@ impl EcVolume {
         tracing::warn!(
             volume_id = self.volume_id.0,
             collection = %self.collection,
-            on_disk_bytes = self.ecj_file_size,
+            on_disk_bytes = self.journal().size,
             unique_ids = ids.len(),
             compacted_bytes = ids.len() * NEEDLE_ID_SIZE,
             "compacting bloated .ecj deletion journal",
@@ -1265,8 +1399,11 @@ impl EcVolume {
             .map_err(|_| io::Error::other("deleted_needles lock poisoned"))?
             .len();
         let compacted_len = (distinct as i64).saturating_mul(NEEDLE_ID_SIZE as i64);
-        Ok(self.ecj_file_size >= ECJ_COMPACT_MIN_BYTES
-            && self.ecj_file_size >= compacted_len.saturating_mul(ECJ_COMPACT_RATIO))
+        let size = self.journal().size;
+        Ok(
+            size >= ECJ_COMPACT_MIN_BYTES
+                && size >= compacted_len.saturating_mul(ECJ_COMPACT_RATIO),
+        )
     }
 
     /// The deleted set, sorted so the rewritten file is deterministic: two
@@ -1289,7 +1426,8 @@ impl EcVolume {
     /// A copy that appended, or replaced the file, after the load fails this,
     /// and compacting then would drop what it wrote.
     fn ecj_unchanged_since_load(&self, ecj_path: &str) -> io::Result<bool> {
-        let Some(held) = self.ecj_file.as_ref() else {
+        let journal = self.journal();
+        let Some(held) = journal.file.as_ref() else {
             return Ok(false);
         };
         let held = held.metadata()?;
@@ -1301,7 +1439,7 @@ impl EcVolume {
                 return Ok(false);
             }
         }
-        Ok(held.len() == on_path.len() && on_path.len() as i64 == self.ecj_file_size)
+        Ok(held.len() == on_path.len() && on_path.len() as i64 == journal.size)
     }
 
     /// Publish a compacted tmp file over the live journal: drop the handle
@@ -1323,12 +1461,13 @@ impl EcVolume {
         // rename over a file that is still open fails outright, which would
         // make compaction a permanent no-op there; on Unix the handle would
         // survive as an unlinked inode, which is worse than useless.
-        self.ecj_file = None;
+        let mut journal = self.journal();
+        journal.file = None;
         if let Err(rename_err) = (ops.rename)(tmp_path, ecj_path) {
             let _ = fs::remove_file(tmp_path);
             return match (ops.reopen)(ecj_path) {
                 Ok(f) => {
-                    self.ecj_file = Some(f);
+                    journal.file = Some(f);
                     Err(EcjPublishError::Abandoned(rename_err))
                 }
                 Err(reopen_err) => Err(EcjPublishError::HandleLost(io::Error::new(
@@ -1355,8 +1494,8 @@ impl EcVolume {
         // Reopen so later journal_delete appends land in the file just written.
         let reopened = (ops.reopen)(ecj_path).map_err(|e| lost("reopen it", e))?;
         let size = reopened.metadata().map_err(|e| lost("stat it", e))?.len();
-        self.ecj_file_size = size as i64;
-        self.ecj_file = Some(reopened);
+        journal.size = size as i64;
+        journal.file = Some(reopened);
         Ok(())
     }
 
@@ -1419,8 +1558,12 @@ impl EcVolume {
     /// Sync the EC volume's journal and index files to disk (matching Go's ecv.Sync()).
     /// Go flushes both .ecj and .ecx to ensure in-place deletion marks are persisted.
     pub fn sync_to_disk(&self) -> io::Result<()> {
-        if let Some(ref ecj_file) = self.ecj_file {
-            ecj_file.sync_all()?;
+        // Every append syncs its own record, so one in flight is not waited
+        // for: callers such as CopyFile hold the store lock here.
+        if let Ok(journal) = self.ecj.try_lock() {
+            if let Some(ref ecj_file) = journal.file {
+                ecj_file.sync_all()?;
+            }
         }
         if let Some(ref ecx_file) = self.ecx_file {
             ecx_file.sync_all()?;
@@ -2083,6 +2226,7 @@ impl EcVolume {
     /// in place and the error is propagated so tombstones are not lost.
     pub(crate) fn rebuild_ecx_from_journal(&mut self) -> io::Result<()> {
         let ecj_path = self.ecj_file_name();
+        let mut journal = self.journal();
         if !std::path::Path::new(&ecj_path).exists() {
             return Ok(());
         }
@@ -2118,9 +2262,9 @@ impl EcVolume {
         // if the recreate fails, deletes must error rather than keep
         // appending to the removed inode.
         fs::remove_file(&ecj_path)?;
-        self.ecj_file = None;
-        self.ecj_file = Some(open_ecj_append(&ecj_path)?);
-        self.ecj_file_size = 0;
+        journal.file = None;
+        journal.file = Some(open_ecj_append(&ecj_path)?);
+        journal.size = 0;
         if let Ok(mut set) = self.deleted_needles.write() {
             set.clear();
         }
@@ -2138,10 +2282,11 @@ impl EcVolume {
         // The old handle points at the replaced file: drop it before the
         // reopen so a failure leaves deletes erroring, not appending to a
         // detached inode. Mirrors Go's ReopenDeletionJournal.
-        self.ecj_file = None;
+        let mut journal = self.journal();
+        journal.file = None;
         let reopened = open_ecj_append(&ecj_path)?;
-        self.ecj_file_size = reopened.metadata()?.len() as i64;
-        self.ecj_file = Some(reopened);
+        journal.size = reopened.metadata()?.len() as i64;
+        journal.file = Some(reopened);
         if let Ok(mut set) = self.deleted_needles.write() {
             set.clear();
         }
@@ -2184,61 +2329,36 @@ impl EcVolume {
             return Ok(());
         }
 
-        let mut buf = [0u8; NEEDLE_ID_SIZE];
-        needle_id.to_bytes(&mut buf);
-        self.append_journal(&buf)?;
-        if let Ok(mut set) = self.deleted_needles.write() {
-            set.insert(needle_id);
-        }
-        Ok(())
+        self.journal_appender().journal_delete(needle_id, || false)
     }
 
-    /// Append whole records to `.ecj` and sync them. On any failure the file is
-    /// truncated back to the pre-append length so the on-disk journal and
-    /// `deleted_needles` cannot drift.
-    fn append_journal(&mut self, records: &[u8]) -> io::Result<()> {
-        let prev_ecj_size = self.ecj_file_size;
-        let append_result: io::Result<()> = {
-            let ecj_file = self
-                .ecj_file
-                .as_mut()
-                .ok_or_else(|| io::Error::other("ecj file not open"))?;
-            ecj_file
-                .write_all(records)
-                .and_then(|_| ecj_file.sync_all())
-        };
-
-        match append_result {
-            Ok(()) => {
-                self.ecj_file_size += records.len() as i64;
-                Ok(())
-            }
-            Err(e) => {
-                // write_all may have extended the file on disk before
-                // sync_all failed; truncate back to the known-good size so
-                // the on-disk journal never drifts past `deleted_needles`.
-                // Uses its own write handle: on Windows the append handle
-                // lacks FILE_WRITE_DATA, so set_len through it fails with
-                // ERROR_ACCESS_DENIED and the rollback would silently not
-                // happen.
-                let ecj_path = self.ecj_file_name();
-                let rollback = open_volume_file(OpenOptions::new().write(true), &ecj_path)
-                    .and_then(|f| f.set_len(prev_ecj_size as u64).and_then(|_| f.sync_all()));
-                // Bumped on attempt, not success: a failed rollback leaves the
-                // bytes in place and a decode re-reading for the epoch change
-                // simply sees them — harmless — while a successful one must
-                // never go unnoticed by an unlocked journal read.
-                ECJ_ROLLBACK_EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if let Err(trunc_err) = rollback {
-                    tracing::error!(
-                        volume_id = self.volume_id.0,
-                        truncate_error = %trunc_err,
-                        "failed to truncate ecj after append failure"
-                    );
-                }
-                Err(e)
-            }
+    /// This volume's journal, detached from the borrow of the volume.
+    pub fn journal_appender(&self) -> EcJournalAppender {
+        EcJournalAppender {
+            volume_id: self.volume_id,
+            ecj_path: self.ecj_file_name(),
+            path_lock: self.journal_path_lock(),
+            ecj: self.ecj.clone(),
+            deleted_needles: self.deleted_needles.clone(),
         }
+    }
+
+    /// The append lock of this volume's `.ecj` path, shared with every other
+    /// disk's runtime journaling into the same file.
+    pub(crate) fn journal_path_lock(&self) -> Option<Arc<Mutex<()>>> {
+        self.ecj_hold.as_ref().map(EcjHold::append_lock)
+    }
+
+    /// Takes this volume's journal lock, waiting out an append in flight.
+    pub(crate) fn journal(&self) -> MutexGuard<'_, EcJournal> {
+        self.ecj.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn append_journal(&mut self, records: &[u8]) -> io::Result<()> {
+        let ecj_path = self.ecj_file_name();
+        let path_lock = self.journal_path_lock();
+        let _path = lock_path(&path_lock);
+        self.journal().append(records, self.volume_id, &ecj_path)
     }
 
     /// Internal: binary search .ecx without masking by `deleted_needles`.
@@ -2380,9 +2500,9 @@ impl EcVolume {
     /// Fold a peer's deletion journal into this mounted volume: append only
     /// the ids not already deleted here, in one write and one fsync, then
     /// publish them into the in-memory set — the same commit order as
-    /// `journal_delete`. `&mut self` serializes it with deletes under the store
-    /// lock, and the live handle is appended to in place, so no delete can land
-    /// in an orphaned file. Returns how many ids were added.
+    /// `journal_delete`. The journal lock serializes it with deletes, and the
+    /// live handle is appended to in place, so no delete can land in an
+    /// orphaned file. Returns how many ids were added.
     pub fn merge_journal(&mut self, ids: &HashSet<NeedleId>) -> io::Result<usize> {
         let delta = super::ecj_merge::ecj_delta(ids, |id| self.is_needle_deleted(*id));
         if delta.is_empty() {
@@ -2405,6 +2525,13 @@ impl EcVolume {
 
     // ---- Lifecycle ----
 
+    /// Closes the journal handle under its lock, after any append in flight.
+    fn close_journal(&self) {
+        let mut journal = self.journal();
+        journal.file = None;
+        journal.closed = true;
+    }
+
     pub fn close(&mut self) {
         for shard in &mut self.shards {
             if let Some(s) = shard {
@@ -2417,7 +2544,7 @@ impl EcVolume {
             let _ = ecx_file.sync_all();
         }
         self.ecx_file = None;
-        self.ecj_file = None;
+        self.close_journal();
         self.ecj_hold = None;
     }
 
@@ -2479,8 +2606,14 @@ impl EcVolume {
             let _ = crate::storage::erasure_coding::ec_bitrot::remove_bitrot_sidecars(&idx_base);
         }
         self.ecx_file = None;
-        self.ecj_file = None;
+        self.close_journal();
         self.ecj_hold = None;
+    }
+}
+
+impl Drop for EcVolume {
+    fn drop(&mut self) {
+        self.close_journal();
     }
 }
 
@@ -3504,6 +3637,44 @@ mod tests {
         assert!(deleted.contains(&NeedleId(7)));
     }
 
+    /// Disks sharing one `.ecj` share its append lock: a delete through one
+    /// disk's handle waits while another disk's runtime reads or replaces the
+    /// file, so a fold or a mount never sees an append half done.
+    #[test]
+    fn test_sibling_holders_share_the_append_lock() {
+        let tmp = TempDir::new().unwrap();
+        let a_dir = tmp.path().join("a");
+        let b_dir = tmp.path().join("b");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        std::fs::create_dir_all(&b_dir).unwrap();
+        let (a, b) = (a_dir.to_str().unwrap(), b_dir.to_str().unwrap());
+        let vid = VolumeId(49);
+        write_ecx_file(
+            a,
+            "",
+            vid,
+            &[(NeedleId(7), Offset::from_actual_offset(8), Size(10))],
+        );
+
+        let on_a = EcVolume::new(a, a, "", vid).unwrap();
+        let on_b = EcVolume::new(b, a, "", vid).unwrap();
+        assert_eq!(on_b.ecj_file_name(), on_a.ecj_file_name());
+
+        let path_lock = on_a.journal_path_lock();
+        let held = lock_path(&path_lock);
+        let appender = on_b.journal_appender();
+        let delete = std::thread::spawn(move || appender.journal_delete(NeedleId(7), || false));
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(
+            !delete.is_finished(),
+            "a sibling's append must wait for the path lock"
+        );
+        drop(held);
+        delete.join().unwrap().unwrap();
+        assert!(on_b.is_needle_deleted(NeedleId(7)));
+        assert_eq!(on_a.read_deleted_needles().unwrap(), vec![NeedleId(7)]);
+    }
+
     /// A copy appending to the journal by path must not have its bytes
     /// dropped by a compaction renaming over the file.
     #[test]
@@ -3655,7 +3826,10 @@ mod tests {
         write_bloated_ecj(dir, "", VolumeId(43), &ids, 4096);
 
         let mut vol = EcVolume::new(dir, dir, "", VolumeId(43)).unwrap();
-        assert!(vol.ecj_file.is_some(), "mount must leave a journal handle");
+        assert!(
+            vol.journal().file.is_some(),
+            "mount must leave a journal handle"
+        );
 
         let ecj_path = format!(
             "{}.ecj",
