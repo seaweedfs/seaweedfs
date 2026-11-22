@@ -841,6 +841,7 @@ func TestDeleteOneVolumeRefusesTrimOfUncoveredNeedles(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name        string
+		replication string
 		doomed      []needle_map.NeedleValue
 		survivors   [][]needle_map.NeedleValue
 		wantDeleted int
@@ -875,16 +876,62 @@ func TestDeleteOneVolumeRefusesTrimOfUncoveredNeedles(t *testing.T) {
 			survivors:   [][]needle_map.NeedleValue{{live(1)}},
 			wantDeleted: 1,
 		},
+		{
+			name:        "needle left on one of two required copies",
+			replication: "001",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(1), live(2)}, {live(1)}},
+			wantDeleted: 0,
+		},
+		{
+			name:        "every needle kept on two copies",
+			replication: "001",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(1), live(2)}, {live(2), live(1)}},
+			wantDeleted: 1,
+		},
+		{
+			name:        "delete on one survivor covers a needle short of copies",
+			replication: "001",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(1), live(2)}, {live(1), deleted(2)}},
+			wantDeleted: 1,
+		},
+		{
+			name:        "needle rewritten after a delete on a survivor",
+			replication: "001",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(1), live(2)}, {live(1), deleted(2), live(2)}},
+			wantDeleted: 1,
+		},
+		{
+			name:        "short volume keeps every needle on its only survivor",
+			replication: "002",
+			doomed:      []needle_map.NeedleValue{live(1), live(2)},
+			survivors:   [][]needle_map.NeedleValue{{live(2), live(1)}},
+			wantDeleted: 1,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			commandEnv, _ := configureReplicationTestEnv()
+			var placement byte
+			if tc.replication != "" {
+				rp, err := super_block.NewReplicaPlacementFromString(tc.replication)
+				if err != nil {
+					t.Fatal(err)
+				}
+				placement = rp.Byte()
+			}
+			info := func() *master_pb.VolumeInformationMessage {
+				return &master_pb.VolumeInformationMessage{Id: 1, ReplicaPlacement: uint32(placement)}
+			}
 			doomed := &trimTestVolumeServer{index: trimTestIndex(tc.doomed...)}
 			replicas := []*VolumeReplica{
-				{location: &location{dataNode: startConfigureReplicationTestVolumeServer(t, doomed, 1)}, info: &master_pb.VolumeInformationMessage{Id: 1}},
+				{location: &location{dataNode: startConfigureReplicationTestVolumeServer(t, doomed, 1)}, info: info()},
 			}
 			for _, entries := range tc.survivors {
 				survivor := &trimTestVolumeServer{index: trimTestIndex(entries...)}
-				replicas = append(replicas, &VolumeReplica{location: &location{dataNode: startConfigureReplicationTestVolumeServer(t, survivor, 1)}, info: &master_pb.VolumeInformationMessage{Id: 1}})
+				replicas = append(replicas, &VolumeReplica{location: &location{dataNode: startConfigureReplicationTestVolumeServer(t, survivor, 1)}, info: info()})
 			}
 			pickDoomed := func([]*VolumeReplica, *super_block.ReplicaPlacement) *VolumeReplica { return replicas[0] }
 

@@ -336,35 +336,61 @@ func checkOneVolume(a *VolumeReplica, b *VolumeReplica, writer io.Writer, comman
 	return
 }
 
-// countUncoveredNeedles counts the needles live on doomed that no other
-// replica holds, live or deleted. Each may be a missed write, so trimming
-// doomed could delete its only copy. Survivor indexes are walked unfiltered:
-// a remote-tier replica records its deletes with offset zero.
-func countUncoveredNeedles(commandEnv *CommandEnv, writer io.Writer, doomed *VolumeReplica, replicas []*VolumeReplica) (int, error) {
+// countUncoveredNeedles counts the needles live on doomed that would be left
+// on fewer than copyCount survivors, or on fewer than all of them when the
+// volume has no more. Each may be a missed write, so trimming doomed could
+// leave it short or delete its only copy. A delete on any survivor covers the
+// needle. Survivor indexes are walked unfiltered: a remote-tier replica
+// records its deletes with offset zero.
+func countUncoveredNeedles(commandEnv *CommandEnv, writer io.Writer, doomed *VolumeReplica, replicas []*VolumeReplica, copyCount int) (int, error) {
 	vcd := &volumeCheckDisk{writer: writer, commandEnv: commandEnv}
-	uncovered := needle_map.NewMemDb()
-	defer uncovered.Close()
-	if err := vcd.readIndexDatabase(uncovered, doomed.info.Collection, doomed.info.Id, pb.NewServerAddressFromDataNode(doomed.location.dataNode)); err != nil {
+	doomedDB := needle_map.NewMemDb()
+	defer doomedDB.Close()
+	if err := vcd.readIndexDatabase(doomedDB, doomed.info.Collection, doomed.info.Id, pb.NewServerAddressFromDataNode(doomed.location.dataNode)); err != nil {
 		return 0, fmt.Errorf("readIndexDatabase %s volume %d: %v", doomed.location.dataNode.Id, doomed.info.Id, err)
 	}
+	var survivorDBs []*needle_map.MemDb
+	defer func() {
+		for _, db := range survivorDBs {
+			db.Close()
+		}
+	}()
 	for _, survivor := range replicas {
 		if survivor.location.dataNode == doomed.location.dataNode {
 			continue
 		}
+		db := needle_map.NewMemDb()
+		survivorDBs = append(survivorDBs, db)
 		var index bytes.Buffer
 		err := vcd.copyVolumeIndexFile(survivor.info.Collection, survivor.info.Id, pb.NewServerAddressFromDataNode(survivor.location.dataNode), &index)
 		if err == nil {
-			err = idx.WalkIndexFile(bytes.NewReader(index.Bytes()), 0, func(key types.NeedleId, _ types.Offset, _ types.Size) error {
-				return uncovered.Delete(key)
+			err = idx.WalkIndexFile(bytes.NewReader(index.Bytes()), 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
+				if _, found := doomedDB.Get(key); !found {
+					return nil
+				}
+				return db.Set(key, offset, size)
 			})
 		}
 		if err != nil {
 			return 0, fmt.Errorf("readIndexDatabase %s volume %d: %v", survivor.location.dataNode.Id, survivor.info.Id, err)
 		}
 	}
+	required := min(copyCount, len(survivorDBs))
 	count := 0
-	err := uncovered.AscendingVisit(func(value needle_map.NeedleValue) error {
-		if !value.Size.IsDeleted() {
+	err := doomedDB.AscendingVisit(func(value needle_map.NeedleValue) error {
+		if value.Size.IsDeleted() {
+			return nil
+		}
+		holders := 0
+		for _, db := range survivorDBs {
+			if held, found := db.Get(value.Key); found {
+				if held.Size.IsDeleted() {
+					return nil
+				}
+				holders++
+			}
+		}
+		if holders < required {
 			count++
 		}
 		return nil
@@ -422,11 +448,11 @@ func (c *commandVolumeFixReplication) deleteOneVolume(commandEnv *CommandEnv, wr
 			}
 			if checkErr == nil {
 				var uncovered int
-				if uncovered, checkErr = countUncoveredNeedles(commandEnv, writer, replica, replicas); checkErr != nil {
+				if uncovered, checkErr = countUncoveredNeedles(commandEnv, writer, replica, replicas, replicaPlacement.GetCopyCount()); checkErr != nil {
 					fmt.Fprintf(writer, "skip deleting volume %d from %s: %v\n", replica.info.Id, replica.location.dataNode.Id, checkErr)
 				} else if uncovered > 0 {
 					checkErr = fmt.Errorf("%d uncovered needle(s)", uncovered)
-					fmt.Fprintf(writer, "skip trimming volume %d from %s: %d live needle(s) there are held by no other replica; reconcile with volume.check.disk first\n", replica.info.Id, replica.location.dataNode.Id, uncovered)
+					fmt.Fprintf(writer, "skip trimming volume %d from %s: %d live needle(s) there would be left short of copies; reconcile with volume.check.disk first\n", replica.info.Id, replica.location.dataNode.Id, uncovered)
 				}
 			}
 			// A survivor can go away while the indexes are read.
