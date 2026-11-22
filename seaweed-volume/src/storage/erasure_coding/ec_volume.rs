@@ -39,6 +39,8 @@ pub(crate) struct ShardLocationCache {
     read_hints: HashMap<ShardId, Vec<String>>,
     /// Changes with every change to `read_hints` (Go's `ShardReadHintsRevision`),
     /// so a read only forgets the hint holders it asked if no lookup changed them.
+    /// Drawn from `READ_HINTS_REVISION`, so a revision read before a remount
+    /// never matches the new `EcVolume`'s cache.
     read_hints_revision: u64,
     /// Wall-clock timestamp of the most recent successful `LookupEcVolume`
     /// refresh of `locations`. `None` until the first refresh. Drives the
@@ -57,6 +59,12 @@ pub(crate) struct ShardLocationCache {
 /// Bytes read per positional read when seeding `deleted_needles` from `.ecj`.
 /// A multiple of `NEEDLE_ID_SIZE`; 1 MiB is 131072 entries per syscall.
 const ECJ_LOAD_CHUNK_BYTES: usize = 1 << 20;
+
+static READ_HINTS_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn next_read_hints_revision() -> u64 {
+    READ_HINTS_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+}
 
 /// Process-wide epoch bumped whenever a failed .ecj append truncates its
 /// uncommitted tail. A decode that read the journal without the store lock
@@ -1754,11 +1762,11 @@ impl EcVolume {
                     && !known.is_empty()
                 {
                     cache.read_hints.insert(shard_id, known);
-                    cache.read_hints_revision += 1;
+                    cache.read_hints_revision = next_read_hints_revision();
                 }
             } else {
                 if cache.read_hints.remove(&shard_id).is_some() {
-                    cache.read_hints_revision += 1;
+                    cache.read_hints_revision = next_read_hints_revision();
                 }
                 cache.locations.insert(shard_id, addrs);
             }
@@ -1832,7 +1840,7 @@ impl EcVolume {
         if hints.is_empty() {
             cache.read_hints.remove(&shard_id);
         }
-        cache.read_hints_revision += 1;
+        cache.read_hints_revision = next_read_hints_revision();
     }
 
     /// Mark the cached map for a prompt re-check after a read failed against one
@@ -3787,6 +3795,33 @@ mod tests {
             (ids.len() * NEEDLE_ID_SIZE) as u64,
         );
         assert_eq!(vol.read_deleted_needles().unwrap(), ids);
+    }
+
+    /// A read hint revision taken from one instance of a volume must not let
+    /// a read forget the hint a later instance holds after a remount.
+    #[test]
+    fn test_read_hint_revision_is_not_shared_across_instances() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let vid = VolumeId(50);
+        write_ecx_file(dir, "", vid, &[]);
+        let holder = "127.0.0.1:8080".to_string();
+        let delist = |vol: &EcVolume| {
+            vol.merge_shard_locations(HashMap::from([(0, vec![holder.clone()])]));
+            vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
+            vol.shard_read_hints(0).unwrap().1
+        };
+        let old = EcVolume::new(dir, dir, "", vid).unwrap();
+        let revision = delist(&old);
+        drop(old);
+
+        let vol = EcVolume::new(dir, dir, "", vid).unwrap();
+        delist(&vol);
+        vol.forget_shard_read_hints(0, revision, std::slice::from_ref(&holder));
+        assert_eq!(
+            vol.shard_read_hints(0).map(|(hints, _)| hints),
+            Some(vec![holder])
+        );
     }
 
     /// A journal that grew, or was replaced, after it was loaded must not be
