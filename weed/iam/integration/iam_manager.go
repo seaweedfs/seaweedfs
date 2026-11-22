@@ -2022,6 +2022,27 @@ func (m *IAMManager) validateTrustPolicyForCredentials(ctx context.Context, role
 		return fmt.Errorf("role has no trust policy")
 	}
 
+	requestContext := map[string]interface{}{
+		"aws:FederatedProvider": request.ProviderName,
+	}
+	if request.DurationSeconds != nil {
+		requestContext["sts:DurationSeconds"] = *request.DurationSeconds
+	}
+	result, err := m.policyEngine.EvaluateTrustPolicy(ctx, roleDef.TrustPolicy, &policy.EvaluationContext{
+		Principal:      request.Username,
+		Action:         sts.ActionAssumeRoleWithCredentials,
+		Resource:       roleDef.RoleArn,
+		RequestContext: requestContext,
+	})
+	if err != nil {
+		return fmt.Errorf("trust policy evaluation failed: %w", err)
+	}
+	for _, match := range result.MatchingStatements {
+		if match.Effect == policy.EffectDeny {
+			return fmt.Errorf("trust policy denies credential assumption for provider: %s", request.ProviderName)
+		}
+	}
+
 	// Check if trust policy allows credential assumption for the specific provider
 	for _, statement := range roleDef.TrustPolicy.Statement {
 		if statement.Effect == "Allow" {
