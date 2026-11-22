@@ -16301,13 +16301,28 @@ mod tests {
     async fn test_volume_ec_blob_delete_rechecks_tail_under_journal_lock() {
         let (service, _tmp, _data, idx, _) = make_split_idx_ec_decode_service(&[], false).await;
         let state = service.state.clone();
-        let appender = state
-            .store
-            .read()
-            .unwrap()
-            .find_ec_volume(VolumeId(1))
-            .unwrap()
-            .journal_appender();
+        let (appender, path_lock) = {
+            let store = state.store.read().unwrap();
+            let ev = store.find_ec_volume(VolumeId(1)).unwrap();
+            (ev.journal_appender(), ev.journal_path_lock().unwrap())
+        };
+        // A delete takes the path lock before the journal lock and gives both
+        // up together, so with the journal lock held here the path lock is
+        // busy exactly while the delete is parked on it.
+        let path_busy_becomes = |busy: bool| {
+            let path_lock = path_lock.clone();
+            async move {
+                let deadline =
+                    std::time::Instant::now() + std::time::Duration::from_secs(5);
+                while path_lock.try_lock().is_ok() == busy {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "path lock never became busy={busy}"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            }
+        };
 
         // Park the delete on the journal lock; the tail is claimed while it
         // waits — the interleaving a check taken before the lock missed.
@@ -16322,7 +16337,7 @@ mod tests {
                 }))
                 .await
         });
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        path_busy_becomes(true).await;
         assert!(
             state.store.try_write().is_ok(),
             "a delete waiting on its journal must not hold the store lock"
@@ -16334,12 +16349,15 @@ mod tests {
             .insert(VolumeId(1));
         drop(held);
 
-        // Under the lock the delete sees the tail and parks on the notify.
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        assert!(
-            !delete.is_finished(),
+        // Under the lock the delete sees the tail, gives up both locks
+        // without appending, and parks on the notify.
+        path_busy_becomes(false).await;
+        assert_eq!(
+            std::fs::metadata(format!("{idx}/1.ecj")).map_or(0, |m| m.len()),
+            0,
             "a delete must not commit while its volume is in the decode tail"
         );
+        assert!(!delete.is_finished());
 
         state
             .ec_decode_tail
