@@ -319,7 +319,7 @@ func TestIsPublicPolicy(t *testing.T) {
 	}
 }
 
-func TestRestrictPublicBucketsIgnoresPublicPolicyForAnonymous(t *testing.T) {
+func TestRestrictPublicBucketsDeniesAnonymousOnPublicPolicy(t *testing.T) {
 	const bucket = "pab-restrict"
 	public := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::pab-restrict/*"}]}`
 	sourceIP := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::pab-restrict/*","Condition":{"IpAddress":{"aws:SourceIp":"192.0.2.0/24"}}}]}`
@@ -342,13 +342,17 @@ func TestRestrictPublicBucketsIgnoresPublicPolicyForAnonymous(t *testing.T) {
 	restricted = true
 	allowed, evaluated = evaluate("*")
 	require.False(t, allowed)
-	require.False(t, evaluated, "an ignored public grant must not read as an explicit deny")
+	require.True(t, evaluated, "a public policy denies anonymous callers, so public ACLs cannot grant them either")
 	allowed, _ = evaluate(user)
 	require.True(t, allowed)
 
 	require.NoError(t, bpe.engine.SetBucketPolicy(bucket, sourceIP))
 	allowed, _ = evaluate("*")
 	require.True(t, allowed, "a policy narrowed by aws:SourceIp is not public")
+
+	require.NoError(t, bpe.DeleteBucketPolicy(bucket))
+	allowed, evaluated = evaluate("*")
+	require.False(t, allowed || evaluated, "without a policy the bucket has nothing to restrict")
 }
 
 func TestRestrictsPublicBucketsReadsBucketConfig(t *testing.T) {

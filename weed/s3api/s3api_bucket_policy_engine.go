@@ -125,6 +125,10 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 		return false, false, fmt.Errorf("action cannot be empty")
 	}
 
+	if principal == "*" && bpe.restrictsPublicPolicy(bucket) {
+		return false, true, nil
+	}
+
 	// Convert action to S3 action format
 	// ResolveS3Action handles nil request internally (falls back to mapBaseActionToS3Format)
 	s3Action := ResolveS3Action(r, action, bucket, object)
@@ -184,7 +188,7 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 	case policy_engine.PolicyResultAllow:
 		// glog.V(4).Infof("EvaluatePolicy [Wrapper]: ALLOW - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
 		if principal == "*" && bpe.restrictsPublicPolicy(bucket) {
-			return false, false, nil
+			return false, true, nil
 		}
 		return true, true, nil
 	case policy_engine.PolicyResultDeny:
@@ -199,15 +203,16 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 	}
 }
 
-// restrictsPublicPolicy reports whether RestrictPublicBuckets keeps the
-// bucket's policy from granting anonymous access, which it does once the
-// policy is public.
+// restrictsPublicPolicy reports whether RestrictPublicBuckets denies the
+// bucket to anonymous callers, which it does while the bucket has a public
+// policy. It is checked before and after evaluation, so a policy replaced
+// in between cannot slip an anonymous grant past it.
 func (bpe *BucketPolicyEngine) restrictsPublicPolicy(bucket string) bool {
-	if bpe.RestrictsPublicBuckets == nil || !bpe.RestrictsPublicBuckets(bucket) {
+	doc, err := bpe.engine.GetBucketPolicy(bucket)
+	if err != nil || !isPublicPolicy(doc) {
 		return false
 	}
-	doc, err := bpe.engine.GetBucketPolicy(bucket)
-	return err != nil || isPublicPolicy(doc)
+	return bpe.RestrictsPublicBuckets != nil && bpe.RestrictsPublicBuckets(bucket)
 }
 
 // principalVariables resolves the policy variables of a principal. A role
