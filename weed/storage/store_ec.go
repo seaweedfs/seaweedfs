@@ -725,27 +725,13 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 	readHints := ecVolume.ShardReadHints[shardId]
 	ecVolume.ShardLocationsLock.RUnlock()
 
-	if !hasShardIdLocation && len(readHints) > 0 {
-		// Only a deleted answer is taken from a hint, so one byte is enough.
-		ctx, cancel := context.WithTimeout(context.Background(), ecReadHintTimeout)
-		_, is_deleted, err = s.readRemoteEcShardInterval(ctx, readHints, needleId, ecVolume.VolumeId, shardId, data[:1], actualOffset, ecVolume.EncodeTsNs)
-		cancel()
-		if err == nil && is_deleted {
-			return
-		}
-		if err != nil {
-			glog.V(1).Infof("read ec shard %d.%d from delisted holders %v: %v", ecVolume.VolumeId, shardId, readHints, err)
-			ecVolume.ShardLocationsLock.Lock()
-			if slices.Equal(ecVolume.ShardReadHints[shardId], readHints) {
-				delete(ecVolume.ShardReadHints, shardId)
-			}
-			ecVolume.ShardLocationsLock.Unlock()
-		}
+	if !hasShardIdLocation && len(readHints) > 0 && s.askEcShardReadHints(needleId, ecVolume, shardId, readHints, data[:1], actualOffset) {
+		return true, nil
 	}
 
 	// try reading directly
 	if hasShardIdLocation {
-		_, is_deleted, err = s.readRemoteEcShardInterval(context.Background(), sourceDataNodes, needleId, ecVolume.VolumeId, shardId, data, actualOffset, ecVolume.EncodeTsNs)
+		_, is_deleted, err = s.readRemoteEcShardInterval(sourceDataNodes, needleId, ecVolume.VolumeId, shardId, data, actualOffset, ecVolume.EncodeTsNs)
 		if err == nil {
 			return
 		}
@@ -1275,6 +1261,41 @@ var errShardQuarantined = fmt.Errorf("ec shard on a quarantined disk: %w", errSh
 // answering, before the read reconstructs the shard.
 var ecReadHintTimeout = 5 * time.Second
 
+// askEcShardReadHints reports whether a delisted holder of the shard journaled
+// the needle's delete. Each holder is asked, since any one of them may hold the
+// delete; only a deleted answer is taken, so one byte is enough. Holders that
+// fail are forgotten unless a lookup replaced the hint meanwhile.
+func (s *Store) askEcShardReadHints(needleId types.NeedleId, ecVolume *erasure_coding.EcVolume, shardId erasure_coding.ShardId, hints []pb.ServerAddress, probe []byte, offset int64) bool {
+	var failed []pb.ServerAddress
+	for _, hint := range hints {
+		ctx, cancel := context.WithTimeout(context.Background(), ecReadHintTimeout)
+		_, isDeleted, err := s.doReadRemoteEcShardInterval(ctx, hint, needleId, ecVolume.VolumeId, shardId, probe, offset, ecVolume.EncodeTsNs)
+		cancel()
+		if err == nil && isDeleted {
+			return true
+		}
+		if err != nil {
+			glog.V(1).Infof("read ec shard %d.%d from delisted holder %s: %v", ecVolume.VolumeId, shardId, hint, err)
+			failed = append(failed, hint)
+		}
+	}
+	if len(failed) == 0 {
+		return false
+	}
+	ecVolume.ShardLocationsLock.Lock()
+	defer ecVolume.ShardLocationsLock.Unlock()
+	if !slices.Equal(ecVolume.ShardReadHints[shardId], hints) {
+		return false
+	}
+	kept := slices.DeleteFunc(slices.Clone(hints), func(hint pb.ServerAddress) bool { return slices.Contains(failed, hint) })
+	if len(kept) == 0 {
+		delete(ecVolume.ShardReadHints, shardId)
+	} else {
+		ecVolume.ShardReadHints[shardId] = kept
+	}
+	return false
+}
+
 // readLocalEcShardInterval refuses a shard whose disk is quarantined unless
 // allowQuarantined is set.
 func (s *Store) readLocalEcShardInterval(ecVolume *erasure_coding.EcVolume, shardId erasure_coding.ShardId, buf []byte, offset int64, allowQuarantined bool) error {
@@ -1309,7 +1330,7 @@ func (s *Store) readLocalEcShardInterval(ecVolume *erasure_coding.EcVolume, shar
 	return nil
 }
 
-func (s *Store) readRemoteEcShardInterval(ctx context.Context, sourceDataNodes []pb.ServerAddress, needleId types.NeedleId, vid needle.VolumeId, shardId erasure_coding.ShardId, buf []byte, offset int64, expectedEncodeTsNs int64) (n int, is_deleted bool, err error) {
+func (s *Store) readRemoteEcShardInterval(sourceDataNodes []pb.ServerAddress, needleId types.NeedleId, vid needle.VolumeId, shardId erasure_coding.ShardId, buf []byte, offset int64, expectedEncodeTsNs int64) (n int, is_deleted bool, err error) {
 
 	if len(sourceDataNodes) == 0 {
 		return 0, false, fmt.Errorf("failed to find ec shard %d.%d", vid, shardId)
@@ -1317,7 +1338,7 @@ func (s *Store) readRemoteEcShardInterval(ctx context.Context, sourceDataNodes [
 
 	for _, sourceDataNode := range sourceDataNodes {
 		glog.V(3).Infof("read remote ec shard %d.%d from %s", vid, shardId, sourceDataNode)
-		n, is_deleted, err = s.doReadRemoteEcShardInterval(ctx, sourceDataNode, needleId, vid, shardId, buf, offset, expectedEncodeTsNs)
+		n, is_deleted, err = s.doReadRemoteEcShardInterval(context.Background(), sourceDataNode, needleId, vid, shardId, buf, offset, expectedEncodeTsNs)
 		if err == nil {
 			return
 		}
@@ -1454,7 +1475,7 @@ func (s *Store) gatherEcShardIntervals(needleId types.NeedleId, ecVolume *erasur
 			go func() {
 				defer wg.Done()
 				data := make([]byte, size)
-				nRead, isDeleted, readErr := s.readRemoteEcShardInterval(context.Background(), locations, needleId, ecVolume.VolumeId, shardId, data, offset, ecVolume.EncodeTsNs)
+				nRead, isDeleted, readErr := s.readRemoteEcShardInterval(locations, needleId, ecVolume.VolumeId, shardId, data, offset, ecVolume.EncodeTsNs)
 				if readErr != nil {
 					glog.V(3).Infof("recover: readRemoteEcShardInterval %d.%d %d bytes from %+v: %v", ecVolume.VolumeId, shardId, nRead, locations, readErr)
 					forgetShardId(ecVolume, shardId)

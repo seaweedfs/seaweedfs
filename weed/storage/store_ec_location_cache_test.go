@@ -510,6 +510,7 @@ func TestReadOneEcShardIntervalAsksADelistedHolderBeforeRebuilding(t *testing.T)
 	const delisted = erasure_coding.ShardId(3)
 	baseFileName, n := writeEcVolumeFiles(t, t.TempDir(), 7)
 	others := startEcShardPeer(t, &oneBadShardPeer{baseFileName: baseFileName, badShard: delisted})
+	live := startEcShardPeer(t, &oneBadShardPeer{baseFileName: baseFileName, badShard: 13})
 	journaled := startEcShardPeer(t, deletedNeedlePeer{})
 
 	store := &Store{grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials())}
@@ -519,26 +520,26 @@ func TestReadOneEcShardIntervalAsksADelistedHolderBeforeRebuilding(t *testing.T)
 	}
 	seedShardLocations(ecVolume, others)
 	delete(ecVolume.ShardLocations, delisted)
-	ecVolume.ShardReadHints = map[erasure_coding.ShardId][]pb.ServerAddress{delisted: {journaled}}
+	ecVolume.ShardReadHints = map[erasure_coding.ShardId][]pb.ServerAddress{delisted: {live, journaled}}
 
 	interval := erasure_coding.Interval{BlockIndex: int(delisted), Size: 4096, IsLargeBlock: true}
 	got := make([]byte, interval.Size)
 	isDeleted, err := store.readOneEcShardInterval(n.Id, ecVolume, interval, got)
 	if err != nil || !isDeleted {
-		t.Fatalf("read interval: deleted=%v err=%v, want the delisted holder's delete", isDeleted, err)
+		t.Fatalf("read interval: deleted=%v err=%v, want the delisted holder's delete after another answered live", isDeleted, err)
 	}
 
-	// A hint that no longer answers is dropped, and the read rebuilds the shard.
-	ecVolume.ShardReadHints[delisted] = []pb.ServerAddress{others}
+	// A holder that no longer answers is dropped, and the read rebuilds the shard.
+	ecVolume.ShardReadHints[delisted] = []pb.ServerAddress{others, live}
 	isDeleted, err = store.readOneEcShardInterval(n.Id, ecVolume, interval, got)
 	if err != nil || isDeleted {
 		t.Fatalf("read interval: deleted=%v err=%v, want it rebuilt", isDeleted, err)
 	}
 	ecVolume.ShardLocationsLock.RLock()
-	_, hinted := ecVolume.ShardReadHints[delisted]
+	hints := ecVolume.ShardReadHints[delisted]
 	ecVolume.ShardLocationsLock.RUnlock()
-	if hinted {
-		t.Error("a read hint that failed is still kept")
+	if want := []pb.ServerAddress{live}; !slices.Equal(hints, want) {
+		t.Errorf("read hints %v, want only the holder that answered %v", hints, want)
 	}
 	want := make([]byte, len(got))
 	f, err := os.Open(baseFileName + erasure_coding.ToExt(int(delisted)))
