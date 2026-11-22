@@ -364,3 +364,42 @@ func TestVolumeEcShardsCopyRefusesOtherEncodeRun(t *testing.T) {
 		})
 	}
 }
+
+func TestCopyFileRefusesSourceWithMixedLocalRuns(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		runB    int64
+		wantErr bool
+	}{
+		{"same run on both disks", 1000, false},
+		{"different runs", 500, true},
+		{"unreported run", 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			diskA, diskB := t.TempDir(), t.TempDir()
+			src := newMultiDiskEcScrubStore(t, diskA, diskB)
+			const vid = needle.VolumeId(903)
+			seedEcShardOnDisk(t, src, vid, "mixed-src", diskA, 0, 1000, 10, 4, 0)
+			seedEcShardOnDisk(t, src, vid, "mixed-src", diskB, 1, tc.runB, 10, 4, 0)
+			source := serveEcCopySource(t, &VolumeServer{store: src})
+
+			dstDir := t.TempDir()
+			receiver := newEcCopyReceiver(t, dstDir)
+			before := listDir(t, dstDir)
+			_, err := receiver.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
+				VolumeId:       uint32(vid),
+				Collection:     "mixed-src",
+				ShardIds:       []uint32{0},
+				CopyEcxFile:    true,
+				CopyVifFile:    true,
+				SourceDataNode: source,
+			})
+			if !tc.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, "holds encode runs")
+			require.Equal(t, before, listDir(t, dstDir))
+		})
+	}
+}

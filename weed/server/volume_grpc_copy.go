@@ -1014,6 +1014,9 @@ func (vs *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream v
 			ecVolume.Sync()
 		}
 
+		if err := vs.requireOneLocalEncodeRun(req.Collection, req.VolumeId); err != nil {
+			return err
+		}
 		baseFileName := erasure_coding.EcShardBaseFileName(req.Collection, int(req.VolumeId)) + req.Ext
 		for _, location := range vs.store.Locations {
 			tName := util.Join(location.Directory, baseFileName)

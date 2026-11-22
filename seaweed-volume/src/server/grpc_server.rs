@@ -2517,6 +2517,7 @@ impl VolumeServer for VolumeGrpcService {
 
             // EC volume: search disk locations for the file
             let store = self.state.store.read().unwrap();
+            require_one_local_encode_run(&store, &req.collection, vid)?;
             let mut found_path = None;
             let ec_base = if req.collection.is_empty() {
                 format!("{}{}", vid.0, req.ext)
@@ -7337,11 +7338,7 @@ fn require_mounted_encode_run(
     vid: VolumeId,
     staged_vif: &str,
 ) -> Result<(), Status> {
-    let run = std::fs::read_to_string(staged_vif)
-        .ok()
-        .and_then(|s| serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&s).ok())
-        .and_then(|vi| vi.ec_shard_config)
-        .map_or(0, |c| c.encode_ts_ns);
+    let run = read_vif_encode_run(staged_vif);
     if run == 0 {
         return Ok(());
     }
@@ -7354,6 +7351,46 @@ fn require_mounted_encode_run(
                 "VolumeEcShardsCopy volume {}: copied shards are encode run {} but {} mounts run {}",
                 vid, run, loc.directory, ecv.encode_ts_ns
             )));
+        }
+    }
+    Ok(())
+}
+
+fn read_vif_encode_run(path: &str) -> i64 {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&s).ok())
+        .and_then(|vi| vi.ec_shard_config)
+        .map_or(0, |c| c.encode_ts_ns)
+}
+
+/// Refuse to serve the files of a volume whose disks here hold different
+/// encode runs: each copied file is looked up on its own, so a copy could pair
+/// one run's shards with another run's `.vif`.
+fn require_one_local_encode_run(
+    store: &crate::storage::store::Store,
+    collection: &str,
+    vid: VolumeId,
+) -> Result<(), Status> {
+    let vif = if collection.is_empty() {
+        format!("{}.vif", vid.0)
+    } else {
+        format!("{}_{}.vif", collection, vid.0)
+    };
+    let mut run = 0i64;
+    for loc in &store.locations {
+        for dir in [&loc.directory, &loc.idx_directory] {
+            let r = read_vif_encode_run(&format!("{}/{}", dir, vif));
+            if r == 0 {
+                continue;
+            }
+            if run != 0 && run != r {
+                return Err(Status::failed_precondition(format!(
+                    "ec volume {} holds encode runs {} and {} on this server",
+                    vid.0, run, r
+                )));
+            }
+            run = r;
         }
     }
     Ok(())
@@ -15444,6 +15481,46 @@ mod tests {
                 .unwrap()
                 .into_inner();
             assert_eq!(resp.ec_shard_config.unwrap().encode_ts_ns, want);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_copy_file_refuses_source_with_mixed_local_runs() {
+        let vif = |run: i64| {
+            serde_json::to_string(&crate::storage::volume::VifVolumeInfo {
+                version: 3,
+                ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                    data_shards: 10,
+                    parity_shards: 4,
+                    encode_ts_ns: run,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .unwrap()
+        };
+        for (run1, want_err) in [(1000i64, false), (500, true), (0, false)] {
+            let (service, tmp) = make_service_with_two_disk_complete_ec_volume(7063);
+            for (dir, run) in [("data0", 1000), ("data1", run1)] {
+                std::fs::write(tmp.path().join(dir).join("7063.vif"), vif(run)).unwrap();
+            }
+            let result = service
+                .copy_file(Request::new(volume_server_pb::CopyFileRequest {
+                    volume_id: 7063,
+                    is_ec_volume: true,
+                    ext: ".ec00".to_string(),
+                    compaction_revision: u32::MAX,
+                    stop_offset: i64::MAX as u64,
+                    ..Default::default()
+                }))
+                .await;
+            match result {
+                Ok(_) => assert!(!want_err, "run {} served a mixed source", run1),
+                Err(e) => {
+                    assert!(want_err, "run {}: {}", run1, e);
+                    assert_eq!(e.code(), tonic::Code::FailedPrecondition, "{}", e);
+                }
+            }
         }
     }
 

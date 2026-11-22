@@ -624,6 +624,28 @@ func (vs *VolumeServer) requireMountedEncodeRun(vid needle.VolumeId, stagedVif s
 	return nil
 }
 
+// requireOneLocalEncodeRun refuses to serve the files of a volume whose disks
+// here hold different encode runs: each copied file is looked up on its own,
+// so a copy could pair one run's shards with another run's .vif.
+func (vs *VolumeServer) requireOneLocalEncodeRun(collection string, vid uint32) error {
+	baseFileName := erasure_coding.EcShardBaseFileName(collection, int(vid)) + ".vif"
+	var run int64
+	for _, location := range vs.store.Locations {
+		for _, dir := range []string{location.Directory, location.IdxDirectory} {
+			vi, _, found, _ := volume_info.MaybeLoadVolumeInfo(util.Join(dir, baseFileName))
+			r := vi.GetEcShardConfig().GetEncodeTsNs()
+			if !found || r == 0 {
+				continue
+			}
+			if run != 0 && run != r {
+				return status.Errorf(codes.FailedPrecondition, "ec volume %d holds encode runs %d and %d on this server", vid, run, r)
+			}
+			run = r
+		}
+	}
+	return nil
+}
+
 // ecCopyCreatedFiles records the files a VolumeEcShardsCopy adds to its disk,
 // so a failed copy removes exactly those and never one that was already there.
 type ecCopyCreatedFiles []string
