@@ -1803,12 +1803,13 @@ impl EcVolume {
         cache.read_hints.get(&shard_id).cloned()
     }
 
-    pub(crate) fn forget_shard_read_hints(&self, shard_id: ShardId) {
-        self.shard_locations
-            .write()
-            .unwrap()
-            .read_hints
-            .remove(&shard_id);
+    /// Drops the shard's hint only if it is still `used`: a lookup may have
+    /// replaced it while the read that failed was in flight.
+    pub(crate) fn forget_shard_read_hints(&self, shard_id: ShardId, used: &[String]) {
+        let mut cache = self.shard_locations.write().unwrap();
+        if cache.read_hints.get(&shard_id).is_some_and(|h| h == used) {
+            cache.read_hints.remove(&shard_id);
+        }
     }
 
     /// Mark the cached map for a prompt re-check after a read failed against one
@@ -5519,7 +5520,13 @@ mod tests {
         vol.merge_shard_locations(HashMap::from([(0, vec!["d:4".to_string()])]));
         assert_eq!(vol.shard_read_hints(0), None);
         vol.merge_shard_locations(HashMap::from([(0, Vec::new())]));
-        vol.forget_shard_read_hints(0);
+        vol.forget_shard_read_hints(0, &["a:1".to_string()]);
+        assert_eq!(
+            vol.shard_read_hints(0),
+            Some(vec!["d:4".to_string()]),
+            "a failed read of an older hint keeps its replacement"
+        );
+        vol.forget_shard_read_hints(0, &["d:4".to_string()]);
         assert_eq!(vol.shard_read_hints(0), None);
     }
 

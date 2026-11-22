@@ -1384,7 +1384,7 @@ async fn fetch_one_interval(
                     hints,
                     e
                 );
-                forget_shard_read_hints(state, vid, shard_id);
+                forget_shard_read_hints(state, vid, shard_id, &hints);
             }
         }
     }
@@ -1881,10 +1881,15 @@ fn shard_read_hints(
     store.find_ec_volume(vid)?.shard_read_hints(shard_id)
 }
 
-fn forget_shard_read_hints(state: &Arc<VolumeServerState>, vid: VolumeId, shard_id: ShardId) {
+fn forget_shard_read_hints(
+    state: &Arc<VolumeServerState>,
+    vid: VolumeId,
+    shard_id: ShardId,
+    used: &[String],
+) {
     let store = state.store.read().unwrap();
     if let Some(ecv) = store.find_ec_volume(vid) {
-        ecv.forget_shard_read_hints(shard_id);
+        ecv.forget_shard_read_hints(shard_id, used);
     }
 }
 
