@@ -128,7 +128,7 @@ func (p *putStages) record() {
 		observe("body_read", d)
 	}
 	observe("assign", time.Duration(p.assign.Load()))
-	observe("chunk_upload", max(p.uploading-p.readDuring, 0))
+	observe("storage", max(p.uploading-p.readDuring, 0))
 	if !p.uploaded.IsZero() {
 		observe("metadata", time.Since(p.uploaded))
 	}

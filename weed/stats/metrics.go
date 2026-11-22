@@ -795,7 +795,7 @@ var (
 			Namespace: Namespace,
 			Subsystem: subsystemS3,
 			Name:      "put_stage_seconds",
-			Help:      "Bucketed histogram of the time one s3 object write spends in each stage: body_read waits on the request body, assign on volume assigns, chunk_upload on chunk uploads apart from body reads, metadata from the uploaded chunks to the committed entry.",
+			Help:      "Bucketed histogram of the time one s3 object write spends in each stage: body_read waits on the request body, assign on volume assigns, storage on volume assigns and chunk uploads (the chunked upload apart from body reads), metadata from the uploaded chunks to the committed entry.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 24),
 		}, []string{"operation", "stage"})
 	S3InFlightRequestsGauge = prometheus.NewGaugeVec(

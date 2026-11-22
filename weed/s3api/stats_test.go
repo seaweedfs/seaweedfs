@@ -99,7 +99,7 @@ func TestPutStagesRecordEachStage(t *testing.T) {
 	r := withMultipartPart(httptest.NewRequest(http.MethodPut, "/bucket/object?partNumber=1&uploadId=u", body), uploadFilerClient{})
 	before := map[string]uint64{}
 	sums := map[string]float64{}
-	for _, stage := range []string{"body_read", "assign", "chunk_upload", "metadata"} {
+	for _, stage := range []string{"body_read", "assign", "storage", "metadata"} {
 		before[stage], sums[stage] = putStageSamples(t, "UploadPart", stage)
 	}
 
@@ -111,7 +111,7 @@ func TestPutStagesRecordEachStage(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 	stages.record()
 
-	for stage, atLeast := range map[string]time.Duration{"body_read": 20 * time.Millisecond, "assign": 40 * time.Millisecond, "chunk_upload": 0, "metadata": 5 * time.Millisecond} {
+	for stage, atLeast := range map[string]time.Duration{"body_read": 20 * time.Millisecond, "assign": 40 * time.Millisecond, "storage": 5 * time.Millisecond, "metadata": 5 * time.Millisecond} {
 		count, sum := putStageSamples(t, "UploadPart", stage)
 		assert.Equal(t, before[stage]+1, count, stage)
 		assert.GreaterOrEqual(t, sum-sums[stage], atLeast.Seconds(), stage)
@@ -150,7 +150,7 @@ func TestTrackTimesBodyReadsBeforeTheWrite(t *testing.T) {
 func TestPutStagesRecordBodyReadOncePerRequest(t *testing.T) {
 	r := timeBodyReads(httptest.NewRequest(http.MethodPut, "/bucket/archive.zip", bytes.NewReader([]byte("12345678"))))
 	before, _ := putStageSamples(t, "PutObject", "body_read")
-	uploadsBefore, _ := putStageSamples(t, "PutObject", "chunk_upload")
+	uploadsBefore, _ := putStageSamples(t, "PutObject", "storage")
 	for i := 0; i < 3; i++ {
 		stages := newPutStages(r)
 		_, err := stages.upload(context.Background(), io.LimitReader(r.Body, 4), stagedUploadOption(0, nil))
@@ -158,7 +158,7 @@ func TestPutStagesRecordBodyReadOncePerRequest(t *testing.T) {
 		stages.record()
 	}
 	after, _ := putStageSamples(t, "PutObject", "body_read")
-	uploadsAfter, _ := putStageSamples(t, "PutObject", "chunk_upload")
+	uploadsAfter, _ := putStageSamples(t, "PutObject", "storage")
 	assert.Equal(t, before+1, after)
 	assert.Equal(t, uploadsBefore+3, uploadsAfter)
 }
