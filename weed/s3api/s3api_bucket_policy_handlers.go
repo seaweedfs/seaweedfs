@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // Bucket policy metadata key for storing policies in filer.
@@ -271,8 +272,9 @@ func (s3a *S3ApiServer) setBucketPolicy(bucket string, policyDoc *policy_engine.
 			if storedPublicAccessBlock(bucket, entry.Extended).blocksPublicPolicy() && isPublicPolicy(policyDoc) {
 				return errPublicPolicyBlocked
 			}
-			// The write must not land over a public access block set after the check above.
-			expected := filer_pb.SnapshotExtended(entry.Extended, s3_constants.ExtPublicAccessBlockKey)
+			// The write lands only over the entry checked above, so neither a public
+			// access block nor any other bucket setting written since is lost.
+			expected := proto.Clone(entry).(*filer_pb.Entry)
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
 			}
@@ -283,9 +285,12 @@ func (s3a *S3ApiServer) setBucketPolicy(bucket string, policyDoc *policy_engine.
 			// Update the entry with new metadata; a bucket deleted between the
 			// lookup above and this write surfaces as a filer NotFound.
 			_, err = client.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
-				Directory:        s3a.bucketRoot(bucket),
-				Entry:            entry,
-				ExpectedExtended: expected,
+				Directory: s3a.bucketRoot(bucket),
+				Entry:     entry,
+				Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+					Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+					ExpectedEntry: expected,
+				}}},
 			})
 			if status.Code(err) == codes.FailedPrecondition && attempt < 3 {
 				continue

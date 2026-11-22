@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -377,40 +376,56 @@ func TestRestrictsPublicBucketsReadsBucketConfig(t *testing.T) {
 	}
 }
 
-type racingPublicAccessBlockFiler struct {
+type racingBucketEntryFiler struct {
 	*ambiguousPutFiler
-	raced bool
+	race func(*filer_pb.Entry)
 }
 
-func (f *racingPublicAccessBlockFiler) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+func (f *racingBucketEntryFiler) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 	f.mu.Lock()
 	current := f.entries[req.Directory+"/"+req.Entry.Name]
-	if !f.raced {
-		f.raced = true
-		current.Extended[s3_constants.ExtPublicAccessBlockKey] = []byte(`<PublicAccessBlockConfiguration><BlockPublicPolicy>true</BlockPublicPolicy></PublicAccessBlockConfiguration>`)
+	if f.race != nil {
+		f.race(current)
+		f.race = nil
 	}
-	for k, v := range req.ExpectedExtended {
-		if !bytes.Equal(current.Extended[k], v) {
-			f.mu.Unlock()
-			return nil, status.Error(codes.FailedPrecondition, "extended attribute changed")
-		}
-	}
+	satisfied := putConditionSatisfied(req.Condition, current)
 	f.mu.Unlock()
+	if !satisfied {
+		return nil, status.Error(codes.FailedPrecondition, "precondition failed")
+	}
 	return f.ambiguousPutFiler.UpdateEntry(ctx, req)
+}
+
+func putPolicyOverRace(t *testing.T, bucket, policy string, race func(*filer_pb.Entry)) (*httptest.ResponseRecorder, map[string][]byte) {
+	t.Helper()
+	filerImpl := &racingBucketEntryFiler{race: race, ambiguousPutFiler: &ambiguousPutFiler{entries: map[string]*filer_pb.Entry{
+		"/buckets/" + bucket: {Name: bucket, IsDirectory: true, Extended: map[string][]byte{}},
+	}}}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+	r := mux.SetURLVars(httptest.NewRequest(http.MethodPut, "/"+bucket+"?policy", strings.NewReader(policy)), map[string]string{"bucket": bucket})
+	rr := httptest.NewRecorder()
+	s3a.PutBucketPolicyHandler(rr, r)
+	return rr, filerImpl.entries["/buckets/"+bucket].Extended
 }
 
 func TestPutBucketPolicyKeepsConcurrentPublicAccessBlock(t *testing.T) {
 	const bucket = "pab-policy-race"
 	public := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::pab-policy-race/*"}]}`
-	filerImpl := &racingPublicAccessBlockFiler{ambiguousPutFiler: &ambiguousPutFiler{entries: map[string]*filer_pb.Entry{
-		"/buckets/" + bucket: {Name: bucket, IsDirectory: true, Extended: map[string][]byte{}},
-	}}}
-	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
-	r := mux.SetURLVars(httptest.NewRequest(http.MethodPut, "/"+bucket+"?policy", strings.NewReader(public)), map[string]string{"bucket": bucket})
-	rr := httptest.NewRecorder()
-	s3a.PutBucketPolicyHandler(rr, r)
+	rr, stored := putPolicyOverRace(t, bucket, public, func(e *filer_pb.Entry) {
+		e.Extended[s3_constants.ExtPublicAccessBlockKey] = []byte(`<PublicAccessBlockConfiguration><BlockPublicPolicy>true</BlockPublicPolicy></PublicAccessBlockConfiguration>`)
+	})
 	require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
-	stored := filerImpl.entries["/buckets/"+bucket].Extended
 	require.NotContains(t, stored, BUCKET_POLICY_METADATA_KEY)
 	require.Contains(t, stored, s3_constants.ExtPublicAccessBlockKey)
+}
+
+func TestPutBucketPolicyKeepsConcurrentBucketSetting(t *testing.T) {
+	const bucket = "pab-policy-versioning"
+	policy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::123456789012:user/alice"},"Action":"s3:GetObject","Resource":"arn:aws:s3:::pab-policy-versioning/*"}]}`
+	rr, stored := putPolicyOverRace(t, bucket, policy, func(e *filer_pb.Entry) {
+		e.Extended[s3_constants.ExtVersioningKey] = []byte(s3_constants.VersioningEnabled)
+	})
+	require.Equal(t, http.StatusNoContent, rr.Code, rr.Body.String())
+	require.Contains(t, stored, BUCKET_POLICY_METADATA_KEY)
+	require.Equal(t, s3_constants.VersioningEnabled, string(stored[s3_constants.ExtVersioningKey]))
 }
