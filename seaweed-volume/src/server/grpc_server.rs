@@ -4357,37 +4357,38 @@ impl VolumeServer for VolumeGrpcService {
         // stalls deletes of this volume, not every store reader. The decode
         // tail is checked under that journal lock (see journal_delete_local).
         loop {
-            let appender = {
+            let appenders = {
                 let store = self.state.store.read().unwrap();
-                // Go's handler locates the needle first: absent fails the RPC
-                // so the caller moves to the next holder; an existing
-                // tombstone is a no-op.
-                let Some(ec_vol) = store.find_ec_volume(vid) else {
-                    // If EC volume not mounted, it's a no-op (matching Go behavior)
-                    return Ok(Response::new(
-                        volume_server_pb::VolumeEcBlobDeleteResponse {},
-                    ));
-                };
-                match ec_vol.find_needle_from_ecx(needle_id) {
-                    Ok(Some((_, size))) if size.is_deleted() => {
-                        return Ok(Response::new(
-                            volume_server_pb::VolumeEcBlobDeleteResponse {},
-                        ));
+                // Each disk holding shards of the volume mounts its own runtime
+                // with its own deletion set, and a shard read checks the runtime
+                // of the disk that holds the shard, so every runtime records the
+                // delete. Go's handler locates the needle first: absent from the
+                // first runtime fails the RPC so the caller moves to the next
+                // holder; an existing tombstone is a no-op. An unmounted volume
+                // is a no-op too.
+                let mut appenders = Vec::new();
+                for (i, ec_vol) in store.find_all_ec_volumes(vid).into_iter().enumerate() {
+                    match ec_vol.find_needle_from_ecx(needle_id) {
+                        Ok(Some((_, size))) if size.is_deleted() => continue,
+                        Ok(None) if i > 0 => continue,
+                        Ok(None) => {
+                            return Err(Status::not_found(format!(
+                                "needle {} not in ec volume {}",
+                                needle_id, req.volume_id
+                            )));
+                        }
+                        Ok(Some(_)) => {}
+                        Err(e) => return Err(Status::internal(e.to_string())),
                     }
-                    Ok(None) => {
-                        return Err(Status::not_found(format!(
-                            "needle {} not in ec volume {}",
-                            needle_id, req.volume_id
-                        )));
-                    }
-                    Ok(Some(_)) => {}
-                    Err(e) => return Err(Status::internal(e.to_string())),
+                    appenders.push(ec_vol.journal_appender());
                 }
-                ec_vol.journal_appender()
+                appenders
             };
             let state = self.state.clone();
             let committed = tokio::task::spawn_blocking(move || {
-                appender.journal_delete(needle_id, || ec_decode_tail_contains(&state, vid))
+                appenders.iter().try_for_each(|appender| {
+                    appender.journal_delete(needle_id, || ec_decode_tail_contains(&state, vid))
+                })
             })
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
@@ -15876,6 +15877,35 @@ mod tests {
             "the finding must come from the parity check, not the needle walk: {:?}",
             resp.details
         );
+    }
+
+    // A volume mounted on two disks keeps a deletion set per disk, and a read
+    // checks the set of the disk holding the shard, so a delete must reach
+    // every local copy.
+    #[tokio::test]
+    async fn test_volume_ec_blob_delete_records_on_every_local_copy() {
+        let (service, _tmp) = make_service_with_two_disk_complete_ec_volume(7064);
+        let vid = VolumeId(7064);
+        let store = service.state.store.read().unwrap();
+        assert_eq!(store.find_all_ec_volumes(vid).len(), 2);
+        drop(store);
+        service
+            .volume_ec_blob_delete(Request::new(volume_server_pb::VolumeEcBlobDeleteRequest {
+                volume_id: 7064,
+                collection: String::new(),
+                file_key: 3,
+                version: 3,
+            }))
+            .await
+            .unwrap();
+        let store = service.state.store.read().unwrap();
+        for (i, ec_vol) in store.find_all_ec_volumes(vid).into_iter().enumerate() {
+            assert!(
+                ec_vol.is_needle_deleted(NeedleId(3)),
+                "copy {} still serves the deleted needle",
+                i
+            );
+        }
     }
 
     #[tokio::test]
