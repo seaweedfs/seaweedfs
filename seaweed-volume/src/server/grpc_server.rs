@@ -14184,6 +14184,36 @@ mod tests {
         assert_eq!(err.message(), "already deleted", "{err}");
     }
 
+    /// A delisted holder that failed before another answered deleted is
+    /// dropped all the same.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_read_drops_a_failed_hint_before_a_deleted_answer() {
+        let (service, tmp) = make_local_service_with_volume("", None);
+        generate_and_mount_ec_1(&service, (1..14).collect()).await;
+        let (journaled, _journaled_tmp, _journaled_stop) =
+            serve_ec_1_shards_from_a_peer(&tmp, vec![0], true).await;
+        {
+            let mut store = service.state.store.write().unwrap();
+            store.unmount_volume(VolumeId(1)).unwrap();
+            let ecv = store.find_ec_volume(VolumeId(1)).unwrap();
+            ecv.merge_shard_locations(std::collections::HashMap::from([(
+                0,
+                vec!["127.0.0.1:255.1".to_string(), journaled.clone()],
+            )]));
+            ecv.merge_shard_locations(std::collections::HashMap::from([(0, Vec::new())]));
+        }
+
+        let err = needle_status(&service, 11).await.unwrap_err();
+        assert_eq!(err.message(), "already deleted", "{err}");
+        let store = service.state.store.read().unwrap();
+        let hints = store
+            .find_ec_volume(VolumeId(1))
+            .unwrap()
+            .shard_read_hints(0)
+            .map(|(hints, _)| hints);
+        assert_eq!(hints, Some(vec![journaled]));
+    }
+
     /// A delete made after the delisting went to a listed holder, so the
     /// delisted holder still answers live; the read must not take that answer
     /// over the reconstruction that asks the listed holder.

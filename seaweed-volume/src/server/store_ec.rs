@@ -1847,8 +1847,8 @@ async fn recover_one_remote_ec_shard_interval(
 /// Reports whether a delisted holder of the shard journaled the needle's
 /// delete (Go's `askEcShardReadHints`). Each holder is asked, since any one of
 /// them may hold the delete; only a deleted answer is taken, so one byte is
-/// enough. Holders that fail are forgotten unless a lookup changed the hints
-/// meanwhile.
+/// enough. Holders that failed are forgotten, even when a later one answers
+/// deleted, unless a lookup changed the hints meanwhile.
 async fn ask_ec_shard_read_hints(
     state: &Arc<VolumeServerState>,
     iv: EcInterval,
@@ -1857,6 +1857,7 @@ async fn ask_ec_shard_read_hints(
 ) -> bool {
     let probe = EcInterval { size: 1, ..iv };
     let mut failed = Vec::new();
+    let mut deleted = false;
     for hint in hints {
         let err = match tokio::time::timeout(
             EC_READ_HINT_TIMEOUT,
@@ -1864,7 +1865,10 @@ async fn ask_ec_shard_read_hints(
         )
         .await
         {
-            Ok(Ok((_, true))) => return true,
+            Ok(Ok((_, true))) => {
+                deleted = true;
+                break;
+            }
             Ok(Ok(_)) => continue,
             Ok(Err(e)) => e.to_string(),
             Err(_) => "timed out".to_string(),
@@ -1884,7 +1888,7 @@ async fn ask_ec_shard_read_hints(
             ecv.forget_shard_read_hints(iv.shard_id, revision, &failed);
         }
     }
-    false
+    deleted
 }
 
 fn shard_read_hints(
