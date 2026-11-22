@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -211,6 +212,7 @@ type replicaRows struct {
 	zeroDeleted map[types.NeedleId]writeMeta // written, then deleted by an offset-0 row
 	bare        []types.NeedleId             // tombstone with no earlier write
 	overwritten map[types.NeedleId]writeMeta // an earlier write the live row replaced
+	tombstoneNs uint64                       // stamp of the deleted rows' tombstones, if not tombstone's
 }
 
 // missedDeleteViews writes each replica's rows as raw .idx bytes, loads them
@@ -229,9 +231,13 @@ func missedDeleteViews(t *testing.T, replicas []replicaRows, readErr error) ([]r
 			metas[i][offset] = m
 			offset += 64
 		}
+		deletedTombstone := tombstone
+		if r.tombstoneNs != 0 {
+			deletedTombstone.appendAtNs = r.tombstoneNs
+		}
 		for id, m := range r.deleted {
 			row(id, types.Size(40), m)
-			row(id, types.TombstoneFileSize, tombstone)
+			row(id, types.TombstoneFileSize, deletedTombstone)
 		}
 		for id, m := range r.zeroDeleted {
 			row(id, types.Size(40), m)
@@ -398,6 +404,51 @@ func TestMissedDeletes_LiveWriteStampedAfterTheTombstoneStillRefuses(t *testing.
 		}
 		if _, err := chooseSourceFromLiveNeedles(7, views, "", io.Discard); err == nil || !strings.Contains(err.Error(), "no union") {
 			t.Fatalf("%s: got %v, want a no-union refusal", name, err)
+		}
+	}
+}
+
+func TestMissedDeletes_LiveWriteFarFromTheDeletedWriteStillRefuses(t *testing.T) {
+	written := uint64(time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC).UnixNano())
+	for name, tc := range map[string]struct{ rewriteAt, tombstoneAt time.Duration }{
+		// A's clock runs an hour behind: the rewrite came 30 minutes after B's delete.
+		"skewed clock": {rewriteAt: 30 * time.Minute, tombstoneAt: time.Hour},
+		// B's compaction commit stamped a delete made before the rewrite.
+		"compaction-stamped tombstone": {rewriteAt: 5 * time.Minute, tombstoneAt: 10 * time.Minute},
+	} {
+		deletedWrite, rewrite := write2, write2
+		deletedWrite.appendAtNs = written
+		rewrite.appendAtNs = written + uint64(tc.rewriteAt)
+		views, err := missedDeleteViews(t, []replicaRows{
+			{loc: replicaA, live: map[types.NeedleId]writeMeta{1: write1, 2: rewrite}},
+			{loc: replicaB, live: map[types.NeedleId]writeMeta{1: write1}, deleted: map[types.NeedleId]writeMeta{2: deletedWrite},
+				tombstoneNs: written + uint64(tc.tombstoneAt)},
+		}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(views[0].missed) != 0 {
+			t.Fatalf("%s: a live write appended %v after the deleted one is not the same write: %v", name, tc.rewriteAt, views[0].missed)
+		}
+	}
+}
+
+func TestMissedDeletes_SameWriteStampedApartBySkewStillProves(t *testing.T) {
+	written := uint64(time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC).UnixNano())
+	for name, skew := range map[string]time.Duration{"behind": -20 * time.Second, "ahead": 20 * time.Second} {
+		deletedWrite, liveWrite := write2, write2
+		deletedWrite.appendAtNs = written
+		liveWrite.appendAtNs = uint64(int64(written) + int64(skew))
+		views, err := missedDeleteViews(t, []replicaRows{
+			{loc: replicaA, live: map[types.NeedleId]writeMeta{1: write1, 2: liveWrite}},
+			{loc: replicaB, live: map[types.NeedleId]writeMeta{1: write1}, deleted: map[types.NeedleId]writeMeta{2: deletedWrite},
+				tombstoneNs: written + uint64(time.Hour)},
+		}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(views[0].missed) != 1 || views[0].missed[0] != 2 {
+			t.Fatalf("%s: the same write stamped %v apart must count as a missed delete: %v", name, skew, views[0].missed)
 		}
 	}
 }

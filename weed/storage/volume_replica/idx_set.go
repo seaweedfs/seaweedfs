@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -156,11 +157,11 @@ func loadIndexHistory(data []byte, latest, replaced *needle_map.MemDb) error {
 // tombstone: deletes the replica missed. live holds each replica's sorted live
 // ids, latest its index with tombstone rows kept, replaced the last live row a
 // later row replaced, and readMeta reads a row's record on replica i. The proof
-// comes from the replicas' own indexes; clocks across servers only refuse. A
-// replica whose index has an earlier row for the needle (an overwrite or its
-// own delete) may hold a rewrite, so it never counts, and since compaction
-// drops such rows, neither does a live write stamped no earlier than the
-// tombstone.
+// comes from the replicas' own indexes. A replica whose index has an earlier
+// row for the needle (an overwrite or its own delete) may hold a rewrite, so it
+// never counts. Compaction drops such rows, so the live write must also have
+// been appended within replicatedWriteSpread of the deleted write, and before
+// the tombstone.
 func MissedDeletes(live [][]types.NeedleId, latest, replaced []*needle_map.MemDb, readMeta func(replica int, nv needle_map.NeedleValue) (*volume_server_pb.ReadNeedleMetaResponse, error)) ([][]types.NeedleId, error) {
 	missed := make([][]types.NeedleId, len(live))
 	for i := range live {
@@ -214,6 +215,9 @@ func MissedDeletes(live [][]types.NeedleId, latest, replaced []*needle_map.MemDb
 					liveMeta.GetLastModified() != deletedMeta.GetLastModified() {
 					continue
 				}
+				if !appendedTogether(liveMeta.GetAppendAtNs(), deletedMeta.GetAppendAtNs()) {
+					continue
+				}
 				tombstoneMeta, err := readMeta(j, *tombstoneRow)
 				if err != nil {
 					return nil, err
@@ -226,6 +230,19 @@ func MissedDeletes(live [][]types.NeedleId, latest, replaced []*needle_map.MemDb
 		}
 	}
 	return missed, nil
+}
+
+// replicatedWriteSpread bounds how far apart two replicas stamp one replicated
+// write: the forwarding time plus their clock skew.
+const replicatedWriteSpread = time.Minute
+
+// appendedTogether reports whether two records were appended within
+// replicatedWriteSpread of each other, as one replicated write is.
+func appendedTogether(a, b uint64) bool {
+	if a < b {
+		a, b = b, a
+	}
+	return a-b <= uint64(replicatedWriteSpread)
 }
 
 // subtractNeedleIds returns the ids of sorted a that are not in sorted b.
