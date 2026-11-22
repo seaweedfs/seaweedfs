@@ -1232,23 +1232,33 @@ async fn cached_lookup_ec_shard_locations(
         .lookup_ec_volume(Request::new(LookupEcVolumeRequest { volume_id: vid.0 }))
         .await
         .map_err(|e| io::Error::other(format!("lookup_ec_volume: {}", e)))?;
-    let resp = resp.into_inner();
+    Ok(shard_locations_from_reply(resp.into_inner()))
+}
 
+/// The shards a `LookupEcVolume` reply places on at least one server. The
+/// master answers every shard slot it tracks, so a shard whose holders are all
+/// down comes back with no locations: kept, it would count toward the reply's
+/// completeness and overwrite the cached address of a holder that is about to
+/// return. Go's `cachedLookupEcShardLocations` drops such a shard the same way.
+fn shard_locations_from_reply(
+    resp: master_pb::LookupEcVolumeResponse,
+) -> HashMap<ShardId, Vec<String>> {
     let mut out = HashMap::new();
     for entry in resp.shard_id_locations {
+        if entry.locations.is_empty() {
+            continue;
+        }
+        let Ok(sid) = shard_id_try_from(entry.shard_id) else {
+            continue;
+        };
         let addrs: Vec<String> = entry
             .locations
             .iter()
             .map(format_location_as_server_address)
             .collect();
-        // Defensive: skip out-of-range shard ids from the master instead of
-        // truncating (256 would alias 0). Valid replies are unaffected.
-        let Ok(sid) = shard_id_try_from(entry.shard_id) else {
-            continue;
-        };
         out.insert(sid, addrs);
     }
-    Ok(out)
+    out
 }
 
 /// Merge a fresh `LookupEcVolume` reply into the per-EcVolume shard-location
@@ -2780,6 +2790,43 @@ mod tests {
         corrupt(&mut shards, &[0, 1, 2, 3, 4], &metas);
 
         assert!(search(&shards, &metas, &n, dat_offset).is_none());
+    }
+
+    // The master answers all 32 shard slots, located or not. While 7 of a 10+4
+    // volume's shards have a holder up, the reply must read as 7 shards, short of
+    // the data shards, and must not carry empty entries that would replace a
+    // returning holder's cached address.
+    #[test]
+    fn a_lookup_reply_drops_shards_with_no_location() {
+        use master_pb::lookup_ec_volume_response::EcShardIdLocation;
+        let located = [0u32, 3, 4, 6, 7, 9, 12];
+        let reply = master_pb::LookupEcVolumeResponse {
+            volume_id: 136,
+            shard_id_locations: (0..32u32)
+                .map(|sid| EcShardIdLocation {
+                    shard_id: sid,
+                    locations: if located.contains(&sid) {
+                        vec![master_pb::Location {
+                            url: "10.0.0.5:8180".to_string(),
+                            grpc_port: 18180,
+                            ..Default::default()
+                        }]
+                    } else {
+                        Vec::new()
+                    },
+                    ..Default::default()
+                })
+                .collect(),
+        };
+        let got = shard_locations_from_reply(reply);
+        let mut ids: Vec<ShardId> = got.keys().copied().collect();
+        ids.sort();
+        assert_eq!(ids, vec![0, 3, 4, 6, 7, 9, 12]);
+        assert!(
+            got.len() < 10,
+            "a 7-shard reply must fail the data-shard completeness guard"
+        );
+        assert_eq!(got[&3], vec!["10.0.0.5:8180.18180".to_string()]);
     }
 
     fn locations(count: usize) -> HashMap<ShardId, Vec<String>> {
