@@ -222,22 +222,55 @@ func TestAtomicRenameEntryOverwriteInATransactionDeletesThenCreates(t *testing.T
 	}
 }
 
-// With a path-specific store configured, the stores may differ in how they
-// take an insert over an existing entry, so renames keep delete-then-create.
-func TestAtomicRenameEntryOverwriteWithPathSpecificStoreDeletesThenCreates(t *testing.T) {
-	store := newInPlaceRenameStore()
-	store.entries["/dir/dst.txt"] = fileEntryWithChunk("/dir/dst.txt", 202, "2,0b02")
-	writes, _ := watchTarget(store, "/dir/dst.txt")
+// A target in a path-specific store keeps delete-then-create: that store may
+// take an insert over an existing entry in its own way. A path-specific store
+// elsewhere changes nothing for a rename within the default store.
+func TestAtomicRenameEntryOverwriteWithPathSpecificStore(t *testing.T) {
+	t.Run("holding the target", func(t *testing.T) {
+		store := newInPlaceRenameStore()
+		store.entries["/dir/sub"] = newDirectoryEntry("/dir/sub", 110)
+		writes, _ := watchTarget(store, "/dir/src.txt")
+		// the store for /dir/sub/ keeps its entries by their path under it
+		subStore := newRenameTestStore()
+		subStore.entries["/dst.txt"] = fileEntryWithChunk("/dst.txt", 202, "2,0b02")
+		subWrites, _ := watchTarget(subStore, "/dst.txt")
 
-	swapNotificationQueue(t, &captureQueue{})
-	f := newRenameTestFiler(t, store)
-	f.Store.(*filer.FilerStoreWrapper).AddPathSpecificStore("/archive/", "archive", newRenameTestStore())
-	renameSrcOverDst(t, &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()})
+		swapNotificationQueue(t, &captureQueue{})
+		f := newRenameTestFiler(t, store)
+		f.Store.(*filer.FilerStoreWrapper).AddPathSpecificStore("/dir/sub/", "sub", subStore)
+		server := &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()}
+		if _, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+			OldDirectory: "/dir", OldName: "src.txt", NewDirectory: "/dir/sub", NewName: "dst.txt",
+		}); err != nil {
+			t.Fatalf("AtomicRenameEntry: %v", err)
+		}
 
-	if want := []string{"delete /dir/dst.txt", "insert /dir/dst.txt", "delete /dir/src.txt"}; !reflect.DeepEqual(*writes, want) {
-		t.Fatalf("store writes = %v, want %v", *writes, want)
-	}
-	checkReplaced(t, f, store)
+		if want := []string{"delete /dst.txt", "insert /dst.txt"}; !reflect.DeepEqual(*subWrites, want) {
+			t.Fatalf("writes to the target's store = %v, want %v", *subWrites, want)
+		}
+		if want := []string{"delete /dir/src.txt"}; !reflect.DeepEqual(*writes, want) {
+			t.Fatalf("writes to the default store = %v, want %v", *writes, want)
+		}
+		dst, err := f.FindEntry(context.Background(), "/dir/sub/dst.txt")
+		if err != nil || dst.Attr.Inode != 101 {
+			t.Fatalf("/dir/sub/dst.txt = %+v, %v; want the renamed file (inode 101)", dst, err)
+		}
+	})
+	t.Run("elsewhere", func(t *testing.T) {
+		store := newInPlaceRenameStore()
+		store.entries["/dir/dst.txt"] = fileEntryWithChunk("/dir/dst.txt", 202, "2,0b02")
+		writes, missing := watchTarget(store, "/dir/dst.txt")
+
+		swapNotificationQueue(t, &captureQueue{})
+		f := newRenameTestFiler(t, store)
+		f.Store.(*filer.FilerStoreWrapper).AddPathSpecificStore("/archive/", "archive", newRenameTestStore())
+		renameSrcOverDst(t, &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()})
+
+		if len(*missing) != 0 {
+			t.Fatalf("target missing after writes %v (all writes %v)", *missing, *writes)
+		}
+		checkReplaced(t, f, store)
+	})
 }
 
 // Another filer unlinks the target's other hard link after this filer read

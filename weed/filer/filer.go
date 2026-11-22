@@ -473,6 +473,26 @@ func (f *Filer) BeginTransaction(ctx context.Context) (context.Context, error) {
 	return context.WithValue(txCtx, storeTransactionKey{}, true), nil
 }
 
+// TransactionCovers reports whether ctx is inside a store transaction that
+// covers the writes to the entries at paths: the default store isolates its
+// transactions and holds those entries. Such writes show to no other reader
+// before the commit, and a refused commit leaves none of them behind.
+func (f *Filer) TransactionCovers(ctx context.Context, paths ...util.FullPath) bool {
+	if ctx.Value(storeTransactionKey{}) == nil {
+		return false
+	}
+	fsw, ok := f.Store.(*FilerStoreWrapper)
+	return ok && fsw.transactionCovers(paths...)
+}
+
+// WritesAtOnce reports whether a write under ctx, which BeginTransaction
+// returned, to the entry at path lands at once and as written: the default
+// store keeps no transaction, and it holds the entry.
+func (f *Filer) WritesAtOnce(ctx context.Context, path util.FullPath) bool {
+	fsw, ok := f.Store.(*FilerStoreWrapper)
+	return ok && fsw.writesAtOnce(ctx, path)
+}
+
 func (f *Filer) CommitTransaction(ctx context.Context) error {
 	return f.Store.CommitTransaction(ctx)
 }

@@ -37,6 +37,9 @@ func newTxnRenameStore() *txnRenameStore {
 	return store
 }
 
+// IsolatesTransactions declares what the store does, as the TiKV store does.
+func (s *txnRenameStore) IsolatesTransactions() bool { return true }
+
 func txnWrites(ctx context.Context) txnRenameWrites {
 	writes, _ := ctx.Value(txnRenameKey{}).(txnRenameWrites)
 	return writes
@@ -371,25 +374,41 @@ func TestStreamRenameOfRemoteFileIsNotRunAgain(t *testing.T) {
 	if got := store.commitCount(); got != 1 {
 		t.Fatalf("commits = %d, want 1: a remote file's rename is not run again", got)
 	}
+	if len(stream.sent) != 0 {
+		t.Fatalf("client got %d responses for a rename that did not happen", len(stream.sent))
+	}
 }
 
-// On a store without transactions nothing can refuse a commit, and the
-// responses go out as the entry moves, as before.
-func TestStreamRenameWithoutTransactionsStreamsLive(t *testing.T) {
-	store := newRenameTestStore()
-	store.entries["/ckpt"] = newDirectoryEntry("/ckpt", 100)
-	store.entries["/ckpt/.tmpL"] = fileEntryWithChunk("/ckpt/.tmpL", 101, "1,0a01")
-	swapNotificationQueue(t, &captureQueue{})
-	server := &FilerServer{filer: newRenameTestFiler(t, store), entryLockTable: util.NewLockTable[util.FullPath]()}
-	stream := &renameLiveStream{store: store}
+// A store that does not declare isolating transactions keeps the responses
+// going out as the entry moves, as before: one without transactions, where
+// each write shows at once, and one that hands back a transaction context but
+// does not say that its writes go through it.
+func TestStreamRenameWithoutIsolatingTransactionsStreamsLive(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		strictTx bool
+	}{
+		{"no transactions", false},
+		{"transactions not declared isolating", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newRenameTestStore()
+			store.strictTx = tc.strictTx
+			store.entries["/ckpt"] = newDirectoryEntry("/ckpt", 100)
+			store.entries["/ckpt/.tmpL"] = fileEntryWithChunk("/ckpt/.tmpL", 101, "1,0a01")
+			swapNotificationQueue(t, &captureQueue{})
+			server := &FilerServer{filer: newRenameTestFiler(t, store), entryLockTable: util.NewLockTable[util.FullPath]()}
+			stream := &renameLiveStream{store: store}
 
-	if err := server.StreamRenameEntry(&filer_pb.StreamRenameEntryRequest{
-		OldDirectory: "/ckpt", OldName: ".tmpL", NewDirectory: "/ckpt", NewName: "l.bin",
-	}, stream); err != nil {
-		t.Fatalf("StreamRenameEntry: %v", err)
-	}
-	if len(stream.sourceAt) != 2 || !stream.sourceAt[0] {
-		t.Fatalf("responses saw the source as %v, want the first sent while the move was still under way", stream.sourceAt)
+			if err := server.StreamRenameEntry(&filer_pb.StreamRenameEntryRequest{
+				OldDirectory: "/ckpt", OldName: ".tmpL", NewDirectory: "/ckpt", NewName: "l.bin",
+			}, stream); err != nil {
+				t.Fatalf("StreamRenameEntry: %v", err)
+			}
+			if len(stream.sourceAt) != 2 || !stream.sourceAt[0] {
+				t.Fatalf("responses saw the source as %v, want the first sent while the move was still under way", stream.sourceAt)
+			}
+		})
 	}
 }
 
@@ -408,37 +427,95 @@ func (s *renameLiveStream) Send(resp *filer_pb.StreamRenameEntryResponse) error 
 	return nil
 }
 
-// With a path-specific store configured, the default store's transaction does
-// not cover the writes under that store's prefix (a parent created at the
-// destination, say), so a refused rename is not run again.
-func TestRenameWithPathSpecificStoreIsNotRunAgain(t *testing.T) {
-	for _, stream := range []bool{true, false} {
-		t.Run(map[bool]string{true: "stream", false: "atomic"}[stream], func(t *testing.T) {
-			store := newTxnRenameStore()
-			store.entries["/ckpt/.tmpP"] = fileEntryWithChunk("/ckpt/.tmpP", 101, "1,0a01")
-			store.refuse = writeConflict
-			swapNotificationQueue(t, &captureQueue{})
-			f := newRenameTestFiler(t, store)
-			f.Store.(*filer.FilerStoreWrapper).AddPathSpecificStore("/archive/", "archive", newRenameTestStore())
-			server := &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()}
+// A path-specific store's writes bypass the default store's transaction. A
+// rename that writes there is not run again; one that stays in the default
+// store is, as without the path-specific store.
+func TestRenameWithPathSpecificStore(t *testing.T) {
+	for _, tc := range []struct {
+		name, newDir string
+		wantCommits  int
+	}{
+		{"into it", "/ckpt/archive", 1},
+		{"elsewhere", "/ckpt", 2},
+	} {
+		for _, stream := range []bool{true, false} {
+			t.Run(tc.name+map[bool]string{true: "/stream", false: "/atomic"}[stream], func(t *testing.T) {
+				store := newTxnRenameStore()
+				store.entries["/ckpt/.tmpP"] = fileEntryWithChunk("/ckpt/.tmpP", 101, "1,0a01")
+				if tc.wantCommits == 1 {
+					store.refuse = writeConflict
+				} else {
+					flushedWhileRenaming(store, "/ckpt/.tmpP", fileEntryWithChunk("/ckpt/.tmpP", 101, "2,0b02"))
+				}
+				swapNotificationQueue(t, &captureQueue{})
+				f := newRenameTestFiler(t, store)
+				f.Store.(*filer.FilerStoreWrapper).AddPathSpecificStore("/ckpt/archive/", "archive", newRenameTestStore())
+				server := &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()}
 
-			var err error
-			if stream {
-				err = server.StreamRenameEntry(&filer_pb.StreamRenameEntryRequest{
-					OldDirectory: "/ckpt", OldName: ".tmpP", NewDirectory: "/ckpt", NewName: "p.bin",
-				}, &commitStampedStream{store: store})
-			} else {
-				_, err = server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
-					OldDirectory: "/ckpt", OldName: ".tmpP", NewDirectory: "/ckpt", NewName: "p.bin",
-				})
-			}
-			if err == nil || !strings.Contains(err.Error(), "move commit error") {
-				t.Fatalf("rename = %v, want the commit error", err)
-			}
-			if got := store.commitCount(); got != 1 {
-				t.Fatalf("commits = %d, want 1: the transaction does not cover every write", got)
-			}
-		})
+				responses := &commitStampedStream{store: store}
+				var err error
+				if stream {
+					err = server.StreamRenameEntry(&filer_pb.StreamRenameEntryRequest{
+						OldDirectory: "/ckpt", OldName: ".tmpP", NewDirectory: tc.newDir, NewName: "p.bin",
+					}, responses)
+				} else {
+					_, err = server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+						OldDirectory: "/ckpt", OldName: ".tmpP", NewDirectory: tc.newDir, NewName: "p.bin",
+					})
+				}
+				if tc.wantCommits == 1 && (err == nil || !strings.Contains(err.Error(), "move commit error")) {
+					t.Fatalf("rename = %v, want the commit error", err)
+				} else if tc.wantCommits == 2 && err != nil {
+					t.Fatalf("rename = %v, want it run again after the conflict", err)
+				}
+				if got := store.commitCount(); got != tc.wantCommits {
+					t.Fatalf("commits = %d, want %d", got, tc.wantCommits)
+				}
+				if tc.wantCommits == 2 && stream {
+					for i, commits := range responses.at {
+						if commits != 2 {
+							t.Fatalf("response %d went out after %d commits, want only after the rename committed", i, commits)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+// canceledRenameStream stands for a client that went away before the rename
+// sent anything.
+type canceledRenameStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s *canceledRenameStream) Context() context.Context { return s.ctx }
+func (s *canceledRenameStream) Send(*filer_pb.StreamRenameEntryResponse) error {
+	return s.ctx.Err()
+}
+
+// A rename whose client canceled before its first response is rolled back,
+// as it is when the responses go out at once, not committed unseen.
+func TestStreamRenameWhoseClientCanceledIsRolledBack(t *testing.T) {
+	store := newTxnRenameStore()
+	store.entries["/ckpt/.tmpC"] = fileEntryWithChunk("/ckpt/.tmpC", 101, "1,0a01")
+	swapNotificationQueue(t, &captureQueue{})
+	server := &FilerServer{filer: newRenameTestFiler(t, store), entryLockTable: util.NewLockTable[util.FullPath]()}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := server.StreamRenameEntry(&filer_pb.StreamRenameEntryRequest{
+		OldDirectory: "/ckpt", OldName: ".tmpC", NewDirectory: "/ckpt", NewName: "c.bin",
+	}, &canceledRenameStream{ctx: ctx})
+	if err == nil {
+		t.Fatal("StreamRenameEntry = nil, want the cancellation")
+	}
+	if got := store.commitCount(); got != 0 {
+		t.Fatalf("commits = %d, want the canceled rename rolled back", got)
+	}
+	if _, err := store.renameTestStore.FindEntry(context.Background(), "/ckpt/.tmpC"); err != nil {
+		t.Fatalf("source after the canceled rename: %v", err)
 	}
 }
 

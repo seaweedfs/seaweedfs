@@ -436,41 +436,49 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 	return
 }
 
-type isolatingTransactionKey struct{}
-
-// IsolatingTransaction reports whether ctx carries a transaction the store
-// began for real, whose writes no other reader sees before its commit (SQL,
-// TiKV), and which covers every write: a store without transactions hands its
-// context back unchanged, and with path-specific stores configured the writes
-// under their prefixes bypass the default store's transaction.
-func IsolatingTransaction(ctx context.Context) bool {
-	isolating, _ := ctx.Value(isolatingTransactionKey{}).(bool)
-	return isolating
+// transactionCovers reports whether a transaction of the default store covers
+// the writes to the entries at paths: the store's transactions are real
+// (IsolatingTransactionStore) and it holds those entries. The writes of a
+// path-specific store bypass the default store's transaction. An entry in the
+// default store has its parents there too.
+func (fsw *FilerStoreWrapper) transactionCovers(paths ...util.FullPath) bool {
+	isolating, ok := fsw.defaultStore.(IsolatingTransactionStore)
+	if !ok || !isolating.IsolatesTransactions() {
+		return false
+	}
+	for _, p := range paths {
+		if fsw.getActualStore(p) != fsw.defaultStore {
+			return false
+		}
+	}
+	return true
 }
 
-type noTransactionKey struct{}
+type noStoreTransactionKey struct{}
 
-// WithoutTransactions reports whether ctx comes from a BeginTransaction the
-// store answered without a transaction of its own, with no path-specific
-// store configured: every write under ctx shows at once, and the store keeps
-// it as written, an insert over an existing entry included.
-func WithoutTransactions(ctx context.Context) bool {
-	none, _ := ctx.Value(noTransactionKey{}).(bool)
-	return none
+// writesAtOnce reports whether a write under ctx to the entry at path lands at
+// once and as written: the default store keeps no transaction, and it holds
+// the entry. Every store without transactions takes an insert over an existing
+// entry as an overwrite.
+func (fsw *FilerStoreWrapper) writesAtOnce(ctx context.Context, path util.FullPath) bool {
+	if none, _ := ctx.Value(noStoreTransactionKey{}).(bool); !none {
+		return false
+	}
+	return fsw.getActualStore(path) == fsw.defaultStore
 }
 
 func (fsw *FilerStoreWrapper) BeginTransaction(ctx context.Context) (context.Context, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	ctx = context.WithoutCancel(ctx)
-	txCtx, err := fsw.getDefaultStore().BeginTransaction(ctx)
-	if err == nil && !fsw.hasPathSpecificStore {
-		if txCtx != ctx {
-			txCtx = context.WithValue(txCtx, isolatingTransactionKey{}, true)
-		} else {
-			txCtx = context.WithValue(txCtx, noTransactionKey{}, true)
-		}
+	// A store without transactions hands back the very context it was given:
+	// it has nowhere else to keep one. A store that hands back another context
+	// may or may not put its writes in a transaction, so nothing is read into
+	// that. The store gets a context of its own to tell the two apart.
+	given := context.WithValue(context.WithoutCancel(ctx), noStoreTransactionKey{}, false)
+	txCtx, err := fsw.getDefaultStore().BeginTransaction(given)
+	if err == nil && txCtx == given {
+		txCtx = context.WithValue(txCtx, noStoreTransactionKey{}, true)
 	}
 	return txCtx, err
 }

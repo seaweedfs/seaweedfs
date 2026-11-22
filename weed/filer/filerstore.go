@@ -73,3 +73,13 @@ type BucketAware interface {
 type Debuggable interface {
 	Debug(writer io.Writer)
 }
+
+// IsolatingTransactionStore is implemented by a store whose transactions are
+// real: the entry and KV writes made under the context BeginTransaction
+// returns go through that transaction, stay invisible to other readers until
+// CommitTransaction, and are undone by RollbackTransaction. A store says so
+// itself. It cannot be told from the context it hands back: a store may carry
+// a transaction there that its writes do not use.
+type IsolatingTransactionStore interface {
+	IsolatesTransactions() bool
+}
