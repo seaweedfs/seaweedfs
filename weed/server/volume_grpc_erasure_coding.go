@@ -296,14 +296,15 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 		// handle is repointed: otherwise RebuildEcxFile's unlink strands later
 		// appends on the detached inode.
 		indexBaseFileName = ev.EcIndexBaseFileName()
+		folded := false
 		unlockJournal := ev.LockDeletionJournal()
-		foldErr := erasure_coding.RebuildEcxFile(indexBaseFileName)
-		err := foldErr
+		err := erasure_coding.RebuildEcxFile(indexBaseFileName)
 		if err == nil {
+			folded = true
 			err = ev.ReopenDeletionJournal()
 		}
 		unlockJournal()
-		if foldErr == nil {
+		if folded {
 			// Mounts on sibling disks can journal into the same .ecj — the
 			// fold unlinked it, so repoint their handles too or their next
 			// append lands on the detached inode, even when this mount's own
