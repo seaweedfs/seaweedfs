@@ -479,17 +479,17 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		remoteEntry = copiedRemote
 	}
 
-	// A file renamed over a file is written over the target in one store write
-	// on a store without transactions: deleting the target first leaves its
-	// path empty for anyone reading it through another filer until the new
-	// entry lands, since the rename's path locks fence this filer only. What
-	// keeps delete-then-create:
-	//   - a store with transactions, or one that may have them: a transaction
-	//     hides the gap and fails cleanly if the target went meanwhile;
-	//   - a target in a path-specific store;
-	//   - directories, and entries with a remote object.
+	// A file renamed over a file is written over the target with one store
+	// write when the store says that its insert replaces an entry at once and
+	// whole (the Redis stores). Deleting the target first leaves its path empty
+	// there for anyone reading it through another filer until the new entry
+	// lands, since the rename's path locks fence this filer only. Everything
+	// else keeps delete-then-create: any other store, among them those with
+	// transactions, which hide the gap and fail cleanly if the target went
+	// meanwhile; a target in a path-specific store; directories; and entries
+	// with a remote object.
 	inPlace := existingTarget != nil && !entry.IsDirectory() && !existingTarget.IsDirectory() &&
-		entry.Remote == nil && existingTarget.Remote == nil && fs.filer.WritesAtOnce(ctx, newPath)
+		entry.Remote == nil && existingTarget.Remote == nil && fs.filer.OverwritesAtOnce(newPath)
 
 	if existingTarget != nil && !inPlace {
 		targetCtx := filer.WithSuppressedMetadataEvents(ctx)

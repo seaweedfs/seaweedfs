@@ -84,3 +84,13 @@ type Debuggable interface {
 type IsolatingTransactionStore interface {
 	IsolatesTransactions() bool
 }
+
+// OverwritingStore is implemented by a store without transactions whose
+// InsertEntry over an existing entry replaces it at once and whole: the stored
+// entry, its expiry, and its listing in the directory. A rename can then write
+// a file over its target instead of deleting the target first. A store says so
+// itself, once its insert has been checked: an upsert may leave part of the
+// old row in place. The Redis stores do.
+type OverwritingStore interface {
+	OverwritesAtOnce() bool
+}

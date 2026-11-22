@@ -44,8 +44,11 @@ func onLookup(store *renameTestStore, path util.FullPath, n int, fn func()) {
 	}
 }
 
+// newInPlaceRenameStore is a store that says its insert replaces an entry at
+// once and whole, as the Redis stores do, holding /dir/src.txt.
 func newInPlaceRenameStore() *renameTestStore {
 	store := newRenameTestStore()
+	store.overwritesAtOnce = true
 	store.entries["/dir"] = newDirectoryEntry("/dir", 100)
 	store.entries["/dir/src.txt"] = fileEntryWithChunk("/dir/src.txt", 101, "1,0a01")
 	return store
@@ -81,9 +84,9 @@ func checkReplaced(t *testing.T, f *filer.Filer, store *renameTestStore) {
 	}
 }
 
-// On a store without transactions the target never goes missing while a file
-// is renamed over it, and subscribers still see the target's delete, then the
-// rename.
+// On a store whose insert replaces an entry at once and whole, the target never
+// goes missing while a file is renamed over it, and subscribers still see the
+// target's delete, then the rename.
 func TestAtomicRenameEntryOverwriteKeepsTargetResolvable(t *testing.T) {
 	store := newInPlaceRenameStore()
 	store.entries["/dir/dst.txt"] = fileEntryWithChunk("/dir/dst.txt", 202, "2,0b02")
@@ -149,6 +152,7 @@ func TestStreamRenameEntryOverwriteKeepsTargetResolvable(t *testing.T) {
 // delete-then-create: in-place replacement is for files only.
 func TestAtomicRenameEntryDirectoryOverEmptyDirectory(t *testing.T) {
 	store := newRenameTestStore()
+	store.overwritesAtOnce = true
 	store.entries["/a"] = newDirectoryEntry("/a", 10)
 	store.entries["/a/f.txt"] = newFileEntry("/a/f.txt", 11)
 	store.entries["/b"] = newDirectoryEntry("/b", 20)
@@ -202,38 +206,52 @@ func TestAtomicRenameEntryOverATargetDeletedMeanwhile(t *testing.T) {
 	}
 }
 
-// A store with transactions keeps delete-then-create: nothing else sees the
-// target missing before the commit, and an update would quietly write nothing
-// on a SQL store if the target went meanwhile through another filer.
-func TestAtomicRenameEntryOverwriteInATransactionDeletesThenCreates(t *testing.T) {
-	store := newInPlaceRenameStore()
-	store.strictTx = true
-	store.entries["/dir/dst.txt"] = fileEntryWithChunk("/dir/dst.txt", 202, "2,0b02")
-	writes, _ := watchTarget(store, "/dir/dst.txt")
+// A store that does not say its insert replaces an entry keeps
+// delete-then-create: with transactions nothing else sees the target missing
+// before the commit, and an insert over an existing row can abort one
+// (Postgres); without them, the insert may leave part of the old row in place.
+func TestAtomicRenameEntryOverwriteOnOtherStoresDeletesThenCreates(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		strictTx bool
+	}{
+		{"without transactions", false},
+		{"with transactions", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newInPlaceRenameStore()
+			store.overwritesAtOnce = false
+			store.strictTx = tc.strictTx
+			store.entries["/dir/dst.txt"] = fileEntryWithChunk("/dir/dst.txt", 202, "2,0b02")
+			writes, _ := watchTarget(store, "/dir/dst.txt")
 
-	swapNotificationQueue(t, &captureQueue{})
-	f := newRenameTestFiler(t, store)
-	renameSrcOverDst(t, &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()})
+			swapNotificationQueue(t, &captureQueue{})
+			f := newRenameTestFiler(t, store)
+			renameSrcOverDst(t, &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()})
 
-	if want := []string{"delete /dir/dst.txt", "insert /dir/dst.txt", "delete /dir/src.txt"}; !reflect.DeepEqual(*writes, want) {
-		t.Fatalf("store writes = %v, want %v", *writes, want)
-	}
-	checkReplaced(t, f, store)
-	if got := queuedDeletions(f); len(got) != 1 || got[0] != "2,0b02" {
-		t.Fatalf("queued chunk deletions = %v, want the replaced file's 2,0b02", got)
+			if want := []string{"delete /dir/dst.txt", "insert /dir/dst.txt", "delete /dir/src.txt"}; !reflect.DeepEqual(*writes, want) {
+				t.Fatalf("store writes = %v, want %v", *writes, want)
+			}
+			checkReplaced(t, f, store)
+			if got := queuedDeletions(f); len(got) != 1 || got[0] != "2,0b02" {
+				t.Fatalf("queued chunk deletions = %v, want the replaced file's 2,0b02", got)
+			}
+		})
 	}
 }
 
-// A target in a path-specific store keeps delete-then-create: that store may
-// take an insert over an existing entry in its own way. A path-specific store
+// A target in a path-specific store keeps delete-then-create: what the default
+// store says of its insert does not hold for that store. A path-specific store
 // elsewhere changes nothing for a rename within the default store.
 func TestAtomicRenameEntryOverwriteWithPathSpecificStore(t *testing.T) {
 	t.Run("holding the target", func(t *testing.T) {
 		store := newInPlaceRenameStore()
 		store.entries["/dir/sub"] = newDirectoryEntry("/dir/sub", 110)
 		writes, _ := watchTarget(store, "/dir/src.txt")
-		// the store for /dir/sub/ keeps its entries by their path under it
+		// the store for /dir/sub/ keeps its entries by their path under it;
+		// even one that says the same of its insert is not asked
 		subStore := newRenameTestStore()
+		subStore.overwritesAtOnce = true
 		subStore.entries["/dst.txt"] = fileEntryWithChunk("/dst.txt", 202, "2,0b02")
 		subWrites, _ := watchTarget(subStore, "/dst.txt")
 
@@ -273,6 +291,47 @@ func TestAtomicRenameEntryOverwriteWithPathSpecificStore(t *testing.T) {
 		}
 		checkReplaced(t, f, store)
 	})
+}
+
+// The in-place write over a hard-linked target takes that name off its file:
+// the file's chunks stay while another name holds them, and go with its last
+// name.
+func TestAtomicRenameEntryInPlaceOverHardLink(t *testing.T) {
+	for _, links := range []int32{2, 1} {
+		t.Run(map[int32]string{2: "one of two links", 1: "the last link"}[links], func(t *testing.T) {
+			store := newInPlaceRenameStore()
+			id := hardLinkedTarget(t, store, links)
+			writes, missing := watchTarget(store, "/dir/dst.txt")
+
+			swapNotificationQueue(t, &captureQueue{})
+			f := newRenameTestFiler(t, store)
+			renameSrcOverDst(t, &FilerServer{filer: f, entryLockTable: util.NewLockTable[util.FullPath]()})
+
+			if len(*missing) != 0 {
+				t.Fatalf("target missing after writes %v (all writes %v)", *missing, *writes)
+			}
+			checkReplaced(t, f, store)
+			_, recordKept := store.kv[string(id)]
+			if links == 2 {
+				if got := queuedDeletions(f); len(got) != 0 {
+					t.Fatalf("queued chunk deletions = %v, want none: /dir/other.txt still uses %s", got, replacedChunk)
+				}
+				if other, err := f.FindEntry(context.Background(), "/dir/other.txt"); err != nil || other.HardLinkCounter != 1 {
+					t.Fatalf("/dir/other.txt = %+v, %v; want it with a link count of 1", other, err)
+				}
+				if !recordKept {
+					t.Fatal("hard link record deleted while a link remains")
+				}
+			} else {
+				if got := queuedDeletions(f); len(got) != 1 || got[0] != replacedChunk {
+					t.Fatalf("queued chunk deletions = %v, want the last link's %s", got, replacedChunk)
+				}
+				if recordKept {
+					t.Fatal("hard link record kept after its last link was replaced")
+				}
+			}
+		})
+	}
 }
 
 // Another filer unlinks the target's other hard link after this filer read

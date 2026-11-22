@@ -41,6 +41,15 @@ func checkUserPassword(username, password string) error {
 	return nil
 }
 
+// OverwritesAtOnce: Redis keeps no transaction here, the SET of an insert
+// replaces the stored entry together with its expiry, and the insert lists the
+// name whether or not it was listed before.
+func (store *UniversalRedis3Store) OverwritesAtOnce() bool {
+	return true
+}
+
+var _ filer.OverwritingStore = (*UniversalRedis3Store)(nil)
+
 func (store *UniversalRedis3Store) BeginTransaction(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }

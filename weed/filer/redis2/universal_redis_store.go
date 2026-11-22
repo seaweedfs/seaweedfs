@@ -48,6 +48,15 @@ func (store *UniversalRedis2Store) getKey(key string) string {
 	return store.keyPrefix + key
 }
 
+// OverwritesAtOnce: Redis keeps no transaction here, the SET of an insert
+// replaces the stored entry together with its expiry, and the insert lists the
+// name whether or not it was listed before.
+func (store *UniversalRedis2Store) OverwritesAtOnce() bool {
+	return true
+}
+
+var _ filer.OverwritingStore = (*UniversalRedis2Store)(nil)
+
 func (store *UniversalRedis2Store) BeginTransaction(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }

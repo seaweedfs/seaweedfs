@@ -485,12 +485,12 @@ func (f *Filer) TransactionCovers(ctx context.Context, paths ...util.FullPath) b
 	return ok && fsw.transactionCovers(paths...)
 }
 
-// WritesAtOnce reports whether a write under ctx, which BeginTransaction
-// returned, to the entry at path lands at once and as written: the default
-// store keeps no transaction, and it holds the entry.
-func (f *Filer) WritesAtOnce(ctx context.Context, path util.FullPath) bool {
+// OverwritesAtOnce reports whether an entry inserted at path replaces what is
+// stored there at once and whole: the default store says that its inserts do,
+// and it holds the entry.
+func (f *Filer) OverwritesAtOnce(path util.FullPath) bool {
 	fsw, ok := f.Store.(*FilerStoreWrapper)
-	return ok && fsw.writesAtOnce(ctx, path)
+	return ok && fsw.overwritesAtOnce(path)
 }
 
 func (f *Filer) CommitTransaction(ctx context.Context) error {
@@ -675,20 +675,21 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, existing *Entry, 
 }
 
 // ReplaceFileForRename stores a file renamed over an existing file at the
-// target's path with one store write. Deleting the target first would leave
-// the path empty, on a store without transactions, for anyone reading it until
-// the new entry lands. Apart from that it does what CreateEntry does for a new
-// entry: it refuses a name the filer would not create, and it creates missing
-// parents after the write. The store drops the replaced entry's hard link, if
-// it had one, after the write.
+// target's path with one store write, on a store whose insert replaces an
+// entry at once and whole (OverwritesAtOnce). Deleting the target first would
+// leave the path empty there for anyone reading it until the new entry lands.
+// Apart from that it does what CreateEntry does for a new entry: it refuses a
+// name the filer would not create, and it creates missing parents after the
+// write. The store drops the replaced entry's hard link, if it had one, after
+// the write.
 //
 // The target was a file when the rename looked it up. Another filer may have
 // turned it into a directory since, by creating a child under it, and writing
 // over that would strand its children; or it may have deleted the target's
 // directory. So the target is read again right before the write and a
-// directory is refused, as the lookup would have refused it. A store without
-// transactions has no conditional write: this leaves the window that a
-// delete-first rename has between its own read of the target and its delete.
+// directory is refused, as the lookup would have refused it. Such a store has
+// no conditional write: this leaves the window that a delete-first rename has
+// between its own read of the target and its delete.
 func (f *Filer) ReplaceFileForRename(ctx context.Context, entry *Entry, maxFilenameLength uint32) error {
 	ctx = f.syncWriteContext(ctx, entry.FullPath)
 	if entry.FullPath.IsLongerFileName(maxFilenameLength) {

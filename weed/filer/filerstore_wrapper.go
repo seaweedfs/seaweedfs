@@ -454,33 +454,20 @@ func (fsw *FilerStoreWrapper) transactionCovers(paths ...util.FullPath) bool {
 	return true
 }
 
-type noStoreTransactionKey struct{}
-
-// writesAtOnce reports whether a write under ctx to the entry at path lands at
-// once and as written: the default store keeps no transaction, and it holds
-// the entry. Every store without transactions takes an insert over an existing
-// entry as an overwrite.
-func (fsw *FilerStoreWrapper) writesAtOnce(ctx context.Context, path util.FullPath) bool {
-	if none, _ := ctx.Value(noStoreTransactionKey{}).(bool); !none {
-		return false
-	}
-	return fsw.getActualStore(path) == fsw.defaultStore
+// overwritesAtOnce reports whether an entry inserted at path replaces what is
+// stored there at once and whole: the default store says that its inserts do
+// (OverwritingStore), and it holds the entry.
+func (fsw *FilerStoreWrapper) overwritesAtOnce(path util.FullPath) bool {
+	overwriting, ok := fsw.defaultStore.(OverwritingStore)
+	return ok && overwriting.OverwritesAtOnce() && fsw.getActualStore(path) == fsw.defaultStore
 }
 
 func (fsw *FilerStoreWrapper) BeginTransaction(ctx context.Context) (context.Context, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	// A store without transactions hands back the very context it was given:
-	// it has nowhere else to keep one. A store that hands back another context
-	// may or may not put its writes in a transaction, so nothing is read into
-	// that. The store gets a context of its own to tell the two apart.
-	given := context.WithValue(context.WithoutCancel(ctx), noStoreTransactionKey{}, false)
-	txCtx, err := fsw.getDefaultStore().BeginTransaction(given)
-	if err == nil && txCtx == given {
-		txCtx = context.WithValue(txCtx, noStoreTransactionKey{}, true)
-	}
-	return txCtx, err
+	ctx = context.WithoutCancel(ctx)
+	return fsw.getDefaultStore().BeginTransaction(ctx)
 }
 
 func (fsw *FilerStoreWrapper) CommitTransaction(ctx context.Context) error {

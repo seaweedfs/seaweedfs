@@ -41,7 +41,13 @@ type renameTestStore struct {
 	afterOp   func(op string, p util.FullPath) // optional: runs after each insert, update or delete
 	afterFind func(p util.FullPath)            // optional: runs after each lookup
 	listing   map[string]bool                  // optional: directory listing kept the way Redis keeps it
+
+	overwritesAtOnce bool // declares filer.OverwritingStore, as the Redis stores do
 }
+
+// OverwritesAtOnce is what the store declares; its InsertEntry does replace an
+// entry at once and whole either way.
+func (s *renameTestStore) OverwritesAtOnce() bool { return s.overwritesAtOnce }
 
 // noteOp runs the afterOp hook after a write, outside the store's lock.
 func (s *renameTestStore) noteOp(op string, p util.FullPath) {
