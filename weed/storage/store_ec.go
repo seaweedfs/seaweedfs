@@ -722,7 +722,19 @@ func (s *Store) readOneEcShardInterval(needleId types.NeedleId, ecVolume *erasur
 
 	ecVolume.ShardLocationsLock.RLock()
 	sourceDataNodes, hasShardIdLocation := ecVolume.ShardLocations[shardId]
+	readHints := ecVolume.ShardReadHints[shardId]
 	ecVolume.ShardLocationsLock.RUnlock()
+
+	if !hasShardIdLocation && len(readHints) > 0 {
+		_, is_deleted, err = s.readRemoteEcShardInterval(readHints, needleId, ecVolume.VolumeId, shardId, data, actualOffset, ecVolume.EncodeTsNs)
+		if err == nil {
+			return
+		}
+		glog.V(1).Infof("read ec shard %d.%d from delisted holders %v: %v", ecVolume.VolumeId, shardId, readHints, err)
+		ecVolume.ShardLocationsLock.Lock()
+		delete(ecVolume.ShardReadHints, shardId)
+		ecVolume.ShardLocationsLock.Unlock()
+	}
 
 	// try reading directly
 	if hasShardIdLocation {
@@ -1218,6 +1230,14 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 		ecVolume.ShardLocationsLock.Lock()
 		for _, shardIdLocations := range resp.ShardIdLocations {
 			shardId := erasure_coding.ShardId(shardIdLocations.ShardId)
+			if len(shardIdLocations.Locations) > 0 {
+				delete(ecVolume.ShardReadHints, shardId)
+			} else if known := ecVolume.ShardLocations[shardId]; len(known) > 0 {
+				if ecVolume.ShardReadHints == nil {
+					ecVolume.ShardReadHints = make(map[erasure_coding.ShardId][]pb.ServerAddress)
+				}
+				ecVolume.ShardReadHints[shardId] = known
+			}
 			delete(ecVolume.ShardLocations, shardId)
 			for _, loc := range shardIdLocations.Locations {
 				ecVolume.ShardLocations[shardId] = append(ecVolume.ShardLocations[shardId], pb.NewServerAddressFromLocation(loc))

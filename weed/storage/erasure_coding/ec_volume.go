@@ -61,6 +61,10 @@ type EcVolume struct {
 	Shards                    []*EcVolumeShard
 	ShardLocations            map[ShardId][]pb.ServerAddress
 	ShardLocationsRefreshTime time.Time
+	// ShardReadHints keeps the holders a complete lookup stopped placing a shard
+	// on. Only reads consult them, before reconstructing: such a holder may still
+	// answer, and may be the one that journaled a delete. Deletes never do.
+	ShardReadHints map[ShardId][]pb.ServerAddress
 	// ShardLocationsStale marks the map for a prompt re-check: a read that failed
 	// against a cached location has disproved what the map claims, and the normal
 	// freshness window is far too long to serve from a map known to be wrong.
