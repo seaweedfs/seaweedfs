@@ -2,6 +2,7 @@ package abstract_sql
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"reflect"
 	"testing"
@@ -249,6 +250,18 @@ func TestWritesUnderATransactionGoThroughIt(t *testing.T) {
 	txCtx, err := store.BeginTransaction(context.Background())
 	if err != nil {
 		t.Fatalf("BeginTransaction: %v", err)
+	}
+	// one mock serves the pool and its transactions alike, so the expectations
+	// alone would also pass for writes through store.DB
+	tx, _ := txCtx.Value("tx").(*sql.Tx)
+	if tx == nil {
+		t.Fatal("BeginTransaction context carries no *sql.Tx")
+	}
+	if db, _, _, _ := store.getTxOrDB(txCtx, "/dir/new.txt", false); db != TxOrDB(tx) {
+		t.Fatalf("getTxOrDB under the transaction = %T, want its *sql.Tx", db)
+	}
+	if db := store.kvDB(txCtx); db != TxOrDB(tx) {
+		t.Fatalf("kvDB under the transaction = %T, want its *sql.Tx", db)
 	}
 	if err := store.InsertEntry(txCtx, &filer.Entry{FullPath: "/dir/new.txt"}); err != nil {
 		t.Fatalf("InsertEntry: %v", err)
