@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
+	"github.com/seaweedfs/seaweedfs/weed/operation/volume_move"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
@@ -87,8 +88,8 @@ func TestVolumeEcShardsCopy_DiskTypePicksThatMedium(t *testing.T) {
 	}
 
 	seed(3)
-	if err := copyShard(3, 1, "ssd"); status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("disk 1 is hdd_ht, a copy naming ssd: err = %v, want InvalidArgument", err)
+	if err := copyShard(3, 1, "ssd"); status.Code(err) != codes.InvalidArgument || !volume_move.IsDiskTypeMismatchError(err) {
+		t.Fatalf("disk 1 is hdd_ht, a copy naming ssd: err = %v, want an InvalidArgument disk type mismatch", err)
 	}
 	if err := copyShard(3, 0, "hdd"); status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("no hdd disk: err = %v, want ResourceExhausted", err)

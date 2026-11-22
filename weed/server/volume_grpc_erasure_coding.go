@@ -440,7 +440,7 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		// Use the specific disk location
 		location = vs.store.Locations[req.DiskId]
 		if req.DiskType != "" && location.DiskType != types.ToDiskType(req.DiskType) {
-			return nil, status.Errorf(codes.InvalidArgument, "disk %d is %s, not %s", req.DiskId, location.DiskType.ReadableString(), req.DiskType)
+			return nil, status.Errorf(codes.InvalidArgument, "disk %d is %s, not the requested disk type %s", req.DiskId, location.DiskType.ReadableString(), req.DiskType)
 		}
 		glog.V(1).Infof("Using disk %d for EC shard copy: %s", req.DiskId, location.Directory)
 	} else {
