@@ -1402,9 +1402,21 @@ func (vs *VolumeServer) VolumeEcBlobDelete(ctx context.Context, req *volume_serv
 
 	// Each disk holding shards of the volume mounts its own runtime with its
 	// own deletion set, and a shard read checks the runtime of the disk that
-	// holds the shard, so every runtime records the delete.
+	// holds the shard, so every runtime records the delete. A retry on this
+	// server resolves the volume through the first runtime, so it records
+	// last: a failure on any other leaves it live and the retry fans out again.
+	var pending []*erasure_coding.EcVolume
 	for i, localEcVolume := range vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId)) {
-		if err := deleteFromLocalEcVolume(localEcVolume, req, i > 0); err != nil {
+		live, err := isLiveInLocalEcVolume(localEcVolume, req, i > 0)
+		if err != nil {
+			return nil, err
+		}
+		if live {
+			pending = append(pending, localEcVolume)
+		}
+	}
+	for i := len(pending) - 1; i >= 0; i-- {
+		if err := pending[i].DeleteNeedleFromEcx(types.NeedleId(req.FileKey)); err != nil {
 			return nil, err
 		}
 	}
@@ -1412,18 +1424,15 @@ func (vs *VolumeServer) VolumeEcBlobDelete(ctx context.Context, req *volume_serv
 	return resp, nil
 }
 
-func deleteFromLocalEcVolume(localEcVolume *erasure_coding.EcVolume, req *volume_server_pb.VolumeEcBlobDeleteRequest, sibling bool) error {
+func isLiveInLocalEcVolume(localEcVolume *erasure_coding.EcVolume, req *volume_server_pb.VolumeEcBlobDeleteRequest, sibling bool) (bool, error) {
 	_, size, _, err := localEcVolume.LocateEcShardNeedle(types.NeedleId(req.FileKey), needle.Version(req.Version))
 	if err != nil {
 		if sibling && errors.Is(err, erasure_coding.NotFoundError) {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("locate in local ec volume: %w", err)
+		return false, fmt.Errorf("locate in local ec volume: %w", err)
 	}
-	if size.IsDeleted() {
-		return nil
-	}
-	return localEcVolume.DeleteNeedleFromEcx(types.NeedleId(req.FileKey))
+	return !size.IsDeleted(), nil
 }
 
 // VolumeEcShardsToVolume generates the .idx, .dat files from .ecx, .ecj and .ec01 ~ .ec14 files
