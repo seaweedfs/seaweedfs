@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // fencedFindEntry reads an entry with an exact log-position fence: the stamp
@@ -981,6 +982,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		garbage         []*filer_pb.FileChunk
 		unchanged       bool
 		stamp           int64
+		observed        *filer_pb.WriteCondition_Clause
 		// refusal is the read's answer (not found, or a precondition that
 		// does not hold), not a failure: the run still commits what the
 		// lookup removed.
@@ -1004,6 +1006,21 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 			glog.V(3).InfofCtx(ctx, "UpdateEntry %s: precondition failed: %v", fullpath, req.Condition)
 			refusal = status.Errorf(codes.FailedPrecondition, "precondition failed: %s", fullpath)
 			return nil
+		}
+		// A retry may find another file, or a newer version of this one. The
+		// request still carries the first version's chunks, some of which the
+		// intervening writer may already have queued for deletion. Only retry
+		// while the complete observed entry, including its commit stamp and
+		// hard-link record, is unchanged; the client must rebase otherwise.
+		if observed != nil && !clauseSatisfied(observed, entry) {
+			refusal = status.Errorf(codes.FailedPrecondition, "entry changed during update: %s", fullpath)
+			return nil
+		}
+		if observed == nil && fs.filer.RefusesConflictingCommits(lockPath) {
+			observed = &filer_pb.WriteCondition_Clause{
+				Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+				ExpectedEntry: proto.Clone(entry.ToProtoEntry()).(*filer_pb.Entry),
+			}
 		}
 
 		chunks, replaced, err := fs.cleanupChunks(ctx, fullpath, entry, req.Entry)
@@ -1075,7 +1092,8 @@ const entryUpdateAttempts = 5
 // Where the store refuses a conflicting commit (filer.ConflictRefusingStore:
 // TiKV), attempt runs in a store transaction of its own. Such a rename or
 // delete wrote the entry's key, so the store refuses the commit; attempt then
-// runs again and reads what is there now. Other stores run attempt once,
+// runs again and reads what is there now. UpdateEntry refuses a changed
+// entry rather than replaying its old chunk list. Other stores run attempt once,
 // without a transaction, as before.
 //
 // attempt returns an error only for what must not be stored. A run that

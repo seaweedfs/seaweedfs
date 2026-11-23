@@ -1039,6 +1039,18 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 	return entry, err
 }
 
+// FindEntryForOverwrite also returns an expired S3 entry retained inside a
+// transaction. A replacement must account for its chunks and hard links and
+// publish its deletion after commit: once overwritten, no later lookup can
+// discover it for expiry cleanup. Ordinary lookups still see it as absent.
+func (f *Filer) FindEntryForOverwrite(ctx context.Context, p util.FullPath) (*Entry, error) {
+	entry, err := f.FindEntry(ctx, p)
+	if errors.Is(err, filer_pb.ErrNotFound) && ctx.Value(storeTransactionKey{}) != nil {
+		return f.Store.FindEntry(ctx, p)
+	}
+	return entry, err
+}
+
 func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (expiredCount int64, lastFileName string, err error) {
 	f.maybeLazyListFromRemote(ctx, p)
 

@@ -143,30 +143,81 @@ func TestUpdateEntryFindsNothingAfterTheEntryIsDeleted(t *testing.T) {
 	checkGone(t, err, f, store, queue, "/ckpt/run/f")
 }
 
-// Another file renamed over f while f is flushed. An update without a
-// condition still writes over whatever is at the path, but it replaces the
-// file that is there now: that file's chunk is the one to delete, and the one
-// subscribers are told went.
-func TestUpdateEntryReplacesWhatWasRenamedOverTheEntry(t *testing.T) {
+// An unconditional request is still based on the entry the first attempt
+// read. A replacement at its path must not inherit that stale snapshot.
+func TestUpdateEntryRefusesWhatWasRenamedOverTheEntry(t *testing.T) {
 	server, f, store, queue := updateConflictServer(t, func(entries map[string]*filer.Entry) {
 		entries["/ckpt/run/f"] = fileEntryWithChunk("/ckpt/run/f", 202, otherChunk)
 	})
 
-	if _, err := server.UpdateEntry(context.Background(), updateOfF(updatedChunk)); err != nil {
-		t.Fatalf("UpdateEntry: %v, want it to run again after the conflict", err)
+	if _, err := server.UpdateEntry(context.Background(), updateOfF(updatedChunk)); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("UpdateEntry: %v, want FailedPrecondition", err)
 	}
 
 	if got := store.commitCount(); got != 2 {
 		t.Fatalf("commits = %d, want 2", got)
 	}
-	checkChunk(t, store, "/ckpt/run/f", updatedChunk)
-	checkDeletions(t, f, otherChunk)
+	checkChunk(t, store, "/ckpt/run/f", otherChunk)
+	checkDeletions(t, f)
 	events := queue.snapshot()
-	if len(events) != 1 {
-		t.Fatalf("metadata events = %+v, want the one committed update", events)
+	if len(events) != 0 {
+		t.Fatalf("metadata events = %+v, want none", events)
 	}
-	if old := events[0].notification.GetOldEntry().GetChunks(); len(old) != 1 || old[0].GetFileIdString() != otherChunk {
-		t.Fatalf("event's old entry chunks = %v, want [%s]", old, otherChunk)
+}
+
+func TestUpdateEntryRetriesAnUnchangedEntry(t *testing.T) {
+	server, f, store, queue := updateConflictServer(t, func(map[string]*filer.Entry) {})
+	if _, err := server.UpdateEntry(context.Background(), updateOfF(updatedChunk)); err != nil {
+		t.Fatalf("UpdateEntry: %v", err)
+	}
+	if got := store.commitCount(); got != 2 {
+		t.Fatalf("commits = %d, want 2", got)
+	}
+	checkChunk(t, store, "/ckpt/run/f", updatedChunk)
+	checkDeletions(t, f, storedChunk)
+	if got := len(queue.snapshot()); got != 1 {
+		t.Fatalf("events = %d, want the committed update only", got)
+	}
+}
+
+func TestUpdateEntryDoesNotRestoreChunksDeletedByConcurrentWriter(t *testing.T) {
+	for _, rename := range []bool{false, true} {
+		t.Run(map[bool]string{false: "same inode updated", true: "another inode renamed over it"}[rename], func(t *testing.T) {
+			server, f, store, queue := updateConflictServer(t, nil)
+			store.entries["/ckpt/run/g"] = fileEntryWithChunk("/ckpt/run/g", 202, otherChunk)
+			peer := &FilerServer{filer: f, option: &FilerOption{}, entryLockTable: util.NewLockTable[util.FullPath]()}
+			var peerEvents int
+			store.refuse = func(commit int) error {
+				if commit != 1 {
+					return nil
+				}
+				var err error
+				if rename {
+					_, err = peer.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+						OldDirectory: "/ckpt/run", OldName: "g", NewDirectory: "/ckpt/run", NewName: "f",
+					})
+				} else {
+					_, err = peer.UpdateEntry(context.Background(), updateOfF(otherChunk))
+				}
+				if err != nil {
+					t.Fatalf("peer mutation: %v", err)
+				}
+				peerEvents = len(queue.snapshot())
+				return writeConflict(commit)
+			}
+
+			// Metadata changes and partial flushes keep previously published
+			// chunks. The peer has deleted this one before the retry begins.
+			_, err := server.UpdateEntry(context.Background(), updateOfF(storedChunk))
+			if status.Code(err) != codes.FailedPrecondition {
+				t.Fatalf("UpdateEntry: %v, want FailedPrecondition", err)
+			}
+			checkChunk(t, store, "/ckpt/run/f", otherChunk)
+			checkDeletions(t, f, storedChunk)
+			if got := len(queue.snapshot()); got != peerEvents {
+				t.Fatalf("events = %d, want only the peer's %d", got, peerEvents)
+			}
+		})
 	}
 }
 

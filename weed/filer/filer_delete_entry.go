@@ -123,7 +123,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 
 	ctx = f.syncWriteContext(ctx, p)
 
-	entry, findErr := f.FindEntry(ctx, p)
+	entry, findErr := f.FindEntryForOverwrite(ctx, p)
 	if findErr != nil {
 		return findErr
 	}
