@@ -11,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -129,6 +130,64 @@ func TestUpdateEntryFindsNothingAfterTheEntryIsRenamed(t *testing.T) {
 
 	checkGone(t, err, f, store, queue, "/ckpt/run/f")
 	checkChunk(t, store, "/ckpt/run/g", storedChunk)
+}
+
+// A deferred remote copy can fail after the metadata rename commits. The
+// destination still reads the old remote key until the copy succeeds.
+type retainedRemoteSource struct{ copyingRenameRemoteClient }
+
+func (c retainedRemoteSource) StatFile(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
+	if loc.Path == "/src/f" {
+		c.record("stat " + loc.Path)
+		return remoteOnlyRenameEntry("/buckets/b/src/f", 101).Remote, nil
+	}
+	return c.copyingRenameRemoteClient.StatFile(loc)
+}
+
+func TestUpdateEntryRetryDoesNotFetchRenamedRemoteSource(t *testing.T) {
+	const source, target = "/buckets/b/src/f", "/buckets/b/dst/f"
+	client := retainedRemoteSource{copyingRenameRemoteClient{&renameRemoteClient{copyErr: errors.New("copy unavailable")}}}
+	server, base := newRenameRemoteTestServer(t, client)
+	store := &txnRenameStore{renameTestStore: base}
+	server.filer.Store = filer.NewFilerStoreWrapper(conflictRefusingStore{store})
+	// The source exists only on the remote. The first update lookup
+	// imports it, then the peer moves the imported entry.
+	store.entries[target] = remoteOnlyRenameEntry(target, 202)
+	peer := &FilerServer{filer: server.filer, option: server.option, entryLockTable: util.NewLockTable[util.FullPath]()}
+	queue := &captureQueue{}
+	swapNotificationQueue(t, queue)
+	var eventsAfterRename int
+	store.refuse = func(commit int) error {
+		if commit != 2 {
+			return nil
+		}
+		if err := renameFile(peer, source, target); err != nil {
+			t.Fatalf("concurrent rename: %v", err)
+		}
+		eventsAfterRename = len(queue.snapshot())
+		return writeConflict(commit)
+	}
+
+	req := updateOfF(updatedChunk)
+	req.Directory = "/buckets/b/src"
+	_, err := server.UpdateEntry(context.Background(), req)
+	if status.Code(err) != codes.NotFound {
+		t.Fatalf("UpdateEntry = %v, want NotFound", err)
+	}
+	if calls := client.recorded(); len(calls) != 1 || calls[0] != "stat /src/f" {
+		t.Fatalf("remote calls = %v, want only the initial source lookup", calls)
+	}
+	if _, err := base.FindEntry(context.Background(), source); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("source after retry: %v, want absent", err)
+	}
+	dst, err := base.FindEntry(context.Background(), target)
+	if err != nil || string(dst.Extended[filer.ExtRemoteRenameSourceKey]) != source {
+		t.Fatalf("destination = %+v, %v, want pending copy from %s", dst, err, source)
+	}
+	if got := len(queue.snapshot()); got != eventsAfterRename {
+		t.Fatalf("events = %d, want %d as after the rename", got, eventsAfterRename)
+	}
+	checkDeletions(t, server.filer)
 }
 
 // rm f on another filer while f is flushed: the update must not bring the

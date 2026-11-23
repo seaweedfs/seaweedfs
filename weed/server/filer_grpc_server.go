@@ -981,10 +981,14 @@ func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	var entry *filer.Entry
 	var observed *filer_pb.WriteCondition_Clause
 	var refusal error
+	findEntry := fs.filer.FindEntry
 	read := func(ctx context.Context) error {
 		var err error
 		refusal = nil
-		entry, err = fs.filer.FindEntry(ctx, lockPath)
+		entry, err = findEntry(ctx, lockPath)
+		// Only the initial lookup may import remote metadata. A rename can
+		// retain the old remote object after removing its filer entry.
+		findEntry = fs.filer.FindEntryWithoutRemoteFetch
 		if err != nil {
 			if errors.Is(err, filer_pb.ErrNotFound) {
 				// A TTL lookup can remove the entry. Commit that removal.

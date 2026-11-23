@@ -1039,6 +1039,12 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 	return entry, err
 }
 
+// FindEntryWithoutRemoteFetch applies the usual expiry checks but leaves a
+// missing filer entry absent, even when its remote object still exists.
+func (f *Filer) FindEntryWithoutRemoteFetch(ctx context.Context, p util.FullPath) (*Entry, error) {
+	return f.FindEntry(context.WithValue(ctx, lazyFetchContextKey{}, true), p)
+}
+
 // FindEntryForOverwrite also returns an expired S3 entry retained inside a
 // transaction. A replacement must account for its chunks and hard links and
 // publish its deletion after commit: once overwritten, no later lookup can
