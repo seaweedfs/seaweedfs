@@ -83,6 +83,9 @@ type S3ApiServerOption struct {
 	// AllowBackslashInKey keeps '\' a literal object-key character instead of
 	// normalizing it to '/', matching AWS S3 where the two are distinct keys.
 	AllowBackslashInKey bool
+	// LancePort is advertised to the master so admin can point workers at the
+	// Lance Namespace; 0 when this gateway serves none.
+	LancePort uint32
 	// IamSelfServiceRequiresGrant makes managing one's own access keys
 	// (CreateAccessKey, DeleteAccessKey, UpdateAccessKey, ListAccessKeys,
 	// GetUser) need an explicit iam: grant instead of being allowed to every
@@ -265,6 +268,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		masterClient.SetOnPeerUpdateFn(filerClient.OnPeerUpdate)
 		masterClient.SetOnVolumeLocationChangeFn(filerClient.OnVolumeLocationChange)
 		masterClient.SetOnVidMapResetFn(filerClient.OnVidMapReset)
+		masterClient.SetLancePort(option.LancePort)
 
 		// Start the master client connection loop - required for GetMaster() to work
 		go masterClient.KeepConnectedToMaster(context.Background())

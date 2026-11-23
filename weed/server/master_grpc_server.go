@@ -571,6 +571,9 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		glog.V(1).Infof("Cluster: %s node %s added to group '%s'", req.ClientType, peerAddress, req.FilerGroup)
 		ms.broadcastToClients(update)
 	}
+	if req.ClientType == cluster.S3Type {
+		ms.Cluster.SetLancePort(req.FilerGroup, peerAddress, req.LancePort)
+	}
 	ms.updateLockRing(req, peerAddress)
 	ms.clusterNodeLock.Unlock()
 	if req.ClientType == cluster.MasterType {

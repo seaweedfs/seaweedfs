@@ -430,6 +430,7 @@ func (s3opt *S3Options) startS3Server() bool {
 
 		AllowUntrustedRemoteEndpoints: *s3opt.allowUntrustedRemoteEndpoints,
 		AllowBackslashInKey:           *s3opt.allowBackslashInKey,
+		LancePort:                     s3opt.lancePort(),
 		IamSelfServiceRequiresGrant:   *s3opt.iamSelfServiceRequiresGrant,
 		RoutedLookupTimeout:           *s3opt.routedLookupTimeout,
 		UnreachableOwnerTTL:           *s3opt.unreachableOwnerTTL,
@@ -734,6 +735,14 @@ func (s3opt *S3Options) newLanceServer(s3ApiServer *s3api.S3ApiServer) *lance.Se
 	lanceServer.SetS3Endpoint(s3opt.deriveLanceStorageEndpoint())
 	lanceServer.SetS3Region(s3tables.DefaultRegion)
 	return lanceServer
+}
+
+// lancePort is the port the Lance Namespace will be served on, or 0.
+func (s3opt *S3Options) lancePort() uint32 {
+	if s3opt.portLance == nil || *s3opt.portLance <= 0 {
+		return 0
+	}
+	return uint32(*s3opt.portLance)
 }
 
 // startLanceServer serves the Lance Namespace catalog on its own port.
