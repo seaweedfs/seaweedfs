@@ -38,3 +38,44 @@ For mutual TLS, configure `[grpc.vector]` for the engine's server certificate, `
 Run the Lance maintenance worker against the cluster's admin to build and update ANN indexes. Queries can scan data that has not been indexed yet. See the [maintenance worker documentation](../seaweed-worker/README.md) and [Helm chart](../k8s/charts/seaweedfs/README.md) for deployment settings.
 
 The integration suite at `test/s3vectors` runs the same API and observability checks against both Go and Rust volume servers, including mutual TLS, signed volume reads, and encrypted volume data.
+
+## Search indexed data only
+
+The default search includes recent writes by scanning data that indexes do not
+cover yet. To exclude that data, send `x-seaweedfs-vector-search-mode: indexed-only`
+on `QueryVectors`. Omit the header, or set it to `all`, for the default behavior.
+This is a SeaweedFS extension. With SigV4, the header must be signed.
+
+For example, inject it before boto3 signs the request:
+
+```python
+def indexed_only(request, **kwargs):
+    request.headers["x-seaweedfs-vector-search-mode"] = "indexed-only"
+
+client.meta.events.register("before-sign.s3vectors.QueryVectors", indexed_only)
+result = client.query_vectors(
+    vectorBucketName="embeddings", indexName="articles",
+    queryVector={"float32": embedding}, topK=10,
+)
+client.meta.events.unregister("before-sign.s3vectors.QueryVectors", indexed_only)
+```
+
+Indexed-only searches use the intersection of vector index coverage and the
+coverage of each metadata index the filter requires, at one table version. Filters
+must be conjunctions of string equality or `$in` predicates on ready indexed
+metadata keys. An unavailable index or unsupported filter returns
+`ValidationException`. A valid index with no eligible data returns an empty list.
+A vector engine predating this extension returns `ServiceUnavailableException`;
+the gateway never falls back to a full search.
+
+The response includes `x-seaweedfs-vector-search-mode: indexed-only`,
+`x-seaweedfs-vector-data-excluded: true|false`, and
+`x-seaweedfs-vector-excluded-fragments`. The exclusion count describes coverage,
+not the number of matching vectors. New writes, updates, and rewritten fragments
+from compaction can be omitted until indexing catches up. Current deletions still
+apply. Exact-search fallbacks stay within the eligible data; this option does not
+guarantee a fixed latency.
+
+Enterprise gateways send this mode to the shared single-engine backend using
+`QueryIndexedVectors`; ordinary searches retain distributed routing. The shared
+`Query` structure and existing query request/response messages are unchanged.
