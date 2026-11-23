@@ -1,6 +1,6 @@
 {{- include "seaweedfs.compat" . -}}
 {{- if .Values.worker.enabled }}
-{{- $lanceMetrics := and .Values.worker.lanceMetricsPort (include "seaweedfs.worker.lanceNamespaceUrl" .) }}
+{{- $lanceMetrics := and .Values.worker.lanceMetricsPort (include "seaweedfs.worker.lanceEnabled" .) }}
 {{- if or .Values.worker.metricsPort $lanceMetrics }}
 {{- if .Values.global.seaweedfs.monitoring.enabled }}
 apiVersion: monitoring.coreos.com/v1
