@@ -47,6 +47,23 @@ func TestGenJwtForFilerScopeRequiresKeyAndPositiveExpiry(t *testing.T) {
 	}
 }
 
+func TestGenJwtForFilerScopeRequiresAPathGrant(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		allowed  []string
+		readOnly []string
+	}{
+		{name: "nil grants"},
+		{name: "empty grants", allowed: []string{}, readOnly: []string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := GenJwtForFilerScope(SigningKey("scope-test-signing-key"), time.Hour, "lease-1", tc.allowed, tc.readOnly); got != "" {
+				t.Fatal("expected no token without a path grant")
+			}
+		})
+	}
+}
+
 func TestDecodeJwtWithAcceptsCurrentAndPreviousScopeKeys(t *testing.T) {
 	current := SigningKey("current-scope-key")
 	previous := SigningKey("previous-scope-key")

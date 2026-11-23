@@ -366,6 +366,11 @@ func authorizeFilerJwtPaths(r *http.Request, claims *security.SeaweedFilerClaims
 	// which the write may delete) must be within allowed_prefixes.
 	prefixes := claims.AllowedPrefixes
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		// New read-only grants use the same canonical path contract as gRPC.
+		// In particular, relative "." must not normalize into a root grant.
+		if _, err := scopeGrantsFromClaims(nil, claims.ReadPrefixes); err != nil {
+			return false
+		}
 		prefixes = append(append([]string{}, prefixes...), claims.ReadPrefixes...)
 	}
 	for _, p := range scopedPaths {

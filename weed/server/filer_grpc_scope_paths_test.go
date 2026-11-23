@@ -143,3 +143,17 @@ func TestAuthorizeFilerJwtPathsReadOnlyClaimsWithoutWritePrefixes(t *testing.T) 
 		})
 	}
 }
+
+func TestAuthorizeFilerJwtPathsRejectsNoncanonicalReadPrefixes(t *testing.T) {
+	for _, prefix := range []string{".", "./", "relative", "/a/../", "/a/"} {
+		t.Run(prefix, func(t *testing.T) {
+			claims := &security.SeaweedFilerClaims{ReadPrefixes: []string{prefix}}
+			for _, method := range []string{"GET", "HEAD"} {
+				r := httptest.NewRequest(method, "/outside/file", nil)
+				if authorizeFilerJwtPaths(r, claims, []string{r.URL.Path}) {
+					t.Fatalf("%s accepted noncanonical read prefix %q", method, prefix)
+				}
+			}
+		})
+	}
+}

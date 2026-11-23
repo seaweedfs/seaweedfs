@@ -153,8 +153,8 @@ func TestScopeStreamExpiryStopsFurtherMessages(t *testing.T) {
 	wrapped.sc.exp = time.Now().Add(-time.Second)
 	expectScopeCode(t, "receive after token expiry", wrapped.RecvMsg(&filer_pb.StreamMutateEntryRequest{}), codes.Unauthenticated)
 	expectScopeCode(t, "send after token expiry", wrapped.SendMsg(&filer_pb.StreamMutateEntryResponse{}), codes.Unauthenticated)
-	if underlying.recvCalls != 2 {
-		t.Fatalf("underlying receive calls=%d, want 2", underlying.recvCalls)
+	if underlying.recvCalls != 1 {
+		t.Fatalf("expired stream attempted another receive: calls=%d, want 1", underlying.recvCalls)
 	}
 	if underlying.sendCalls != 0 {
 		t.Fatalf("expired response reached underlying stream: %d sends", underlying.sendCalls)

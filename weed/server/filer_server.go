@@ -336,7 +336,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec, "", "")
 
 	fs.grpcScope = newFilerGrpcScope(scopeConfig{
-		verificationKeys: func() (security.SigningKey, security.SigningKey) { return fs.filerGuard.VerificationKeys(true) },
+		verificationKeys:  func() (security.SigningKey, security.SigningKey) { return fs.filerGuard.VerificationKeys(true) },
+		subscriptionScope: fs.metadataSubscriptionScope,
 	}, fs)
 
 	fs.checkWithMaster()

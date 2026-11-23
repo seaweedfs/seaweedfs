@@ -48,9 +48,10 @@ func (c *SeaweedFilerClaims) IsScoped() bool {
 // GenJwtForFilerScope mints a filer credential restricted to allowedPrefixes
 // (read and write) and readPrefixes (read only). id becomes the "jti" claim:
 // the identity used in authorization diagnostics. Returns an empty string
-// if the signing key is not configured or the token would not expire.
+// if the signing key is not configured, the token would not expire, or no
+// path grant was supplied.
 func GenJwtForFilerScope(signingKey SigningKey, expiresAfter time.Duration, id string, allowedPrefixes, readPrefixes []string) EncodedJwt {
-	if len(signingKey) == 0 || expiresAfter <= 0 {
+	if len(signingKey) == 0 || expiresAfter <= 0 || len(allowedPrefixes) == 0 && len(readPrefixes) == 0 {
 		return ""
 	}
 	claims := SeaweedFilerClaims{

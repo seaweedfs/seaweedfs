@@ -56,8 +56,9 @@ type scopeBackend interface {
 // scopeConfig is the jwt.filer_signing configuration the scope reads, as
 // functions so that a reload is seen at once.
 type scopeConfig struct {
-	signingKey       func() security.SigningKey
-	verificationKeys func() (security.SigningKey, security.SigningKey)
+	signingKey        func() security.SigningKey
+	verificationKeys  func() (security.SigningKey, security.SigningKey)
+	subscriptionScope func(context.Context, string) (*security.MetadataSubscriptionScope, error)
 }
 
 // filerGrpcScope holds the interceptors. It keeps no state across calls.
@@ -118,22 +119,25 @@ func scopeExpiredError(sc *scope) error {
 	return status.Errorf(codes.Unauthenticated, "filer: token %s expired", sc.id)
 }
 
-// bearerFromMetadata extracts the Bearer token of the "authorization"
-// metadata, or "".
-func bearerFromMetadata(ctx context.Context) string {
+// bearerFromMetadata distinguishes absent credentials from malformed or
+// ambiguous credentials. Only the former retains tokenless compatibility.
+func bearerFromMetadata(ctx context.Context) (string, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return ""
+		return "", nil
 	}
 	values := md.Get("authorization")
 	if len(values) == 0 {
-		return ""
+		return "", nil
+	}
+	if len(values) != 1 {
+		return "", status.Error(codes.Unauthenticated, "filer: exactly one authorization value is required")
 	}
 	parts := strings.Fields(values[0])
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return ""
+		return "", status.Error(codes.Unauthenticated, "filer: malformed bearer authorization")
 	}
-	return parts[1]
+	return parts[1], nil
 }
 
 func scopePeer(ctx context.Context) string {
@@ -146,14 +150,20 @@ func scopePeer(ctx context.Context) string {
 // resolve authenticates the call. It returns (nil, nil) for an unscoped call,
 // a *scope for a scoped token, and an error that refuses the call.
 func (s *filerGrpcScope) resolve(ctx context.Context) (*scope, error) {
-	raw := bearerFromMetadata(ctx)
 	var key, previous security.SigningKey
 	if s.cfg.verificationKeys != nil {
 		key, previous = s.cfg.verificationKeys()
 	} else if s.cfg.signingKey != nil {
 		key = s.cfg.signingKey()
 	}
-	if raw == "" || len(key) == 0 {
+	if len(key) == 0 {
+		return nil, nil
+	}
+	raw, authErr := bearerFromMetadata(ctx)
+	if authErr != nil {
+		return nil, authErr
+	}
+	if raw == "" {
 		return nil, nil
 	}
 	claims := &security.SeaweedFilerClaims{}
@@ -243,35 +253,14 @@ func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method
 		}
 		return nil
 	}
-	// Inline content is data too. Keeping it or clearing it is permitted;
-	// introducing or replacing bytes is deferred with new-chunk admission.
-	if len(e.GetContent()) > 0 {
+	// Inline content and chunk references are rechecked against the locked
+	// entry by the handlers as well as against this admission snapshot.
+	if len(e.GetContent()) > 0 || len(e.GetChunks()) > 0 {
 		if err := load(); err != nil {
 			return err
 		}
-		if !bytes.Equal(e.GetContent(), stored.GetContent()) {
-			return sc.deny(method, "new inline content is not allowed")
-		}
-	}
-	if len(e.GetChunks()) > 0 {
-		if err := load(); err != nil {
-			return err
-		}
-		known := map[string]bool{}
-		for _, c := range stored.GetChunks() {
-			if c != nil {
-				known[c.GetFileIdString()] = true
-			}
-		}
-		var refused []string
-		for _, c := range e.GetChunks() {
-			fid := c.GetFileIdString()
-			if !known[fid] {
-				refused = append(refused, fid)
-			}
-		}
-		if len(refused) > 0 {
-			return sc.deny(method, "new chunk file ids are not allowed: "+strings.Join(refused, ","))
+		if err := scopeRetainsData(stored, e); err != nil {
+			return sc.deny(method, err.Error())
 		}
 	}
 
@@ -363,8 +352,8 @@ func (sc *scope) checkRename(m, oldDir, oldName, newDir, newName string) error {
 // the registry knows (their ids are random, so a holder only has those it
 // read from an entry; a lock serializes, it reads nothing).
 func (s *filerGrpcScope) checkPosixLock(ctx context.Context, sc *scope, m string, req *filer_pb.PosixLockRequest) error {
-	if req.GetIsMoved() {
-		return sc.deny(m, "is_moved is not allowed")
+	if req.GetIsMoved() || req.GetCoolingProbe() {
+		return sc.deny(m, "internal lock flags are not allowed")
 	}
 	key := req.GetKey()
 	if !strings.HasPrefix(key, scopePosixLockKeyPrefix) {
@@ -417,14 +406,15 @@ func (s *filerGrpcScope) unary(ctx context.Context, req any, info *grpc.UnarySer
 	if !ok || reflect.TypeOf(req) != expected {
 		return nil, sc.deny(info.FullMethod, "not available to a scoped token")
 	}
-	return s.unaryScoped(ctx, sc, req, handler)
+	return s.unaryScoped(withScopeKeepOnly(ctx), sc, req, handler)
 }
 
 // isScopeFilerConf reports whether (dir, name) is the filer's per-path config
 // file, which is hidden from a scoped token on every read path: single and
 // batch lookup and directory listing.
 func isScopeFilerConf(dir, name string) bool {
-	return dir == scopeFilerConfDir && name == scopeFilerConfName
+	p, err := scopeFullPath(dir, name)
+	return err == nil && p == scopeFilerConfDir+"/"+scopeFilerConfName
 }
 
 // unaryScoped applies the per-method path rule before calling the handler.
@@ -442,6 +432,9 @@ func (s *filerGrpcScope) unaryScoped(ctx context.Context, sc *scope, req any, ha
 
 	case *filer_pb.LookupDirectoryEntriesRequest:
 		const m = "LookupDirectoryEntries"
+		if err := validateFilerBatchLookupRequest(r); err != nil {
+			return nil, err
+		}
 		reqs := r.GetRequests()
 		kept := make([]*filer_pb.LookupDirectoryEntryRequest, 0, len(reqs))
 		hidden := make([]bool, len(reqs))

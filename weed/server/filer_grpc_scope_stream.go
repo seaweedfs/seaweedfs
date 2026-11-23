@@ -3,7 +3,8 @@ package weed_server
 // Streaming methods under a scoped token: the server stream handed to the
 // handler is wrapped so that every request message is checked as it is
 // received and every response message is filtered as it is sent. A stream
-// keeps the grants of the token it was opened with and ends at its expiry;
+// keeps the grants of the token it was opened with and enforces expiry at
+// each message boundary. Idle streams await client or transport cancellation;
 // a client whose token changed reconnects.
 
 import (
@@ -14,6 +15,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -24,6 +26,21 @@ func (s *filerGrpcScope) stream(srv any, ss grpc.ServerStream, info *grpc.Stream
 	}
 	sc, err := s.resolve(ss.Context())
 	if err != nil {
+		// Preserve the existing dedicated subscription-token verifier. General
+		// filer scopes still reach the ruleless-method denial below; this seam
+		// only accepts a credential verified as a dedicated subscription scope.
+		method := strings.TrimPrefix(info.FullMethod, scopeFilerMethodPrefix)
+		if s.cfg.subscriptionScope != nil && (method == "SubscribeMetadata" || method == "SubscribeLocalMetadata") {
+			if raw, authErr := bearerFromMetadata(ss.Context()); authErr == nil && raw != "" {
+				// Authenticate the token itself even on mTLS: the existing verifier
+				// otherwise returns an unrestricted nil scope for a verified peer.
+				// The handler still receives the original peer/context unchanged.
+				verifyCtx := peer.NewContext(ss.Context(), &peer.Peer{})
+				if sub, subErr := s.cfg.subscriptionScope(verifyCtx, method); subErr == nil && sub != nil {
+					return handler(srv, ss)
+				}
+			}
+		}
 		return err
 	}
 	if sc == nil {
@@ -38,10 +55,10 @@ func (s *filerGrpcScope) stream(srv any, ss grpc.ServerStream, info *grpc.Stream
 	if !scopeStreamMethods[strings.TrimPrefix(info.FullMethod, scopeFilerMethodPrefix)] {
 		return sc.deny(info.FullMethod, "not available to a scoped token")
 	}
-	w := &scopedStream{ServerStream: ss, sc: sc}
+	w := &scopedStream{ServerStream: ss, sc: sc, ctx: withScopeKeepOnly(ss.Context())}
 	switch info.FullMethod {
 	case filer_pb.SeaweedFiler_ListEntries_FullMethodName:
-		w.ctx = context.WithValue(ss.Context(), scopeListContextKey{}, true)
+		w.ctx = context.WithValue(w.Context(), scopeListContextKey{}, true)
 		var listedDir string
 		w.onRecv = func(m any) (bool, error) {
 			req, ok := m.(*filer_pb.ListEntriesRequest)
@@ -126,6 +143,9 @@ func (w *scopedStream) Context() context.Context {
 
 func (w *scopedStream) RecvMsg(m any) error {
 	for {
+		if w.sc.expired() {
+			return scopeExpiredError(w.sc)
+		}
 		if err := w.ServerStream.RecvMsg(m); err != nil {
 			return err
 		}
@@ -172,6 +192,9 @@ func (w *scopedStream) SendMsg(m any) error {
 func (w *scopedStream) sendRaw(m any) error {
 	w.sendMu.Lock()
 	defer w.sendMu.Unlock()
+	if w.sc.expired() {
+		return scopeExpiredError(w.sc)
+	}
 	return w.ServerStream.SendMsg(m)
 }
 

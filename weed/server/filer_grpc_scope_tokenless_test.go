@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
 func TestScopeTokenlessCallsKeepExistingBehavior(t *testing.T) {
@@ -40,9 +41,11 @@ func TestScopeUnscopedFilerTokenKeepsExistingBehavior(t *testing.T) {
 		t.Fatalf("unscoped create: %v", err)
 	}
 
-	// A token with an expiry but no scope claims is still an unscoped filer token.
-	if _, err := h.client(scopedToken("", time.Hour, nil, nil)).Ping(scopeCtx(t), &filer_pb.PingRequest{}); err != nil {
-		t.Fatalf("empty-scope filer token: %v", err)
+	// An unrestricted filer token is minted explicitly by the server helper;
+	// the scoped helper requires at least one path grant.
+	serverToken := string(security.GenJwtForFilerServer(security.SigningKey(scopeTestKey), 3600))
+	if _, err := h.client(serverToken).Ping(scopeCtx(t), &filer_pb.PingRequest{}); err != nil {
+		t.Fatalf("unscoped filer token: %v", err)
 	}
 }
 

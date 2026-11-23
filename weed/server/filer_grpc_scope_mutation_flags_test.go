@@ -45,4 +45,11 @@ func TestScopeRejectsMovedMutations(t *testing.T) {
 		})
 		return err
 	})
+	expectScopeDenied(t, h, "PosixLock", "cooling-probe lock", func() error {
+		_, err := c.PosixLock(scopeCtx(t), &filer_pb.PosixLockRequest{
+			Key:          scopePosixLockKeyPrefix + aliceWS + "/file",
+			CoolingProbe: true,
+		})
+		return err
+	})
 }
