@@ -1176,3 +1176,28 @@ func TestReaderCacheDestroyCancelsDownloadAfterItsLastStream(t *testing.T) {
 		t.Fatalf("orphaned download: got %v, want context.Canceled", err)
 	}
 }
+
+func TestReaderCacheServesCachedChunkPastCacheCutoff(t *testing.T) {
+	cache := newMockChunkCacheForReaderCache()
+	testData := []byte("uploaded chunk cached before its entry is published")
+	cache.SetChunk("uploaded-file", testData)
+
+	var lookups int32
+	rc := NewReaderCache(10, cache, func(ctx context.Context, fileId string) ([]string, error) {
+		atomic.AddInt32(&lookups, 1)
+		return nil, fmt.Errorf("no read token for %s", fileId)
+	}, nil)
+	defer rc.destroy()
+
+	buffer := make([]byte, len(testData))
+	n, err := rc.ReadChunkAt(context.Background(), buffer, "uploaded-file", nil, false, 0, len(testData), false)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if n != len(testData) || string(buffer) != string(testData) {
+		t.Fatalf("read %d bytes %q, want the cached chunk", n, buffer[:n])
+	}
+	if got := atomic.LoadInt32(&lookups); got != 0 {
+		t.Fatalf("looked up the volume %d times for a cached chunk", got)
+	}
+}

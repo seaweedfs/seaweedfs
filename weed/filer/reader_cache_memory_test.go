@@ -285,7 +285,8 @@ func TestReaderCachePrefetchBufferDroppedAfterRead(t *testing.T) {
 		buffer[0] = 42
 		return len(buffer), nil
 	}
-	rc.MaybeCache(&Interval[*ChunkView]{Value: &ChunkView{FileId: "chunk", ViewSize: 4 << 10, ChunkSize: 4 << 10}}, 1)
+	// Past the 1 MiB cache cutoff, so the prefetch does not land in the chunk cache.
+	rc.MaybeCache(&Interval[*ChunkView]{Value: &ChunkView{FileId: "chunk", ViewOffset: 2 << 20, ViewSize: 4 << 10, ChunkSize: 4 << 10}}, 1)
 
 	buf := make([]byte, 4<<10)
 	n, err := rc.ReadChunkAt(context.Background(), buf, "chunk", nil, false, 0, 4<<10, false)

@@ -187,13 +187,12 @@ retry:
 		rc.RUnlock()
 	}
 
-	if shouldCache || rc.lookupFileIdFn == nil {
-		n, err := rc.chunkCache.ReadChunkAt(buffer, fileId, uint64(offset))
-		if n > 0 {
-			// Served from the chunk cache: the stream has left its pinned chunk.
-			rc.unpin(stream.detach(nil))
-			return n, err
-		}
+	// shouldCache only admits new downloads: a chunk past the cutoff can still
+	// be cached (uploads on peer-sharing and read-auth mounts cache every chunk).
+	if n, err := rc.chunkCache.ReadChunkAt(buffer, fileId, uint64(offset)); n > 0 {
+		// Served from the chunk cache: the stream has left its pinned chunk.
+		rc.unpin(stream.detach(nil))
+		return n, err
 	}
 
 	rc.Lock()
