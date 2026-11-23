@@ -361,6 +361,8 @@ message ClusterContext {
   repeated string volume_grpc_addresses = 3;
   map<string, string> metadata = 4;
   repeated string s3_grpc_addresses = 5;
+  // Lance Namespace base URLs, one per S3 gateway that serves one.
+  repeated string lance_namespace_urls = 6;
 }
 
 message ActivityEvent {
@@ -499,6 +501,7 @@ message RequestObjectPreview {
   // can decline instead of guessing.
   string format = 2;
   int32 row_limit = 3;
+  ClusterContext cluster_context = 4;
 }
 
 // ObjectPreviewResponse carries the sample back, already rendered as text. The
