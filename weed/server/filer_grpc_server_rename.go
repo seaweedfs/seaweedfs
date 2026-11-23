@@ -61,6 +61,14 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 		if err := fs.checkScopeWorm(ctx, string(newParent.Child(req.NewName))); err != nil {
 			return false, err
 		}
+		if oldEntry.IsDirectory() {
+			if err := fs.checkScopeWormDirectory(ctx, string(oldParent.Child(req.OldName))); err != nil {
+				return false, err
+			}
+			if err := fs.checkScopeWormDirectory(ctx, string(newParent.Child(req.NewName))); err != nil {
+				return false, err
+			}
+		}
 
 		// The check runs under the rename path locks, which CreateEntry on the same
 		// filer also takes, so a target created concurrently cannot slip through.
@@ -114,6 +122,14 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 		}
 		if err := fs.checkScopeWorm(ctx, string(newParent.Child(req.NewName))); err != nil {
 			return false, err
+		}
+		if oldEntry.IsDirectory() {
+			if err := fs.checkScopeWormDirectory(ctx, string(oldParent.Child(req.OldName))); err != nil {
+				return false, err
+			}
+			if err := fs.checkScopeWormDirectory(ctx, string(newParent.Child(req.NewName))); err != nil {
+				return false, err
+			}
 		}
 
 		if oldEntry.IsDirectory() {

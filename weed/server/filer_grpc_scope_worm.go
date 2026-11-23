@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/constants"
 	"google.golang.org/grpc/codes"
@@ -24,6 +25,27 @@ func (fs *FilerServer) checkScopeWorm(ctx context.Context, fullPath string) erro
 	}
 	if enforced {
 		return status.Error(codes.PermissionDenied, constants.ErrMsgOperationNotPermitted)
+	}
+	return nil
+}
+
+// checkScopeWormDirectory refuses a subtree mutation wherever WORM could apply.
+// The endpoint path locks do not lock descendants, so checking their timestamps
+// before mutation would race with child writes. Check configuration instead,
+// before moving or deleting any entries, even if no child is currently retained.
+func (fs *FilerServer) checkScopeWormDirectory(ctx context.Context, fullPath string) error {
+	if !scopeKeepOnly(ctx) {
+		return nil
+	}
+	prefix := strings.TrimRight(fullPath, "/") + "/"
+	conf := fs.filer.FilerConf
+	if conf.MatchStorageRule(prefix).GetWorm() {
+		return status.Error(codes.PermissionDenied, "scoped directory mutation intersects a WORM rule")
+	}
+	for _, rule := range conf.ToProto().Locations {
+		if rule.GetWorm() && strings.HasPrefix(rule.LocationPrefix, prefix) {
+			return status.Error(codes.PermissionDenied, "scoped directory mutation intersects a WORM rule")
+		}
 	}
 	return nil
 }

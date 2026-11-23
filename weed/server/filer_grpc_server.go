@@ -1271,6 +1271,17 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 	if err := fs.checkScopeWorm(ctx, string(fullpath)); err != nil {
 		return &filer_pb.DeleteEntryResponse{}, err
 	}
+	if scopeKeepOnly(ctx) && req.IsRecursive {
+		entry, findErr := fs.filer.FindEntry(ctx, fullpath)
+		if findErr != nil && findErr != filer_pb.ErrNotFound {
+			return &filer_pb.DeleteEntryResponse{}, findErr
+		}
+		if findErr == nil && entry.IsDirectory() {
+			if err := fs.checkScopeWormDirectory(ctx, string(fullpath)); err != nil {
+				return &filer_pb.DeleteEntryResponse{}, err
+			}
+		}
+	}
 
 	// Extended-attribute preconditions run here, under the lock the delete
 	// runs under: an attribute write that keeps Mtime can no longer slip
