@@ -485,6 +485,15 @@ func (f *Filer) TransactionCovers(ctx context.Context, paths ...util.FullPath) b
 	return ok && fsw.transactionCovers(paths...)
 }
 
+// RefusesConflictingCommits reports whether a store transaction that reads the
+// entry at path and writes it is refused when another writer commits that
+// entry meanwhile: the default store says that its commits are, and it holds
+// the entry.
+func (f *Filer) RefusesConflictingCommits(path util.FullPath) bool {
+	fsw, ok := f.Store.(*FilerStoreWrapper)
+	return ok && fsw.refusesConflictingCommits(path)
+}
+
 // OverwritesAtOnce reports whether an entry inserted at path replaces what is
 // stored there at once and whole: the default store says that its inserts do,
 // and it holds the entry.

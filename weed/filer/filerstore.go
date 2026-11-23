@@ -92,6 +92,17 @@ type IsolatingTransactionStore interface {
 	IsolatesTransactions() bool
 }
 
+// ConflictRefusingStore is implemented by a store whose transactions are
+// optimistic: CommitTransaction refuses, with ErrTransactionConflict, a
+// transaction that wrote a key another writer committed after it began. A read
+// of an entry and the write it decides, made in one such transaction, cannot
+// have a rename or a delete of the entry commit between them unnoticed, from
+// whichever filer. A store says so itself: TiKV does. The SQL stores do not:
+// at their default isolation the later write goes through.
+type ConflictRefusingStore interface {
+	RefusesConflictingCommits() bool
+}
+
 // OverwritingStore is implemented by a store without transactions whose
 // InsertEntry over an existing entry replaces it at once and whole: the stored
 // entry, its expiry, and its listing in the directory. A rename can then write
