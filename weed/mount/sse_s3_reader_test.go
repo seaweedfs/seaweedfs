@@ -94,3 +94,50 @@ func TestSSES3GatewayReadAtVersionFile(t *testing.T) {
 		t.Fatalf("read = %d, %v, bytes %q", n, err, buf)
 	}
 }
+
+func TestSSES3GatewayReadAtNullVersion(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "local-test-reader")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "local-test-secret")
+	t.Setenv("AWS_SESSION_TOKEN", "")
+	t.Setenv("AWS_REGION", "us-east-1")
+	for _, tc := range []struct {
+		name         string
+		currentETag  string
+		wantRequests []string
+	}{
+		{"current", `"fixture"`, []string{""}},
+		{"superseded", `"newer"`, []string{"", "null"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				versionId := req.URL.Query().Get("versionId")
+				got = append(got, versionId)
+				if versionId == "" && req.Header.Get("If-Match") != tc.currentETag {
+					w.WriteHeader(http.StatusPreconditionFailed)
+					return
+				}
+				w.Header().Set("ETag", `"fixture"`)
+				w.Header().Set("Content-Range", "bytes 0-2/3")
+				w.Header().Set("Content-Length", "3")
+				w.Header().Set("X-Amz-Server-Side-Encryption", "AES256")
+				w.Header().Set("X-Amz-Version-Id", "null")
+				w.WriteHeader(http.StatusPartialContent)
+				_, _ = w.Write([]byte("abc"))
+			}))
+			defer server.Close()
+			reader, err := NewSSES3Reader(context.Background(), server.URL, "/buckets/bucket")
+			if err != nil {
+				t.Fatal(err)
+			}
+			buf := make([]byte, 3)
+			n, err := reader.readAt(context.Background(), "/buckets/bucket/report.csv", `"fixture"`, "null", 3, buf, 0)
+			if err != nil || n != 3 || string(buf) != "abc" {
+				t.Fatalf("read = %d, %v, bytes %q", n, err, buf)
+			}
+			if strings.Join(got, ",") != strings.Join(tc.wantRequests, ",") {
+				t.Fatalf("versionId requests = %q, want %q", got, tc.wantRequests)
+			}
+		})
+	}
+}

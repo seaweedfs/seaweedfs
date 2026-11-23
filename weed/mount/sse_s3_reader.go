@@ -62,9 +62,10 @@ func (r *SSES3Reader) readAt(ctx context.Context, fullPath, etag, version string
 	if !ok || key == "" || key == "." || key == ".." || path.IsAbs(key) || path.Clean(key) != key || strings.HasPrefix(key, "../") {
 		return 0, errNativeSSES3Read
 	}
+	versionFile := false
 	if dir, name := path.Split(key); version != "" && name == "v_"+version {
 		if object, found := strings.CutSuffix(strings.TrimSuffix(dir, "/"), s3_constants.VersionsFolder); found && object != "" {
-			key = object
+			key, versionFile = object, true
 		}
 	}
 	if offset < 0 || size < 0 {
@@ -82,13 +83,17 @@ func (r *SSES3Reader) readAt(ctx context.Context, fullPath, etag, version string
 		Bucket: aws.String(r.bucket), Key: aws.String(key),
 		IfMatch: aws.String(etag), Range: aws.String(fmt.Sprintf("bytes=%d-%d", offset, last)),
 	}
-	if version != "" {
+	currentNull := version == "null" && !versionFile
+	if version != "" && !currentNull {
 		req.VersionId = aws.String(version)
 	}
 	obj, err := r.client.GetObject(ctx, req)
+	if err != nil && currentNull && !isS3PermissionError(err) {
+		req.VersionId = aws.String(version)
+		obj, err = r.client.GetObject(ctx, req)
+	}
 	if err != nil {
-		var respErr *smithyhttp.ResponseError
-		if errors.As(err, &respErr) && (respErr.HTTPStatusCode() == 403 || respErr.HTTPStatusCode() == 401) {
+		if isS3PermissionError(err) {
 			return 0, errSSES3Permission
 		}
 		return 0, err
@@ -97,11 +102,16 @@ func (r *SSES3Reader) readAt(ctx context.Context, fullPath, etag, version string
 	wantRange := fmt.Sprintf("bytes %d-%d/%d", offset, last, size)
 	if aws.ToString(obj.ContentRange) != wantRange || aws.ToInt64(obj.ContentLength) != n ||
 		aws.ToString(obj.ETag) != etag || obj.ServerSideEncryption != types.ServerSideEncryptionAes256 ||
-		(version != "" && aws.ToString(obj.VersionId) != version) {
+		(version != "" && aws.ToString(obj.VersionId) != version && (req.VersionId != nil || aws.ToString(obj.VersionId) != "")) {
 		return 0, errors.New("S3 response did not match the encrypted object range")
 	}
 	if _, err := io.ReadFull(obj.Body, buf[:n]); err != nil {
 		return 0, err
 	}
 	return n, nil
+}
+
+func isS3PermissionError(err error) bool {
+	var respErr *smithyhttp.ResponseError
+	return errors.As(err, &respErr) && (respErr.HTTPStatusCode() == 403 || respErr.HTTPStatusCode() == 401)
 }
