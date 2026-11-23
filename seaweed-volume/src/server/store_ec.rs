@@ -510,8 +510,12 @@ async fn forward_ec_delete_to_holders_reading_deleted(
     let mut last_err = None;
     for addr in &holders {
         if !matches!(
-            do_read_remote_ec_shard_interval(state, addr, probe).await,
-            Ok((_, true))
+            tokio::time::timeout(
+                EC_READ_HINT_TIMEOUT,
+                do_read_remote_ec_shard_interval(state, addr, probe),
+            )
+            .await,
+            Ok(Ok((_, true)))
         ) {
             continue;
         }
@@ -1440,8 +1444,9 @@ struct EcShardMap<'a> {
     parity_shards: usize,
 }
 
-/// Bounds asking a delisted holder, which may have stopped answering, before
-/// the read reconstructs the shard (Go's `ecReadHintTimeout`).
+/// Bounds a one-byte probe of a holder that may have stopped answering: a
+/// delisted holder before the read reconstructs the shard, or a holder a
+/// delete retry asks (Go's `ecReadHintTimeout`).
 const EC_READ_HINT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Try direct peer read; on failure, reconstruct via Reed-Solomon
