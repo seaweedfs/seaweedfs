@@ -231,6 +231,33 @@ func TestLookupRecordsHardLinkNames(t *testing.T) {
 	}
 }
 
+func TestRemoveAliasOfChecksOwnership(t *testing.T) {
+	table := NewInodeToPath(util.FullPath("/"), 0)
+	inode := table.Lookup("/a", 1, false, true, 42, true)
+	if survivor, ok := table.RemoveAliasOf(inode, "/a"); ok || survivor != "" || !table.HasPath("/a") {
+		t.Fatal("removed the only name")
+	}
+	table.AddPath(inode, "/b")
+	if survivor, ok := table.RemoveAliasOf(inode+1, "/a"); ok || survivor != "" {
+		t.Fatalf("removed another inode's name: survivor %q", survivor)
+	}
+	if paths := table.GetAllPaths(inode); len(paths) != 2 || paths[0] != "/a" || paths[1] != "/b" {
+		t.Fatalf("ownership mismatch changed inode paths: %v", paths)
+	}
+	if got, found := table.GetInode("/a"); !found || got != inode {
+		t.Fatalf("ownership mismatch changed /a mapping: %d (found %v)", got, found)
+	}
+	if survivor, ok := table.RemoveAliasOf(inode, "/a"); !ok || survivor != "/b" || table.HasPath("/a") {
+		t.Fatalf("RemoveAliasOf(/a) = %q, %v, want /b", survivor, ok)
+	}
+	if survivor, ok := table.RemoveAliasOf(inode, "/a"); ok || survivor != "" {
+		t.Fatal("removed an absent name")
+	}
+	if got, status := table.GetPath(inode); status != fuse.OK || got != "/b" {
+		t.Fatalf("surviving path %q (%v), want /b", got, status)
+	}
+}
+
 func TestRemoveAliasKeepsSoleName(t *testing.T) {
 	table := NewInodeToPath(util.FullPath("/"), 0)
 	inode := table.Lookup("/a", 1, false, true, 42, true)

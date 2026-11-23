@@ -2336,6 +2336,59 @@ func TestPeerReplacementAfterALocalRenameKeepsTheHandle(t *testing.T) {
 	}
 }
 
+// A queued invalidation must not take a surviving name from a different
+// hard-linked inode that local renames moved onto the invalidated path.
+func TestPeerInvalidationLeavesAnotherInodesHardLinks(t *testing.T) {
+	for _, event := range []string{"replacement", "delete"} {
+		t.Run(event, func(t *testing.T) {
+			wfs := newInvalidateTestWFS(t)
+			path, renamed := util.FullPath("/dir/file"), util.FullPath("/dir/renamed")
+			incoming, alias := util.FullPath("/dir/incoming"), util.FullPath("/dir/alias")
+			inode := wfs.inodeToPath.Lookup(path, 1, false, true, 42, true)
+			other := wfs.inodeToPath.Lookup(incoming, 1, false, true, 99, true)
+			wfs.inodeToPath.AddPath(other, alias)
+			base := flushConditionEntry(1)
+			base.HardLinkId, base.HardLinkCounter = []byte{7, 7, 7}, 2
+			wfs.mapPbIdFromFilerToLocal(base)
+			fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, base, 0, 0)
+
+			testLock := wfs.fhLockTable.AcquireLock("test", fh.fh, util.ExclusiveLock)
+			var releaseOnce sync.Once
+			release := func() { releaseOnce.Do(func() { wfs.fhLockTable.ReleaseLock(fh.fh, testLock) }) }
+			t.Cleanup(release)
+
+			message := &filer_pb.EventNotification{OldEntry: proto.Clone(base).(*filer_pb.Entry)}
+			if event == "replacement" {
+				message.NewEntry = flushConditionEntry(7)
+				message.NewEntry.Attributes.Inode = 99
+				message.NewParentPath = "/dir"
+			}
+			resp := &filer_pb.SubscribeMetadataResponse{Directory: "/dir", TsNs: 1500, EventNotification: message}
+			if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), resp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+				t.Fatalf("apply: %v", err)
+			}
+			waitForHandleLockWaiter(t, "invalidateOpenFileHandle")
+			wfs.inodeToPath.MovePath(path, renamed)
+			wfs.inodeToPath.MovePath(incoming, path)
+			fh.RememberPath(renamed)
+			release()
+			wfs.metaCache.WaitForEntryInvalidations()
+
+			for _, name := range []util.FullPath{path, alias} {
+				if got, found := wfs.inodeToPath.GetInode(name); !found || got != other {
+					t.Errorf("%s maps to %d (found %v), want %d", name, got, found, other)
+				}
+			}
+			if paths := wfs.inodeToPath.GetAllPaths(other); len(paths) != 2 {
+				t.Errorf("other inode's paths %v, want both hard links", paths)
+			}
+			if fh.savedDir != "/dir" || fh.savedName != "renamed" || len(fh.linkRefresh) != 0 {
+				t.Errorf("handle followed another inode's alias: saved path %s/%s, linkRefresh %v", fh.savedDir, fh.savedName, fh.linkRefresh)
+			}
+		})
+	}
+}
+
 // waitForHandleLockWaiter returns once a goroutine in caller waits for a
 // handle lock.
 func waitForHandleLockWaiter(t *testing.T, caller string) {

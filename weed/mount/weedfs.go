@@ -1175,7 +1175,7 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		if invalidation.Deleted {
 			// The next flush reads the survivor's stored entry before
 			// publishing, so the version stays where it was.
-			if len(invalidation.LiveHardLinkId) > 0 && wfs.followSurvivingLink(fh, filePath) {
+			if len(invalidation.LiveHardLinkId) > 0 && wfs.followSurvivingLink(fh, inode, filePath) {
 				fh.linkRefresh = invalidation.LiveHardLinkId
 				return
 			}
@@ -1222,7 +1222,7 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		// with it under one this mount knows, as after a peer's unlink of
 		// one name. The next flush reads the survivor's stored entry before
 		// publishing, so the version stays where it was.
-		if len(base.HardLinkId) > 0 && wfs.followSurvivingLink(fh, filePath) {
+		if len(base.HardLinkId) > 0 && wfs.followSurvivingLink(fh, inode, filePath) {
 			detached = true
 			fh.linkRefresh = base.HardLinkId
 			return
@@ -1277,9 +1277,9 @@ func (wfs *WFS) cachedEntrySince(path util.FullPath, tsNs int64) (*filer.Entry, 
 
 // followSurvivingLink drops a hard link name another client deleted and
 // keeps the handle on a name of the inode this mount still knows, reporting
-// false when it knows none.
-func (wfs *WFS) followSurvivingLink(fh *FileHandle, removed util.FullPath) bool {
-	survivor, ok := wfs.inodeToPath.RemoveAlias(removed)
+// false when it knows none or the removed name no longer belongs to owner.
+func (wfs *WFS) followSurvivingLink(fh *FileHandle, owner uint64, removed util.FullPath) bool {
+	survivor, ok := wfs.inodeToPath.RemoveAliasOf(owner, removed)
 	if ok {
 		fh.RememberPath(survivor)
 		wfs.readAuth.TrackHandle(survivor, fh)

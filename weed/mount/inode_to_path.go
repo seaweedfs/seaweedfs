@@ -655,6 +655,22 @@ func (i *InodeToPath) RemoveAlias(path util.FullPath) (util.FullPath, bool) {
 	if !found {
 		return "", false
 	}
+	return i.removeAlias(inode, path)
+}
+
+// RemoveAliasOf drops path only while it still names inode and the inode
+// keeps another name. Ownership is checked under the same lock as removal.
+func (i *InodeToPath) RemoveAliasOf(inode uint64, path util.FullPath) (util.FullPath, bool) {
+	i.Lock()
+	defer i.Unlock()
+	if current, found := i.path2inode[path]; !found || current != inode {
+		return "", false
+	}
+	return i.removeAlias(inode, path)
+}
+
+// removeAlias requires the table lock and a path that belongs to inode.
+func (i *InodeToPath) removeAlias(inode uint64, path util.FullPath) (util.FullPath, bool) {
 	ie := i.inode2path[inode]
 	if ie == nil {
 		return "", false
