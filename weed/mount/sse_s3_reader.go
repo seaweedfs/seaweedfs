@@ -102,8 +102,9 @@ func listS3Endpoints(ctx context.Context, filers []pb.ServerAddress, grpcDialOpt
 	return nil, errNoS3Gateway
 }
 
-// gatewayClient picks one of the registered gateways other than failed,
-// preferring HTTPS, and keeps it until a request cannot reach it.
+// gatewayClient picks one of the registered gateways other than failed, using
+// HTTPS whenever an HTTPS gateway is registered, and keeps it until a request
+// cannot reach it.
 func (r *SSES3Reader) gatewayClient(ctx context.Context, failed string) (*s3.Client, string, error) {
 	r.clientLock.Lock()
 	defer r.clientLock.Unlock()
@@ -116,11 +117,12 @@ func (r *SSES3Reader) gatewayClient(ctx context.Context, failed string) (*s3.Cli
 	}
 	endpoints = slices.DeleteFunc(endpoints, func(endpoint string) bool {
 		u, err := url.Parse(endpoint)
-		return endpoint == failed || err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != ""
+		return err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != ""
 	})
 	if https := slices.DeleteFunc(slices.Clone(endpoints), func(endpoint string) bool { return !strings.HasPrefix(endpoint, "https://") }); len(https) > 0 {
 		endpoints = https
 	}
+	endpoints = slices.DeleteFunc(endpoints, func(endpoint string) bool { return endpoint == failed })
 	if len(endpoints) == 0 {
 		return nil, "", errNoS3Gateway
 	}

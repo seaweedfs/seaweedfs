@@ -162,6 +162,11 @@ func TestSSES3GatewayChoice(t *testing.T) {
 	if _, _, err := reader.gatewayClient(context.Background(), ""); !errors.Is(err, errNoS3Gateway) {
 		t.Fatalf("no usable gateway: err = %v", err)
 	}
+
+	reader = gatewayReader(t, "/buckets/bucket", "http://b:8333", "https://d:8443")
+	if client, _, err := reader.gatewayClient(context.Background(), "https://d:8443"); !errors.Is(err, errNoS3Gateway) {
+		t.Fatalf("retry after the only HTTPS gateway failed = %v, %v; want no plain-HTTP fallback", err, client)
+	}
 }
 
 func TestSSES3GatewayReadAtPicksAnotherGateway(t *testing.T) {
