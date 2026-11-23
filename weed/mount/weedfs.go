@@ -1218,19 +1218,24 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	// does: the kernel walks the path again and reaches the newcomer under an
 	// inode of its own.
 	if replacedByAnotherFile(candidate, base) {
-		detached = true
 		// A hard-linked file lives on under its other names, and the handle
 		// with it under one this mount knows, as after a peer's unlink of
 		// one name. The next flush reads the survivor's stored entry before
 		// publishing, so the version stays where it was.
 		if len(base.HardLinkId) > 0 && wfs.followSurvivingLink(fh, filePath) {
+			detached = true
 			fh.linkRefresh = base.HardLinkId
 			return
 		}
+		// A local rename may have moved the inode off the name since it was
+		// looked up; the file then lives on under its new one.
+		if !wfs.inodeToPath.RemovePathOf(inode, filePath) {
+			return
+		}
 		// No name left here: the handle's file is gone, as after a delete.
+		detached = true
 		fh.isDeleted = true
 		fh.deleteEpoch++
-		wfs.inodeToPath.RemovePathOf(inode, filePath)
 		fh.advanceEntryVersion(candidateTsNs, 0)
 		return
 	}

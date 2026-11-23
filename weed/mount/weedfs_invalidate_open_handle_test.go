@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -2292,6 +2294,65 @@ func TestPeerReplacementDetachesCleanHandle(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The worker looks the inode up by name before it takes the handle's lock. A
+// rename on this mount can move the inode off that name in between: the file
+// lives on under its new name, so the handle is not the replaced file's.
+func TestPeerReplacementAfterALocalRenameKeepsTheHandle(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+
+	path, renamed := util.FullPath("/dir/file"), util.FullPath("/dir/renamed")
+	inode := wfs.inodeToPath.Lookup(path, time.Now().Unix(), false, false, 0, true)
+	base := flushConditionEntry(1)
+	wfs.mapPbIdFromFilerToLocal(base)
+	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, base, 0, 0)
+
+	testLock := wfs.fhLockTable.AcquireLock("test", fh.fh, util.ExclusiveLock)
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { wfs.fhLockTable.ReleaseLock(fh.fh, testLock) }) }
+	t.Cleanup(release)
+
+	replacement := flushConditionEntry(7)
+	replacement.Attributes.Inode = 99
+	resp := &filer_pb.SubscribeMetadataResponse{
+		Directory:         "/dir",
+		TsNs:              1500,
+		EventNotification: &filer_pb.EventNotification{NewEntry: replacement, NewParentPath: "/dir"},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), resp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	waitForHandleLockWaiter(t, "invalidateOpenFileHandle")
+	wfs.inodeToPath.MovePath(path, renamed)
+	release()
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if fh.isDeleted {
+		t.Fatal("handle marked deleted while its file lives on under the name it was renamed to")
+	}
+	if got, found := wfs.inodeToPath.GetInode(renamed); !found || got != inode {
+		t.Fatalf("renamed name answers to %d (found %v), want %d", got, found, inode)
+	}
+}
+
+// waitForHandleLockWaiter returns once a goroutine in caller waits for a
+// handle lock.
+func waitForHandleLockWaiter(t *testing.T, caller string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		buf := make([]byte, 1<<20)
+		n := runtime.Stack(buf, true)
+		for _, stack := range strings.Split(string(buf[:n]), "\n\n") {
+			header, _, _ := strings.Cut(stack, "\n")
+			if strings.Contains(header, "[sync.Cond.Wait") && strings.Contains(stack, "."+caller+"(") {
+				return
+			}
+		}
+		runtime.Gosched()
+	}
+	t.Fatalf("%s never waited for the handle lock", caller)
 }
 
 // A hard-linked file a peer replaced under one of its names lives on under
