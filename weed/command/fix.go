@@ -33,7 +33,7 @@ var cmdFix = &Command{
 	Long: `Fix runs the SeaweedFS fix command on local dat files ( or remote files) or whole folders to re-create the index .idx file. If fixing remote files, you need to synchronize master.toml to the same directory on the current node as on the master node.
   You Need to stop the volume server when running this command.
   Use -ecx to rebuild a lost EC index (.ecx) — and the .vif when missing — from the local .ec## shards.
-  On a damaged .dat, fix indexes only the needles before the first unreadable header; repair from a replica, or run fix on a copy, before compacting or loading the volume.
+  On a damaged .dat, fix indexes only the needles before the first unreadable header or a record cut off by the end of the file, and exits non-zero; repair from a replica, or run fix on a copy, before compacting or loading the volume.
   With -ignoreError, fix keeps going and writes what it could index, but still exits non-zero if any volume failed.
 `,
 }
@@ -70,7 +70,8 @@ func (scanner *VolumeFileScanner4Fix) ReadNeedleBody() bool {
 func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 	glog.V(2).Infof("key %v offset %d size %d disk_size %d compressed %v", n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsCompressed())
 	if scanner.datSize > 0 && offset+n.DiskSize(scanner.version) > scanner.datSize {
-		glog.Warningf("needle %v at offset %d needs %d bytes but the .dat ends at %d; not indexing it", n.Id, offset, n.DiskSize(scanner.version), scanner.datSize)
+		glog.Errorf("needle %v at offset %d needs %d bytes but the .dat ends at %d; not indexing it", n.Id, offset, n.DiskSize(scanner.version), scanner.datSize)
+		SetCommandExitStatus(1)
 		// The key was rewritten or deleted here, so an older record must not become current again.
 		if pe := scanner.nm.Delete(n.Id); pe != nil {
 			return fmt.Errorf("delete %v with error %v", n.Id, pe)

@@ -140,6 +140,8 @@ func overwriteAt(t *testing.T, path string, offset int64, b []byte) {
 }
 
 func TestFixSkipsRecordPastEndOfDat(t *testing.T) {
+	savedStatus := commandExitStatus
+	defer func() { commandExitStatus = savedStatus }()
 	sizeAt := types.NeedleIdSize + types.CookieSize
 	for _, tc := range []struct {
 		name    string
@@ -158,7 +160,11 @@ func TestFixSkipsRecordPastEndOfDat(t *testing.T) {
 			dir := t.TempDir()
 			base, offsets := writeFixTestVolume(t, dir, 5)
 			tc.corrupt(t, base+".dat", offsets[4])
+			commandExitStatus = 0
 			doFixOneVolume(dir, "fix_7", "fix", 7, true)
+			if CommandExitStatus() == 0 {
+				t.Error("expected a non-zero exit status")
+			}
 			if got := indexedKeys(t, base+".idx"); !slices.Equal(got, []uint64{1, 2, 3, 4}) {
 				t.Errorf("indexed keys %v, want [1 2 3 4]", got)
 			}
@@ -223,6 +229,8 @@ func TestLocalDatSizeIgnoresRemoteTier(t *testing.T) {
 }
 
 func TestFixTruncatedDeleteKeepsKeyDeleted(t *testing.T) {
+	savedStatus := commandExitStatus
+	defer func() { commandExitStatus = savedStatus }()
 	dir := t.TempDir()
 	base, _ := writeFixTestVolume(t, dir, 3)
 	f, err := os.OpenFile(base+".dat", os.O_RDWR, 0644)
