@@ -297,6 +297,9 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 			authInfo.AccessKey, keyCount, iam.isAuthEnabled)
 		return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
 	}
+	if errCode = refuseFips140ShortSecret(cred); errCode != s3err.ErrNone {
+		return nil, nil, "", nil, errCode
+	}
 
 	// 3. Perform permission check
 	if shouldCheckPermissions {
@@ -917,6 +920,10 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(ctx context.Cont
 		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
 			credHeader.accessKey, cred.Expiration, time.Now().Unix())
 		return nil, s3err.ErrAccessDenied
+	}
+
+	if errCode := refuseFips140ShortSecret(cred); errCode != s3err.ErrNone {
+		return nil, errCode
 	}
 
 	// Get signing key.

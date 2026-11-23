@@ -171,7 +171,13 @@ func (g *Guard) IsWhiteListed(host string) bool {
 // operators can rotate keys (e.g. via SIGHUP) without restarting the process.
 // It swaps in a new snapshot carrying the existing whitelist, so a concurrent
 // reader sees either the old keys or the new ones, never a torn slice header.
+// Keys too short for GODEBUG=fips140=only keep the keys in effect, as signing
+// with them would panic.
 func (g *Guard) UpdateSigningKeys(signingKey string, expiresAfterSec int, readSigningKey string, readExpiresAfterSec int, previousSigningKey string, previousReadSigningKey string) {
+	if err := checkFips140SigningKeys(signingKey, readSigningKey, previousSigningKey, previousReadSigningKey); err != nil {
+		glog.Errorf("keeping the JWT signing keys in effect: %v", err)
+		return
+	}
 	g.updateMu.Lock()
 	defer g.updateMu.Unlock()
 	next := *g.state.Load()
@@ -205,6 +211,22 @@ func (g *Guard) ReloadSigningKeys(section string) {
 		fresh.GetString(section+".previous_key"),
 		fresh.GetString(section+".read.previous_key"),
 	)
+}
+
+// checkFips140SigningKeys is util.CheckFips140HmacKey for the four keys a
+// Guard holds.
+func checkFips140SigningKeys(signingKey, readSigningKey, previousSigningKey, previousReadSigningKey string) error {
+	for _, k := range []struct{ name, key string }{
+		{"signing key", signingKey},
+		{"read signing key", readSigningKey},
+		{"previous signing key", previousSigningKey},
+		{"previous read signing key", previousReadSigningKey},
+	} {
+		if err := util.CheckFips140HmacKey(k.name, []byte(k.key)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // freshKey returns name as the fresh read sets it, else its merged value, so

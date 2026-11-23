@@ -33,9 +33,14 @@ type Configuration interface {
 	SetDefault(key string, value interface{})
 }
 
+// LoadSecurityConfiguration merges security.toml once per process and exits
+// when a JWT signing key is too short for GODEBUG=fips140=only.
 func LoadSecurityConfiguration() {
 	loadSecurityConfigOnce.Do(func() {
 		LoadConfiguration("security", false)
+		if err := CheckFips140SigningKeys(GetViper()); err != nil {
+			glog.Fatalf("security.toml: %v", err)
+		}
 	})
 }
 
