@@ -83,9 +83,13 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 		StartTsNs:              lastTsNs,
 		StopTsNs:               0,
 		EventErrorType:         pb.FatalOnError,
-		LogFileReaderFn: func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
+	}
+	// A nil lookup asks for decoded events instead: a keyless mount cannot
+	// read raw metadata-log chunks with its entry-scoped volume tokens.
+	if lookupFn != nil {
+		metadataFollowOption.LogFileReaderFn = func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
 			return filer.NewChunkStreamReaderFromLookup(context.Background(), lookupFn, chunks), nil
-		},
+		}
 	}
 	util.RetryUntil("followMetaUpdates", func() error {
 		metadataFollowOption.ClientEpoch++

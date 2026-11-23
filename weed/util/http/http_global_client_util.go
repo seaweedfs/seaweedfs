@@ -692,20 +692,34 @@ type RefreshUrlsFunc func() []string
 // list for the reads that follow.
 func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []string, cipherKey []byte, isGzipped bool, isFullChunk bool, offset int64, fileId string, refreshUrls RefreshUrlsFunc) (n int, err error) {
 
-	var jwt security.EncodedJwt
-	if len(urlStrings) > 0 && IsProxyChunkUrl(urlStrings[0]) {
-		jwt = security.EncodedJwt(JwtForFilerServer(false))
-	} else {
+	// A filer-issued read token (VolumeReadToken) can have only seconds of life
+	// when it is minted, and a retry backoff can outlast it. Select the token
+	// per attempt so each volume request carries a current credential instead
+	// of an expired one, which the volume server rejects as non-retryable. The
+	// proxy credential is a filer token taken once.
+	proxy := len(urlStrings) > 0 && IsProxyChunkUrl(urlStrings[0])
+	var proxyJwt security.EncodedJwt
+	if proxy {
+		proxyJwt = security.EncodedJwt(JwtForFilerServer(false))
+	}
+	selectJwt := func() security.EncodedJwt {
+		if proxy {
+			return proxyJwt
+		}
+		if token, ok := security.VolumeReadToken(ctx, fileId); ok {
+			return security.EncodedJwt(token)
+		}
 		loadJwtConfigOnce.Do(loadJwtConfig)
 		if cfg := jwtSigningReadConfigPtr.Load(); cfg != nil && len(cfg.key) > 0 {
-			jwt = security.GenJwtForVolumeServer(cfg.key, cfg.expires, fileId)
+			return security.GenJwtForVolumeServer(cfg.key, cfg.expires, fileId)
 		}
+		return ""
 	}
 
 	// For unencrypted, non-gzipped full chunks, use direct buffer read
 	// This avoids the 64KB intermediate buffer and callback overhead
 	if cipherKey == nil && !isGzipped && isFullChunk {
-		return retriedFetchChunkDataDirect(ctx, buffer, urlStrings, string(jwt), fileId, refreshUrls)
+		return retriedFetchChunkDataDirect(ctx, buffer, urlStrings, selectJwt, fileId, refreshUrls)
 	}
 
 	var shouldRetry bool
@@ -731,7 +745,7 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 			if strings.Contains(urlString, "%") {
 				urlString = url.PathEscape(urlString)
 			}
-			shouldRetry, err = ReadUrlAsStream(ctx, AppendQueryParameter(urlString, "readDeleted", "true"), string(jwt), cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
+			shouldRetry, err = ReadUrlAsStream(ctx, AppendQueryParameter(urlString, "readDeleted", "true"), string(selectJwt()), cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
 				if n < len(buffer) {
 					x := copy(buffer[n:], data)
 					n += x
@@ -778,7 +792,7 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 // retriedFetchChunkDataDirect reads chunk data directly into the buffer without
 // intermediate buffering. This reduces memory copies and improves throughput
 // for large chunk reads.
-func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings []string, jwt, fileId string, refreshUrls RefreshUrlsFunc) (n int, err error) {
+func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings []string, selectJwt func() security.EncodedJwt, fileId string, refreshUrls RefreshUrlsFunc) (n int, err error) {
 	var shouldRetry bool
 
 	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
@@ -796,7 +810,7 @@ func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings 
 			default:
 			}
 
-			n, shouldRetry, err = readUrlDirectToBuffer(ctx, AppendQueryParameter(urlString, "readDeleted", "true"), jwt, buffer)
+			n, shouldRetry, err = readUrlDirectToBuffer(ctx, AppendQueryParameter(urlString, "readDeleted", "true"), string(selectJwt()), buffer)
 			if err == nil {
 				if failed && refreshUrls != nil {
 					refreshUrls()

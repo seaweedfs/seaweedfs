@@ -45,6 +45,9 @@ func loadJwtConfig() {
 
 // JwtForVolumeServer generates a JWT token for volume server read operations if jwt.signing.read is configured
 func JwtForVolumeServer(fileId string) string {
+	if token, ok := security.VolumeReadToken(context.Background(), fileId); ok {
+		return token
+	}
 	loadJwtConfigOnce.Do(loadJwtConfig)
 	if len(jwtSigningReadKey) == 0 {
 		return ""
