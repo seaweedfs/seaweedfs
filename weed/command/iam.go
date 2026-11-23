@@ -87,6 +87,7 @@ func (iamopt *IamOptions) startIamServer() bool {
 
 	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	var digest string
 	for {
 		err := pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
@@ -94,6 +95,7 @@ func (iamopt *IamOptions) startIamServer() bool {
 				return fmt.Errorf("get filer configuration: %v", err)
 			}
 			glog.V(0).Infof("IAM read filer configuration: %s", resp)
+			digest = resp.Digest
 			return nil
 		})
 		if err != nil {
@@ -104,6 +106,7 @@ func (iamopt *IamOptions) startIamServer() bool {
 			break
 		}
 	}
+	adoptFilerDigest(*iamopt.filer, digest)
 
 	masters := pb.ServerAddresses(*iamopt.masters).ToAddressMap()
 	router := mux.NewRouter().SkipClean(true)

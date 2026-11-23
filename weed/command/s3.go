@@ -325,6 +325,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	var filerMaxMB int32
 	// the filer's -encryptVolumeData, which turns on chunk encryption here too
 	var filerCipher bool
+	var filerDigest string
 
 	for {
 		err := pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -339,6 +340,7 @@ func (s3opt *S3Options) startS3Server() bool {
 			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
 			filerMaxMB = int32(resp.MaxMb)
 			filerCipher = resp.Cipher
+			filerDigest = resp.Digest
 			glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
 			glog.V(0).Infof("S3 read filer maxMB: %d", filerMaxMB)
 			if len(masterAddresses) > 0 {
@@ -354,6 +356,7 @@ func (s3opt *S3Options) startS3Server() bool {
 			break
 		}
 	}
+	adoptFilerDigest(*s3opt.filer, filerDigest)
 
 	go stats_collect.LoopPushingMetric("s3", stats_collect.SourceName(uint32(*s3opt.port)), metricsAddress, metricsIntervalSec)
 

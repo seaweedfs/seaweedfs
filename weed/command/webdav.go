@@ -110,6 +110,7 @@ func (wo *WebDavOption) startWebDav() bool {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	var cipher bool
+	var digest string
 	// connect to filer
 	for {
 		err := pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -118,6 +119,7 @@ func (wo *WebDavOption) startWebDav() bool {
 				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
 			}
 			cipher = resp.Cipher
+			digest = resp.Digest
 			return nil
 		})
 		if err != nil {
@@ -128,6 +130,7 @@ func (wo *WebDavOption) startWebDav() bool {
 			break
 		}
 	}
+	adoptFilerDigest(*wo.filer, digest)
 
 	ws, webdavServer_err := weed_server.NewWebDavServer(&weed_server.WebDavOption{
 		Filer:          filerAddress,

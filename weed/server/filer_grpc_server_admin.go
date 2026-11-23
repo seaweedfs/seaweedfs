@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
@@ -161,6 +162,7 @@ func (fs *FilerServer) GetFilerConfiguration(ctx context.Context, req *filer_pb.
 		FilerGroup:         fs.option.FilerGroup,
 		MajorVersion:       version.MAJOR_VERSION,
 		MinorVersion:       version.MINOR_VERSION,
+		Digest:             util.Digest(),
 	}
 
 	glog.V(4).InfofCtx(ctx, "GetFilerConfiguration: %v", t)

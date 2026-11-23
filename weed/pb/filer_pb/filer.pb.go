@@ -4242,6 +4242,7 @@ type GetFilerConfigurationResponse struct {
 	FilerGroup         string                 `protobuf:"bytes,13,opt,name=filer_group,json=filerGroup,proto3" json:"filer_group,omitempty"`
 	MajorVersion       int32                  `protobuf:"varint,14,opt,name=major_version,json=majorVersion,proto3" json:"major_version,omitempty"`
 	MinorVersion       int32                  `protobuf:"varint,15,opt,name=minor_version,json=minorVersion,proto3" json:"minor_version,omitempty"`
+	Digest             string                 `protobuf:"bytes,16,opt,name=digest,proto3" json:"digest,omitempty"` // "md5" or "sha256": the hash behind ETags and chunk digests
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -4372,6 +4373,13 @@ func (x *GetFilerConfigurationResponse) GetMinorVersion() int32 {
 		return x.MinorVersion
 	}
 	return 0
+}
+
+func (x *GetFilerConfigurationResponse) GetDigest() string {
+	if x != nil {
+		return x.Digest
+	}
+	return ""
 }
 
 type SubscribeMetadataRequest struct {
@@ -7803,7 +7811,7 @@ const file_filer_proto_rawDesc = "" +
 	"\x0eremote_time_ns\x18\x02 \x01(\x03R\fremoteTimeNs\x12 \n" +
 	"\fstop_time_ns\x18\x03 \x01(\x03R\n" +
 	"stopTimeNs\"\x1e\n" +
-	"\x1cGetFilerConfigurationRequest\"\xe8\x03\n" +
+	"\x1cGetFilerConfigurationRequest\"\x80\x04\n" +
 	"\x1dGetFilerConfigurationResponse\x12\x18\n" +
 	"\amasters\x18\x01 \x03(\tR\amasters\x12 \n" +
 	"\vreplication\x18\x02 \x01(\tR\vreplication\x12\x1e\n" +
@@ -7824,7 +7832,8 @@ const file_filer_proto_rawDesc = "" +
 	"\vfiler_group\x18\r \x01(\tR\n" +
 	"filerGroup\x12#\n" +
 	"\rmajor_version\x18\x0e \x01(\x05R\fmajorVersion\x12#\n" +
-	"\rminor_version\x18\x0f \x01(\x05R\fminorVersion\"\xfd\x03\n" +
+	"\rminor_version\x18\x0f \x01(\x05R\fminorVersion\x12\x16\n" +
+	"\x06digest\x18\x10 \x01(\tR\x06digest\"\xfd\x03\n" +
 	"\x18SubscribeMetadataRequest\x12\x1f\n" +
 	"\vclient_name\x18\x01 \x01(\tR\n" +
 	"clientName\x12\x1f\n" +
