@@ -312,7 +312,7 @@ func OneServerCopyAndMountEcShardsFromSource(grpcDialOption grpc.DialOption,
 	fmt.Printf("allocate %d.%v %s => %s\n", volumeId, shardIdsToCopy, existingLocation, targetServer.Info.Id)
 
 	targetAddress := pb.NewServerAddressFromDataNode(targetServer.Info)
-	err = volume_move.NewMover(grpcDialOption).CopyAndMountEcShards(context.Background(), volumeId, collection, shardIdsToCopy, existingLocation, targetAddress, destDiskId, 0, os.Stdout)
+	err = volume_move.NewMover(grpcDialOption).CopyAndMountEcShards(context.Background(), volumeId, collection, shardIdsToCopy, existingLocation, targetAddress, destDiskId, "", 0, os.Stdout)
 	if err != nil {
 		return
 	}
@@ -1440,12 +1440,13 @@ func (ecb *ecBalancer) applyShardMoveRPC(src, dst *EcNode, collection string, vi
 		return nil
 	}
 	return volume_move.NewMover(ecb.env.GrpcDialOption).MoveEcShards(context.Background(), volume_move.EcShardMove{
-		VolumeId:   vid,
-		Collection: collection,
-		ShardIds:   []erasure_coding.ShardId{shardId},
-		Source:     srcAddr,
-		Target:     dstAddr,
-		TargetDisk: destDiskId,
+		VolumeId:       vid,
+		Collection:     collection,
+		ShardIds:       []erasure_coding.ShardId{shardId},
+		Source:         srcAddr,
+		Target:         dstAddr,
+		TargetDisk:     destDiskId,
+		TargetDiskType: ecb.diskType.String(),
 	}, volume_move.EcMoveOptions{IoBytePerSecond: ecb.ioBytePerSecond, Writer: os.Stdout})
 }
 

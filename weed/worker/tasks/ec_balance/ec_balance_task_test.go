@@ -29,7 +29,8 @@ func TestECBalanceTaskRejectsOutOfRangeShardIds(t *testing.T) {
 }
 
 // A refusal against the pinned disk convicts only that disk, not the node:
-// the task retries once letting the server pick a disk, and the move completes.
+// the task retries once letting the server pick a disk of the same type, and
+// the move completes.
 func TestECBalanceTaskRetriesServerPickOnPinnedDiskRefusal(t *testing.T) {
 	source := startFakeEcVolumeServer(t, 7, 5)
 	target := startFakeEcVolumeServer(t, 7)
@@ -41,6 +42,9 @@ func TestECBalanceTaskRetriesServerPickOnPinnedDiskRefusal(t *testing.T) {
 		VolumeId: 7,
 		Sources:  []*worker_pb.TaskSource{{Node: source.address(), ShardIds: []uint32{5}}},
 		Targets:  []*worker_pb.TaskTarget{{Node: target.address(), DiskId: 2, ShardIds: []uint32{5}}},
+		TaskParams: &worker_pb.TaskParams_EcBalanceParams{
+			EcBalanceParams: &worker_pb.EcBalanceTaskParams{DiskType: "ssd"},
+		},
 	}
 
 	if err := task.Execute(context.Background(), params); err != nil {
@@ -48,6 +52,9 @@ func TestECBalanceTaskRetriesServerPickOnPinnedDiskRefusal(t *testing.T) {
 	}
 	if got := target.copyDiskIds; len(got) != 2 || got[0] != 2 || got[1] != 0 {
 		t.Fatalf("expected copies to disk 2 then server-picked 0, got %v", got)
+	}
+	if got := target.copyDiskTypes; len(got) != 2 || got[0] != "ssd" || got[1] != "ssd" {
+		t.Fatalf("expected both copies to name disk type ssd, got %v", got)
 	}
 	if source.has(7, 5) {
 		t.Fatalf("source still holds shard 5")

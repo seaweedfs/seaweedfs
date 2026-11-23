@@ -483,6 +483,7 @@ message VolumeEcShardsCopyRequest {
     uint32 disk_id = 8;  // Target disk ID for storing EC shards
     bool copy_ecsum_file = 9; // copy the bitrot checksum sidecar (.ecsum) when present; tolerant of a missing source (no-op), since this non-2PC path has no Prepare backstop
     int64 io_byte_per_second = 10; // limit the copy rate; 0 falls back to the server's maintenance rate
+    string disk_type = 11; // with disk_id 0, pick only among disks of this type; empty means any
 }
 message VolumeEcShardsCopyResponse {
 }

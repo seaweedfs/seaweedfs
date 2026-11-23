@@ -531,38 +531,48 @@ async fn delete_on_remote_ec_shard(
 /// no-op: `journal_delete` would accept it silently, but here it means the
 /// volume remounted as a different generation mid-delete and the tombstone
 /// should go to a replica that still has the needle.
-async fn journal_delete_local(
+pub(crate) async fn journal_delete_local(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
     needle_id: NeedleId,
 ) -> io::Result<()> {
-    let appender = {
+    // Every local runtime records the delete, the first last, as in the
+    // VolumeEcBlobDelete handler.
+    let appenders = {
         let store = state.store.read().unwrap();
-        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
-            io::Error::new(
+        let ec_vols = store.find_all_ec_volumes(vid);
+        if ec_vols.is_empty() {
+            return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 format!("ec volume {} unmounted", vid.0),
-            )
-        })?;
-        match ecv.find_needle_from_ecx(needle_id)? {
-            None => {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("needle {} not in local ecx", needle_id),
-                ));
-            }
-            Some((_, size)) if size.is_deleted() => return Ok(()),
-            Some(_) => {}
+            ));
         }
-        ecv.journal_appender()
+        let mut appenders = Vec::new();
+        for (i, ecv) in ec_vols.into_iter().enumerate() {
+            match ecv.find_needle_from_ecx(needle_id)? {
+                None if i > 0 => continue,
+                None => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("needle {} not in local ecx", needle_id),
+                    ));
+                }
+                Some((_, size)) if size.is_deleted() => continue,
+                Some(_) => {}
+            }
+            appenders.push(ecv.journal_appender());
+        }
+        appenders
     };
     // Membership is read under the journal lock: a decode claims the
     // publishing tail before it takes that lock for its catch-up, so a check
     // taken earlier would be stale by commit time.
     let state = state.clone();
     tokio::task::spawn_blocking(move || {
-        appender.journal_delete(needle_id, || {
-            crate::server::grpc_server::ec_decode_tail_contains(&state, vid)
+        appenders.iter().rev().try_for_each(|appender| {
+            appender.journal_delete(needle_id, || {
+                crate::server::grpc_server::ec_decode_tail_contains(&state, vid)
+            })
         })
     })
     .await

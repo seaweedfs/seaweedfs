@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
@@ -52,6 +55,42 @@ func TestMoveEcShardsSequence(t *testing.T) {
 	}
 	if copyReq.DiskId != 2 || copyReq.SourceDataNode != string(srcAddr) || copyReq.Collection != "c1" || copyReq.IoBytePerSecond != 77 {
 		t.Errorf("copy request not propagated: %+v", copyReq)
+	}
+}
+
+// A pinned disk can be another medium than the shards it holds report, so a
+// typed move refused there lets the server pick a disk of that type.
+func TestMoveEcShardsWrongTypePinnedDiskLetsServerPick(t *testing.T) {
+	cluster := newFakeCluster()
+	cluster.ecShards[string(dstAddr)] = dstShards(3)
+	cluster.wrongTypeDisk = map[string]uint32{string(dstAddr): 2}
+	move := ecMove(3)
+	move.TargetDiskType = "ssd"
+
+	if err := cluster.mover().MoveEcShards(context.Background(), move, EcMoveOptions{}); err != nil {
+		t.Fatalf("MoveEcShards: %v", err)
+	}
+	if len(cluster.ecCopyReqs) != 2 {
+		t.Fatalf("want the refused copy and one retry, got %d copies", len(cluster.ecCopyReqs))
+	}
+	if retry := cluster.ecCopyReqs[1]; retry.DiskId != 0 || retry.DiskType != "ssd" {
+		t.Errorf("retry should let the server pick an ssd disk: %+v", retry)
+	}
+
+	// An untyped refusal is not a type mismatch and is not retried.
+	cluster = newFakeCluster()
+	cluster.errs[string(dstAddr)+" VolumeEcShardsCopy"] = status.Error(codes.InvalidArgument, "invalid disk_id 2")
+	if err := cluster.mover().MoveEcShards(context.Background(), ecMove(3), EcMoveOptions{}); err == nil {
+		t.Fatal("expected the copy refusal")
+	}
+	copies := 0
+	for _, call := range cluster.callList() {
+		if call == string(dstAddr)+" VolumeEcShardsCopy" {
+			copies++
+		}
+	}
+	if copies != 1 {
+		t.Errorf("an untyped refusal was retried: %v", cluster.callList())
 	}
 }
 
@@ -126,7 +165,7 @@ func TestRemoveEcShards(t *testing.T) {
 func TestCopyAndMountEcShardsSameAddressMountsOnly(t *testing.T) {
 	cluster := newFakeCluster()
 
-	err := cluster.mover().CopyAndMountEcShards(context.Background(), 7, "c1", []erasure_coding.ShardId{3}, srcAddr, srcAddr, 0, 0, nil)
+	err := cluster.mover().CopyAndMountEcShards(context.Background(), 7, "c1", []erasure_coding.ShardId{3}, srcAddr, srcAddr, 0, "", 0, nil)
 	if err != nil {
 		t.Fatalf("CopyAndMountEcShards: %v", err)
 	}

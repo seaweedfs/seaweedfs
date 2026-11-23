@@ -2708,6 +2708,7 @@ impl VolumeServer for VolumeGrpcService {
                                         &info.collection,
                                         vid,
                                         data_shards,
+                                        "",
                                         &[],
                                     )
                                     .map(|i| store.locations[i].directory.clone())
@@ -4356,37 +4357,40 @@ impl VolumeServer for VolumeGrpcService {
         // stalls deletes of this volume, not every store reader. The decode
         // tail is checked under that journal lock (see journal_delete_local).
         loop {
-            let appender = {
+            let appenders = {
                 let store = self.state.store.read().unwrap();
-                // Go's handler locates the needle first: absent fails the RPC
-                // so the caller moves to the next holder; an existing
-                // tombstone is a no-op.
-                let Some(ec_vol) = store.find_ec_volume(vid) else {
-                    // If EC volume not mounted, it's a no-op (matching Go behavior)
-                    return Ok(Response::new(
-                        volume_server_pb::VolumeEcBlobDeleteResponse {},
-                    ));
-                };
-                match ec_vol.find_needle_from_ecx(needle_id) {
-                    Ok(Some((_, size))) if size.is_deleted() => {
-                        return Ok(Response::new(
-                            volume_server_pb::VolumeEcBlobDeleteResponse {},
-                        ));
+                // Each disk holding shards of the volume mounts its own runtime
+                // with its own deletion set, and a shard read checks the runtime
+                // of the disk that holds the shard, so every runtime records the
+                // delete. Go's handler locates the needle first: absent from the
+                // first runtime fails the RPC so the caller moves to the next
+                // holder; an existing tombstone is a no-op. An unmounted volume
+                // is a no-op too. A retry on this server resolves the volume
+                // through the first runtime, so it records last: a failure on
+                // any other leaves it live and the retry fans out again.
+                let mut appenders = Vec::new();
+                for (i, ec_vol) in store.find_all_ec_volumes(vid).into_iter().enumerate() {
+                    match ec_vol.find_needle_from_ecx(needle_id) {
+                        Ok(Some((_, size))) if size.is_deleted() => continue,
+                        Ok(None) if i > 0 => continue,
+                        Ok(None) => {
+                            return Err(Status::not_found(format!(
+                                "needle {} not in ec volume {}",
+                                needle_id, req.volume_id
+                            )));
+                        }
+                        Ok(Some(_)) => {}
+                        Err(e) => return Err(Status::internal(e.to_string())),
                     }
-                    Ok(None) => {
-                        return Err(Status::not_found(format!(
-                            "needle {} not in ec volume {}",
-                            needle_id, req.volume_id
-                        )));
-                    }
-                    Ok(Some(_)) => {}
-                    Err(e) => return Err(Status::internal(e.to_string())),
+                    appenders.push(ec_vol.journal_appender());
                 }
-                ec_vol.journal_appender()
+                appenders
             };
             let state = self.state.clone();
             let committed = tokio::task::spawn_blocking(move || {
-                appender.journal_delete(needle_id, || ec_decode_tail_contains(&state, vid))
+                appenders.iter().rev().try_for_each(|appender| {
+                    appender.journal_delete(needle_id, || ec_decode_tail_contains(&state, vid))
+                })
             })
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
@@ -6300,6 +6304,16 @@ impl VolumeGrpcService {
                     )));
                 }
                 let loc = &store.locations[req.disk_id as usize];
+                if !req.disk_type.is_empty()
+                    && loc.disk_type != DiskType::from_string(&req.disk_type)
+                {
+                    return Err(Status::invalid_argument(format!(
+                        "disk {} is {}, not the requested disk type {}",
+                        req.disk_id,
+                        loc.disk_type.readable_string(),
+                        req.disk_type
+                    )));
+                }
                 (loc.directory.clone(), loc.idx_directory.clone())
             } else {
                 // A batch whose requested shards are already owned by
@@ -6323,11 +6337,18 @@ impl VolumeGrpcService {
                     &req.collection,
                     vid,
                     data_shards,
+                    &req.disk_type,
                     &shard_ids,
                 ) {
                     Some(i) => {
                         let loc = &store.locations[i];
                         (loc.directory.clone(), loc.idx_directory.clone())
+                    }
+                    None if !req.disk_type.is_empty() => {
+                        return Err(Status::resource_exhausted(format!(
+                            "no space left on a {} disk, or a disk of another type holds the shards",
+                            req.disk_type
+                        )));
                     }
                     None => {
                         return Err(Status::internal("no space left".to_string()));
@@ -10403,6 +10424,79 @@ mod tests {
         assert_eq!(sorted_dir_names(&dir), before);
         assert_eq!(std::fs::read(format!("{}/57.ecx", dir)).unwrap(), ecx);
         assert_eq!(std::fs::read(format!("{}/57.ec05", dir)).unwrap(), ec05);
+    }
+
+    // A copy naming a disk type must land on that medium even when the volume's
+    // index already sits on another disk of the server, which auto-select prefers.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ec_shards_copy_disk_type_picks_that_medium() {
+        let (source_service, source_tmp) = make_local_service_with_volume("", None);
+        let src = source_tmp.path().to_str().unwrap().to_string();
+        let ecx = vec![1u8; NEEDLE_MAP_ENTRY_SIZE as usize];
+        for vid in 61..=63 {
+            std::fs::write(format!("{}/{}.ecx", src, vid), &ecx).unwrap();
+            std::fs::write(format!("{}/{}.ec02", src, vid), vec![2u8; 4096]).unwrap();
+        }
+        let (port, _shutdown) = serve_source(source_service).await;
+
+        let (dest, _dest_tmp, hdd_dir) = ec_copy_destination().await;
+        let ht_tmp = TempDir::new().unwrap();
+        let ht_dir = ht_tmp.path().to_str().unwrap().to_string();
+        {
+            let mut store = dest.state.store.write().unwrap();
+            store
+                .add_location(
+                    &ht_dir,
+                    &ht_dir,
+                    100,
+                    DiskType::from_string("hdd_ht"),
+                    MinFreeSpace::Percent(0.0),
+                    Vec::new(),
+                )
+                .unwrap();
+            for loc in &store.locations {
+                loc.check_disk_space();
+            }
+        }
+        for vid in 61..=63 {
+            std::fs::write(format!("{}/{}.ecx", hdd_dir, vid), &ecx).unwrap();
+        }
+        let copy = |vid: u32, disk_id: u32, disk_type: &str| {
+            dest.volume_ec_shards_copy(Request::new(volume_server_pb::VolumeEcShardsCopyRequest {
+                volume_id: vid,
+                shard_ids: vec![2],
+                copy_ecx_file: true,
+                source_data_node: format!("127.0.0.1:1.{}", port),
+                disk_id,
+                disk_type: disk_type.to_string(),
+                ..Default::default()
+            }))
+        };
+        let landed =
+            |dir: &str, vid: u32| std::path::Path::new(&format!("{}/{}.ec02", dir, vid)).exists();
+
+        copy(61, 0, "").await.expect("copy without a disk type");
+        assert!(
+            landed(&hdd_dir, 61),
+            "without a disk type the shard should follow the index"
+        );
+
+        copy(62, 0, "hdd_ht").await.expect("copy to hdd_ht");
+        assert!(
+            landed(&ht_dir, 62) && !landed(&hdd_dir, 62),
+            "a hdd_ht copy landed off the hdd_ht disk"
+        );
+
+        let err = copy(63, 1, "ssd").await.expect_err("disk 1 is hdd_ht");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument, "{}", err);
+        // Movers match this wording to let the server pick a disk of the type.
+        assert!(
+            err.message().contains("not the requested disk type"),
+            "{}",
+            err
+        );
+        let err = copy(63, 0, "ssd").await.expect_err("no ssd disk");
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted, "{}", err);
     }
 
     // A copy failing after some shards landed removes exactly those shards and
@@ -15791,6 +15885,81 @@ mod tests {
             "the finding must come from the parity check, not the needle walk: {:?}",
             resp.details
         );
+    }
+
+    // A volume mounted on two disks keeps a deletion set per disk, and a read
+    // checks the set of the disk holding the shard, so a delete must reach
+    // every local copy.
+    #[tokio::test]
+    async fn test_volume_ec_blob_delete_records_on_every_local_copy() {
+        let (service, _tmp) = make_service_with_two_disk_complete_ec_volume(7064);
+        let vid = VolumeId(7064);
+        let store = service.state.store.read().unwrap();
+        assert_eq!(store.find_all_ec_volumes(vid).len(), 2);
+        drop(store);
+        service
+            .volume_ec_blob_delete(Request::new(volume_server_pb::VolumeEcBlobDeleteRequest {
+                volume_id: 7064,
+                collection: String::new(),
+                file_key: 3,
+                version: 3,
+            }))
+            .await
+            .unwrap();
+        let store = service.state.store.read().unwrap();
+        for (i, ec_vol) in store.find_all_ec_volumes(vid).into_iter().enumerate() {
+            assert!(
+                ec_vol.is_needle_deleted(NeedleId(3)),
+                "copy {} still serves the deleted needle",
+                i
+            );
+        }
+    }
+
+    // A retry on this server resolves the volume through its first copy, so a
+    // delete that fails on another copy must leave the first one live.
+    #[tokio::test]
+    async fn test_volume_ec_blob_delete_failed_copy_leaves_first_live() {
+        let (service, _tmp) = make_service_with_two_disk_complete_ec_volume(7065);
+        let vid = VolumeId(7065);
+        let store = service.state.store.read().unwrap();
+        let copies = store.find_all_ec_volumes(vid);
+        assert_eq!(copies.len(), 2);
+        copies[1].journal_appender().drop_journal_file();
+        drop(store);
+        service
+            .volume_ec_blob_delete(Request::new(volume_server_pb::VolumeEcBlobDeleteRequest {
+                volume_id: 7065,
+                collection: String::new(),
+                file_key: 3,
+                version: 3,
+            }))
+            .await
+            .unwrap_err();
+        let store = service.state.store.read().unwrap();
+        assert!(
+            !store.find_all_ec_volumes(vid)[0].is_needle_deleted(NeedleId(3)),
+            "the first copy recorded a delete another copy failed"
+        );
+    }
+
+    // The distributed delete journals on this server without the RPC when it
+    // holds the shard, so it too must reach every local copy.
+    #[tokio::test]
+    async fn test_local_ec_delete_records_on_every_local_copy() {
+        let (service, _tmp) = make_service_with_two_disk_complete_ec_volume(7066);
+        let vid = VolumeId(7066);
+        crate::server::store_ec::journal_delete_local(&service.state, vid, NeedleId(3))
+            .await
+            .unwrap();
+        let store = service.state.store.read().unwrap();
+        for (i, ec_vol) in store.find_all_ec_volumes(vid).into_iter().enumerate() {
+            assert!(
+                ec_vol.is_needle_deleted(NeedleId(3)),
+                "copy {} still serves the deleted needle",
+                i
+            );
+        }
     }
 
     #[tokio::test]

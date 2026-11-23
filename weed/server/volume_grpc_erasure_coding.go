@@ -439,6 +439,9 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 
 		// Use the specific disk location
 		location = vs.store.Locations[req.DiskId]
+		if req.DiskType != "" && location.DiskType != types.ToDiskType(req.DiskType) {
+			return nil, status.Errorf(codes.InvalidArgument, "disk %d is %s, not the requested disk type %s", req.DiskId, location.DiskType.ReadableString(), req.DiskType)
+		}
 		glog.V(1).Infof("Using disk %d for EC shard copy: %s", req.DiskId, location.Directory)
 	} else {
 		// Auto-select the target disk: prefer a disk that already owns one
@@ -467,8 +470,11 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 			}
 			return nil, fmt.Errorf("volume %d shards %v are already owned by multiple local disks %v: no single destination; copy per shard or pass disk_id", req.VolumeId, req.ShardIds, dirs)
 		}
-		location = vs.store.FindEcShardTargetLocation(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.DataShardsCount, shardIds...)
+		location = vs.store.FindEcShardTargetLocation(req.Collection, needle.VolumeId(req.VolumeId), erasure_coding.DataShardsCount, req.DiskType, shardIds...)
 		if location == nil {
+			if req.DiskType != "" {
+				return nil, status.Errorf(codes.ResourceExhausted, "no space left on a %s disk, or a disk of another type holds the shards", req.DiskType)
+			}
 			return nil, status.Error(codes.ResourceExhausted, "no space left")
 		}
 	}
@@ -1394,27 +1400,39 @@ func (vs *VolumeServer) VolumeEcBlobDelete(ctx context.Context, req *volume_serv
 
 	resp := &volume_server_pb.VolumeEcBlobDeleteResponse{}
 
-	for _, location := range vs.store.Locations {
-		if localEcVolume, found := location.FindEcVolume(needle.VolumeId(req.VolumeId)); found {
-
-			_, size, _, err := localEcVolume.LocateEcShardNeedle(types.NeedleId(req.FileKey), needle.Version(req.Version))
-			if err != nil {
-				return nil, fmt.Errorf("locate in local ec volume: %w", err)
-			}
-			if size.IsDeleted() {
-				return resp, nil
-			}
-
-			err = localEcVolume.DeleteNeedleFromEcx(types.NeedleId(req.FileKey))
-			if err != nil {
-				return nil, err
-			}
-
-			break
+	// Each disk holding shards of the volume mounts its own runtime with its
+	// own deletion set, and a shard read checks the runtime of the disk that
+	// holds the shard, so every runtime records the delete. A retry on this
+	// server resolves the volume through the first runtime, so it records
+	// last: a failure on any other leaves it live and the retry fans out again.
+	var pending []*erasure_coding.EcVolume
+	for i, localEcVolume := range vs.store.FindAllEcVolumes(needle.VolumeId(req.VolumeId)) {
+		live, err := isLiveInLocalEcVolume(localEcVolume, req, i > 0)
+		if err != nil {
+			return nil, err
+		}
+		if live {
+			pending = append(pending, localEcVolume)
+		}
+	}
+	for i := len(pending) - 1; i >= 0; i-- {
+		if err := pending[i].DeleteNeedleFromEcx(types.NeedleId(req.FileKey)); err != nil {
+			return nil, err
 		}
 	}
 
 	return resp, nil
+}
+
+func isLiveInLocalEcVolume(localEcVolume *erasure_coding.EcVolume, req *volume_server_pb.VolumeEcBlobDeleteRequest, sibling bool) (bool, error) {
+	_, size, _, err := localEcVolume.LocateEcShardNeedle(types.NeedleId(req.FileKey), needle.Version(req.Version))
+	if err != nil {
+		if sibling && errors.Is(err, erasure_coding.NotFoundError) {
+			return false, nil
+		}
+		return false, fmt.Errorf("locate in local ec volume: %w", err)
+	}
+	return !size.IsDeleted(), nil
 }
 
 // VolumeEcShardsToVolume generates the .idx, .dat files from .ecx, .ecj and .ec01 ~ .ec14 files

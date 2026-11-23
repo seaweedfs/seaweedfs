@@ -117,12 +117,13 @@ func (t *ECBalanceTask) Execute(ctx context.Context, params *worker_pb.TaskParam
 	}
 
 	move := volume_move.EcShardMove{
-		VolumeId:   needle.VolumeId(params.VolumeId),
-		Collection: params.Collection,
-		ShardIds:   shardIds,
-		Source:     sourceAddr,
-		Target:     targetAddr,
-		TargetDisk: target.DiskId,
+		VolumeId:       needle.VolumeId(params.VolumeId),
+		Collection:     params.Collection,
+		ShardIds:       shardIds,
+		Source:         sourceAddr,
+		Target:         targetAddr,
+		TargetDisk:     target.DiskId,
+		TargetDiskType: ecParams.GetDiskType(),
 	}
 	opts := volume_move.EcMoveOptions{
 		IoBytePerSecond: ecParams.GetIoBytePerSecond(),

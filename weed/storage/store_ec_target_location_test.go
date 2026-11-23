@@ -41,7 +41,7 @@ func TestFindEcShardTargetLocation_PinsToEcxOnDisk(t *testing.T) {
 		t.Fatalf("seed .ecx on disk 2: %v", err)
 	}
 
-	got := store.FindEcShardTargetLocation(collection, vid, dataShardCount)
+	got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, "")
 	if got == nil {
 		t.Fatalf("FindEcShardTargetLocation returned nil; expected disk 2")
 	}
@@ -72,7 +72,7 @@ func TestFindEcShardTargetLocation_PrefersMountedOverEcx(t *testing.T) {
 		t.Fatalf("seed .ecx on disk 2: %v", err)
 	}
 
-	got := store.FindEcShardTargetLocation(collection, vid, dataShardCount)
+	got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, "")
 	if got != loc1 {
 		t.Errorf("placement should follow mounted EC volume on disk 1, got %v", got)
 	}
@@ -86,7 +86,7 @@ func TestFindEcShardTargetLocation_FallsThroughToHddWhenNothingMatches(t *testin
 	collection := "grafana-loki"
 	vid := needle.VolumeId(3333)
 
-	got := store.FindEcShardTargetLocation(collection, vid, dataShardCount)
+	got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, "")
 	if got == nil {
 		t.Fatalf("FindEcShardTargetLocation returned nil; expected an HDD fallback")
 	}
@@ -104,7 +104,7 @@ func TestFindEcShardTargetLocation_HonoursUnlimitedDisk(t *testing.T) {
 	store := newEcTargetTestStore(t, 1)
 	store.Locations[0].MaxVolumeCount = 0 // unlimited
 
-	got := store.FindEcShardTargetLocation("grafana-loki", needle.VolumeId(4444), dataShardCount)
+	got := store.FindEcShardTargetLocation("grafana-loki", needle.VolumeId(4444), dataShardCount, "")
 	if got == nil {
 		t.Fatalf("FindEcShardTargetLocation returned nil for an unlimited (MaxVolumeCount=0) disk")
 	}
@@ -142,7 +142,7 @@ func TestFindEcShardTargetLocation_TightProvisioningKeepsEcxDisk(t *testing.T) {
 	}
 	loc1.ecVolumesLock.Unlock()
 
-	got := store.FindEcShardTargetLocation(collection, vid, dataShardCount)
+	got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, "")
 	if got != loc1 {
 		t.Errorf("expected the .ecx-owning disk (1 shard placed, 9 free shard slots) to be picked; got %v", got)
 	}
@@ -168,16 +168,16 @@ func TestFindEcShardTargetLocation_PinsToTheDiskOwningTheShard(t *testing.T) {
 	mountEcShards(store.Locations[0], collection, vid, 0, 1)
 	mountEcShards(store.Locations[1], collection, vid, 2)
 
-	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, 0); got != store.Locations[0] {
+	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, "", 0); got != store.Locations[0] {
 		t.Errorf("a copy of shard 0 left its owning disk: got %v, want %s", got, store.Locations[0].Directory)
 	}
-	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, 2); got != store.Locations[1] {
+	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, "", 2); got != store.Locations[1] {
 		t.Errorf("a copy of shard 2 left its owning disk: got %v, want %s", got, store.Locations[1].Directory)
 	}
 
 	// A shard no disk owns yet is placed by the unchanged waterfall: both
 	// disks have it mounted, so the emptier one wins.
-	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, 7); got != store.Locations[1] {
+	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, "", 7); got != store.Locations[1] {
 		t.Errorf("placement of an unclaimed shard changed: got %v, want the emptier mounted disk", got)
 	}
 }
@@ -202,11 +202,11 @@ func TestFindEcShardTargetLocation_OwningDiskWinsWhenFull(t *testing.T) {
 	}
 	mountEcShards(store.Locations[0], collection, filler, fillerShards...)
 
-	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, 0); got != store.Locations[0] {
+	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, "", 0); got != store.Locations[0] {
 		t.Errorf("a copy of shard 0 left its owning disk when the disk was full: got %v", got)
 	}
 	// A shard it does not own still respects the space filter.
-	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, 7); got != store.Locations[1] {
+	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, "", 7); got != store.Locations[1] {
 		t.Errorf("an unclaimed shard should go to the disk with free slots: got %v", got)
 	}
 }
@@ -293,4 +293,37 @@ func newEcTargetTestStore(t *testing.T, numDirs int) *Store {
 		close(done)
 	})
 	return store
+}
+
+// TestFindEcShardTargetLocation_RequiredDiskType pins the strict medium filter:
+// a copy that names a disk type skips the other medium even when that disk has
+// the EC volume mounted, and refuses rather than split a shard another medium
+// already owns.
+func TestFindEcShardTargetLocation_RequiredDiskType(t *testing.T) {
+	store := newEcTargetTestStore(t, 2)
+	store.Locations[0].DiskType = types.SsdType
+	store.Locations[1].DiskType = types.ToDiskType("hdd_ht")
+	collection := "grafana-loki"
+	vid := needle.VolumeId(5555)
+	mountEcShards(store.Locations[0], collection, vid, 0, 1)
+
+	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, "", 2); got != store.Locations[0] {
+		t.Errorf("without a disk type the mounted disk should win: got %v", got)
+	}
+	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, "hdd_ht", 2); got != store.Locations[1] {
+		t.Errorf("a hdd_ht copy landed off the hdd_ht disk: got %v", got)
+	}
+	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, "hdd_ht", 1); got != nil {
+		t.Errorf("a shard the ssd disk owns must not get a second claim on hdd_ht: got %s", got.Directory)
+	}
+	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, "hdd", 2); got != nil {
+		t.Errorf("no hdd disk exists, want nil: got %s", got.Directory)
+	}
+	ssdBase := erasure_coding.EcShardFileName(collection, store.Locations[0].Directory, int(vid))
+	if err := os.WriteFile(ssdBase+erasure_coding.ToExt(3), []byte("s"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.FindEcShardTargetLocation(collection, vid, dataShardCount, "hdd_ht", 3); got != nil {
+		t.Errorf("an unmounted shard file on ssd would be mounted ahead of a hdd_ht copy: got %s", got.Directory)
+	}
 }

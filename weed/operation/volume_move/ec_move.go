@@ -21,6 +21,8 @@ type EcShardMove struct {
 	Target     pb.ServerAddress
 	// TargetDisk picks the destination disk (0 lets the server pick).
 	TargetDisk uint32
+	// TargetDiskType limits the server's pick to disks of this type.
+	TargetDiskType string
 }
 
 // EcMoveOptions control MoveEcShards.
@@ -58,7 +60,15 @@ func (m *Mover) MoveEcShards(ctx context.Context, move EcShardMove, opts EcMoveO
 	}
 
 	progress(10, fmt.Sprintf("copying EC shard(s) %d.%v from %s to %s", move.VolumeId, move.ShardIds, move.Source, move.Target))
-	if err := m.CopyAndMountEcShards(ctx, move.VolumeId, move.Collection, move.ShardIds, move.Source, move.Target, move.TargetDisk, opts.IoBytePerSecond, writer); err != nil {
+	err := m.CopyAndMountEcShards(ctx, move.VolumeId, move.Collection, move.ShardIds, move.Source, move.Target, move.TargetDisk, move.TargetDiskType, opts.IoBytePerSecond, writer)
+	// A disk pinned from the medium its shards report can be another physical
+	// medium; the server refuses it before copying, so let it pick a disk of
+	// the requested type instead.
+	if err != nil && move.TargetDisk > 0 && IsDiskTypeMismatchError(err) {
+		fmt.Fprintf(writer, "%s disk %d is not %s, letting the server pick\n", move.Target, move.TargetDisk, move.TargetDiskType)
+		err = m.CopyAndMountEcShards(ctx, move.VolumeId, move.Collection, move.ShardIds, move.Source, move.Target, 0, move.TargetDiskType, opts.IoBytePerSecond, writer)
+	}
+	if err != nil {
 		return err
 	}
 
@@ -87,7 +97,7 @@ func (m *Mover) MoveEcShards(ctx context.Context, move EcShardMove, opts EcMoveO
 // .vif/.ecsum sidecars) from source and mount them. A same-address call skips
 // the copy and just mounts — ec.encode uses that to bring freshly generated
 // shards online in place.
-func (m *Mover) CopyAndMountEcShards(ctx context.Context, volumeId needle.VolumeId, collection string, shardIds []erasure_coding.ShardId, source, target pb.ServerAddress, targetDisk uint32, ioBytePerSecond int64, writer io.Writer) error {
+func (m *Mover) CopyAndMountEcShards(ctx context.Context, volumeId needle.VolumeId, collection string, shardIds []erasure_coding.ShardId, source, target pb.ServerAddress, targetDisk uint32, targetDiskType string, ioBytePerSecond int64, writer io.Writer) error {
 	if writer == nil {
 		writer = io.Discard
 	}
@@ -111,6 +121,7 @@ func (m *Mover) CopyAndMountEcShards(ctx context.Context, volumeId needle.Volume
 				CopyEcsumFile:   true, // propagate the bitrot sidecar with the shards (no-op if the source has none)
 				SourceDataNode:  string(source),
 				DiskId:          targetDisk,
+				DiskType:        targetDiskType,
 				IoBytePerSecond: ioBytePerSecond,
 			})
 			if copyErr != nil {
@@ -209,6 +220,12 @@ func (m *Mover) DeleteEcShards(ctx context.Context, volumeId needle.VolumeId, co
 // reply), however the move chain wraps it.
 func IsNoSpaceLeftError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "no space left")
+}
+
+// IsDiskTypeMismatchError matches the volume server's refusal of a pinned disk
+// that is not the requested disk type.
+func IsDiskTypeMismatchError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "not the requested disk type")
 }
 
 // RemoveEcShards unmounts then deletes shards in place — the dedup path for a
