@@ -50,6 +50,7 @@ var (
 
 type VolumeFileScanner4Fix struct {
 	version        needle.Version
+	datSize        int64
 	nm             *needle_map.MemDb
 	nmDeleted      *needle_map.MemDb
 	includeDeleted bool
@@ -66,6 +67,10 @@ func (scanner *VolumeFileScanner4Fix) ReadNeedleBody() bool {
 
 func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 	glog.V(2).Infof("key %v offset %d size %d disk_size %d compressed %v", n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsCompressed())
+	if scanner.datSize > 0 && offset+n.DiskSize(scanner.version) > scanner.datSize {
+		glog.Warningf("needle %v at offset %d needs %d bytes but the .dat ends at %d; not indexing it", n.Id, offset, n.DiskSize(scanner.version), scanner.datSize)
+		return io.EOF
+	}
 	if n.Size.IsValid() {
 		if pe := scanner.nm.Set(n.Id, types.ToOffset(offset), n.Size); pe != nil {
 			return fmt.Errorf("saved %d with error %v", n.Size, pe)
@@ -247,6 +252,9 @@ func doFixOneVolume(basepath string, baseFileName string, collection string, vol
 		nm:             nm,
 		nmDeleted:      nmDeleted,
 		includeDeleted: fixIncludeDeleted,
+	}
+	if info, err := os.Stat(path.Join(basepath, baseFileName+".dat")); err == nil {
+		scanner.datSize = info.Size()
 	}
 
 	if err := storage.ScanVolumeFile(basepath, collection, vid, storage.NeedleMapInMemory, scanner); err != nil {

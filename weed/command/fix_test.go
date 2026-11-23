@@ -1,12 +1,17 @@
 package command
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
@@ -71,5 +76,90 @@ func TestSaveToIdxWritesOffsetOrder(t *testing.T) {
 	// The .dat-tail needle (the orphan tombstone at the highest offset) must be last.
 	if lastKey != types.Uint64ToNeedleId(5) {
 		t.Errorf("last entry should be the .dat-tail tombstone (key 5), got key %v", lastKey)
+	}
+}
+
+// writeFixTestVolume writes a .dat holding needles 1..count and returns its
+// base path and the offset of each needle, in key order.
+func writeFixTestVolume(t *testing.T, dir string, count int) (string, []int64) {
+	t.Helper()
+	base := filepath.Join(dir, "fix_7")
+	version := needle.GetCurrentVersion()
+	f, err := os.OpenFile(base+".dat", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	datBackend := backend.NewDiskFile(f)
+	defer datBackend.Close()
+	sb := super_block.SuperBlock{Version: version, ReplicaPlacement: &super_block.ReplicaPlacement{}, Ttl: &needle.TTL{}}
+	if _, err := datBackend.WriteAt(sb.Bytes(), 0); err != nil {
+		t.Fatal(err)
+	}
+	var offsets []int64
+	for i := 1; i <= count; i++ {
+		n := &needle.Needle{Id: types.Uint64ToNeedleId(uint64(i)), Data: bytes.Repeat([]byte{byte(i)}, 1000*i)}
+		n.Checksum = needle.NewCRC(n.Data)
+		offset, _, _, err := n.Append(datBackend, version)
+		if err != nil {
+			t.Fatalf("append needle %d: %v", i, err)
+		}
+		offsets = append(offsets, int64(offset))
+	}
+	return base, offsets
+}
+
+func indexedKeys(t *testing.T, idxPath string) []uint64 {
+	t.Helper()
+	f, err := os.Open(idxPath)
+	if err != nil {
+		t.Fatalf("open idx: %v", err)
+	}
+	defer f.Close()
+	var keys []uint64
+	if err := idx.WalkIndexFile(f, 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
+		keys = append(keys, uint64(key))
+		return nil
+	}); err != nil {
+		t.Fatalf("walk idx: %v", err)
+	}
+	return keys
+}
+
+func overwriteAt(t *testing.T, path string, offset int64, b []byte) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteAt(b, offset); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFixSkipsRecordPastEndOfDat(t *testing.T) {
+	sizeAt := types.NeedleIdSize + types.CookieSize
+	for _, tc := range []struct {
+		name    string
+		corrupt func(t *testing.T, dat string, off int64)
+	}{
+		{"truncated", func(t *testing.T, dat string, off int64) {
+			if err := os.Truncate(dat, off+100); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"huge size", func(t *testing.T, dat string, off int64) {
+			overwriteAt(t, dat, off+int64(sizeAt), []byte{0x7f, 0xff, 0xff, 0xf0})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			base, offsets := writeFixTestVolume(t, dir, 5)
+			tc.corrupt(t, base+".dat", offsets[4])
+			doFixOneVolume(dir, "fix_7", "fix", 7, true)
+			if got := indexedKeys(t, base+".idx"); !slices.Equal(got, []uint64{1, 2, 3, 4}) {
+				t.Errorf("indexed keys %v, want [1 2 3 4]", got)
+			}
+		})
 	}
 }
