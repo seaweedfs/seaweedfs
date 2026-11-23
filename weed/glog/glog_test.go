@@ -24,6 +24,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -464,5 +465,70 @@ func BenchmarkHeader(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		buf, _, _ := logging.header(infoLog, 0)
 		logging.putBuffer(buf)
+	}
+}
+
+func TestWritesToStderr(t *testing.T) {
+	saved := struct {
+		toStderr     bool
+		alsoToStderr presetBool
+		threshold    severity
+		set          int32
+	}{logging.toStderr, logging.alsoToStderr, logging.stderrThreshold.get(), atomic.LoadInt32(&logging.stderrThresholdSet)}
+	defer func() {
+		logging.toStderr = saved.toStderr
+		logging.alsoToStderr = saved.alsoToStderr
+		logging.stderrThreshold.set(saved.threshold)
+		atomic.StoreInt32(&logging.stderrThresholdSet, saved.set)
+	}()
+
+	// threshold "" means the flag was not given; want is indexed by severity.
+	tests := []struct {
+		name         string
+		toStderr     bool
+		alsoToStderr presetBool
+		threshold    string
+		bridged      bool
+		want         [numSeverity]bool
+	}{
+		{"defaults", false, presetBool{value: true}, "", false, [4]bool{true, true, true, true}},
+		{"threshold over default alsologtostderr", false, presetBool{value: true}, "WARNING", false, [4]bool{false, true, true, true}},
+		{"explicit alsologtostderr=true wins", false, presetBool{value: true, explicit: true}, "FATAL", false, [4]bool{true, true, true, true}},
+		{"alsologtostderr=false keeps default ERROR", false, presetBool{value: false, explicit: true}, "", false, [4]bool{false, false, true, true}},
+		{"alsologtostderr=false with threshold", false, presetBool{value: false, explicit: true}, "INFO", false, [4]bool{true, true, true, true}},
+		{"logtostderr writes all", true, presetBool{value: true}, "", false, [4]bool{true, true, true, true}},
+		{"logtostderr with threshold", true, presetBool{value: true}, "ERROR", false, [4]bool{false, false, true, true}},
+		{"bridged always written", true, presetBool{value: true}, "FATAL", true, [4]bool{true, true, true, true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logging.toStderr = tt.toStderr
+			logging.alsoToStderr = tt.alsoToStderr
+			logging.stderrThreshold.set(errorLog)
+			atomic.StoreInt32(&logging.stderrThresholdSet, 0)
+			if tt.threshold != "" {
+				if err := logging.stderrThreshold.Set(tt.threshold); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for s := infoLog; s <= fatalLog; s++ {
+				if got := logging.writesToStderr(s, tt.bridged); got != tt.want[s] {
+					t.Errorf("severity %s: got %v, want %v", severityName[s], got, tt.want[s])
+				}
+			}
+		})
+	}
+}
+
+func TestAlsoLogToStderrFlag(t *testing.T) {
+	var b presetBool
+	if b.explicit || !b.IsBoolFlag() {
+		t.Fatal("unexpected zero value")
+	}
+	if err := b.Set("false"); err != nil || b.value || !b.explicit {
+		t.Fatalf("Set(false): value=%v explicit=%v err=%v", b.value, b.explicit, err)
+	}
+	if err := b.Set("bogus"); err == nil {
+		t.Fatal("Set(bogus) succeeded")
 	}
 }
