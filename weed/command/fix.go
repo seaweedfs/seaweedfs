@@ -202,6 +202,11 @@ func SaveToIdx(scaner *VolumeFileScanner4Fix, idxName string) (ret error) {
 	}
 	defer func() {
 		idxFile.Close()
+		if ret != nil && !*fixIgnoreError {
+			if err := os.Remove(idxName); err != nil {
+				glog.Errorf("failed to cleanup file %s:%v", idxName, err)
+			}
+		}
 	}()
 
 	// Emit entries in .dat offset (append) order so the .idx stays the
@@ -295,9 +300,6 @@ func doFixOneVolume(basepath string, baseFileName string, collection string, vol
 			glog.Error(err)
 			SetCommandExitStatus(1)
 		} else {
-			if err := os.Remove(indexFileName); err != nil {
-				glog.Errorf("failed to cleanup file %s:%v", indexFileName, err)
-			}
 			glog.Fatal(err)
 		}
 	}
