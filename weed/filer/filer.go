@@ -1013,8 +1013,12 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 	if entry != nil && entry.TtlSec > 0 && !entry.IsDirectory() {
 		if entry.IsExpireS3Enabled() {
 			if entry.GetS3ExpireTime().Before(time.Now()) && !entry.IsS3Versioning() {
-				if delErr := f.doDeleteEntryMetaAndData(ctx, entry, true, false, nil); delErr != nil {
-					glog.ErrorfCtx(ctx, "FindEntry doDeleteEntryMetaAndData %s failed: %v", entry.FullPath, delErr)
+				// Its remote delete and event would outlive a refused commit, so a
+				// lookup outside a transaction removes it.
+				if ctx.Value(storeTransactionKey{}) == nil {
+					if delErr := f.doDeleteEntryMetaAndData(ctx, entry, true, false, nil); delErr != nil {
+						glog.ErrorfCtx(ctx, "FindEntry doDeleteEntryMetaAndData %s failed: %v", entry.FullPath, delErr)
+					}
 				}
 				return nil, filer_pb.ErrNotFound
 			}

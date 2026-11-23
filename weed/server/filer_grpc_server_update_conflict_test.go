@@ -11,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -231,6 +232,39 @@ func TestUpdateEntryCommitsWhatItsLookupRemoved(t *testing.T) {
 	checkGone(t, err, f, store, queue, "/ckpt/run/f")
 	if got := store.commitCount(); got != 1 {
 		t.Fatalf("commits = %d, want the one that removes the expired entry", got)
+	}
+}
+
+// An expired S3 object's removal tells the subscribers and deletes a remote
+// copy at once, which a refused commit could not take back. The update leaves
+// it to a lookup outside a transaction.
+func TestUpdateEntryLeavesAnExpiredS3ObjectToALookupOutsideIt(t *testing.T) {
+	server, f, store, queue := updateConflictServer(t, func(map[string]*filer.Entry) {})
+	store.refuse = nil
+	expired := fileEntryWithChunk("/ckpt/run/f", 101, storedChunk)
+	expired.TtlSec = 1
+	expired.Mtime = time.Now().Add(-time.Hour)
+	expired.Extended = map[string][]byte{s3_constants.SeaweedFSExpiresS3: []byte("true")}
+	store.entries["/ckpt/run/f"] = expired
+
+	_, err := server.UpdateEntry(context.Background(), updateOfF(updatedChunk))
+
+	if status.Code(err) != codes.NotFound {
+		t.Fatalf("UpdateEntry: %v, want NotFound", err)
+	}
+	if events := queue.snapshot(); len(events) != 0 {
+		t.Fatalf("metadata events = %+v, want none", events)
+	}
+	checkChunk(t, store, "/ckpt/run/f", storedChunk)
+
+	if _, err := f.FindEntry(context.Background(), "/ckpt/run/f"); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("lookup outside a transaction: %v, want NotFound", err)
+	}
+	if _, err := store.renameTestStore.FindEntry(context.Background(), "/ckpt/run/f"); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("after the lookup: %v, want the expired object removed", err)
+	}
+	if events := queue.snapshot(); len(events) != 1 || events[0].notification.NewEntry != nil {
+		t.Fatalf("metadata events = %+v, want the one delete", events)
 	}
 }
 

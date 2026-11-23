@@ -981,11 +981,9 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		garbage         []*filer_pb.FileChunk
 		unchanged       bool
 		stamp           int64
-		// refusal is what the read answered the update with: the entry is not
-		// there, or a precondition does not hold. It is the run's result, not
-		// its failure, so the run still commits: the lookup of an expired
-		// entry removes it and tells the subscribers, and a rollback would
-		// take the removal back and leave the event.
+		// refusal is the read's answer (not found, or a precondition that
+		// does not hold), not a failure: the run still commits what the
+		// lookup removed.
 		refusal error
 	)
 	err := fs.runEntryTransaction(ctx, lockPath, func(ctx context.Context) error {
