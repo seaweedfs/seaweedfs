@@ -132,8 +132,12 @@ func TestScopeDedicatedSubscriptionTokenSurvivesVerifiedPeerFallback(t *testing.
 		if !ok || peerInfo == nil {
 			t.Fatal("handler lost the original peer context")
 		}
-		if _, ok := peerInfo.AuthInfo.(credentials.TLSInfo); !ok {
+		tlsInfo, ok := peerInfo.AuthInfo.(credentials.TLSInfo)
+		if !ok {
 			t.Fatalf("handler peer auth info = %T, want verified TLSInfo", peerInfo.AuthInfo)
+		}
+		if len(tlsInfo.State.VerifiedChains) == 0 {
+			t.Fatal("handler peer lost verified TLS chains")
 		}
 	})
 
