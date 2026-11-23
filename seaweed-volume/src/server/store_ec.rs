@@ -441,16 +441,18 @@ pub async fn delete_ec_shard_needle_distributed(
     )))
 }
 
-/// A delete whose read found no needle. A holder's read checks one disk's
-/// deletion set, and a delete that failed part way can leave another of its
-/// disks live, so forward again, best effort; holders skip copies already
-/// recording it. Nothing is sent when this server's index has no live entry.
+/// A delete whose read found the needle deleted, best effort. A holder's read
+/// checks one disk's deletion set, and a delete that failed part way can leave
+/// its other disks live, so the delete goes to the primary shard holders whose
+/// read answers deleted, which skip the disks already recording it. Normal
+/// routing could stop at another copy instead; it is used only when no holder
+/// answers deleted. `forwardEcDeleteOfDeletedNeedle` in Go.
 pub async fn forward_ec_delete_of_deleted_needle(
     state: &Arc<VolumeServerState>,
     vid: VolumeId,
     needle_id: NeedleId,
 ) {
-    if let Err(e) = delete_ec_shard_needle_distributed(state, vid, needle_id).await {
+    if let Err(e) = forward_ec_delete_to_holders_reading_deleted(state, vid, needle_id).await {
         tracing::debug!(
             "re-forward delete of deleted ec needle {}.{}: {}",
             vid.0,
@@ -458,6 +460,70 @@ pub async fn forward_ec_delete_of_deleted_needle(
             e
         );
     }
+}
+
+async fn forward_ec_delete_to_holders_reading_deleted(
+    state: &Arc<VolumeServerState>,
+    vid: VolumeId,
+    needle_id: NeedleId,
+) -> io::Result<()> {
+    let (probe, holders, collection, version) = {
+        let store = state.store.read().unwrap();
+        let ecv = store.find_ec_volume(vid).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("ec volume {} not mounted", vid.0),
+            )
+        })?;
+        let (_, _, intervals) = ecv.locate_needle(needle_id)?.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("needle {} not in ec volume {}", needle_id, vid.0),
+            )
+        })?;
+        let (shard_id, shard_offset) = intervals
+            .first()
+            .map(|i| ecv.interval_to_shard_id_and_offset(i))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no intervals for needle"))?;
+        let (locations, _) = ecv.shard_locations_snapshot();
+        (
+            EcInterval {
+                vid,
+                needle_id,
+                shard_id,
+                shard_offset,
+                size: 1,
+                expected_encode_ts_ns: ecv.encode_ts_ns,
+            },
+            locations.get(&shard_id).cloned().unwrap_or_default(),
+            ecv.collection.clone(),
+            ecv.version,
+        )
+    };
+    let target = EcDeleteTarget {
+        vid,
+        collection: &collection,
+        version,
+        needle_id,
+    };
+    let mut reported = false;
+    let mut last_err = None;
+    for addr in &holders {
+        if !matches!(
+            do_read_remote_ec_shard_interval(state, addr, probe).await,
+            Ok((_, true))
+        ) {
+            continue;
+        }
+        reported = true;
+        if let Err(e) = delete_on_remote_ec_shard(state, addr, &target).await {
+            last_err = Some(e);
+        }
+    }
+    if !reported {
+        return delete_ec_shard_needle_distributed(state, vid, needle_id).await;
+    }
+    last_err.map_or(Ok(()), Err)
 }
 
 /// `doDeleteNeedleFromRemoteEcShardServers` in Go. `Ok(false)` is the

@@ -16038,6 +16038,99 @@ mod tests {
         }
     }
 
+    // The retry goes to the holder that answered the read deleted, not to the
+    // first holder that takes a delete.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_batch_delete_forwards_to_the_holder_reading_the_ec_needle_deleted() {
+        let (peer, peer_tmp) = make_service_with_two_disk_complete_ec_volume(7068);
+        let vid = VolumeId(7068);
+        let idx_dir = peer_tmp.path().join("data1");
+        let mut index_only = Vec::new();
+        for _ in 0..2 {
+            let (service, tmp) = make_local_service_with_volume("", None);
+            for name in ["7068.ecx", "7068.ecj", "7068.vif", "7068.ec13"] {
+                std::fs::copy(idx_dir.join(name), tmp.path().join(name)).unwrap();
+            }
+            service
+                .volume_ec_shards_mount(Request::new(
+                    volume_server_pb::VolumeEcShardsMountRequest {
+                        volume_id: 7068,
+                        collection: String::new(),
+                        shard_ids: vec![13],
+                        source_disk_type: String::new(),
+                        recover_missing_index: false,
+                    },
+                ))
+                .await
+                .unwrap();
+            index_only.push((service, tmp));
+        }
+        let (service, _tmp) = index_only.remove(0);
+        let (unreadable, _unreadable_tmp) = index_only.remove(0);
+
+        peer.state
+            .store
+            .write()
+            .unwrap()
+            .find_ec_volume_mut(vid)
+            .unwrap()
+            .journal_delete(NeedleId(3))
+            .unwrap();
+        let peer_state = peer.state.clone();
+        let unreadable_state = unreadable.state.clone();
+        let (port, _shutdown) = serve_source(peer).await;
+        let peer_addr = format!("127.0.0.1:{port}.{port}");
+        let (uport, _ushutdown) = serve_source(unreadable).await;
+        let unreadable_addr = format!("127.0.0.1:{uport}.{uport}");
+        {
+            let store = service.state.store.read().unwrap();
+            let ecv = store.find_ec_volume(vid).unwrap();
+            let (_, _, intervals) = ecv.locate_needle(NeedleId(3)).unwrap().unwrap();
+            let (primary, _) = ecv.interval_to_shard_id_and_offset(&intervals[0]);
+            ecv.merge_shard_locations(
+                (0u8..14)
+                    .map(|sid| {
+                        if sid == primary {
+                            (sid, vec![unreadable_addr.clone(), peer_addr.clone()])
+                        } else {
+                            (sid, vec![peer_addr.clone()])
+                        }
+                    })
+                    .collect(),
+            );
+        }
+
+        let fid = needle::FileId::new(vid, NeedleId(3), Cookie(3));
+        let resp = service
+            .batch_delete(Request::new(volume_server_pb::BatchDeleteRequest {
+                file_ids: vec![fid.to_string()],
+                skip_cookie_check: false,
+                fsync: false,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(resp.results[0].status, 404, "{:?}", resp.results);
+        {
+            let store = peer_state.store.read().unwrap();
+            for (i, ec_vol) in store.find_all_ec_volumes(vid).into_iter().enumerate() {
+                assert!(
+                    ec_vol.is_needle_deleted(NeedleId(3)),
+                    "peer copy {} still serves the deleted needle",
+                    i
+                );
+            }
+        }
+        let store = unreadable_state.store.read().unwrap();
+        assert!(
+            !store
+                .find_ec_volume(vid)
+                .unwrap()
+                .is_needle_deleted(NeedleId(3)),
+            "the delete went to the holder that could not read the shard"
+        );
+    }
+
     #[tokio::test]
     async fn volume_delete_reports_absent_volume_as_not_found() {
         let (service, _tmp) = make_service_with_seed_masters(&[]);
