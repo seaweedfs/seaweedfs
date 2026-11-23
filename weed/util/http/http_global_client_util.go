@@ -102,6 +102,10 @@ func Get(url string) ([]byte, bool, error) {
 }
 
 func GetAuthenticated(ctx context.Context, url, jwt string) ([]byte, bool, error) {
+	return getAuthenticated(ctx, url, jwt, nil)
+}
+
+func getAuthenticated(ctx context.Context, url, jwt string, progress *chunkProgress) ([]byte, bool, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, true, err
@@ -123,17 +127,23 @@ func GetAuthenticated(ctx context.Context, url, jwt string) ([]byte, bool, error
 		retryable := response.StatusCode >= 500
 		return nil, retryable, StatusError(url, response)
 	}
+	progress.answer()
 
-	var reader io.ReadCloser
+	var body io.Reader = response.Body
+	if progress != nil {
+		body = progressReader{reader: response.Body, progress: progress}
+	}
+	var reader io.Reader
 	switch response.Header.Get("Content-Encoding") {
 	case "gzip":
-		reader, err = gzip.NewReader(response.Body)
-		if err != nil {
-			return nil, true, err
+		gz, gzErr := gzip.NewReader(body)
+		if gzErr != nil {
+			return nil, true, gzErr
 		}
-		defer reader.Close()
+		defer gz.Close()
+		reader = gz
 	default:
-		reader = response.Body
+		reader = body
 	}
 
 	b, err := io.ReadAll(reader)
@@ -317,7 +327,7 @@ func ReadUrl(ctx context.Context, fileUrl string, cipherKey []byte, isContentCom
 		var n int
 		_, err := readEncryptedUrl(ctx, fileUrl, "", cipherKey, isContentCompressed, isFullChunk, offset, size, func(data []byte) {
 			n = copy(buf, data)
-		})
+		}, nil)
 		return int64(n), err
 	}
 
@@ -384,8 +394,13 @@ func ReadUrl(ctx context.Context, fileUrl string, cipherKey []byte, isContentCom
 }
 
 func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (retryable bool, err error) {
+	return readUrlAsStream(ctx, fileUrl, jwt, cipherKey, isContentGzipped, isFullChunk, offset, size, fn, nil)
+}
+
+// readUrlAsStream is ReadUrlAsStream reporting to progress what arrives.
+func readUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte, isContentGzipped bool, isFullChunk bool, offset int64, size int, fn func(data []byte), progress *chunkProgress) (retryable bool, err error) {
 	if cipherKey != nil {
-		return readEncryptedUrl(ctx, fileUrl, jwt, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
+		return readEncryptedUrl(ctx, fileUrl, jwt, cipherKey, isContentGzipped, isFullChunk, offset, size, fn, progress)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileUrl, nil)
@@ -420,18 +435,24 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 		retryable = r.StatusCode >= 499
 		return retryable, StatusError(fileUrl, r)
 	}
+	progress.answer()
 
-	var reader io.ReadCloser
+	var raw io.Reader = r.Body
+	if progress != nil {
+		raw = progressReader{reader: r.Body, progress: progress}
+	}
+	var reader io.Reader
 	contentEncoding := r.Header.Get("Content-Encoding")
 	switch contentEncoding {
 	case "gzip":
-		reader, err = gzip.NewReader(r.Body)
-		if err != nil {
-			return true, err
+		gz, gzErr := gzip.NewReader(raw)
+		if gzErr != nil {
+			return true, gzErr
 		}
-		defer reader.Close()
+		defer gz.Close()
+		reader = gz
 	default:
-		reader = r.Body
+		reader = raw
 	}
 	var body io.Reader = reader
 	if size > 0 {
@@ -471,8 +492,8 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 
 }
 
-func readEncryptedUrl(ctx context.Context, fileUrl, jwt string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, fn func(data []byte)) (bool, error) {
-	encryptedData, retryable, err := GetAuthenticated(ctx, fileUrl, jwt)
+func readEncryptedUrl(ctx context.Context, fileUrl, jwt string, cipherKey []byte, isContentCompressed bool, isFullChunk bool, offset int64, size int, fn func(data []byte), progress *chunkProgress) (bool, error) {
+	encryptedData, retryable, err := getAuthenticated(ctx, fileUrl, jwt, progress)
 	if err != nil {
 		return retryable, fmt.Errorf("fetch %s: %v", fileUrl, err)
 	}
@@ -733,34 +754,19 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 		}
 
 		var failed bool
-		for _, urlString := range ReachableFirst(urlStrings) {
-			// Check for context cancellation before each volume server request
-			select {
-			case <-ctx.Done():
-				return n, ctx.Err()
-			default:
-			}
-
-			n = 0
-			if strings.Contains(urlString, "%") {
-				urlString = url.PathEscape(urlString)
-			}
-			shouldRetry, err = ReadUrlAsStream(ctx, AppendQueryParameter(urlString, "readDeleted", "true"), string(selectJwt()), cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
-				if n < len(buffer) {
-					x := copy(buffer[n:], data)
-					n += x
+		n, failed, shouldRetry, err = hedgedChunkPass(ctx, ReachableFirst(urlStrings), buffer,
+			func(attemptCtx context.Context, urlString string, dst []byte, progress *chunkProgress) (int, bool, error) {
+				if strings.Contains(urlString, "%") {
+					urlString = url.PathEscape(urlString)
 				}
+				m := 0
+				retryable, readErr := readUrlAsStream(attemptCtx, AppendQueryParameter(urlString, "readDeleted", "true"), string(selectJwt()), cipherKey, isGzipped, isFullChunk, offset, len(dst), func(data []byte) {
+					if m < len(dst) {
+						m += copy(dst[m:], data)
+					}
+				}, progress)
+				return m, retryable, readErr
 			})
-			if !shouldRetry {
-				break
-			}
-			if err != nil {
-				failed = true
-				glog.V(0).InfofCtx(ctx, "read %s failed, err: %v", urlString, err)
-			} else {
-				break
-			}
-		}
 		if err == nil && failed && refreshUrls != nil {
 			refreshUrls()
 		}
@@ -803,25 +809,15 @@ func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings 
 		}
 
 		var failed bool
-		for _, urlString := range ReachableFirst(urlStrings) {
-			select {
-			case <-ctx.Done():
-				return 0, ctx.Err()
-			default:
+		n, failed, shouldRetry, err = hedgedChunkPass(ctx, ReachableFirst(urlStrings), buffer,
+			func(attemptCtx context.Context, urlString string, dst []byte, progress *chunkProgress) (int, bool, error) {
+				return readUrlDirectToBuffer(attemptCtx, AppendQueryParameter(urlString, "readDeleted", "true"), string(selectJwt()), dst, progress)
+			})
+		if err == nil {
+			if failed && refreshUrls != nil {
+				refreshUrls()
 			}
-
-			n, shouldRetry, err = readUrlDirectToBuffer(ctx, AppendQueryParameter(urlString, "readDeleted", "true"), string(selectJwt()), buffer)
-			if err == nil {
-				if failed && refreshUrls != nil {
-					refreshUrls()
-				}
-				return n, nil
-			}
-			if !shouldRetry {
-				break
-			}
-			failed = true
-			glog.V(0).InfofCtx(ctx, "read %s failed, err: %v", urlString, err)
+			return n, nil
 		}
 
 		if err != nil && shouldRetry {
@@ -848,7 +844,7 @@ func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings 
 
 // readUrlDirectToBuffer reads HTTP response directly into the provided buffer,
 // avoiding intermediate buffer allocations and copies.
-func readUrlDirectToBuffer(ctx context.Context, fileUrl, jwt string, buffer []byte) (n int, retryable bool, err error) {
+func readUrlDirectToBuffer(ctx context.Context, fileUrl, jwt string, buffer []byte, progress *chunkProgress) (n int, retryable bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileUrl, nil)
 	if err != nil {
 		return 0, false, err
@@ -876,6 +872,7 @@ func readUrlDirectToBuffer(ctx context.Context, fileUrl, jwt string, buffer []by
 		retryable = r.StatusCode >= 499
 		return 0, retryable, StatusError(fileUrl, r)
 	}
+	progress.answer()
 
 	// Read directly into the buffer without intermediate copying
 	// This is significantly faster for large chunks (16MB+)
@@ -889,6 +886,9 @@ func readUrlDirectToBuffer(ctx context.Context, fileUrl, jwt string, buffer []by
 
 		m, readErr := r.Body.Read(buffer[totalRead:])
 		totalRead += m
+		if m > 0 {
+			progress.arrived()
+		}
 		if readErr != nil {
 			if readErr == io.EOF {
 				// Return io.ErrUnexpectedEOF if we haven't filled the buffer
