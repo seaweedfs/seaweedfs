@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"math/rand"
 	"net"
 	"os"
@@ -360,5 +361,60 @@ func TestReadEcShardNeedleAnswersDeletedWhenRecoveryFallsShort(t *testing.T) {
 	got.Id = n.Id
 	if _, err := store.ReadEcShardNeedle(vid, got, nil); err != ErrorDeleted {
 		t.Errorf("read a deleted needle returned %v, want %v", err, ErrorDeleted)
+	}
+}
+
+// partlyDeletedEcShardPeer reports the needle deleted on its shard reads and
+// counts the deletes forwarded to it.
+type partlyDeletedEcShardPeer struct {
+	deletingEcShardPeer
+	deletes atomic.Int64
+	fileKey atomic.Uint64
+}
+
+func (p *partlyDeletedEcShardPeer) VolumeEcBlobDelete(ctx context.Context, req *volume_server_pb.VolumeEcBlobDeleteRequest) (*volume_server_pb.VolumeEcBlobDeleteResponse, error) {
+	p.deletes.Add(1)
+	p.fileKey.Store(req.FileKey)
+	return &volume_server_pb.VolumeEcBlobDeleteResponse{}, nil
+}
+
+// A holder whose delete stopped part way reports the needle deleted from the
+// disk that recorded it, so a retry still forwards the delete for the rest.
+func TestDeleteEcShardNeedleForwardsWhenReadSaysDeleted(t *testing.T) {
+	store := newTestStore(t, 1)
+	store.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+	const vid = needle.VolumeId(8)
+	_, n := writeEcVolumeFiles(t, store.Locations[0].Directory, vid)
+	for shardId := 1; shardId < erasure_coding.TotalShardsCount; shardId++ {
+		if err := store.MountEcShards("", vid, erasure_coding.ShardId(shardId), ""); err != nil {
+			t.Fatalf("mount shard %d: %v", shardId, err)
+		}
+	}
+	ecVolume, found := store.Locations[0].FindEcVolume(vid)
+	if !found {
+		t.Fatal("ec volume not mounted")
+	}
+
+	peer := &partlyDeletedEcShardPeer{}
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := grpc.NewServer()
+	volume_server_pb.RegisterVolumeServerServer(srv, peer)
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+	seedShardLocations(ecVolume, pb.NewServerAddressWithGrpcPort("127.0.0.1:1", lis.Addr().(*net.TCPAddr).Port))
+
+	got := new(needle.Needle)
+	got.Id = n.Id
+	if _, err := store.DeleteEcShardNeedle(ecVolume, got, n.Cookie); err != ErrorDeleted {
+		t.Fatalf("delete of a needle read as deleted returned %v, want %v", err, ErrorDeleted)
+	}
+	if peer.deletes.Load() != 1 {
+		t.Errorf("forwarded %d deletes to the holder, want 1", peer.deletes.Load())
+	}
+	if got := types.NeedleId(peer.fileKey.Load()); got != n.Id {
+		t.Errorf("forwarded the delete of needle %s, want %s", got, n.Id)
 	}
 }

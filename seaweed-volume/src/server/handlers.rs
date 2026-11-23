@@ -3669,6 +3669,10 @@ pub async fn delete_handler(
                     // distributed reader reports both as `Ok(None)`, and both
                     // mean the same thing to a deleter.
                     let result = DeleteResult { size: 0 };
+                    crate::server::store_ec::forward_ec_delete_of_deleted_needle(
+                        &state, vid, needle_id,
+                    )
+                    .await;
                     return json_response_with_params(
                         StatusCode::NOT_FOUND,
                         &result,
