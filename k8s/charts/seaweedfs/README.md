@@ -729,7 +729,7 @@ global:
 
 The engine registers its pod address with the masters and stores indexes through the filers and volume servers. Both Go and Rust volume servers use the same setup. The maintenance worker builds and updates ANN indexes; queries can scan data before indexing completes. Enabling filer write signing also requires clients writing directly to the filer HTTP API to supply a signed JWT.
 
-The bundled engine images support Linux amd64 and arm64. Use `vector.imageOverride` to select a compatible engine build, `vector.masters` for an external cluster, and `vector.resources` to set memory and CPU limits. The cache defaults to 512 MiB and is configured with `vector.readCacheMB`.
+The bundled engine images support Linux amd64 and arm64. Use `vector.imageOverride` to select a compatible engine build, `vector.masters` for an external cluster, and `vector.resources` to set memory and CPU limits. The engine sizes its caches to a quarter of its memory limit.
 
 `global.seaweedfs.enableSecurity` provisions and mounts the vector certificate and shared security configuration. With external certificates, provide the `<fullname>-vector-cert` secret (`my-seaweedfs-vector-cert` for release `my`). `fullname` follows `seaweedfs.fullname`, including `fullnameOverride`, `nameOverride`, and DNS-name truncation. Provide this secret alongside the existing CA and client secrets.
 

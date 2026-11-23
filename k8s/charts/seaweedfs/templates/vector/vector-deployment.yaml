@@ -56,12 +56,8 @@ spec:
             - 'case "$POD_IP" in *:*) POD_IP="[$POD_IP]";; esac; exec /usr/bin/weed-vector --listen="$POD_IP:{{ .Values.vector.port }}" "$@"'
             - vector
             - {{ printf "--masters=%s" (.Values.vector.masters | default $masters) | quote }}
-            - {{ printf "--read-cache-mb=%d" (int .Values.vector.readCacheMB) | quote }}
             {{- if .Values.filer.filerGroup }}
             - {{ printf "--filer-group=%s" .Values.filer.filerGroup | quote }}
-            {{- end }}
-            {{- if .Values.vector.nprobes }}
-            - {{ printf "--nprobes=%d" (int .Values.vector.nprobes) | quote }}
             {{- end }}
             {{- if include "seaweedfs.securityConfigEnabled" . }}
             - --security-toml=/etc/seaweedfs/security.toml

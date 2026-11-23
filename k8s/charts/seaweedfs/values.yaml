@@ -1774,8 +1774,6 @@ vector:
   port: 8090
   metricsPort: 0
   masters: ""
-  readCacheMB: 512
-  nprobes: null
   extraArgs: []
   extraEnvironmentVars: {}
   podLabels: {}
