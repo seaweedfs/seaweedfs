@@ -415,8 +415,16 @@ func hedgedChunkPass(ctx context.Context, urls []string, buffer []byte, hedging 
 				// The chunk is here. A location that has not even answered by
 				// now is tried last for a while, like one that cannot be
 				// reached, and the location list it came from may be stale.
+				// A request asked again where the server answered is only
+				// waiting for a connection.
+				answered := make(map[string]bool, len(attempts))
 				for _, other := range attempts {
-					if !other.finished && !other.progress.answered.Load() && time.Since(other.started) >= chunkReadAnswerDelay {
+					if other.progress.answered.Load() {
+						answered[other.url] = true
+					}
+				}
+				for _, other := range attempts {
+					if !other.finished && !answered[other.url] && time.Since(other.started) >= chunkReadAnswerDelay {
 						recordUnreachable(hostOf(other.url), errNoAnswer)
 						failed = true
 					}

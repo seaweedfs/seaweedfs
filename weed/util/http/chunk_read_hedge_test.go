@@ -557,6 +557,45 @@ func TestChunkReadAsksAgainWhereTheServerAnswered(t *testing.T) {
 	assertOrder(t, ReachableFirst(urls), flaky.url(), silent.url())
 }
 
+// TestChunkReadAskedAgainIsNotUnreachable: the requests that asked a stalled
+// location again over new connections had not answered when the first one
+// recovered and delivered the chunk. That server answered, so it is not taken
+// for one that cannot be reached.
+func TestChunkReadAskedAgainIsNotUnreachable(t *testing.T) {
+	forgetUnreachable(t)
+	shortHedgeDelay(t, 50*time.Millisecond)
+	payload := testPayload(64 * 1024)
+	var only *chunkServer
+	only = newChunkServer(t, func(n int32, w http.ResponseWriter, r *http.Request) {
+		if n > 1 {
+			only.wait(r)
+			return
+		}
+		sendHeaders(w, payload, false)
+		w.Write(payload[:len(payload)/2])
+		flush(w)
+		time.Sleep(5 * chunkReadStallDelay)
+		w.Write(payload[len(payload)/2:])
+	})
+	p := readPath{name: "direct", body: payload, isFullChunk: true}
+	refreshed := 0
+	got, _, err := fetch(context.Background(), p, len(payload), []string{only.url()}, func() []string {
+		refreshed++
+		return nil
+	})
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("got %d bytes, %v; want the chunk", len(got), err)
+	}
+	if n := only.requests.Load(); n < 2 {
+		t.Fatalf("asked %d times, want it asked again", n)
+	}
+	if refreshed != 0 {
+		t.Fatalf("refresh called %d times; the location answered", refreshed)
+	}
+	other := "http://127.0.0.1:1/3,abc"
+	assertOrder(t, ReachableFirst([]string{only.url(), other}), only.url(), other)
+}
+
 // TestChunkReadWaitsForTheOnlyLocationToAnswer: with nowhere else to go, a
 // location that has not answered yet is waited for, as before: asking its
 // server again would only add to whatever keeps it busy.
