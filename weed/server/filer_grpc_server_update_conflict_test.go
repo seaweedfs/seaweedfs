@@ -32,7 +32,7 @@ const updatedChunk, storedChunk, otherChunk = "2,0b02", "1,0a01", "3,0c03"
 
 // updateConflictServer has /ckpt/run/f in the store with the chunk 1,0a01.
 // meanwhile runs against the store as another writer's committed transaction,
-// after the update read the entry and before its first commit, which the store
+// after the update read the entry and before its first write commit, which the store
 // then refuses.
 func updateConflictServer(t *testing.T, meanwhile func(entries map[string]*filer.Entry)) (*FilerServer, *filer.Filer, *txnRenameStore, *captureQueue) {
 	t.Helper()
@@ -40,7 +40,7 @@ func updateConflictServer(t *testing.T, meanwhile func(entries map[string]*filer
 	store.entries["/ckpt/run"] = newDirectoryEntry("/ckpt/run", 110)
 	store.entries["/ckpt/run/f"] = fileEntryWithChunk("/ckpt/run/f", 101, storedChunk)
 	store.refuse = func(commit int) error {
-		if commit > 1 {
+		if commit != 2 {
 			return nil
 		}
 		store.mu.Lock()
@@ -154,8 +154,8 @@ func TestUpdateEntryRefusesWhatWasRenamedOverTheEntry(t *testing.T) {
 		t.Fatalf("UpdateEntry: %v, want FailedPrecondition", err)
 	}
 
-	if got := store.commitCount(); got != 2 {
-		t.Fatalf("commits = %d, want 2", got)
+	if got := store.commitCount(); got != 3 {
+		t.Fatalf("commits = %d, want a lookup and two write attempts", got)
 	}
 	checkChunk(t, store, "/ckpt/run/f", otherChunk)
 	checkDeletions(t, f)
@@ -170,13 +170,70 @@ func TestUpdateEntryRetriesAnUnchangedEntry(t *testing.T) {
 	if _, err := server.UpdateEntry(context.Background(), updateOfF(updatedChunk)); err != nil {
 		t.Fatalf("UpdateEntry: %v", err)
 	}
-	if got := store.commitCount(); got != 2 {
-		t.Fatalf("commits = %d, want 2", got)
+	if got := store.commitCount(); got != 3 {
+		t.Fatalf("commits = %d, want a lookup and two write attempts", got)
 	}
 	checkChunk(t, store, "/ckpt/run/f", updatedChunk)
 	checkDeletions(t, f, storedChunk)
 	if got := len(queue.snapshot()); got != 1 {
 		t.Fatalf("events = %d, want the committed update only", got)
+	}
+}
+
+// prepare stands in for a volume upload. Its result belongs to the request
+// across retries, and becomes safe to delete only after a definite failure.
+func TestUpdateEntryPreparesManifestsBetweenTransactions(t *testing.T) {
+	const manifestID = "4,0d04"
+	unknown := errors.New("commit outcome unknown")
+	for _, tc := range []struct {
+		name                    string
+		changeDuringPreparation bool
+		commitError             error
+		refuseAllWrites         bool
+		wantCode                codes.Code
+		wantStored              string
+		wantDeletions           []string
+	}{
+		{name: "reuse after conflict", commitError: filer.ErrTransactionConflict, wantStored: manifestID, wantDeletions: []string{storedChunk}},
+		{name: "replaced during upload", changeDuringPreparation: true, wantCode: codes.FailedPrecondition, wantStored: otherChunk, wantDeletions: []string{manifestID}},
+		{name: "exhausted conflicts release upload", commitError: filer.ErrTransactionConflict, refuseAllWrites: true, wantCode: codes.Unknown, wantStored: storedChunk, wantDeletions: []string{manifestID}},
+		{name: "unknown outcome retains upload", commitError: unknown, wantCode: codes.Unknown, wantStored: storedChunk},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, f, store, queue := updateConflictServer(t, nil)
+			store.refuse = func(commit int) error {
+				if commit == 2 || (commit > 2 && tc.refuseAllWrites) {
+					return tc.commitError
+				}
+				return nil
+			}
+			calls := 0
+			prepare := func(ctx context.Context, path string, old *filer.Entry, _ *filer_pb.Entry) ([]*filer_pb.FileChunk, []*filer_pb.FileChunk, error) {
+				calls++
+				if txnWrites(ctx) != nil || store.commitCount() != 1 {
+					t.Fatal("manifest preparation must run after the lookup commits and outside the write transaction")
+				}
+				if tc.changeDuringPreparation {
+					store.entries[path] = fileEntryWithChunk(path, 202, otherChunk)
+				}
+				manifest := written(manifestID, 2)
+				manifest.IsChunkManifest = true
+				return []*filer_pb.FileChunk{manifest}, old.GetChunks(), nil
+			}
+			_, err := server.updateEntry(context.Background(), updateOfF(updatedChunk), "/ckpt/run/f", prepare)
+			if status.Code(err) != tc.wantCode || calls != 1 {
+				t.Fatalf("update = %v, preparations = %d, want %v and one preparation", err, calls, tc.wantCode)
+			}
+			checkChunk(t, store, "/ckpt/run/f", tc.wantStored)
+			checkDeletions(t, f, tc.wantDeletions...)
+			wantEvents := 0
+			if tc.wantCode == codes.OK {
+				wantEvents = 1
+			}
+			if got := len(queue.snapshot()); got != wantEvents {
+				t.Fatalf("events = %d, want %d", got, wantEvents)
+			}
+		})
 	}
 }
 
@@ -188,7 +245,7 @@ func TestUpdateEntryDoesNotRestoreChunksDeletedByConcurrentWriter(t *testing.T) 
 			peer := &FilerServer{filer: f, option: &FilerOption{}, entryLockTable: util.NewLockTable[util.FullPath]()}
 			var peerEvents int
 			store.refuse = func(commit int) error {
-				if commit != 1 {
+				if commit != 2 {
 					return nil
 				}
 				var err error
@@ -249,15 +306,20 @@ func TestUpdateEntryChecksItsPreconditionAgainAfterAConflict(t *testing.T) {
 // leaves the entry as the other writers have it.
 func TestUpdateEntryGivesUpWhileTheStoreKeepsRefusing(t *testing.T) {
 	server, f, store, queue := updateConflictServer(t, func(map[string]*filer.Entry) {})
-	store.refuse = writeConflict
+	store.refuse = func(commit int) error {
+		if commit == 1 {
+			return nil
+		}
+		return writeConflict(commit)
+	}
 
 	_, err := server.UpdateEntry(context.Background(), updateOfF(updatedChunk))
 
 	if !errors.Is(err, filer.ErrTransactionConflict) {
 		t.Fatalf("UpdateEntry: %v, want the store's conflict", err)
 	}
-	if got := store.commitCount(); got != entryUpdateAttempts {
-		t.Fatalf("commits = %d, want %d", got, entryUpdateAttempts)
+	if got := store.commitCount(); got != 1+entryUpdateAttempts {
+		t.Fatalf("commits = %d, want a lookup and %d write attempts", got, entryUpdateAttempts)
 	}
 	checkChunk(t, store, "/ckpt/run/f", storedChunk)
 	if events := queue.snapshot(); len(events) != 0 {
@@ -344,25 +406,25 @@ func TestUpdateEntryCommitsARunThatFailsItsPrecondition(t *testing.T) {
 
 // A run that fails stores nothing: it is rolled back, and what it made
 // outside the store is given up, as for a run whose commit was refused.
-func TestEntryTransactionDiscardsAFailedRun(t *testing.T) {
+func TestEntryTransactionRollsBackAFailedRun(t *testing.T) {
 	server, _, store, _ := updateConflictServer(t, func(map[string]*filer.Entry) {})
 	store.refuse = nil
 	failed := errors.New("the write failed")
-	runs, discards := 0, 0
+	runs := 0
 
-	err := server.runEntryTransaction(context.Background(), "/ckpt/run/f", func(ctx context.Context) error {
+	uncertain, err := server.runEntryTransaction(context.Background(), "/ckpt/run/f", func(ctx context.Context) error {
 		runs++
 		if err := server.filer.Store.DeleteEntry(ctx, "/ckpt/run/f"); err != nil {
 			t.Fatalf("delete in the transaction: %v", err)
 		}
 		return failed
-	}, func() { discards++ })
+	})
 
 	if !errors.Is(err, failed) {
 		t.Fatalf("runEntryTransaction: %v, want the run's error", err)
 	}
-	if runs != 1 || discards != 1 {
-		t.Fatalf("runs = %d, discards = %d, want one of each", runs, discards)
+	if runs != 1 || uncertain {
+		t.Fatalf("runs = %d, uncertain = %v, want one rolled-back attempt", runs, uncertain)
 	}
 	if got := store.commitCount(); got != 0 {
 		t.Fatalf("commits = %d, want none", got)

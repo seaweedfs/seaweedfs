@@ -962,10 +962,13 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		}
 	}
 
-	// Serialize concurrent mutations to the same path on this filer so the
-	// read (preconditions, garbage diff) and the write are atomic. Callers
-	// route a key's writes to this owner filer, making this local lock
-	// sufficient.
+	return fs.updateEntry(ctx, req, fullpath, fs.cleanupChunks)
+}
+
+func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest, fullpath string,
+	prepareChunks func(context.Context, string, *filer.Entry, *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error),
+) (*filer_pb.UpdateEntryResponse, error) {
+	// Serialize concurrent mutations to the same path on this filer.
 	lockPath := util.FullPath(fullpath)
 	pathLock := fs.entryLockTable.AcquireLock("UpdateEntry", lockPath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(lockPath, pathLock)
@@ -974,30 +977,21 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	// but the acknowledged state still reflects everything at or below this.
 	logTsNs := time.Now().UnixNano()
 
-	// The read (preconditions, garbage diff) and the write it decides: in one
-	// store transaction where the store refuses a conflicting commit, since
-	// the lock above does not cover a rename or a delete of the entry.
-	var (
-		entry, newEntry *filer.Entry
-		garbage         []*filer_pb.FileChunk
-		unchanged       bool
-		stamp           int64
-		observed        *filer_pb.WriteCondition_Clause
-		// refusal is the read's answer (not found, or a precondition that
-		// does not hold), not a failure: the run still commits what the
-		// lookup removed.
-		refusal error
-	)
-	err := fs.runEntryTransaction(ctx, lockPath, func(ctx context.Context) error {
+	transactional := fs.filer.RefusesConflictingCommits(lockPath)
+	var entry *filer.Entry
+	var observed *filer_pb.WriteCondition_Clause
+	var refusal error
+	read := func(ctx context.Context) error {
 		var err error
-		entry, newEntry, garbage, unchanged, refusal = nil, nil, nil, false, nil
+		refusal = nil
 		entry, err = fs.filer.FindEntry(ctx, lockPath)
 		if err != nil {
 			if errors.Is(err, filer_pb.ErrNotFound) {
+				// A TTL lookup can remove the entry. Commit that removal.
 				refusal = status.Errorf(codes.NotFound, "not found %s: %v", fullpath, err)
 				return nil
 			}
-			return fmt.Errorf("not found %s: %v", fullpath, err)
+			return fmt.Errorf("not found %s: %w", fullpath, err)
 		}
 		if refusal = validateUpdateEntryPreconditions(entry, req.ExpectedExtended); refusal != nil {
 			return nil
@@ -1007,54 +1001,64 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 			refusal = status.Errorf(codes.FailedPrecondition, "precondition failed: %s", fullpath)
 			return nil
 		}
-		// A retry may find another file, or a newer version of this one. The
-		// request still carries the first version's chunks, some of which the
-		// intervening writer may already have queued for deletion. Only retry
-		// while the complete observed entry, including its commit stamp and
-		// hard-link record, is unchanged; the client must rebase otherwise.
 		if observed != nil && !clauseSatisfied(observed, entry) {
 			refusal = status.Errorf(codes.FailedPrecondition, "entry changed during update: %s", fullpath)
-			return nil
 		}
-		if observed == nil && fs.filer.RefusesConflictingCommits(lockPath) {
+		if transactional && observed == nil {
 			observed = &filer_pb.WriteCondition_Clause{
 				Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
 				ExpectedEntry: proto.Clone(entry.ToProtoEntry()).(*filer_pb.Entry),
 			}
 		}
+		return nil
+	}
 
-		chunks, replaced, err := fs.cleanupChunks(ctx, fullpath, entry, req.Entry)
-		if err != nil {
-			return fmt.Errorf("UpdateEntry cleanupChunks %s: %v", fullpath, err)
+	// Finish the lookup (including any expiry removal) before doing volume
+	// I/O. Fetching or uploading manifests can outlast a FoundationDB transaction.
+	if _, err := fs.runEntryTransaction(ctx, lockPath, read); err != nil {
+		return &filer_pb.UpdateEntryResponse{}, err
+	}
+	if refusal != nil {
+		return &filer_pb.UpdateEntryResponse{}, refusal
+	}
+	chunks, garbage, err := prepareChunks(ctx, fullpath, entry, req.Entry)
+	if err != nil {
+		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("UpdateEntry cleanupChunks %s: %w", fullpath, err)
+	}
+
+	var newEntry *filer.Entry
+	var stamp int64
+	var unchanged bool
+	uncertain, err := fs.runEntryTransaction(ctx, lockPath, func(ctx context.Context) error {
+		fs.filer.ReleaseEntryCommitTsNs(stamp)
+		stamp = 0
+		if transactional {
+			// A writer may have retired chunks while we prepared or retried.
+			// The prepared update and garbage list are valid only for this snapshot.
+			if err := read(ctx); err != nil || refusal != nil {
+				return err
+			}
 		}
-
 		newEntry = filer.FromPbEntry(req.Directory, req.Entry)
 		newEntry.Chunks = chunks
-
-		// Don't apply TTL to remote entries - they're managed by remote storage
+		// Remote storage manages expiry for remote entries.
 		if newEntry.Remote != nil {
 			newEntry.TtlSec = 0
 		}
-
 		if unchanged = filer.EqualEntry(entry, newEntry); unchanged {
 			return nil
 		}
-		garbage = replaced
 		stamp = fs.filer.StampEntryCommitTsNs(newEntry)
 		return fs.filer.UpdateEntry(ctx, entry, newEntry, req.IsFromOtherCluster)
-	}, func() {
-		// Nothing of the run is stored: its stamp names no event, and nothing
-		// refers to the manifest chunks it folded the request's chunks into.
-		fs.filer.ReleaseEntryCommitTsNs(stamp)
-		stamp = 0
-		if newEntry != nil {
-			fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunks(newEntry.GetChunks(), req.Entry.GetChunks()))
-		}
 	})
 	if err == nil {
 		err = refusal
 	}
 	if err != nil {
+		// A commit with unknown outcome may already reference these manifests.
+		if !uncertain || stamp == 0 {
+			fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunks(chunks, req.Entry.GetChunks()))
+		}
 		fs.filer.ReleaseEntryCommitTsNs(stamp)
 		glog.V(3).InfofCtx(ctx, "UpdateEntry %s: %v", fullpath, err)
 		return &filer_pb.UpdateEntryResponse{}, err
@@ -1081,50 +1085,31 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 // while the store refuses the commit for a concurrent write to the entry.
 const entryUpdateAttempts = 5
 
-// runEntryTransaction runs attempt: the read of the entry at path and the
-// write that read decides. The caller holds the path's lock, which keeps the
-// two together against the writers that take it on this filer. A rename or a
-// delete sent to another filer does not take it, and on any filer a rename
-// moves, and a recursive delete removes, what is below its paths unlocked. One
-// that committed between the read and the write had the write store the entry
-// again at the path it had left.
-//
-// Where the store refuses a conflicting commit (filer.ConflictRefusingStore:
-// TiKV and FoundationDB), attempt runs in a store transaction of its own. Such
-// a rename or delete wrote the entry's key, so the store refuses the commit; attempt then
-// runs again and reads what is there now. UpdateEntry refuses a changed
-// entry rather than replaying its old chunk list. Other stores run attempt once,
-// without a transaction, as before.
-//
-// attempt returns an error only for what must not be stored. A run that
-// failed and one whose commit was refused are rolled back, and discard gives
-// up what such a run made outside the store. A commit that fails for another
-// reason may have gone through, so nothing is given up for it.
-func (fs *FilerServer) runEntryTransaction(ctx context.Context, path util.FullPath, attempt func(ctx context.Context) error, discard func()) error {
+// runEntryTransaction retries known conflicts on capable stores and calls
+// attempt directly elsewhere. On error, uncertain is true if writes from
+// attempt may be visible, so the caller must retain chunks they could reference.
+func (fs *FilerServer) runEntryTransaction(ctx context.Context, path util.FullPath, attempt func(context.Context) error) (uncertain bool, err error) {
 	if !fs.filer.RefusesConflictingCommits(path) {
-		return attempt(ctx)
+		err := attempt(ctx)
+		return err != nil, err
 	}
 	for n := 1; ; n++ {
 		txCtx, err := fs.filer.BeginTransaction(ctx)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if err := attempt(txCtx); err != nil {
 			fs.filer.RollbackTransaction(txCtx)
-			discard()
-			return err
+			return false, err
 		}
 		commitErr := fs.filer.CommitTransaction(txCtx)
 		if commitErr == nil {
-			return nil
+			return false, nil
 		}
 		fs.filer.RollbackTransaction(txCtx)
-		if !errors.Is(commitErr, filer.ErrTransactionConflict) {
-			return fmt.Errorf("%s commit error: %w", path, commitErr)
-		}
-		discard()
-		if n == entryUpdateAttempts {
-			return fmt.Errorf("%s commit error: %w", path, commitErr)
+		conflict := errors.Is(commitErr, filer.ErrTransactionConflict)
+		if !conflict || n == entryUpdateAttempts {
+			return !conflict, fmt.Errorf("%s commit error: %w", path, commitErr)
 		}
 		glog.V(0).InfofCtx(ctx, "update %s: running it again (%d of %d) after a concurrent write: %v", path, n+1, entryUpdateAttempts, commitErr)
 		time.Sleep(time.Duration(n) * 10 * time.Millisecond)
