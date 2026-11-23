@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestScopedInlineContentWritesPersistThroughUnaryHandlers(t *testing.T) {
@@ -142,5 +143,69 @@ func TestScopedInlineAppendWithChunksIsRefusedBeforePersistence(t *testing.T) {
 	}
 	if len(stored.GetChunks()) != 0 {
 		t.Fatalf("chunks after refused append = %v, want no chunks", stored.GetChunks())
+	}
+}
+
+func TestScopedRemoteAppendUsesRemoteOnlyBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		remoteSize int64
+		wantDenied bool
+	}{
+		{name: "remote-only", remoteSize: 100, wantDenied: true},
+		{name: "empty remote marker", remoteSize: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fs, store := newAppendLockServer(t)
+			close(store.release)
+
+			const newFid = "5,0c00000057"
+			expectedRemote := &filer_pb.RemoteEntry{
+				StorageName: "remote-store",
+				RemoteSize:  tc.remoteSize,
+				RemoteMtime: 1700000001,
+				RemoteETag:  "\"remote-etag\"",
+			}
+			entry := newFileEntry(appendLockTestPath, 1)
+			entry.Remote = proto.Clone(expectedRemote).(*filer_pb.RemoteEntry)
+			store.entries[appendLockTestPath] = entry
+
+			scope := newFilerGrpcScope(scopeConfig{
+				signingKey: func() security.SigningKey { return security.SigningKey(scopeTestKey) },
+			}, fs)
+			ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
+				"authorization",
+				"Bearer "+scopedToken("append", time.Hour, []string{"/data"}, nil),
+			))
+			_, err := scope.unary(ctx, &filer_pb.AppendToEntryRequest{
+				Directory: "/data",
+				EntryName: "app.log",
+				Chunks:    []*filer_pb.FileChunk{{FileId: newFid, Size: 10}},
+				ChunkAuth: map[string]string{newFid: scopedChunkProof(t, "append", newFid, time.Hour)},
+			}, &grpc.UnaryServerInfo{FullMethod: scopeFilerMethodPrefix + "AppendToEntry"}, func(handlerCtx context.Context, req any) (any, error) {
+				return fs.AppendToEntry(handlerCtx, req.(*filer_pb.AppendToEntryRequest))
+			})
+			if tc.wantDenied {
+				if status.Code(err) != codes.PermissionDenied {
+					t.Fatalf("scoped append to remote-only entry error = %v, want PermissionDenied", err)
+				}
+			} else if err != nil {
+				t.Fatalf("scoped append to empty remote marker: %v", err)
+			}
+
+			stored, err := store.FindEntry(context.Background(), appendLockTestPath)
+			if err != nil {
+				t.Fatalf("find remote entry after append: %v", err)
+			}
+			if !proto.Equal(stored.Remote, expectedRemote) {
+				t.Fatalf("remote metadata after append = %#v, want %#v", stored.Remote, expectedRemote)
+			}
+			if tc.wantDenied && len(stored.GetChunks()) != 0 {
+				t.Fatalf("chunks after refused append = %v, want no chunks", stored.GetChunks())
+			}
+			if !tc.wantDenied && (len(stored.GetChunks()) != 1 || stored.GetChunks()[0].GetFileIdString() != newFid) {
+				t.Fatalf("chunks after allowed append = %v, want %s", stored.GetChunks(), newFid)
+			}
+		})
 	}
 }

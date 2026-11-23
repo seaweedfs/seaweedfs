@@ -1159,6 +1159,9 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 		if scopeKeepOnly(ctx) && len(entry.Content) > 0 && len(req.GetChunks()) > 0 {
 			return &filer_pb.AppendToEntryResponse{}, status.Error(codes.PermissionDenied, "filer: scoped append cannot add chunks to an inline entry")
 		}
+		if scopeKeepOnly(ctx) && entry.IsInRemoteOnly() && len(req.GetChunks()) > 0 {
+			return &filer_pb.AppendToEntryResponse{}, status.Error(codes.PermissionDenied, "filer: scoped append cannot add chunks to a remote-only entry")
+		}
 		offset = int64(filer.TotalSize(entry.GetChunks()))
 	}
 	if err := fs.checkScopeWorm(ctx, string(fullpath)); err != nil {

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -20,18 +22,51 @@ func scopeRetainsData(stored, requested *filer_pb.Entry, proven func(string) boo
 		return err
 	}
 	known := make(map[string]bool, len(stored.GetChunks()))
+	identities := make(map[string]string, len(stored.GetChunks())+len(requested.GetChunks()))
 	for _, chunk := range stored.GetChunks() {
 		if chunk != nil {
-			known[chunk.GetFileIdString()] = true
+			fid := chunk.GetFileIdString()
+			known[fid] = true
+			identity := scopeChunkIdentity(fid)
+			if old, exists := identities[identity]; exists && old != fid {
+				// Existing aliases cannot safely be retained while one of their
+				// spellings might be queued for deletion.
+				identities[identity] = ""
+			} else {
+				identities[identity] = fid
+			}
 		}
 	}
 	for _, chunk := range requested.GetChunks() {
 		fid := chunk.GetFileIdString()
+		identity := scopeChunkIdentity(fid)
+		if old, exists := identities[identity]; exists && old != fid {
+			return fmt.Errorf("chunk identity aliases are not allowed: %s", fid)
+		}
+		// Garbage comparisons use literal IDs. A proof must not admit a
+		// second spelling of the same needle, even within a new chunk list.
+		identities[identity] = fid
 		if !known[fid] && (proven == nil || !proven(fid)) {
 			return fmt.Errorf("%s %s", filer_pb.ChunkProofRefused, fid)
 		}
 	}
 	return nil
+}
+
+func scopeChunkIdentity(fid string) string {
+	volume, path, ok := strings.Cut(fid, ",")
+	if !ok {
+		return fid
+	}
+	vid, err := needle.NewVolumeId(volume)
+	if err != nil {
+		return fid
+	}
+	var n needle.Needle
+	if err := n.ParsePath(path); err != nil {
+		return fid
+	}
+	return (&needle.FileId{VolumeId: vid, Key: n.Id, Cookie: n.Cookie}).String()
 }
 
 // scopeKeepsHardLink refuses a write that changes a stored hard link's count
