@@ -21,6 +21,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -124,6 +125,9 @@ func (r *SSES3Reader) gatewayClient(ctx context.Context, failed string) (*s3.Cli
 		return nil, "", errNoS3Gateway
 	}
 	endpoint := endpoints[rand.IntN(len(endpoints))]
+	if strings.HasPrefix(endpoint, "http://") {
+		glog.Warningf("-sseS3Read: no HTTPS S3 gateway is registered, reading %s over plain HTTP", endpoint)
+	}
 	r.client = s3.NewFromConfig(r.cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true
