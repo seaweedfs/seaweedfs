@@ -1161,7 +1161,7 @@ s3:
   # Set to a port number to enable, or 0/null to disable
   icebergPort: null
   # Lance Namespace port; weed serves 9101 by default, 0 disables it
-  # (and, unless worker.namespaceUrl points elsewhere, the worker's Lance container)
+  # (and the worker's Lance container)
   lancePort: 9101
   loggingOverrideLevel: null
   # enable user & permission to s3 (need to inject to all services)
@@ -1840,10 +1840,6 @@ worker:
   # lance_* jobs find nothing to do. It also makes the filer accept only signed
   # HTTP writes, so clients writing to the filer's HTTP API directly need a JWT
   # signed with that key.
-
-  # Lance namespace URL, used only when admin names none (an admin or S3
-  # gateways older than 4.56); empty derives it from s3.lancePort.
-  namespaceUrl: ""
 
   # Metrics port for the Lance worker container; the Go worker keeps metricsPort
   lanceMetricsPort: 9328

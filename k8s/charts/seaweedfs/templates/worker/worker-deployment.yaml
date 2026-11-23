@@ -237,7 +237,7 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            {{- /* admin names the filers and namespaces; these are the fallback, and what a pinned worker before 4.56 needs */}}
+            {{- /* only a worker pinned before 4.56 reads these; later ones learn the cluster from admin */}}
             - name: WEED_LANCE_NAMESPACE
               value: {{ include "seaweedfs.worker.lanceNamespaceUrl" . | quote }}
             - name: WEED_MASTERS

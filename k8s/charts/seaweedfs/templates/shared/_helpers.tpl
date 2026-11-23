@@ -269,11 +269,9 @@ true
 {{- end -}}
 {{- end -}}
 
-{{/* Lance namespace URL the worker falls back to when admin names none; empty when unreachable */}}
+{{/* The S3 service's Lance namespace URL; empty when it serves none, which also leaves out the worker's Lance container */}}
 {{- define "seaweedfs.worker.lanceNamespaceUrl" -}}
-{{- if .Values.worker.namespaceUrl -}}
-{{- .Values.worker.namespaceUrl -}}
-{{- else if and .Values.s3.enabled .Values.s3.lancePort -}}
+{{- if and .Values.s3.enabled .Values.s3.lancePort -}}
 {{- printf "http://%s.%s:%d" (include "seaweedfs.componentName" (list . "s3")) (include "seaweedfs.namespace" .) (int .Values.s3.lancePort) -}}
 {{- end -}}
 {{- end -}}
