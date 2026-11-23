@@ -441,6 +441,25 @@ pub async fn delete_ec_shard_needle_distributed(
     )))
 }
 
+/// A delete whose read found no needle. A holder's read checks one disk's
+/// deletion set, and a delete that failed part way can leave another of its
+/// disks live, so forward again, best effort; holders skip copies already
+/// recording it. Nothing is sent when this server's index has no live entry.
+pub async fn forward_ec_delete_of_deleted_needle(
+    state: &Arc<VolumeServerState>,
+    vid: VolumeId,
+    needle_id: NeedleId,
+) {
+    if let Err(e) = delete_ec_shard_needle_distributed(state, vid, needle_id).await {
+        tracing::debug!(
+            "re-forward delete of deleted ec needle {}.{}: {}",
+            vid.0,
+            needle_id,
+            e
+        );
+    }
+}
+
 /// `doDeleteNeedleFromRemoteEcShardServers` in Go. `Ok(false)` is the
 /// shard-missing signal — no live holder anywhere — that triggers the
 /// caller's fallback walk over the remaining shards.

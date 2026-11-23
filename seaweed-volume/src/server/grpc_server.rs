@@ -1178,6 +1178,14 @@ impl VolumeServer for VolumeGrpcService {
                         n.id,
                     )
                     .await;
+                    if matches!(read, Ok(Err(EcMiss::Deleted))) {
+                        crate::server::store_ec::forward_ec_delete_of_deleted_needle(
+                            &self.state,
+                            file_id.volume_id,
+                            n.id,
+                        )
+                        .await;
+                    }
                     let error = match read {
                         Ok(Ok(ec_needle)) => {
                             n = ec_needle;
@@ -15957,6 +15965,74 @@ mod tests {
             assert!(
                 ec_vol.is_needle_deleted(NeedleId(3)),
                 "copy {} still serves the deleted needle",
+                i
+            );
+        }
+    }
+
+    // A holder whose delete reached only the disk with the needle's shard reads
+    // it deleted, so a retry through another server still forwards the delete
+    // for the holder's other disk.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_batch_delete_forwards_when_a_peer_reads_the_ec_needle_deleted() {
+        let (peer, peer_tmp) = make_service_with_two_disk_complete_ec_volume(7067);
+        let vid = VolumeId(7067);
+        let (service, tmp) = make_local_service_with_volume("", None);
+        let idx_dir = peer_tmp.path().join("data1");
+        for name in ["7067.ecx", "7067.ecj", "7067.vif", "7067.ec13"] {
+            std::fs::copy(idx_dir.join(name), tmp.path().join(name)).unwrap();
+        }
+        service
+            .volume_ec_shards_mount(Request::new(volume_server_pb::VolumeEcShardsMountRequest {
+                volume_id: 7067,
+                collection: String::new(),
+                shard_ids: vec![13],
+                source_disk_type: String::new(),
+                recover_missing_index: false,
+            }))
+            .await
+            .unwrap();
+
+        peer.state
+            .store
+            .write()
+            .unwrap()
+            .find_ec_volume_mut(vid)
+            .unwrap()
+            .journal_delete(NeedleId(3))
+            .unwrap();
+        let peer_state = peer.state.clone();
+        let (port, _shutdown) = serve_source(peer).await;
+        let peer_addr = format!("127.0.0.1:{port}.{port}");
+        service
+            .state
+            .store
+            .read()
+            .unwrap()
+            .find_ec_volume(vid)
+            .unwrap()
+            .merge_shard_locations(
+                (0u8..14)
+                    .map(|sid| (sid, vec![peer_addr.clone()]))
+                    .collect(),
+            );
+
+        let fid = needle::FileId::new(vid, NeedleId(3), Cookie(3));
+        let resp = service
+            .batch_delete(Request::new(volume_server_pb::BatchDeleteRequest {
+                file_ids: vec![fid.to_string()],
+                skip_cookie_check: false,
+                fsync: false,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(resp.results[0].status, 404, "{:?}", resp.results);
+        let store = peer_state.store.read().unwrap();
+        for (i, ec_vol) in store.find_all_ec_volumes(vid).into_iter().enumerate() {
+            assert!(
+                ec_vol.is_needle_deleted(NeedleId(3)),
+                "peer copy {} still serves the deleted needle",
                 i
             );
         }
