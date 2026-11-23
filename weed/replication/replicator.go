@@ -40,6 +40,12 @@ func NewReplicator(sourceConfig util.Configuration, configPrefix string, dataSin
 	}
 }
 
+// CheckSinkDigest refuses a filer sink whose filer uses a different digest
+// from the source filer's; see CheckSinkDigest.
+func (r *Replicator) CheckSinkDigest() error {
+	return CheckSinkDigest(r.source.GrpcAddress(), r.source.Digest, r.sink)
+}
+
 func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_pb.EventNotification) error {
 	if message.IsFromOtherCluster && r.sink.GetName() == "filer" {
 		return nil

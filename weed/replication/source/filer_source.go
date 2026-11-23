@@ -86,6 +86,11 @@ func (fs *FilerSource) SetFilerJwtProvider(provider security.FilerJwtProvider) {
 // ProxyByFiler reports whether chunk reads are proxied through the source
 // filer. A proxied 404 can also mean the filer found no volume locations, so it
 // does not isolate a missing needle the way a direct volume read's 404 does.
+// GrpcAddress names the source filer.
+func (fs *FilerSource) GrpcAddress() string {
+	return fs.grpcAddress
+}
+
 func (fs *FilerSource) ProxyByFiler() bool {
 	return fs.proxyByFiler
 }
@@ -94,31 +99,43 @@ func (fs *FilerSource) FilerJwt() security.FilerJwtProvider {
 	return fs.jwtForFiler
 }
 
-// DigestIsMd5 reports whether the source filer's entry digests are MD5s. It
-// asks the filer once; a filer that does not report its digest, or cannot be
-// reached, is taken to use this process's digest mode.
-func (fs *FilerSource) DigestIsMd5() bool {
+// Digest returns the digest the source filer reports, empty for a filer that
+// predates the setting. It asks the filer once and remembers the answer; a
+// failed query is not remembered, so the next call asks again.
+func (fs *FilerSource) Digest() (string, error) {
 	fs.digestMu.Lock()
 	defer fs.digestMu.Unlock()
-	if !fs.digestKnown {
-		err := fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
-			if err != nil {
-				return err
-			}
-			fs.digest = resp.Digest
-			return nil
-		})
-		if err != nil {
-			glog.Warningf("read digest of source filer %s: %v", fs.grpcAddress, err)
-			return !util.DigestIsSha256()
-		}
-		fs.digestKnown = true
+	if fs.digestKnown {
+		return fs.digest, nil
 	}
-	if fs.digest == "" {
+	err := fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		fs.digest = resp.Digest
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	fs.digestKnown = true
+	return fs.digest, nil
+}
+
+// DigestIsMd5 reports whether the source filer's entry digests are MD5s. A
+// filer that does not report its digest, or cannot be reached, is taken to
+// use this process's digest mode.
+func (fs *FilerSource) DigestIsMd5() bool {
+	digest, err := fs.Digest()
+	if err != nil {
+		glog.Warningf("read digest of source filer %s: %v", fs.grpcAddress, err)
 		return !util.DigestIsSha256()
 	}
-	return fs.digest == util.DigestMd5
+	if digest == "" {
+		return !util.DigestIsSha256()
+	}
+	return digest == util.DigestMd5
 }
 
 func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls []string, err error) {

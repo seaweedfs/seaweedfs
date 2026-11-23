@@ -1754,6 +1754,8 @@ func runMini(cmd *Command, args []string) bool {
 
 // startMiniServices starts all mini services with proper dependency coordination
 func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
+	applyFilerDigest(*miniFilerOptions.digest)
+
 	// Determine bind IP for health checks
 	bindIp := getBindIp()
 

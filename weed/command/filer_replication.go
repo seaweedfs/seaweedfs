@@ -79,6 +79,9 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 	}
 
 	replicator := replication.NewReplicator(config, "source.filer.", dataSink)
+	if err := replicator.CheckSinkDigest(); err != nil {
+		glog.Exitf("%v", err)
+	}
 
 	for {
 		key, m, onSuccessFn, onFailureFn, err := notificationInput.ReceiveMessage()

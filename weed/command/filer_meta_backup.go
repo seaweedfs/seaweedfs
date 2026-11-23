@@ -88,6 +88,9 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 			*metaBackup.backupFilerConfig, err, "backup_filer", "filer")
 	}
 
+	if err := metaBackup.adoptSourceDigest(); err != nil {
+		glog.Exitf("%v", err)
+	}
 	if err := metaBackup.initStore(v); err != nil {
 		glog.V(0).Infof("init backup filer store: %v", err)
 		return true
@@ -133,6 +136,26 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 			time.Sleep(1747 * time.Millisecond)
 		}
 	}
+}
+
+// adoptSourceDigest makes this process hash with the source filer's digest
+// before the backup store opens: the store's directory keys and its digest
+// marker must match the filer's, or the copy cannot be opened as that filer's
+// store.
+func (metaBackup *FilerMetaBackupOptions) adoptSourceDigest() error {
+	var digest string
+	err := metaBackup.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		digest = resp.Digest
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("read digest of filer %s: %w", *metaBackup.filerAddress, err)
+	}
+	return util.AdoptFilerDigest(*metaBackup.filerAddress, digest)
 }
 
 func (metaBackup *FilerMetaBackupOptions) initStore(v *viper.Viper) error {

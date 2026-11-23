@@ -1,8 +1,6 @@
 package command
 
 import (
-	"fmt"
-
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -16,16 +14,12 @@ func adoptFilerDigest(filer string, digest string) {
 	}
 }
 
-// checkSyncDigests refuses to sync filers that use different digests:
-// filer.sync copies entry digests and ETags as they are, so one side would
-// hold digests of the other kind. A filer that reports none predates the
-// setting and cannot be checked.
-func checkSyncDigests(filerA, digestA, filerB, digestB string) error {
-	switch {
-	case digestA == "" || digestB == "":
-		glog.Warningf("cannot check that filers %s and %s use the same digest: one of them does not report it", filerA, filerB)
-	case digestA != digestB:
-		return fmt.Errorf("filer %s uses digest %s and filer %s uses digest %s; filer.sync would copy digests of one kind into the other", filerA, digestA, filerB, digestB)
+// applyFilerDigest sets this process's digest mode from the filer's -digest
+// flag, and exits when that setting is refused. weed server and weed mini call
+// it before they start their master and volume server, so every part of the
+// process hashes with one digest from the start.
+func applyFilerDigest(digest string) {
+	if err := util.SetDigest(digest); err != nil {
+		glog.Fatalf("filer -digest: %v", err)
 	}
-	return nil
 }

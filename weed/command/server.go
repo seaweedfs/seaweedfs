@@ -483,6 +483,7 @@ func runServer(cmd *Command, args []string) bool {
 				return ms != nil && ms.Topo.FreshMinted()
 			}
 		}
+		applyFilerDigest(*filerOptions.digest)
 		go func() {
 			time.Sleep(1 * time.Second)
 			filerOptions.startFiler()

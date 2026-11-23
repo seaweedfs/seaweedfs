@@ -216,7 +216,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 		glog.Errorf("get filer 'b' signature %d error from %s to %s: %v", bFilerSignature, *syncOptions.filerA, *syncOptions.filerB, bFilerErr)
 		return true
 	}
-	if err := checkSyncDigests(*syncOptions.filerA, aFilerDigest, *syncOptions.filerB, bFilerDigest); err != nil {
+	if err := replication.CheckDigestsMatch(*syncOptions.filerA, aFilerDigest, *syncOptions.filerB, bFilerDigest); err != nil {
 		glog.Errorf("%v", err)
 		return true
 	}

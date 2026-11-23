@@ -399,9 +399,7 @@ func runFiler(cmd *Command, args []string) bool {
 }
 
 func (fo *FilerOptions) startFiler() {
-	if err := util.SetDigest(*fo.digest); err != nil {
-		glog.Fatalf("filer -digest: %v", err)
-	}
+	applyFilerDigest(*fo.digest)
 
 	defaultMux := http.NewServeMux()
 	publicVolumeMux := defaultMux
