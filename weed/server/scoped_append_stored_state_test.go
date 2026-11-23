@@ -69,7 +69,7 @@ func TestScopedAppendRejectsNilStoredChunkRange(t *testing.T) {
 	}
 }
 
-func TestScopedEmptyAppendRefusesMalformedStoredRangesAtAdmission(t *testing.T) {
+func TestScopeRetainsDataRefusesMalformedStoredRangesWithoutRequestedChunks(t *testing.T) {
 	tests := []struct {
 		name   string
 		chunks []*filer_pb.FileChunk
@@ -82,7 +82,7 @@ func TestScopedEmptyAppendRefusesMalformedStoredRangesAtAdmission(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			stored := &filer_pb.Entry{Chunks: tc.chunks}
 			if err := scopeRetainsData(stored, &filer_pb.Entry{}, nil); err == nil {
-				t.Fatalf("empty append admission accepted malformed stored range: %v", tc.chunks)
+				t.Fatalf("retention check accepted malformed stored range: %v", tc.chunks)
 			}
 		})
 	}

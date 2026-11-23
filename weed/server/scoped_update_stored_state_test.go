@@ -284,8 +284,9 @@ func TestScopedUpdateRejectsMalformedStoredChunkRanges(t *testing.T) {
 					continue
 				}
 				run := runScopedUpdateState(t, initial, requested, nil)
-				if status.Code(run.err) != codes.PermissionDenied || run.called {
-					t.Fatalf("malformed stored update requestedChunks=%d err=%v called=%v, want admission PermissionDenied", len(requested.GetChunks()), run.err, run.called)
+				wantHandler := len(requested.GetChunks()) == 0
+				if status.Code(run.err) != codes.PermissionDenied || run.called != wantHandler {
+					t.Fatalf("malformed stored update requestedChunks=%d err=%v called=%v, want PermissionDenied with handler called=%v", len(requested.GetChunks()), run.err, run.called, wantHandler)
 				}
 				assertScopedEntryUnchanged(t, run, want)
 			}

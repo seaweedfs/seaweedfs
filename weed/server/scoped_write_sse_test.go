@@ -92,11 +92,12 @@ func TestScopeCheckSSEStateComparesPresenceAndBytes(t *testing.T) {
 func TestScopedSSEMetadataAdmissionRules(t *testing.T) {
 	const storedFid = "5,0c00000060"
 	tests := []struct {
-		name       string
-		method     string
-		stored     *filer_pb.Entry
-		requested  *filer_pb.Entry
-		wantDenied bool
+		name        string
+		method      string
+		stored      *filer_pb.Entry
+		requested   *filer_pb.Entry
+		wantDenied  bool
+		wantHandler bool
 	}{
 		{
 			name:   "chunkless add to plain update",
@@ -136,7 +137,16 @@ func TestScopedSSEMetadataAdmissionRules(t *testing.T) {
 			requested: &filer_pb.Entry{
 				Name: "metadata",
 			},
-			wantDenied: true,
+			wantDenied:  true,
+			wantHandler: true,
+		},
+		{
+			name:        "removal from SSE create overwrite",
+			method:      "CreateEntry",
+			stored:      &filer_pb.Entry{Name: "metadata", Extended: map[string][]byte{s3_constants.AmzServerSideEncryption: []byte(s3_constants.SSEAlgorithmAES256)}},
+			requested:   &filer_pb.Entry{Name: "metadata"},
+			wantDenied:  true,
+			wantHandler: true,
 		},
 		{
 			name:   "identical metadata update",
@@ -193,6 +203,8 @@ func TestScopedSSEMetadataAdmissionRules(t *testing.T) {
 				before = seeded.ToProtoEntry()
 			}
 			fs, scope := newScopeRetentionServer(t, store)
+			backend := &scopeCountingBackend{scopeBackend: scope.backend}
+			scope.backend = backend
 			var req any
 			if tc.method == "CreateEntry" {
 				req = &filer_pb.CreateEntryRequest{Directory: aliceWS, Entry: tc.requested, SkipCheckParentDirectory: true}
@@ -213,14 +225,17 @@ func TestScopedSSEMetadataAdmissionRules(t *testing.T) {
 			called := false
 			_, err := scope.unary(scopedRetentionContext(), req, &grpc.UnaryServerInfo{FullMethod: scopeFilerMethodPrefix + tc.method}, func(handlerCtx context.Context, handlerReq any) (any, error) {
 				called = true
+				if tc.wantHandler && backend.lookups != 0 {
+					t.Fatalf("chunkless SSE removal made %d admission lookups, want zero", backend.lookups)
+				}
 				if tc.method == "CreateEntry" {
 					return fs.CreateEntry(handlerCtx, handlerReq.(*filer_pb.CreateEntryRequest))
 				}
 				return fs.UpdateEntry(handlerCtx, handlerReq.(*filer_pb.UpdateEntryRequest))
 			})
 			if tc.wantDenied {
-				if status.Code(err) != codes.PermissionDenied || called {
-					t.Fatalf("error=%v called=%v, want PermissionDenied before handler", err, called)
+				if status.Code(err) != codes.PermissionDenied || called != tc.wantHandler {
+					t.Fatalf("error=%v called=%v, want PermissionDenied with handler called=%v", err, called, tc.wantHandler)
 				}
 				got, findErr := store.FindEntry(context.Background(), path)
 				if before == nil {

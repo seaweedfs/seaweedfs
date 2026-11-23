@@ -281,20 +281,23 @@ func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method
 		}
 		return nil
 	}
-	// Data and SSE metadata are rechecked against the locked entry by the
-	// handlers as well as against this admission snapshot, even without chunks.
-	if err := load(); err != nil {
-		return err
-	}
-	if err := scopeCheckSSEState(stored, e, method == "AppendToEntry"); err != nil {
-		return sc.deny(method, err.Error())
-	}
-	if err := scopeRetainsData(stored, e, func(fid string) bool { return s.proven(sc, chunkAuth, fid) }); err != nil {
-		return sc.deny(method, err.Error())
-	}
-	if method == "AppendToEntry" {
-		if err := scopeCheckAppendState(stored, e.GetChunks()); err != nil {
+	// Keep ordinary mount creates lookup-free at admission. The handlers
+	// recheck stored data and SSE state under the path lock, including SSE-key
+	// removal by a chunkless request that carries no SSE state of its own.
+	if len(e.GetContent()) > 0 || len(e.GetChunks()) > 0 || scopeHasSSE(e) {
+		if err := load(); err != nil {
+			return err
+		}
+		if err := scopeCheckSSEState(stored, e, method == "AppendToEntry"); err != nil {
 			return sc.deny(method, err.Error())
+		}
+		if err := scopeRetainsData(stored, e, func(fid string) bool { return s.proven(sc, chunkAuth, fid) }); err != nil {
+			return sc.deny(method, err.Error())
+		}
+		if method == "AppendToEntry" {
+			if err := scopeCheckAppendState(stored, e.GetChunks()); err != nil {
+				return sc.deny(method, err.Error())
+			}
 		}
 	}
 
