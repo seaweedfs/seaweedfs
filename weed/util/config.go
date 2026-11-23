@@ -34,7 +34,8 @@ type Configuration interface {
 }
 
 // LoadSecurityConfiguration merges security.toml once per process and exits
-// when a JWT signing key is too short for GODEBUG=fips140=only.
+// when a JWT signing key is too short for GODEBUG=fips140=only; outside that
+// mode it warns about such a key.
 func LoadSecurityConfiguration() {
 	loadSecurityConfigOnce.Do(func() {
 		LoadConfiguration("security", false)

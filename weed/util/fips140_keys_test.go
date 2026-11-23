@@ -56,3 +56,22 @@ func TestCheckFips140SigningKeys(t *testing.T) {
 		t.Errorf("no keys, enforced: got %v", err)
 	}
 }
+
+func TestShortJwtKeyWarning(t *testing.T) {
+	setFIPS140Enforced(t, false)
+	if w := shortJwtKeyWarning("jwt.signing.key", []byte("0123456789")); !strings.Contains(w, "jwt.signing.key is 10 bytes") || !strings.Contains(w, "future release") || !strings.Contains(w, "previous_key") {
+		t.Errorf("short key, not enforced: got %q", w)
+	}
+	if w := shortJwtKeyWarning("jwt.signing.previous_key", []byte("0123456789")); !strings.Contains(w, "clear it once the key rotation is done") || strings.Contains(w, "future release") {
+		t.Errorf("short previous key, not enforced: got %q", w)
+	}
+	for _, key := range []string{"", "0123456789abcd"} {
+		if w := shortJwtKeyWarning("jwt.signing.key", []byte(key)); w != "" {
+			t.Errorf("%d-byte key, not enforced: got %q, want no warning", len(key), w)
+		}
+	}
+	setFIPS140Enforced(t, true)
+	if w := shortJwtKeyWarning("jwt.signing.key", []byte("0123456789")); w != "" {
+		t.Errorf("short key, enforced: got %q, want no warning (the key is refused)", w)
+	}
+}
