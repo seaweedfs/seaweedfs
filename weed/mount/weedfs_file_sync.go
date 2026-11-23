@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"sort"
 	"syscall"
 	"time"
 
@@ -721,29 +723,38 @@ func contentFileIdKey(c *filer_pb.FileChunk) string {
 // of the stored entry and what its own chunk list covers, so a covered chunk no
 // stored entry ever named is only deleted if the request carries it. The filer
 // compacts only plain chunks, and merged chunks carry no modification time, so
-// a dropped chunk that would show through chunks again is not sent.
+// each one is sent only if newer plain chunks of the request hide all of it.
 func (fh *FileHandle) unpublishedChunks(dropped, chunks []*filer_pb.FileChunk) (unpublished []*filer_pb.FileChunk) {
 	inBase := make(map[string]bool)
 	for _, c := range fh.baseEntry.Load().GetChunks() {
 		inBase[contentFileIdKey(c)] = true
 	}
-	candidates := make(map[*filer_pb.FileChunk]bool)
-	_, plain := filer.SeparateManifestChunks(chunks)
+	var visibles []*filer.Interval[*filer.VisibleInterval]
+	resolved := false
 	for _, c := range dropped {
-		if !inBase[contentFileIdKey(c)] {
-			candidates[c] = true
-			plain = append(plain, c)
+		if inBase[contentFileIdKey(c)] {
+			continue
 		}
-	}
-	if len(candidates) == 0 {
-		return nil
-	}
-	_, covered, err := filer.CompactFileChunks(context.Background(), nil, plain)
-	if err != nil {
-		return nil
-	}
-	for _, c := range covered {
-		if candidates[c] {
+		if !resolved {
+			resolved = true
+			_, plain := filer.SeparateManifestChunks(chunks)
+			list, err := filer.NonOverlappingVisibleIntervals(context.Background(), nil, plain, 0, math.MaxInt64)
+			if err != nil {
+				return nil
+			}
+			for x := list.Front(); x != nil; x = x.Next {
+				visibles = append(visibles, x)
+			}
+		}
+		start, stop := c.Offset, c.Offset+int64(c.Size)
+		i := sort.Search(len(visibles), func(i int) bool { return visibles[i].StopOffset > start })
+		for ; i < len(visibles) && start < stop; i++ {
+			if visibles[i].StartOffset > start || visibles[i].TsNs <= c.ModifiedTsNs {
+				break
+			}
+			start = visibles[i].StopOffset
+		}
+		if start >= stop {
 			unpublished = append(unpublished, c)
 		}
 	}

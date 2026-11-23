@@ -93,27 +93,30 @@ func TestFlushSendsUnpublishedCoveredChunks(t *testing.T) {
 	}
 }
 
-// A dropped chunk goes out only while the request's own plain chunks still
-// cover it: merged chunks are stamped 0 and the filer does not look into a
-// manifest, so in either case the chunk would show through again.
+// A dropped chunk goes out only while newer plain chunks of the request hide
+// all of it: merged chunks are stamped 0, the filer does not look into a
+// manifest, and another dropped chunk is not sent to hide it either.
 func TestUnpublishedChunksStayCovered(t *testing.T) {
-	chunk := func(key uint64, offset, ts int64) *filer_pb.FileChunk {
-		return &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: key, Cookie: 1}, Offset: offset, Size: 1, ModifiedTsNs: ts}
+	chunk := func(key uint64, offset, size, ts int64) *filer_pb.FileChunk {
+		return &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: key, Cookie: 1}, Offset: offset, Size: uint64(size), ModifiedTsNs: ts}
 	}
-	published, dropped := chunk(1, 0, 1), chunk(2, 0, 2)
+	published := chunk(1, 0, 2, 1)
+	dropped := []*filer_pb.FileChunk{published, chunk(2, 0, 2, 2), chunk(3, 0, 2, 3)}
 	for _, tt := range []struct {
 		name   string
 		chunks []*filer_pb.FileChunk
 		want   []uint64
 	}{
-		{"covered", []*filer_pb.FileChunk{chunk(3, 0, 3)}, []uint64{2}},
-		{"merged", []*filer_pb.FileChunk{chunk(3, 0, 0)}, nil},
-		{"manifest", []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 4, Cookie: 1}, Size: 1, ModifiedTsNs: 4, IsChunkManifest: true}}, nil},
+		{"covered", []*filer_pb.FileChunk{chunk(4, 0, 1, 4), chunk(5, 1, 1, 5)}, []uint64{2, 3}},
+		{"between", []*filer_pb.FileChunk{chunk(4, 0, 2, 3)}, []uint64{2}},
+		{"partly", []*filer_pb.FileChunk{chunk(4, 0, 1, 4)}, nil},
+		{"merged", []*filer_pb.FileChunk{chunk(4, 0, 2, 0)}, nil},
+		{"manifest", []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 4, Cookie: 1}, Size: 2, ModifiedTsNs: 4, IsChunkManifest: true}}, nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			fh := &FileHandle{}
 			fh.baseEntry.Store(&filer_pb.Entry{Chunks: []*filer_pb.FileChunk{proto.Clone(published).(*filer_pb.FileChunk)}})
-			got := chunkFileKeys(&filer_pb.Entry{Chunks: fh.unpublishedChunks([]*filer_pb.FileChunk{published, dropped}, tt.chunks)})
+			got := chunkFileKeys(&filer_pb.Entry{Chunks: fh.unpublishedChunks(dropped, tt.chunks)})
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("unpublished %v, want %v", got, tt.want)
 			}
