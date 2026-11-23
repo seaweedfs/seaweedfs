@@ -212,6 +212,12 @@ func runFuse(cmd *Command, args []string) bool {
 			} else {
 				panic(fmt.Errorf("nonempty: %s", err))
 			}
+		case "idmap":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.idmap = &parsed
+			} else {
+				panic(fmt.Errorf("idmap: %s", err))
+			}
 		case "volumeServerAccess":
 			mountOptions.volumeServerAccess = &parameter.value
 		case "map.uid":
