@@ -118,7 +118,7 @@ mod tests {
         let paths = |groups: &str| -> Vec<String> {
             limit_files(groups)
                 .iter()
-                .map(|p| p.display().to_string())
+                .map(|p| p.display().to_string().replace('\\', "/"))
                 .collect()
         };
         assert_eq!(
