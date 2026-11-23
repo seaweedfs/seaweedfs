@@ -1235,7 +1235,6 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 		if !req.IsMoved {
 			var ownerResp *filer_pb.DeleteEntryResponse
 			handled, forwardErr := fs.forwardToWriteOwner(ctx, entryRouteKey(fullpath), func(owner pb.ServerAddress) error {
-				// Peer scope propagation belongs to PR-4; forwarding now would bypass scoped WORM checks.
 				if scopeKeepOnly(ctx) {
 					return status.Error(codes.PermissionDenied, "filer: scoped DeleteEntry cannot be forwarded to the write owner")
 				}

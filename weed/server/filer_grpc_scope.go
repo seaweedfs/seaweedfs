@@ -232,7 +232,7 @@ func (sc *scope) checkProtectedPath(method, p string, descendants bool) error {
 // checkClientEntry admits only chunks already stored at the checked target.
 // A hard-link id may be retained there, or a fresh id may be introduced by an
 // update of an existing unlinked entry. Attaching another path's id is refused.
-// Client signatures remain allowed for mount own-event filtering; tightening is deferred to the series.
+// Client signatures stay allowed so mounts can filter their own events.
 func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method, p string, e *filer_pb.Entry, allowNewHardLink bool) error {
 	if err := scopeCheckEntryShape(e); err != nil {
 		return sc.deny(method, err.Error())
@@ -392,9 +392,8 @@ func (s *filerGrpcScope) checkPosixLock(ctx context.Context, sc *scope, m string
 	if req.GetIsMoved() || req.GetCoolingProbe() {
 		return sc.deny(m, "internal lock flags are not allowed")
 	}
-	// Mutating locks require write access, so a read-only grant cannot release
-	// even its own shared locks. Binding the client-supplied sid to an authenticated
-	// session is a follow-up; GET_LK remains available with a read grant.
+	// Only GET_LK is a read: the sid is client-supplied, so a read grant must
+	// not release or renew another session's locks.
 	write := req.GetOp() != filer_pb.PosixLockOp_GET_LK
 	key := req.GetKey()
 	if !strings.HasPrefix(key, scopePosixLockKeyPrefix) {
