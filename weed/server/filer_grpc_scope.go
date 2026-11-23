@@ -297,6 +297,11 @@ func (s *filerGrpcScope) checkCreate(ctx context.Context, sc *scope, m string, r
 	if err != nil {
 		return err
 	}
+	if !req.GetSkipCheckParentDirectory() {
+		if err := s.checkAncestors(ctx, sc, m, p); err != nil {
+			return err
+		}
+	}
 	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), false)
 }
 
@@ -319,7 +324,32 @@ func (s *filerGrpcScope) checkAppend(ctx context.Context, sc *scope, m string, r
 	if err != nil {
 		return err
 	}
+	if err := s.checkAncestors(ctx, sc, m, p); err != nil {
+		return err
+	}
 	return s.checkClientEntry(ctx, sc, m, p, &filer_pb.Entry{Name: req.GetEntryName(), Chunks: req.GetChunks()}, false)
+}
+
+// checkAncestors refuses a write at p that would make an ancestor outside the
+// write grants: the filer creates the missing ancestors of p up to the first
+// one it finds, and turns that one into a directory if it is a file.
+func (s *filerGrpcScope) checkAncestors(ctx context.Context, sc *scope, m, p string) error {
+	for dir, _ := scopeSplitPath(p); dir != "/"; dir, _ = scopeSplitPath(dir) {
+		entry, err := s.backend.scopeFindEntry(ctx, dir)
+		if err != nil {
+			return sc.deny(m, fmt.Sprintf("the entry stored at %s could not be read: %v", dir, err))
+		}
+		if entry != nil && entry.GetIsDirectory() {
+			return nil
+		}
+		if !scopePathAllowed(sc.grants, dir, true) {
+			return sc.deny(m, fmt.Sprintf("%s is outside the token's scope and is not a directory", dir))
+		}
+		if entry != nil {
+			return nil
+		}
+	}
+	return nil
 }
 
 func (sc *scope) checkDelete(m string, req *filer_pb.DeleteEntryRequest) error {
@@ -333,7 +363,7 @@ func (sc *scope) checkDelete(m string, req *filer_pb.DeleteEntryRequest) error {
 	return sc.checkProtectedPath(m, p, true)
 }
 
-func (sc *scope) checkRename(m, oldDir, oldName, newDir, newName string) error {
+func (s *filerGrpcScope) checkRename(ctx context.Context, sc *scope, m, oldDir, oldName, newDir, newName string) error {
 	oldPath, err := sc.checkPath(m, oldDir, oldName, true)
 	if err != nil {
 		return err
@@ -345,7 +375,10 @@ func (sc *scope) checkRename(m, oldDir, oldName, newDir, newName string) error {
 	if err != nil {
 		return err
 	}
-	return sc.checkProtectedPath(m, newPath, true)
+	if err := sc.checkProtectedPath(m, newPath, true); err != nil {
+		return err
+	}
+	return s.checkAncestors(ctx, sc, m, newPath)
 }
 
 // checkPosixLock admits locks on paths inside the scope and on hard links
@@ -525,7 +558,7 @@ func (s *filerGrpcScope) unaryScoped(ctx context.Context, sc *scope, req any, ha
 		return handler(ctx, req)
 
 	case *filer_pb.AtomicRenameEntryRequest:
-		if err := sc.checkRename("AtomicRenameEntry", r.GetOldDirectory(), r.GetOldName(), r.GetNewDirectory(), r.GetNewName()); err != nil {
+		if err := s.checkRename(ctx, sc, "AtomicRenameEntry", r.GetOldDirectory(), r.GetOldName(), r.GetNewDirectory(), r.GetNewName()); err != nil {
 			return nil, err
 		}
 		return handler(ctx, req)

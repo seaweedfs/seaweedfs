@@ -77,6 +77,11 @@ func (f *scopeFakeFiler) put(path string, entry *filer_pb.Entry) {
 	f.entries[path] = proto.Clone(entry).(*filer_pb.Entry)
 }
 
+func (f *scopeFakeFiler) putDir(p string) {
+	_, name := scopeSplitPath(p)
+	f.put(p, &filer_pb.Entry{Name: name, IsDirectory: true})
+}
+
 func (f *scopeFakeFiler) setFindErr(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

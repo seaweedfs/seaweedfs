@@ -53,6 +53,7 @@ func TestScopeListEntriesBoundsDirectoriesAndFiltersFilerConf(t *testing.T) {
 
 func TestScopeStreamRenameBoundsBothPaths(t *testing.T) {
 	h := newScopeHarness(t)
+	h.fake.putDir(aliceWS)
 	c := h.client(scopedToken("alice", time.Hour, []string{aliceWS}, nil))
 
 	allowed, err := c.StreamRenameEntry(scopeCtx(t), &filer_pb.StreamRenameEntryRequest{

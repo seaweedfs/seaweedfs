@@ -82,7 +82,7 @@ func (s *filerGrpcScope) stream(srv any, ss grpc.ServerStream, info *grpc.Stream
 			if !ok {
 				return false, sc.deny("StreamRenameEntry", fmt.Sprintf("unexpected request %T", m))
 			}
-			return false, sc.checkRename("StreamRenameEntry", req.GetOldDirectory(), req.GetOldName(), req.GetNewDirectory(), req.GetNewName())
+			return false, s.checkRename(w.Context(), sc, "StreamRenameEntry", req.GetOldDirectory(), req.GetOldName(), req.GetNewDirectory(), req.GetNewName())
 		}
 	case filer_pb.SeaweedFiler_StreamMutateEntry_FullMethodName:
 		w.onRecv = func(m any) (bool, error) {
@@ -205,7 +205,7 @@ func (s *filerGrpcScope) checkMutate(w *scopedStream, sc *scope, req *filer_pb.S
 	case *filer_pb.StreamMutateEntryRequest_DeleteRequest:
 		return sc.checkDelete(m, r.DeleteRequest)
 	case *filer_pb.StreamMutateEntryRequest_RenameRequest:
-		return sc.checkRename(m, r.RenameRequest.GetOldDirectory(), r.RenameRequest.GetOldName(), r.RenameRequest.GetNewDirectory(), r.RenameRequest.GetNewName())
+		return s.checkRename(ctx, sc, m, r.RenameRequest.GetOldDirectory(), r.RenameRequest.GetOldName(), r.RenameRequest.GetNewDirectory(), r.RenameRequest.GetNewName())
 	}
 	return sc.deny(m, "empty mutate request")
 }

@@ -60,6 +60,7 @@ func TestScopePathRulesRejectNonCanonicalAndSiblingPrefixes(t *testing.T) {
 
 func TestScopeReadAndWritePrefixAccess(t *testing.T) {
 	h := newScopeHarness(t)
+	h.fake.putDir(aliceWS)
 	c := h.client(scopedToken("alice", time.Hour, []string{aliceWS}, []string{groupG1}))
 
 	expectScopeForwarded(t, h, "LookupDirectoryEntry", "read in the write prefix", func() error {

@@ -40,6 +40,7 @@ func TestScopeKeepOnlyEntryWrites(t *testing.T) {
 	c := h.client(scopedToken("alice", time.Hour, []string{aliceWS}, nil))
 	const keptFid = "5,0c00000055"
 	h.fake.put(aliceWS+"/kept", entryWith("kept", keptFid))
+	h.fake.putDir(aliceWS)
 
 	expectScopeForwarded(t, h, "UpdateEntry", "update reusing the target's stored chunk", func() error {
 		_, err := c.UpdateEntry(scopeCtx(t), &filer_pb.UpdateEntryRequest{Directory: aliceWS, Entry: entryWith("kept", keptFid)})
