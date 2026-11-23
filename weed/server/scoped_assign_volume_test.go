@@ -227,11 +227,79 @@ func TestGrpcScopeAssignmentConfigAndKeyRotation(t *testing.T) {
 	if string(key) != "grpc-test-key" || len(previous) != 0 || string(fs.filerGuard.SigningKey()) != "http-test-key" {
 		t.Fatal("gRPC override imported HTTP rotation state or changed HTTP key")
 	}
-	// Omitting the current key keeps verification on, matching the existing
-	// guard reload; HTTP rotation state must still remain excluded.
+	// Removing the override must revoke it and restore the shared key pair,
+	// just as starting with the same configuration would.
 	fs.loadGrpcScopeConfig(util.NewViperProxy(viper.New()))
 	key, previous = fs.grpcScopeVerificationKeys()
-	if string(key) != "grpc-test-key" || len(previous) != 0 {
-		t.Fatal("reload kept the retired previous key or disabled verification")
+	if string(key) != "http-test-key" || string(previous) != "http-previous-test-key" {
+		t.Error("reload did not restore the shared verification keys")
+	}
+	for _, tc := range []struct {
+		name    string
+		key     string
+		allowed bool
+	}{
+		{"removed dedicated key", "grpc-test-key", false},
+		{"shared current key", "http-test-key", true},
+		{"shared previous key", "http-previous-test-key", true},
+	} {
+		t.Run("reload/"+tc.name, func(t *testing.T) {
+			token := security.GenJwtForFilerScope(security.SigningKey(tc.key), time.Hour, "writer", []string{aliceWS}, nil)
+			ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+string(token)))
+			called := false
+			_, err := shared.unary(ctx, &filer_pb.PingRequest{}, &grpc.UnaryServerInfo{FullMethod: scopeFilerMethodPrefix + "Ping"}, func(context.Context, any) (any, error) {
+				called = true
+				return &filer_pb.PingResponse{}, nil
+			})
+			if called != tc.allowed || (err == nil) != tc.allowed {
+				t.Fatalf("called=%v err=%v, want allowed=%v", called, err, tc.allowed)
+			}
+			if !tc.allowed && status.Code(err) != codes.Unauthenticated {
+				t.Fatalf("removed key must fail authentication: %v", err)
+			}
+		})
+	}
+}
+
+func TestGrpcScopeKeylessReloadMatchesStartup(t *testing.T) {
+	for _, mode := range []string{"startup", "reload removed key", "reload empty key"} {
+		t.Run(mode, func(t *testing.T) {
+			fs := &FilerServer{filerGuard: security.NewGuard(nil, "", 0, "", 0, "", "")}
+			if mode != "startup" {
+				v := util.NewViperProxy(viper.New())
+				v.Set("jwt.filer_signing.grpc_key", "grpc-test-key")
+				fs.loadGrpcScopeConfig(v)
+			}
+			v := util.NewViperProxy(viper.New())
+			if mode == "reload empty key" {
+				v.Set("jwt.filer_signing.grpc_key", "")
+			}
+			fs.loadGrpcScopeConfig(v)
+			s := newFilerGrpcScope(scopeConfig{verificationKeys: fs.grpcScopeVerificationKeys}, newScopeFakeFiler())
+			for name, token := range map[string]security.EncodedJwt{
+				"tokenless": "",
+				"scoped":    security.GenJwtForFilerScope(security.SigningKey("grpc-test-key"), time.Hour, "writer", []string{aliceWS}, nil),
+				"expired":   security.GenJwtForFilerScope(security.SigningKey("grpc-test-key"), -time.Hour, "writer", []string{aliceWS}, nil),
+				"other key": security.GenJwtForFilerAdmin(security.SigningKey("other-test-key"), 60),
+			} {
+				t.Run(name, func(t *testing.T) {
+					ctx := context.Background()
+					if token != "" {
+						ctx = metadata.NewIncomingContext(ctx, metadata.Pairs("authorization", "Bearer "+string(token)))
+					}
+					called := false
+					_, err := s.unary(ctx, &filer_pb.LookupDirectoryEntryRequest{Directory: bobWS, Name: "file"}, &grpc.UnaryServerInfo{FullMethod: scopeFilerMethodPrefix + "LookupDirectoryEntry"}, func(ctx context.Context, _ any) (any, error) {
+						called = true
+						if scopeKeepOnly(ctx) {
+							t.Error("keyless call acquired scope enforcement")
+						}
+						return &filer_pb.LookupDirectoryEntryResponse{}, nil
+					})
+					if err != nil || !called {
+						t.Fatalf("keyless call was refused: called=%v err=%v", called, err)
+					}
+				})
+			}
+		})
 	}
 }

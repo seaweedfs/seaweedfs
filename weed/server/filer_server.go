@@ -796,6 +796,7 @@ func (fs *FilerServer) FilerGuard() *security.Guard {
 
 func (fs *FilerServer) Reload() {
 	glog.V(0).Infoln("Reload filer server...")
+	previousScopeKey, _ := fs.grpcScopeVerificationKeys()
 
 	util.LoadConfiguration("security", false)
 	v := util.GetViper()
@@ -819,6 +820,9 @@ func (fs *FilerServer) Reload() {
 	if fresh, used := util.ReadConfiguration("security", ""); used != "" {
 		fs.loadGrpcScopeConfig(fresh)
 	}
+	if key, _ := fs.grpcScopeVerificationKeys(); len(previousScopeKey) > 0 && len(key) == 0 {
+		glog.Warningf("filer gRPC reload: no verification key is configured; scope enforcement is now off")
+	}
 	util_http.ReloadJwtSigningReadConfig()
 }
 
@@ -833,11 +837,6 @@ func (fs *FilerServer) loadGrpcScopeConfig(v *util.ViperProxy) {
 	v.SetDefault("jwt.filer_signing.assign_expires_after_seconds", int(security.DefaultAssignTokenLifetime/time.Second))
 	v.SetDefault("jwt.filer_signing.clock_leeway_seconds", 30)
 	key := security.SigningKey(v.GetString("jwt.filer_signing.grpc_key"))
-	// Removing a current key must not silently disable verification. Setting
-	// grpc_key explicitly to empty switches back to the filer's HTTP key.
-	if old := fs.grpcScopeSettings.Load(); old != nil && !v.IsSet("jwt.filer_signing.grpc_key") {
-		key = old.key
-	}
 	lifetime := time.Duration(v.GetInt("jwt.filer_signing.assign_expires_after_seconds")) * time.Second
 	if lifetime <= 0 {
 		lifetime = security.DefaultAssignTokenLifetime
