@@ -1277,8 +1277,9 @@ func (s *Store) cachedLookupEcShardLocations(ecVolume *erasure_coding.EcVolume) 
 // to peers or reconstruction first.
 var errShardQuarantined = fmt.Errorf("ec shard on a quarantined disk: %w", errShardNotLocal)
 
-// ecReadHintTimeout bounds asking a delisted holder, which may have stopped
-// answering, before the read reconstructs the shard.
+// ecReadHintTimeout bounds a one-byte probe of a holder that may have stopped
+// answering: a delisted holder before the read reconstructs the shard, or a
+// holder a delete retry asks.
 var ecReadHintTimeout = 5 * time.Second
 
 // askEcShardReadHints reports whether a delisted holder of the shard journaled

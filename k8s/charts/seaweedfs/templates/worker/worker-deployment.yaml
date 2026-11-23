@@ -228,7 +228,7 @@ spec:
           {{- if .Values.worker.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.worker.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
-        {{- if include "seaweedfs.worker.lanceNamespaceUrl" . }}
+        {{- if include "seaweedfs.worker.lanceEnabled" . }}
         - name: worker-lance
           image: {{ template "seaweedfs.worker.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
@@ -238,8 +238,10 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
             {{- /* only a worker pinned before 4.56 reads these; later ones learn the cluster from admin */}}
+            {{- with include "seaweedfs.worker.lanceNamespaceUrl" . }}
             - name: WEED_LANCE_NAMESPACE
-              value: {{ include "seaweedfs.worker.lanceNamespaceUrl" . | quote }}
+              value: {{ . | quote }}
+            {{- end }}
             - name: WEED_MASTERS
               value: {{ include "seaweedfs.masterServerArg" . | quote }}
             {{- if .Values.filer.filerGroup }}
@@ -343,7 +345,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.worker.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" (list . .Values.worker.containerSecurityContext (tpl (.Values.worker.extraVolumeMounts | default "") .) (tpl (.Values.worker.extraVolumes | default "") .) (ne (include "seaweedfs.worker.lanceNamespaceUrl" .) "")) | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.worker.containerSecurityContext (tpl (.Values.worker.extraVolumeMounts | default "") .) (tpl (.Values.worker.extraVolumes | default "") .) (ne (include "seaweedfs.worker.lanceEnabled" .) "")) | nindent 8 }}
         {{- if eq .Values.worker.data.type "hostPath" }}
         - name: worker-data
           hostPath:

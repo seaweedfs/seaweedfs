@@ -114,7 +114,12 @@ impl Default for AdminCluster {
 #[async_trait]
 impl ClusterObserver for AdminCluster {
     async fn observe(&self, cluster: &ClusterContext) {
-        *self.namespaces.write().unwrap() = cluster.lance_namespace_urls.clone();
+        // As with the filers, keep the last known namespaces while admin lists
+        // none: admin sends its cached filers but no gateways when a master
+        // call fails, and the gateways serve the namespace regardless.
+        if !cluster.lance_namespace_urls.is_empty() {
+            *self.namespaces.write().unwrap() = cluster.lance_namespace_urls.clone();
+        }
         self.take_filers(&cluster.filer_addresses).await;
     }
 }
@@ -141,9 +146,18 @@ mod tests {
             .await;
         assert_eq!(admin.namespace_url().unwrap(), "http://10.0.0.5:9101");
 
-        // Admin stops naming any, as when its gateways go away.
+        // A context naming no gateway, as admin sends when listing them from
+        // the master fails, keeps the namespace.
         admin.observe(&ClusterContext::default()).await;
-        assert!(admin.namespace_url().is_err());
+        assert_eq!(admin.namespace_url().unwrap(), "http://10.0.0.5:9101");
+
+        admin
+            .observe(&ClusterContext {
+                lance_namespace_urls: vec!["http://10.0.0.6:9101".into()],
+                ..Default::default()
+            })
+            .await;
+        assert_eq!(admin.namespace_url().unwrap(), "http://10.0.0.6:9101");
     }
 
     #[tokio::test]
