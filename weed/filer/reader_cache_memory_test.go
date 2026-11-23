@@ -486,3 +486,69 @@ func TestReaderCacheBudgetWaitStopsWithItsLastStream(t *testing.T) {
 		t.Fatal("releasing the stream waited for budget nobody needs")
 	}
 }
+
+// TestReaderCacheBudgetLendsScratchToHedges: a hedged download borrows its
+// buffer from the budget. It may evict idle chunks for it, as a download
+// does, but it neither waits nor touches downloads in flight.
+func TestReaderCacheBudgetLendsScratchToHedges(t *testing.T) {
+	budget := NewReaderCacheBudget(8 << 10)
+	gate := make(chan struct{})
+	rc := NewReaderCache(256, newMockChunkCacheForReaderCache(), func(context.Context, string) ([]string, error) { return []string{"unused"}, nil }, nil, budget)
+	defer rc.destroy()
+	var sawBudget atomic.Bool
+	rc.fetchChunkDataFn = func(ctx context.Context, buffer []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, fileId string, _ util_http.RefreshUrlsFunc) (int, error) {
+		if util_http.ScratchBudgetFrom(ctx) == budget {
+			sawBudget.Store(true)
+		}
+		if fileId == "inflight" {
+			<-gate
+		}
+		buffer[0] = 42
+		return len(buffer), nil
+	}
+	used := func() int64 {
+		budget.Lock()
+		defer budget.Unlock()
+		return budget.used
+	}
+
+	// two idle chunks fill the budget
+	for _, fid := range []string{"a", "b"} {
+		buffer := make([]byte, 1)
+		if n, err := rc.ReadChunkAt(context.Background(), buffer, fid, nil, false, 0, 3<<10, false); err != nil || n != 1 {
+			t.Fatalf("read %s: n=%d err=%v", fid, n, err)
+		}
+	}
+	if !sawBudget.Load() {
+		t.Fatal("the download's context does not carry the budget for its hedges")
+	}
+	if used() != 8<<10 {
+		t.Fatalf("used %d, want the budget full of idle chunks", used())
+	}
+	if !budget.TryReserveScratch(3<<10) || !budget.TryReserveScratch(3<<10) {
+		t.Fatal("hedge buffers did not evict the idle chunks")
+	}
+	if budget.TryReserveScratch(3 << 10) {
+		t.Fatal("a third hedge buffer fit into a full budget")
+	}
+	budget.ReleaseScratch(3 << 10)
+	budget.ReleaseScratch(3 << 10)
+	if used() != 0 {
+		t.Fatalf("used %d after returning the hedge buffers, want 0", used())
+	}
+
+	// downloads in flight are not evicted, and the hedge does not wait for them
+	rc.MaybeCache(&Interval[*ChunkView]{Value: &ChunkView{FileId: "inflight", ViewSize: 6 << 10, ChunkSize: 6 << 10}}, 1)
+	deadline := time.Now().Add(5 * time.Second)
+	for used() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	start := time.Now()
+	if budget.TryReserveScratch(3 << 10) {
+		t.Fatal("a hedge buffer evicted a download in flight")
+	}
+	if took := time.Since(start); took > time.Second {
+		t.Fatalf("a hedge waited %v for room", took)
+	}
+	close(gate)
+}

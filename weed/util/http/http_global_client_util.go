@@ -744,6 +744,7 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 	}
 
 	var shouldRetry bool
+	hedging := &readHedges{}
 
 	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
 		// Check for context cancellation before starting retry loop
@@ -754,7 +755,7 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 		}
 
 		var failed bool
-		n, failed, shouldRetry, err = hedgedChunkPass(ctx, ReachableFirst(urlStrings), buffer,
+		n, failed, shouldRetry, err = hedgedChunkPass(ctx, ReachableFirst(urlStrings), buffer, hedging,
 			func(attemptCtx context.Context, urlString string, dst []byte, progress *chunkProgress) (int, bool, error) {
 				if strings.Contains(urlString, "%") {
 					urlString = url.PathEscape(urlString)
@@ -800,6 +801,7 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 // for large chunk reads.
 func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings []string, selectJwt func() security.EncodedJwt, fileId string, refreshUrls RefreshUrlsFunc) (n int, err error) {
 	var shouldRetry bool
+	hedging := &readHedges{}
 
 	for waitTime := time.Second; waitTime < util.RetryWaitTime; waitTime += waitTime / 2 {
 		select {
@@ -809,7 +811,7 @@ func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings 
 		}
 
 		var failed bool
-		n, failed, shouldRetry, err = hedgedChunkPass(ctx, ReachableFirst(urlStrings), buffer,
+		n, failed, shouldRetry, err = hedgedChunkPass(ctx, ReachableFirst(urlStrings), buffer, hedging,
 			func(attemptCtx context.Context, urlString string, dst []byte, progress *chunkProgress) (int, bool, error) {
 				return readUrlDirectToBuffer(attemptCtx, AppendQueryParameter(urlString, "readDeleted", "true"), string(selectJwt()), dst, progress)
 			})

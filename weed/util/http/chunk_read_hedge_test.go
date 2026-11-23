@@ -577,3 +577,118 @@ func TestChunkReadWaitsForTheOnlyLocationToAnswer(t *testing.T) {
 		t.Fatalf("asked %d times, want once", n)
 	}
 }
+
+// fakeScratchBudget has room for a hedge buffer while room is set, and
+// counts what is reserved and returned.
+type fakeScratchBudget struct {
+	room               atomic.Bool
+	reserved, released atomic.Int32
+}
+
+func (b *fakeScratchBudget) TryReserveScratch(size int) bool {
+	if !b.room.Load() {
+		return false
+	}
+	b.reserved.Add(1)
+	return true
+}
+
+func (b *fakeScratchBudget) ReleaseScratch(size int) { b.released.Add(1) }
+
+// TestChunkReadHedgeNeedsRoomInTheScratchBudget: a hedge reads into a buffer
+// of its own, which counts against the caller's memory budget. Without room
+// in it the stalled read is waited out as before; with room, every buffer
+// taken is returned once its request has ended, abandoned ones included.
+func TestChunkReadHedgeNeedsRoomInTheScratchBudget(t *testing.T) {
+	forgetUnreachable(t)
+	shortHedgeDelay(t, 50*time.Millisecond)
+	payload := testPayload(64 * 1024)
+	recovering := newChunkServer(t, func(n int32, w http.ResponseWriter, r *http.Request) {
+		sendHeaders(w, payload, false)
+		w.Write(payload[:len(payload)/2])
+		flush(w)
+		select {
+		case <-time.After(4 * chunkReadStallDelay):
+			w.Write(payload[len(payload)/2:])
+		case <-r.Context().Done():
+		}
+	})
+	other := newChunkServer(t, answers(payload, false))
+	p := readPath{name: "direct", body: payload, isFullChunk: true}
+	budget := &fakeScratchBudget{}
+	ctx := WithScratchBudget(context.Background(), budget)
+
+	got, took, err := fetch(ctx, p, len(payload), []string{recovering.url(), other.url()}, nil)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("no room: got %d bytes, %v; want the chunk", len(got), err)
+	}
+	if took < 4*chunkReadStallDelay || other.requests.Load() != 0 {
+		t.Fatalf("no room: read took %v and asked the other location %d times; want it waited out", took, other.requests.Load())
+	}
+
+	budget.room.Store(true)
+	got, took, err = fetch(ctx, p, len(payload), []string{recovering.url(), other.url()}, nil)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("room: got %d bytes, %v; want the chunk", len(got), err)
+	}
+	if took >= 4*chunkReadStallDelay || other.requests.Load() != 1 {
+		t.Fatalf("room: read took %v and asked the other location %d times; want it hedged", took, other.requests.Load())
+	}
+	waitFor(t, "every hedge buffer to be returned", func() bool {
+		return budget.reserved.Load() == 1 && budget.released.Load() == 1
+	})
+}
+
+// TestChunkReadThrottledHedgeAsksTheNextLocation: a hedge whose server is too
+// busy to serve it (429) says nothing about the other locations, so the read
+// goes on to the next one instead of waiting out the stalled request.
+func TestChunkReadThrottledHedgeAsksTheNextLocation(t *testing.T) {
+	forgetUnreachable(t)
+	shortHedgeDelay(t, 50*time.Millisecond)
+	payload := testPayload(64 * 1024)
+	var stalling *chunkServer
+	stalling = newChunkServer(t, stallsAfter(&stalling, payload, len(payload)/2, false))
+	busy := newChunkServer(t, func(n int32, w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
+	})
+	live := newChunkServer(t, answers(payload, false))
+	p := readPath{name: "direct", body: payload, isFullChunk: true}
+
+	got, took, err := fetch(context.Background(), p, len(payload), []string{stalling.url(), busy.url(), live.url()}, nil)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("got %d bytes, %v; want the chunk from the third location", len(got), err)
+	}
+	if took > chunkReadStallDelay+time.Second {
+		t.Fatalf("read took %v; it should not have waited for the stalled location", took)
+	}
+	if b, l := busy.requests.Load(), live.requests.Load(); b != 1 || l != 1 {
+		t.Fatalf("asked the busy location %d and the live one %d times, want once each", b, l)
+	}
+}
+
+// TestChunkReadHedgeCapCoversRetries: the hedges of one read are capped across
+// the passes of its retries, not per pass.
+func TestChunkReadHedgeCapCoversRetries(t *testing.T) {
+	shortHedgeDelay(t, 20*time.Millisecond)
+	var attempts atomic.Int32
+	stallThenFail := func(ctx context.Context, url string, dst []byte, progress *chunkProgress) (int, bool, error) {
+		attempts.Add(1)
+		progress.answer()
+		select {
+		case <-time.After(10 * chunkReadStallDelay):
+			return 0, true, errors.New("connection reset")
+		case <-ctx.Done():
+			return 0, false, ctx.Err()
+		}
+	}
+	hedging := &readHedges{}
+	buffer := make([]byte, 16)
+	for pass := 0; pass < 2; pass++ {
+		if _, _, _, err := hedgedChunkPass(context.Background(), []string{"http://volume:8080/3,abc"}, buffer, hedging, stallThenFail); err == nil {
+			t.Fatalf("pass %d: want the failure", pass)
+		}
+	}
+	if n := attempts.Load(); n != 1+maxHedgesPerRead+1 {
+		t.Fatalf("%d requests over two passes, want %d: the first pass's request and hedges, then one", n, 1+maxHedgesPerRead+1)
+	}
+}
