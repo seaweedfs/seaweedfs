@@ -67,6 +67,23 @@ func (ra *ReadAuth) Track(path util.FullPath, chunks []*filer_pb.FileChunk) {
 	}
 }
 
+// TrackHandle records that the chunks fh holds now belong to the entry at
+// path, for a handle whose name moved without a new SetEntry.
+func (ra *ReadAuth) TrackHandle(path util.FullPath, fh *FileHandle) {
+	if ra == nil {
+		return
+	}
+	le := fh.GetEntry()
+	if le == nil {
+		return
+	}
+	le.RLock()
+	defer le.RUnlock()
+	if le.Entry != nil {
+		ra.Track(path, le.Entry.Chunks)
+	}
+}
+
 // Token is the security.VolumeReadTokenProvider of this mount.
 func (ra *ReadAuth) Token(ctx context.Context, fileId string) string {
 	if token, ok := ra.cached(fileId); ok {

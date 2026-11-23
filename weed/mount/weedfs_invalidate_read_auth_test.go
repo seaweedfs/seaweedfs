@@ -98,3 +98,38 @@ func TestSurvivingHardLinkReTracksReadAuthUnderNewPath(t *testing.T) {
 		t.Fatalf("chunk still indexed to %q after hard-link delete, want /dir/survivor", got)
 	}
 }
+
+// A writeback mount skips its own rename event, so the local rename response
+// is the only place the open handle's chunks move to the new name.
+func TestLocalRenameReTracksReadAuthUnderNewPath(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	wfs.readAuth = newReadAuth(wfs)
+
+	const fid = "3,abc"
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 200},
+		Chunks:     []*filer_pb.FileChunk{{FileId: fid, Size: 200}},
+	}, 0, 0)
+	wfs.readAuth.Track(fh.FullPath(), []*filer_pb.FileChunk{{FileId: fid}})
+
+	resp := &filer_pb.StreamRenameEntryResponse{
+		Directory: "/dir",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: "file"},
+			NewEntry:      &filer_pb.Entry{Name: "renamed", Attributes: &filer_pb.FuseAttributes{FileSize: 200, Inode: inode}, Chunks: []*filer_pb.FileChunk{{FileId: fid, Size: 200}}},
+			NewParentPath: "/dir",
+		},
+	}
+	if err := wfs.handleRenameResponse(context.Background(), resp, util.FullPath("/dir/renamed"), nil); err != nil {
+		t.Fatalf("handle rename response: %v", err)
+	}
+
+	if got := fh.FullPath(); got != util.FullPath("/dir/renamed") {
+		t.Fatalf("handle path = %q, want /dir/renamed", got)
+	}
+	if got := wfs.readAuth.paths[fid]; got != util.FullPath("/dir/renamed") {
+		t.Fatalf("chunk still indexed to %q after local rename, want /dir/renamed", got)
+	}
+}

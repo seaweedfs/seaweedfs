@@ -1094,20 +1094,9 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 					}
 				})
 			}
-			// Re-track the handle's chunks under the new path: the old path is
-			// now vacated, so a read token refresh against it would find no
-			// entry. A read-only handle never reaches SetEntry, AddChunks, or
-			// truncate again, so without this its reads would lose their tokens
-			// once the cached ones expire.
-			if le := fh.GetEntry(); le != nil {
-				le.RLock()
-				var renamedChunks []*filer_pb.FileChunk
-				if le.Entry != nil {
-					renamedChunks = le.Entry.Chunks
-				}
-				le.RUnlock()
-				fh.wfs.readAuth.Track(invalidation.RenamedTo, renamedChunks)
-			}
+			// A read-only handle never reaches SetEntry, AddChunks, or truncate
+			// again, so its token refreshes must look up the new name.
+			wfs.readAuth.TrackHandle(invalidation.RenamedTo, fh)
 		}
 	}
 
@@ -1219,15 +1208,7 @@ func (wfs *WFS) followSurvivingLink(fh *FileHandle, removed util.FullPath) bool 
 	survivor, ok := wfs.inodeToPath.RemoveAlias(removed)
 	if ok {
 		fh.RememberPath(survivor)
-		if le := fh.GetEntry(); le != nil {
-			le.RLock()
-			var survivingChunks []*filer_pb.FileChunk
-			if le.Entry != nil {
-				survivingChunks = le.Entry.Chunks
-			}
-			le.RUnlock()
-			fh.wfs.readAuth.Track(survivor, survivingChunks)
-		}
+		wfs.readAuth.TrackHandle(survivor, fh)
 	}
 	return ok
 }
