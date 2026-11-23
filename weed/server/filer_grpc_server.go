@@ -86,6 +86,9 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 		var hasEntries bool
 		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, int64(paginationLimit), req.Prefix, "", "", func(entry *filer.Entry) (bool, error) {
 			hasEntries = true
+			if scopeHideListEntry(stream.Context(), req.Directory, entry.Name()) {
+				return true, nil
+			}
 			pbEntry := entry.ToProtoEntry()
 			if req.OmitChunks {
 				// Stamp the size before dropping the only other thing carrying
