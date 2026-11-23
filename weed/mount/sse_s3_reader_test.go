@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 func gatewayReader(t *testing.T, bucketPath string, endpoints ...string) *SSES3Reader {
@@ -152,13 +153,13 @@ func TestSSES3GatewayReadAtNullVersion(t *testing.T) {
 
 func TestSSES3GatewayChoice(t *testing.T) {
 	reader := gatewayReader(t, "/buckets/bucket", "ftp://a:21", "http://b:8333", "https://user@c:8443", "https://d:8443")
-	client, err := reader.gatewayClient(context.Background())
+	client, _, err := reader.gatewayClient(context.Background(), "")
 	if err != nil || aws.ToString(client.Options().BaseEndpoint) != "https://d:8443" {
 		t.Fatalf("gateway = %v, %v; want the valid HTTPS one", err, client)
 	}
 
 	reader = gatewayReader(t, "/buckets/bucket", "ftp://a:21")
-	if _, err := reader.gatewayClient(context.Background()); !errors.Is(err, errNoS3Gateway) {
+	if _, _, err := reader.gatewayClient(context.Background(), ""); !errors.Is(err, errNoS3Gateway) {
 		t.Fatalf("no usable gateway: err = %v", err)
 	}
 }
@@ -180,16 +181,19 @@ func TestSSES3GatewayReadAtPicksAnotherGateway(t *testing.T) {
 	}))
 	defer live.Close()
 
-	reader := gatewayReader(t, "/buckets/bucket")
-	reader.cfg.Retryer = func() aws.Retryer { return aws.NopRetryer{} }
-	lists := [][]string{{stopped.URL}, {live.URL}}
-	reader.endpoints = func(context.Context) ([]string, error) {
-		next := lists[0]
-		lists = lists[1:]
-		return next, nil
-	}
 	buf := make([]byte, 3)
-	if n, err := reader.readAt(context.Background(), "/buckets/bucket/a", `"fixture"`, "", 3, buf, 0); err != nil || string(buf[:n]) != "abc" {
-		t.Fatalf("read = %d, %v, bytes %q", n, err, buf)
+	for range 20 {
+		reader := gatewayReader(t, "/buckets/bucket", stopped.URL, live.URL)
+		reader.cfg.Retryer = func() aws.Retryer { return aws.NopRetryer{} }
+		if n, err := reader.readAt(context.Background(), "/buckets/bucket/a", `"fixture"`, "", 3, buf, 0); err != nil || string(buf[:n]) != "abc" {
+			t.Fatalf("read = %d, %v, bytes %q", n, err, buf)
+		}
+	}
+
+	reader := gatewayReader(t, "/buckets/bucket", stopped.URL)
+	reader.cfg.Retryer = func() aws.Retryer { return aws.NopRetryer{} }
+	var sendErr *smithyhttp.RequestSendError
+	if _, err := reader.readAt(context.Background(), "/buckets/bucket/a", `"fixture"`, "", 3, buf, 0); !errors.As(err, &sendErr) {
+		t.Fatalf("only gateway unreachable: err = %v, want the send error", err)
 	}
 }
