@@ -138,8 +138,8 @@ func (ra *ReadAuth) refresh(ctx context.Context, path util.FullPath) error {
 }
 
 // installRefreshResult records the tokens a lookup of path returned. It
-// refreshes every fid's token, but fills a path only for a fid that is not
-// already mapped. Track owns path changes: a fid re-tracked to a newer path
+// keeps each fid's longest-lived usable token, but fills a path only for a fid
+// that is not already mapped. Track owns path changes: a fid re-tracked to a newer path
 // (a rename) while this lookup was in flight must keep it, not have the
 // vacated path it was looked up under restored. The fids a lookup discovers
 // that Track has not seen -- the data chunks behind a manifest -- are the
@@ -151,7 +151,11 @@ func (ra *ReadAuth) installRefreshResult(path util.FullPath, readAuth map[string
 		ra.tokens = map[string]readAuthToken{}
 	}
 	for fid, token := range readAuth {
-		ra.tokens[fid] = readAuthToken{token: token, expires: jwtExpiry(token)}
+		expires := jwtExpiry(token)
+		held, ok := ra.tokens[fid]
+		if !ok || time.Until(held.expires) <= 0 || !expires.Before(held.expires) {
+			ra.tokens[fid] = readAuthToken{token: token, expires: expires}
+		}
 		if _, known := ra.paths[fid]; !known {
 			ra.paths[fid] = path
 		}

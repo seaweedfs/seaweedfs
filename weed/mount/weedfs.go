@@ -1219,6 +1219,15 @@ func (wfs *WFS) followSurvivingLink(fh *FileHandle, removed util.FullPath) bool 
 	survivor, ok := wfs.inodeToPath.RemoveAlias(removed)
 	if ok {
 		fh.RememberPath(survivor)
+		if le := fh.GetEntry(); le != nil {
+			le.RLock()
+			var survivingChunks []*filer_pb.FileChunk
+			if le.Entry != nil {
+				survivingChunks = le.Entry.Chunks
+			}
+			le.RUnlock()
+			fh.wfs.readAuth.Track(survivor, survivingChunks)
+		}
 	}
 	return ok
 }

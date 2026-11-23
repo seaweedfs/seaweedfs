@@ -55,3 +55,46 @@ func TestRenameReTracksReadAuthUnderNewPath(t *testing.T) {
 		t.Fatalf("chunk still indexed to %q after rename, want /dir/renamed", got)
 	}
 }
+
+func TestSurvivingHardLinkReTracksReadAuthUnderNewPath(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	wfs.readAuth = newReadAuth(wfs)
+
+	const fid = "3,abc"
+	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
+	wfs.inodeToPath.AddPath(inode, util.FullPath("/dir/survivor"))
+	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+		Name:            "file",
+		HardLinkId:      []byte("link"),
+		HardLinkCounter: 2,
+		Attributes:      &filer_pb.FuseAttributes{FileSize: 200},
+		Chunks:          []*filer_pb.FileChunk{{FileId: fid, Size: 200}},
+	}, 0, 0)
+
+	// Precondition: the chunk is indexed to the name that the open handle was
+	// using when the peer removed that name.
+	wfs.readAuth.Track(fh.FullPath(), []*filer_pb.FileChunk{{FileId: fid}})
+
+	deleteResp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/dir",
+		TsNs:      1500,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{
+				Name:            "file",
+				HardLinkId:      []byte("link"),
+				HardLinkCounter: 2,
+			},
+		},
+	}
+	if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), deleteResp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply hard-link delete: %v", err)
+	}
+	wfs.metaCache.WaitForEntryInvalidations()
+
+	if got := fh.FullPath(); got != util.FullPath("/dir/survivor") {
+		t.Fatalf("handle path = %q, want /dir/survivor", got)
+	}
+	if got := wfs.readAuth.paths[fid]; got != util.FullPath("/dir/survivor") {
+		t.Fatalf("chunk still indexed to %q after hard-link delete, want /dir/survivor", got)
+	}
+}

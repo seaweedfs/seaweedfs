@@ -152,6 +152,53 @@ func TestReadAuthRefreshDoesNotClobberNewerTrackedPath(t *testing.T) {
 	}
 }
 
+func TestReadAuthRefreshKeepsLongestLivedToken(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		heldLifetime time.Duration
+		lateLifetime time.Duration
+		wantHeld     bool
+	}{
+		{name: "older response", heldLifetime: 2 * time.Minute, lateLifetime: time.Minute, wantHeld: true},
+		{name: "expired response", heldLifetime: time.Minute, lateLifetime: -time.Minute, wantHeld: true},
+		{name: "newer response", heldLifetime: time.Minute, lateLifetime: 2 * time.Minute},
+		{name: "same expiry", heldLifetime: time.Minute, lateLifetime: time.Minute},
+		{name: "expired cache", heldLifetime: -time.Minute, lateLifetime: time.Minute},
+		{name: "empty cache", lateLifetime: time.Minute},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ra := newTestReadAuth()
+			fid := "3,01637037d6"
+			chunks := []*filer_pb.FileChunk{{FileId: fid}}
+			oldPath := util.FullPath("/dir/a")
+			newPath := util.FullPath("/dir/b")
+			now := time.Now()
+			held := makeUnsignedJwtWithExp(t, now.Add(tt.heldLifetime).Unix()) + "-held"
+			late := makeUnsignedJwtWithExp(t, now.Add(tt.lateLifetime).Unix()) + "-late"
+
+			// A lookup starts under the old path, then a rename allows another
+			// lookup to finish first. Install the delayed response last.
+			ra.Track(oldPath, chunks)
+			ra.Track(newPath, chunks)
+			if tt.heldLifetime != 0 {
+				ra.installRefreshResult(newPath, map[string]string{fid: held})
+			}
+			ra.installRefreshResult(oldPath, map[string]string{fid: late})
+
+			want := late
+			if tt.wantHeld {
+				want = held
+			}
+			if ra.Token(context.Background(), fid) != want {
+				t.Fatal("Token did not retain the usable token with the latest expiry")
+			}
+			if ra.paths[fid] != newPath {
+				t.Fatalf("late response restored stale path: got %q", ra.paths[fid])
+			}
+		})
+	}
+}
+
 // TestJwtExpiryReadsExpClaim checks the unverified exp parse and its fallback.
 func TestJwtExpiryReadsExpClaim(t *testing.T) {
 	exp := time.Now().Add(42 * time.Second).Unix()
