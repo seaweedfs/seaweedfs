@@ -214,6 +214,8 @@ func runFuse(cmd *Command, args []string) bool {
 			}
 		case "volumeServerAccess":
 			mountOptions.volumeServerAccess = &parameter.value
+		case "sseS3ReadEndpoint":
+			mountOptions.sseS3ReadEndpoint = &parameter.value
 		case "map.uid":
 			mountOptions.uidMap = &parameter.value
 		case "map.gid":
