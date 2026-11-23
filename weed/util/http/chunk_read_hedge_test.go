@@ -618,12 +618,29 @@ func TestChunkReadHedgeNeedsRoomInTheScratchBudget(t *testing.T) {
 	budget := &fakeScratchBudget{}
 	ctx := WithScratchBudget(context.Background(), budget)
 
+	// without a hedge token, no room is taken: taking it can evict cached chunks
+	budget.room.Store(true)
+	hedgeTokens.Store(0)
+	got, _, err := fetch(ctx, p, len(payload), []string{recovering.url(), other.url()}, nil)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("no token: got %d bytes, %v; want the chunk", len(got), err)
+	}
+	if r, o := budget.reserved.Load(), other.requests.Load(); r != 0 || o != 0 {
+		t.Fatalf("no token: took room %d times and asked the other location %d times, want neither", r, o)
+	}
+
+	// without room, the token is given back
+	budget.room.Store(false)
+	hedgeTokens.Store(5 * hedgeTokenScale)
 	got, took, err := fetch(ctx, p, len(payload), []string{recovering.url(), other.url()}, nil)
 	if err != nil || !bytes.Equal(got, payload) {
 		t.Fatalf("no room: got %d bytes, %v; want the chunk", len(got), err)
 	}
 	if took < 4*chunkReadStallDelay || other.requests.Load() != 0 {
 		t.Fatalf("no room: read took %v and asked the other location %d times; want it waited out", took, other.requests.Load())
+	}
+	if got, want := hedgeTokens.Load(), int64(5*hedgeTokenScale+hedgeTokenEarn); got != want {
+		t.Fatalf("no room: %d thousandths of a token left, want %d: the hedge not sent keeps its token", got, want)
 	}
 
 	budget.room.Store(true)
@@ -683,6 +700,7 @@ func TestChunkReadHedgeCapCoversRetries(t *testing.T) {
 	}
 	hedging := &readHedges{}
 	buffer := make([]byte, 16)
+	hedgeTokens.Store(5 * hedgeTokenScale)
 	for pass := 0; pass < 2; pass++ {
 		if _, _, _, err := hedgedChunkPass(context.Background(), []string{"http://volume:8080/3,abc"}, buffer, hedging, stallThenFail); err == nil {
 			t.Fatalf("pass %d: want the failure", pass)
@@ -690,5 +708,37 @@ func TestChunkReadHedgeCapCoversRetries(t *testing.T) {
 	}
 	if n := attempts.Load(); n != 1+maxHedgesPerRead+1 {
 		t.Fatalf("%d requests over two passes, want %d: the first pass's request and hedges, then one", n, 1+maxHedgesPerRead+1)
+	}
+	if got, want := hedgeTokens.Load(), int64(5*hedgeTokenScale+hedgeTokenEarn-maxHedgesPerRead*hedgeTokenScale); got != want {
+		t.Fatalf("%d thousandths of a token left, want %d: one share earned for the read, not one per pass", got, want)
+	}
+}
+
+// TestChunkReadErrorThatAnsweredIsNotUnreachable: a location that sent the
+// response headers of an error and then stalled its body did answer. When
+// another location delivers the chunk first, it is not taken for one that
+// cannot be reached.
+func TestChunkReadErrorThatAnsweredIsNotUnreachable(t *testing.T) {
+	forgetUnreachable(t)
+	shortHedgeDelay(t, 100*time.Millisecond)
+	payload := testPayload(64 * 1024)
+	failing := stalledBodyServer(t, http.StatusInternalServerError, "disk ")
+	live := newChunkServer(t, answers(payload, false))
+
+	for _, p := range readPaths(t, payload)[:2] {
+		forgetUnreachable(t)
+		urls := []string{failing.URL + "/3,abc", live.url()}
+		refreshed := 0
+		got, _, err := fetch(context.Background(), p, len(payload), urls, func() []string {
+			refreshed++
+			return nil
+		})
+		if err != nil || !bytes.Equal(got, payload) {
+			t.Fatalf("%s: got %d bytes, %v; want the chunk from the second location", p.name, len(got), err)
+		}
+		if refreshed != 0 {
+			t.Fatalf("%s: refresh called %d times; the first location answered", p.name, refreshed)
+		}
+		assertOrder(t, ReachableFirst(urls), urls...)
 	}
 }

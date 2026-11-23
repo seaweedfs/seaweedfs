@@ -122,12 +122,12 @@ func getAuthenticated(ctx context.Context, url, jwt string, progress *chunkProgr
 	}
 	recordReachable(request.URL.Host)
 	defer CloseResponse(response)
+	progress.answer()
 
 	if response.StatusCode >= 400 {
 		retryable := response.StatusCode >= 500
 		return nil, retryable, StatusError(url, response)
 	}
-	progress.answer()
 
 	var body io.Reader = response.Body
 	if progress != nil {
@@ -425,6 +425,7 @@ func readUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 	}
 	recordReachable(req.URL.Host)
 	defer CloseResponse(r)
+	progress.answer()
 	if r.StatusCode >= 400 {
 		if r.StatusCode == http.StatusNotFound {
 			return true, fmt.Errorf("%s: %s: %w", fileUrl, r.Status, ErrNotFound)
@@ -435,7 +436,6 @@ func readUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 		retryable = r.StatusCode >= 499
 		return retryable, StatusError(fileUrl, r)
 	}
-	progress.answer()
 
 	var raw io.Reader = r.Body
 	if progress != nil {
@@ -863,6 +863,7 @@ func readUrlDirectToBuffer(ctx context.Context, fileUrl, jwt string, buffer []by
 	}
 	recordReachable(req.URL.Host)
 	defer CloseResponse(r)
+	progress.answer()
 
 	if r.StatusCode >= 400 {
 		if r.StatusCode == http.StatusNotFound {
@@ -874,7 +875,6 @@ func readUrlDirectToBuffer(ctx context.Context, fileUrl, jwt string, buffer []by
 		retryable = r.StatusCode >= 499
 		return 0, retryable, StatusError(fileUrl, r)
 	}
-	progress.answer()
 
 	// Read directly into the buffer without intermediate copying
 	// This is significantly faster for large chunks (16MB+)

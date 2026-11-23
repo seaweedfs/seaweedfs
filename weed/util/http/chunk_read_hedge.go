@@ -60,6 +60,16 @@ func earnHedgeToken() {
 	}
 }
 
+// refundHedgeToken gives back the token of a hedge that was not sent after all.
+func refundHedgeToken() {
+	for {
+		tokens := hedgeTokens.Load()
+		if hedgeTokens.CompareAndSwap(tokens, min(tokens+hedgeTokenScale, hedgeTokenBurst)) {
+			return
+		}
+	}
+}
+
 func spendHedgeToken() bool {
 	for {
 		tokens := hedgeTokens.Load()
@@ -366,16 +376,16 @@ func hedgedChunkPass(ctx context.Context, urls []string, buffer []byte, hedging 
 			} else {
 				continue // nowhere worth asking yet
 			}
-			dst, scratch, ok := destination()
-			if !ok {
-				hedgeOff = true // no room for another buffer
+			// The token comes first: room for a buffer may evict cached
+			// chunks, which is only worth it for a hedge that is sent.
+			if !spendHedgeToken() {
+				hedgeOff = true
 				continue
 			}
-			if !spendHedgeToken() {
-				if scratch {
-					freeScratch(dst)
-				}
-				hedgeOff = true
+			dst, scratch, ok := destination()
+			if !ok {
+				refundHedgeToken()
+				hedgeOff = true // no room for another buffer
 				continue
 			}
 			if unasked {

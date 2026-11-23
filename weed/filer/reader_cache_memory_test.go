@@ -495,6 +495,7 @@ func TestReaderCacheBudgetLendsScratchToHedges(t *testing.T) {
 	gate := make(chan struct{})
 	rc := NewReaderCache(256, newMockChunkCacheForReaderCache(), func(context.Context, string) ([]string, error) { return []string{"unused"}, nil }, nil, budget)
 	defer rc.destroy()
+	defer close(gate) // before destroy, which waits for the download held at the gate
 	var sawBudget atomic.Bool
 	rc.fetchChunkDataFn = func(ctx context.Context, buffer []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, fileId string, _ util_http.RefreshUrlsFunc) (int, error) {
 		if util_http.ScratchBudgetFrom(ctx) == budget {
@@ -550,5 +551,4 @@ func TestReaderCacheBudgetLendsScratchToHedges(t *testing.T) {
 	if took := time.Since(start); took > time.Second {
 		t.Fatalf("a hedge waited %v for room", took)
 	}
-	close(gate)
 }
