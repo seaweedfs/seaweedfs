@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"strconv"
 	"testing"
 	"time"
 
@@ -196,6 +197,39 @@ func TestReadAuthRefreshKeepsLongestLivedToken(t *testing.T) {
 				t.Fatalf("late response restored stale path: got %q", ra.paths[fid])
 			}
 		})
+	}
+}
+
+func TestReadAuthRefreshPreservesResponseTokensAcrossCapacityReset(t *testing.T) {
+	ra := newTestReadAuth()
+	ra.tokens = make(map[string]readAuthToken, readAuthMaxFids+3)
+	for i := 0; i <= readAuthMaxFids; i++ {
+		ra.tokens[strconv.Itoa(i)] = readAuthToken{}
+	}
+	now := time.Now()
+	held := makeUnsignedJwtWithExp(t, now.Add(time.Minute).Unix())
+	fresher := makeUnsignedJwtWithExp(t, now.Add(2*time.Minute).Unix())
+	expired := makeUnsignedJwtWithExp(t, now.Add(-time.Minute).Unix())
+	ra.tokens["retained"] = readAuthToken{token: held, expires: jwtExpiry(held)}
+	ra.tokens["renewed"] = readAuthToken{token: held, expires: jwtExpiry(held)}
+
+	path := util.FullPath("/dir/file")
+	ra.installRefreshResult(path, map[string]string{
+		"retained":   expired,
+		"renewed":    fresher,
+		"discovered": fresher,
+	})
+
+	for fid, want := range map[string]string{"retained": held, "renewed": fresher, "discovered": fresher} {
+		if ra.Token(context.Background(), fid) != want {
+			t.Errorf("wrong token after capacity reset for %s", fid)
+		}
+		if ra.paths[fid] != path {
+			t.Errorf("response fid %s was not indexed to its path", fid)
+		}
+	}
+	if len(ra.tokens) != 3 {
+		t.Fatalf("capacity reset retained unrelated entries: got %d tokens, want 3", len(ra.tokens))
 	}
 }
 

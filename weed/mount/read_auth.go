@@ -147,15 +147,17 @@ func (ra *ReadAuth) refresh(ctx context.Context, path util.FullPath) error {
 func (ra *ReadAuth) installRefreshResult(path util.FullPath, readAuth map[string]string) {
 	ra.mu.Lock()
 	defer ra.mu.Unlock()
+	previous := ra.tokens
 	if len(ra.tokens) > readAuthMaxFids {
 		ra.tokens = map[string]readAuthToken{}
 	}
 	for fid, token := range readAuth {
-		expires := jwtExpiry(token)
-		held, ok := ra.tokens[fid]
-		if !ok || time.Until(held.expires) <= 0 || !expires.Before(held.expires) {
-			ra.tokens[fid] = readAuthToken{token: token, expires: expires}
+		updated := readAuthToken{token: token, expires: jwtExpiry(token)}
+		// Compare against the old map even when capacity eviction reset it.
+		if held, ok := previous[fid]; ok && time.Until(held.expires) > 0 && updated.expires.Before(held.expires) {
+			updated = held
 		}
+		ra.tokens[fid] = updated
 		if _, known := ra.paths[fid]; !known {
 			ra.paths[fid] = path
 		}
