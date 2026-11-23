@@ -62,6 +62,11 @@ func (r *SSES3Reader) readAt(ctx context.Context, fullPath, etag, version string
 	if !ok || key == "" || key == "." || key == ".." || path.IsAbs(key) || path.Clean(key) != key || strings.HasPrefix(key, "../") {
 		return 0, errNativeSSES3Read
 	}
+	if dir, name := path.Split(key); version != "" && name == "v_"+version {
+		if object, found := strings.CutSuffix(strings.TrimSuffix(dir, "/"), s3_constants.VersionsFolder); found && object != "" {
+			key = object
+		}
+	}
 	if offset < 0 || size < 0 {
 		return 0, errors.New("invalid S3 object range")
 	}

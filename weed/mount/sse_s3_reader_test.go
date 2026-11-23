@@ -65,3 +65,32 @@ func TestSSES3GatewayReadAt(t *testing.T) {
 		})
 	}
 }
+
+func TestSSES3GatewayReadAtVersionFile(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "local-test-reader")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "local-test-secret")
+	t.Setenv("AWS_SESSION_TOKEN", "")
+	t.Setenv("AWS_REGION", "us-east-1")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/bucket/dir/report.csv" || req.URL.Query().Get("versionId") != "v1" {
+			t.Errorf("version file read sent %s?%s", req.URL.Path, req.URL.RawQuery)
+		}
+		w.Header().Set("ETag", `"fixture"`)
+		w.Header().Set("Content-Range", "bytes 0-2/3")
+		w.Header().Set("Content-Length", "3")
+		w.Header().Set("X-Amz-Server-Side-Encryption", "AES256")
+		w.Header().Set("X-Amz-Version-Id", "v1")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte("abc"))
+	}))
+	defer server.Close()
+	reader, err := NewSSES3Reader(context.Background(), server.URL, "/buckets/bucket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 3)
+	n, err := reader.readAt(context.Background(), "/buckets/bucket/dir/report.csv.versions/v_v1", `"fixture"`, "v1", 3, buf, 0)
+	if err != nil || n != 3 || string(buf) != "abc" {
+		t.Fatalf("read = %d, %v, bytes %q", n, err, buf)
+	}
+}
