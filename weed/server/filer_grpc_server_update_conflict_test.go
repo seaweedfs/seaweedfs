@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -211,6 +212,77 @@ func TestUpdateEntryGivesUpWhileTheStoreKeepsRefusing(t *testing.T) {
 		t.Fatalf("metadata events = %+v, want none", events)
 	}
 	checkDeletions(t, f)
+}
+
+// The lookup of an expired entry removes it. NotFound is then the update's
+// answer, not a failure of its transaction: the removal is committed with
+// it, where a rollback would bring the expired entry back for the next
+// lookup to remove, and to announce, again.
+func TestUpdateEntryCommitsWhatItsLookupRemoved(t *testing.T) {
+	server, f, store, queue := updateConflictServer(t, func(map[string]*filer.Entry) {})
+	store.refuse = nil
+	expired := fileEntryWithChunk("/ckpt/run/f", 101, storedChunk)
+	expired.TtlSec = 1
+	expired.Crtime = time.Now().Add(-time.Hour)
+	store.entries["/ckpt/run/f"] = expired
+
+	_, err := server.UpdateEntry(context.Background(), updateOfF(updatedChunk))
+
+	checkGone(t, err, f, store, queue, "/ckpt/run/f")
+	if got := store.commitCount(); got != 1 {
+		t.Fatalf("commits = %d, want the one that removes the expired entry", got)
+	}
+}
+
+// A precondition that does not hold is an answer too: the run commits, and
+// leaves the entry alone.
+func TestUpdateEntryCommitsARunThatFailsItsPrecondition(t *testing.T) {
+	server, f, store, queue := updateConflictServer(t, func(map[string]*filer.Entry) {})
+	store.refuse = nil
+	request := updateOfF(updatedChunk)
+	request.ExpectedExtended = map[string][]byte{"k": []byte("v")}
+
+	_, err := server.UpdateEntry(context.Background(), request)
+
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("UpdateEntry: %v, want FailedPrecondition", err)
+	}
+	if got := store.commitCount(); got != 1 {
+		t.Fatalf("commits = %d, want 1", got)
+	}
+	checkChunk(t, store, "/ckpt/run/f", storedChunk)
+	if events := queue.snapshot(); len(events) != 0 {
+		t.Fatalf("metadata events = %+v, want none", events)
+	}
+	checkDeletions(t, f)
+}
+
+// A run that fails stores nothing: it is rolled back, and what it made
+// outside the store is given up, as for a run whose commit was refused.
+func TestEntryTransactionDiscardsAFailedRun(t *testing.T) {
+	server, _, store, _ := updateConflictServer(t, func(map[string]*filer.Entry) {})
+	store.refuse = nil
+	failed := errors.New("the write failed")
+	runs, discards := 0, 0
+
+	err := server.runEntryTransaction(context.Background(), "/ckpt/run/f", func(ctx context.Context) error {
+		runs++
+		if err := server.filer.Store.DeleteEntry(ctx, "/ckpt/run/f"); err != nil {
+			t.Fatalf("delete in the transaction: %v", err)
+		}
+		return failed
+	}, func() { discards++ })
+
+	if !errors.Is(err, failed) {
+		t.Fatalf("runEntryTransaction: %v, want the run's error", err)
+	}
+	if runs != 1 || discards != 1 {
+		t.Fatalf("runs = %d, discards = %d, want one of each", runs, discards)
+	}
+	if got := store.commitCount(); got != 0 {
+		t.Fatalf("commits = %d, want none", got)
+	}
+	checkChunk(t, store, "/ckpt/run/f", storedChunk)
 }
 
 // A store that does not refuse conflicting commits gains nothing from a

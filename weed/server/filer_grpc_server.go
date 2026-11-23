@@ -981,23 +981,31 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		garbage         []*filer_pb.FileChunk
 		unchanged       bool
 		stamp           int64
+		// refusal is what the read answered the update with: the entry is not
+		// there, or a precondition does not hold. It is the run's result, not
+		// its failure, so the run still commits: the lookup of an expired
+		// entry removes it and tells the subscribers, and a rollback would
+		// take the removal back and leave the event.
+		refusal error
 	)
 	err := fs.runEntryTransaction(ctx, lockPath, func(ctx context.Context) error {
 		var err error
-		entry, newEntry, garbage, unchanged = nil, nil, nil, false
+		entry, newEntry, garbage, unchanged, refusal = nil, nil, nil, false, nil
 		entry, err = fs.filer.FindEntry(ctx, lockPath)
 		if err != nil {
 			if errors.Is(err, filer_pb.ErrNotFound) {
-				return status.Errorf(codes.NotFound, "not found %s: %v", fullpath, err)
+				refusal = status.Errorf(codes.NotFound, "not found %s: %v", fullpath, err)
+				return nil
 			}
 			return fmt.Errorf("not found %s: %v", fullpath, err)
 		}
-		if err := validateUpdateEntryPreconditions(entry, req.ExpectedExtended); err != nil {
-			return err
+		if refusal = validateUpdateEntryPreconditions(entry, req.ExpectedExtended); refusal != nil {
+			return nil
 		}
 		if conditionIsSet(req.Condition) && !writeConditionSatisfied(req.Condition, entry) {
 			glog.V(3).InfofCtx(ctx, "UpdateEntry %s: precondition failed: %v", fullpath, req.Condition)
-			return status.Errorf(codes.FailedPrecondition, "precondition failed: %s", fullpath)
+			refusal = status.Errorf(codes.FailedPrecondition, "precondition failed: %s", fullpath)
+			return nil
 		}
 
 		chunks, replaced, err := fs.cleanupChunks(ctx, fullpath, entry, req.Entry)
@@ -1024,8 +1032,13 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		// refers to the manifest chunks it folded the request's chunks into.
 		fs.filer.ReleaseEntryCommitTsNs(stamp)
 		stamp = 0
-		fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunks(newEntry.GetChunks(), req.Entry.GetChunks()))
+		if newEntry != nil {
+			fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunks(newEntry.GetChunks(), req.Entry.GetChunks()))
+		}
 	})
+	if err == nil {
+		err = refusal
+	}
 	if err != nil {
 		fs.filer.ReleaseEntryCommitTsNs(stamp)
 		glog.V(3).InfofCtx(ctx, "UpdateEntry %s: %v", fullpath, err)
@@ -1063,11 +1076,15 @@ const entryUpdateAttempts = 5
 //
 // Where the store refuses a conflicting commit (filer.ConflictRefusingStore:
 // TiKV), attempt runs in a store transaction of its own. Such a rename or
-// delete wrote the entry's key, so the store refuses the commit; refused then
-// gives up what the run made outside the store, and attempt runs again and
-// reads what is there now. Other stores run attempt once, without a
-// transaction, as before.
-func (fs *FilerServer) runEntryTransaction(ctx context.Context, path util.FullPath, attempt func(ctx context.Context) error, refused func()) error {
+// delete wrote the entry's key, so the store refuses the commit; attempt then
+// runs again and reads what is there now. Other stores run attempt once,
+// without a transaction, as before.
+//
+// attempt returns an error only for what must not be stored. A run that
+// failed and one whose commit was refused are rolled back, and discard gives
+// up what such a run made outside the store. A commit that fails for another
+// reason may have gone through, so nothing is given up for it.
+func (fs *FilerServer) runEntryTransaction(ctx context.Context, path util.FullPath, attempt func(ctx context.Context) error, discard func()) error {
 	if !fs.filer.RefusesConflictingCommits(path) {
 		return attempt(ctx)
 	}
@@ -1078,6 +1095,7 @@ func (fs *FilerServer) runEntryTransaction(ctx context.Context, path util.FullPa
 		}
 		if err := attempt(txCtx); err != nil {
 			fs.filer.RollbackTransaction(txCtx)
+			discard()
 			return err
 		}
 		commitErr := fs.filer.CommitTransaction(txCtx)
@@ -1088,7 +1106,7 @@ func (fs *FilerServer) runEntryTransaction(ctx context.Context, path util.FullPa
 		if !errors.Is(commitErr, filer.ErrTransactionConflict) {
 			return fmt.Errorf("%s commit error: %w", path, commitErr)
 		}
-		refused()
+		discard()
 		if n == entryUpdateAttempts {
 			return fmt.Errorf("%s commit error: %w", path, commitErr)
 		}
