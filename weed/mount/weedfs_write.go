@@ -12,6 +12,19 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
+// shouldCacheUploadedChunk decides whether a just-uploaded chunk's bytes are
+// put in the local chunk cache. The first chunk (small files) is always cached.
+// Peer sharing needs every chunk cached so it can be served back on FetchChunk.
+// A read-auth mount needs every chunk cached too: it holds no volume read key
+// and reads a chunk with a filer-issued per-fid token the filer can mint only
+// after the chunk's entry is published, so a chunk this handle just uploaded
+// has no token until the next metadata flush; caching it lets a read-after-write
+// of that chunk be served locally instead of failing on a token-less volume
+// fetch. Gated on chunkCache != nil (-cacheCapacityMB=0 disables the cache).
+func (wfs *WFS) shouldCacheUploadedChunk(offset int64) bool {
+	return wfs.chunkCache != nil && (offset == 0 || wfs.peerAnnouncer != nil || wfs.readAuth != nil)
+}
+
 func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFunctionType {
 
 	// Backstop: FUSE entry points sanitize names before they reach
@@ -66,16 +79,9 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 			return nil, fmt.Errorf("upload result: %v", uploadResult.Error)
 		}
 
-		// When peer sharing is enabled we need EVERY chunk in the
-		// local cache so we can actually serve it back to peers on
-		// FetchChunk — otherwise the directory would advertise us as
-		// a holder and the fetcher would get NOT_FOUND from our
-		// chunk cache. When peer sharing is off we preserve the
-		// original behavior of caching only the first chunk (small
-		// files) to avoid blowing the cache on large uploads. Both
-		// paths gate on chunkCache != nil: -cacheCapacityMB=0 disables
-		// the cache entirely, in which case SetChunk would panic.
-		shouldCache := wfs.chunkCache != nil && (offset == 0 || wfs.peerAnnouncer != nil)
+		// shouldCacheUploadedChunk explains when and why every uploaded
+		// chunk is cached (peer sharing, and read-auth read-after-write).
+		shouldCache := wfs.shouldCacheUploadedChunk(offset)
 		if shouldCache {
 			wfs.chunkCache.SetChunk(fileId, data)
 		}

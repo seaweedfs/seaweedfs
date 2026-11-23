@@ -45,25 +45,28 @@ type Option struct {
 	FilerSigningKey             security.SigningKey
 	FilerSigningExpiresAfterSec int
 	FilerMountRootPath          string
-	Collection                  string
-	Replication                 string
-	TtlSec                      int32
-	DiskType                    types.DiskType
-	ChunkSizeLimit              int64
-	ConcurrentWriters           int
-	ConcurrentReaders           int
-	ReaderCacheSizeMB           int64
-	CacheDirForRead             string
-	CacheSizeMBForRead          int64
-	CacheDirForWrite            string
-	WriteBufferSizeMB           int64
-	CacheMetaTTlSec             int
-	CacheDirMaxEntries          int
-	DataCenter                  string
-	Umask                       os.FileMode
-	Quota                       int64
-	DisableXAttr                bool
-	IsMacOs                     bool
+	// VolumeReadAuth reads chunks with the exact-fid read tokens the filer
+	// returns from LookupDirectoryEntries instead of signing them locally.
+	VolumeReadAuth     bool
+	Collection         string
+	Replication        string
+	TtlSec             int32
+	DiskType           types.DiskType
+	ChunkSizeLimit     int64
+	ConcurrentWriters  int
+	ConcurrentReaders  int
+	ReaderCacheSizeMB  int64
+	CacheDirForRead    string
+	CacheSizeMBForRead int64
+	CacheDirForWrite   string
+	WriteBufferSizeMB  int64
+	CacheMetaTTlSec    int
+	CacheDirMaxEntries int
+	DataCenter         string
+	Umask              os.FileMode
+	Quota              int64
+	DisableXAttr       bool
+	IsMacOs            bool
 
 	// LogicalDiskUsage reports data sizes rather than the space they occupy,
 	// for both df and the quota. See WFS.diskSizes.
@@ -144,6 +147,7 @@ type Option struct {
 }
 
 type WFS struct {
+	readAuth *ReadAuth
 	// Metadata-only refusal token, detached at final Forget; no live resources retained.
 	writebackContentErrors sync.Map
 	// https://dl.acm.org/doi/fullHtml/10.1145/3310148
@@ -485,6 +489,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.startAsyncFlushWorkers(numWorkers)
 	}
 	wfs.streamMutate = newStreamMutateMux(wfs)
+	wfs.installReadAuth()
 	wfs.copyBufferPool.New = func() any {
 		return make([]byte, option.ChunkSizeLimit)
 	}
@@ -506,7 +511,7 @@ func (wfs *WFS) StartBackgroundTasks() error {
 	}
 
 	startTime := time.Now()
-	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.LookupFn(), wfs.option.FilerMountRootPath, startTime.UnixNano(), wfs.option.WritebackCache, func(lastTsNs int64, err error) {
+	go meta_cache.SubscribeMetaEvents(wfs.metaCache, wfs.signature, wfs, wfs.metadataLogLookupFn(), wfs.option.FilerMountRootPath, startTime.UnixNano(), wfs.option.WritebackCache, func(lastTsNs int64, err error) {
 		glog.Warningf("meta events follow retry from %v: %v", time.Unix(0, lastTsNs), err)
 		// A subscription gap may have dropped events, so distrust every cached
 		// listing. Reset the flags first (safe — it never deletes entries), then
@@ -1089,6 +1094,9 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 					}
 				})
 			}
+			// A read-only handle never reaches SetEntry, AddChunks, or truncate
+			// again, so its token refreshes must look up the new name.
+			wfs.readAuth.TrackHandle(invalidation.RenamedTo, fh)
 		}
 	}
 
@@ -1200,6 +1208,7 @@ func (wfs *WFS) followSurvivingLink(fh *FileHandle, removed util.FullPath) bool 
 	survivor, ok := wfs.inodeToPath.RemoveAlias(removed)
 	if ok {
 		fh.RememberPath(survivor)
+		wfs.readAuth.TrackHandle(survivor, fh)
 	}
 	return ok
 }

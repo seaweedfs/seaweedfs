@@ -538,6 +538,9 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 				// Keep the saved handle path current so any flush fallback
 				// after Forget uses the post-rename location, not the old one.
 				fh.RememberPath(newPath)
+				// Writeback mounts skip their own rename event, so the
+				// subscriber never re-tracks this handle.
+				wfs.readAuth.TrackHandle(newPath, fh)
 
 				// Migrate the DLM lock from old path to new path so the
 				// lock key matches the current file location. Hold the
