@@ -20,6 +20,7 @@ package foundationdb
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -360,10 +361,31 @@ func (store *FoundationDBStore) CommitTransaction(ctx context.Context) error {
 	// Commit the transaction
 	err := tx.Commit().Get()
 	if err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		return fmt.Errorf("failed to commit transaction: %w", commitError(err))
 	}
 
 	return nil
+}
+
+// RefusesConflictingCommits covers single-entry updates and their shared KV
+// records: ordinary Get reads add conflict ranges, and entry/KV writes use the
+// same context transaction, bypassing the batcher. Bulk folder deletion uses
+// separate transactions, so this does not advertise IsolatingTransactionStore.
+func (store *FoundationDBStore) RefusesConflictingCommits() bool {
+	return true
+}
+
+var _ filer.ConflictRefusingStore = (*FoundationDBStore)(nil)
+
+func commitError(err error) error {
+	var fdbErr fdb.Error
+	// not_committed (1020) guarantees that nothing was committed. In
+	// particular, commit_unknown_result (1021) must not trigger retries or
+	// disposal of manifests that a successful commit may reference.
+	if errors.As(err, &fdbErr) && fdbErr.Code == 1020 {
+		return fmt.Errorf("%w: %w", filer.ErrTransactionConflict, err)
+	}
+	return err
 }
 
 func (store *FoundationDBStore) RollbackTransaction(ctx context.Context) error {

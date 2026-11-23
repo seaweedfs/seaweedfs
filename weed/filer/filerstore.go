@@ -16,8 +16,9 @@ var (
 	ErrKvNotImplemented                      = errors.New("kv not implemented yet")
 	ErrKvNotFound                            = errors.New("kv: not found")
 	// ErrTransactionConflict marks a commit the store refused because another
-	// writer changed a key the transaction wrote after it began. Running the
-	// transaction again reads that write.
+	// writer changed a key the transaction read or wrote. No writes from the
+	// refused transaction were committed; an unknown commit result must not
+	// carry this sentinel. Running the transaction again reads the other write.
 	ErrTransactionConflict = errors.New("transaction conflict")
 )
 
@@ -92,13 +93,17 @@ type IsolatingTransactionStore interface {
 	IsolatesTransactions() bool
 }
 
-// ConflictRefusingStore is implemented by a store whose transactions are
-// optimistic: CommitTransaction refuses, with ErrTransactionConflict, a
-// transaction that wrote a key another writer committed after it began. A read
-// of an entry and the write it decides, made in one such transaction, cannot
-// have a rename or a delete of the entry commit between them unnoticed, from
-// whichever filer. A store says so itself: TiKV does. The SQL stores do not:
-// at their default isolation the later write goes through.
+// ConflictRefusingStore protects a read-modify-write of one entry and its
+// shared KV records. Entry and KV operations must use the context's transaction,
+// keep its writes invisible until commit, and leave none behind on rollback.
+// If another writer changes a key this transaction both reads and writes after
+// its read version, CommitTransaction must refuse with ErrTransactionConflict.
+// Read/write conflicts suffice; blind writes need not conflict with each other.
+//
+// TiKV and FoundationDB implement this capability. It does not promise that
+// bulk operations such as DeleteFolderChildren stay inside the transaction.
+// Other stores must opt in only after their entry and KV paths, isolation and
+// conflict errors have been checked; having BeginTransaction alone is not enough.
 type ConflictRefusingStore interface {
 	RefusesConflictingCommits() bool
 }

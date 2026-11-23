@@ -11,6 +11,20 @@ This package provides a FoundationDB-based filer store for SeaweedFS, offering A
 - **Key-Value Support**: Full KV operations for metadata storage
 - **Compression**: Automatic compression for large entry chunks
 
+## Transaction conflicts
+
+Single-entry updates read the entry and its hard-link KV records in the same
+transaction as their writes. A concurrent rename, delete, or update that changes
+the entry causes FoundationDB to refuse the commit. The filer retries against
+the current entry and refuses to replay a stale update over changed metadata.
+Conflicts (`not_committed`, code 1020) are distinguished from an unknown commit
+result (1021), which must not be retried or have its manifests deleted.
+
+This capability covers entry and KV operations, including when write batching
+is enabled: an explicit transaction bypasses the batcher. It does not make
+`DeleteFolderChildren` atomic with an outer transaction; that operation keeps
+its separate batch transactions to respect FoundationDB's size and time limits.
+
 ## Installation
 
 ### Prerequisites

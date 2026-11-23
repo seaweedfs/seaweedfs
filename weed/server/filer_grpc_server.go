@@ -1090,8 +1090,8 @@ const entryUpdateAttempts = 5
 // again at the path it had left.
 //
 // Where the store refuses a conflicting commit (filer.ConflictRefusingStore:
-// TiKV), attempt runs in a store transaction of its own. Such a rename or
-// delete wrote the entry's key, so the store refuses the commit; attempt then
+// TiKV and FoundationDB), attempt runs in a store transaction of its own. Such
+// a rename or delete wrote the entry's key, so the store refuses the commit; attempt then
 // runs again and reads what is there now. UpdateEntry refuses a changed
 // entry rather than replaying its old chunk list. Other stores run attempt once,
 // without a transaction, as before.
