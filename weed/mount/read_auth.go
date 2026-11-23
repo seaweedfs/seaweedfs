@@ -79,9 +79,16 @@ func (ra *ReadAuth) Token(ctx context.Context, fileId string) string {
 		glog.V(1).Infof("read auth: no entry known for chunk %s", fileId)
 		return ""
 	}
-	_, _, _ = ra.flight.Do(string(path), func() (interface{}, error) {
-		return nil, ra.refresh(ctx, path)
+	// Other reads of this entry wait on the same lookup, so the caller that
+	// started it must not cancel it for them.
+	flight := ra.flight.DoChan(string(path), func() (interface{}, error) {
+		return nil, ra.refresh(context.WithoutCancel(ctx), path)
 	})
+	select {
+	case <-flight:
+	case <-ctx.Done():
+		return ""
+	}
 	if token, ok := ra.cached(fileId); ok {
 		return token
 	}
