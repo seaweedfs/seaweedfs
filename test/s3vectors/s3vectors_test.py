@@ -143,15 +143,14 @@ def assert_engine_wrote_like_the_gateway(cluster, index):
 
 def run_cli(cluster, *args):
     """weed-vector-cli's JSON answer. It reaches the cluster through the
-    namespace that names the tables, the masters whose filers hold them and the
-    cluster token's key, and finds security.toml and the read key where the
-    weed processes do."""
+    masters, whose gateways and filers hold the tables, and the cluster token's
+    key, and finds security.toml and the read key where the weed processes do."""
     import os
     import subprocess
     from pathlib import Path
     cli = Path(os.environ.get("VECTOR_CLI_BINARY", Path(__file__).resolve().parent / "weed-vector-cli")).resolve()
-    command = [str(cli), "--namespace", cluster["catalog"], "--masters", cluster["masters"],
-               "--filer-signing-key", cluster["filer_signing_key"], "--filer-group", os.environ.get("VECTOR_FILER_GROUP", ""), *args]
+    command = [str(cli), "--masters", cluster["masters"], "--filer-signing-key", cluster["filer_signing_key"],
+               "--filer-group", os.environ.get("VECTOR_FILER_GROUP", ""), *args]
     return json.loads(subprocess.run(command, check=True, capture_output=True, text=True,
                                      cwd=cluster["directory"], env=cluster["env"]).stdout)
 
