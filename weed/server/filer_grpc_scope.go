@@ -281,13 +281,19 @@ func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method
 		}
 		return nil
 	}
-	// Inline content and chunk references are rechecked against the locked
-	// entry by the handlers as well as against this admission snapshot.
-	if len(e.GetContent()) > 0 || len(e.GetChunks()) > 0 {
-		if err := load(); err != nil {
-			return err
-		}
-		if err := scopeRetainsData(stored, e, func(fid string) bool { return s.proven(sc, chunkAuth, fid) }); err != nil {
+	// Data and SSE metadata are rechecked against the locked entry by the
+	// handlers as well as against this admission snapshot, even without chunks.
+	if err := load(); err != nil {
+		return err
+	}
+	if err := scopeCheckSSEState(stored, e, method == "AppendToEntry"); err != nil {
+		return sc.deny(method, err.Error())
+	}
+	if err := scopeRetainsData(stored, e, func(fid string) bool { return s.proven(sc, chunkAuth, fid) }); err != nil {
+		return sc.deny(method, err.Error())
+	}
+	if method == "AppendToEntry" {
+		if err := scopeCheckAppendState(stored, e.GetChunks()); err != nil {
 			return sc.deny(method, err.Error())
 		}
 	}

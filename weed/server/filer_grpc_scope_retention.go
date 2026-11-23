@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
+	"os"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -20,6 +22,18 @@ import (
 func scopeRetainsData(stored, requested *filer_pb.Entry, proven func(string) bool) error {
 	if err := scopeCheckEntryShape(requested); err != nil {
 		return err
+	}
+	if err := scopeCheckChunkRanges(stored.GetChunks()); err != nil {
+		return fmt.Errorf("stored entry: %w", err)
+	}
+	if len(requested.GetChunks()) > 0 {
+		// Manifest members are not present in the identity map below. A
+		// replacement could otherwise retain an alias while deleting its needle.
+		for _, chunk := range stored.GetChunks() {
+			if chunk.GetIsChunkManifest() {
+				return fmt.Errorf("chunks cannot be written to an entry containing manifests")
+			}
+		}
 	}
 	known := make(map[string]bool, len(stored.GetChunks()))
 	identities := make(map[string]string, len(stored.GetChunks())+len(requested.GetChunks()))
@@ -51,6 +65,44 @@ func scopeRetainsData(stored, requested *filer_pb.Entry, proven func(string) boo
 		}
 	}
 	return nil
+}
+
+// Chunk extents must fit the signed offsets used by readers and appenders.
+func scopeCheckChunkRanges(chunks []*filer_pb.FileChunk) error {
+	for _, chunk := range chunks {
+		if chunk == nil {
+			return fmt.Errorf("nil chunks are not allowed")
+		}
+		if chunk.Offset < 0 || chunk.Size > uint64(math.MaxInt64-chunk.Offset) {
+			return fmt.Errorf("chunk range must fit a nonnegative signed offset")
+		}
+	}
+	return nil
+}
+
+// Append has no replacement entry: its offset must preserve the stored data.
+// Use the same refusals at admission and under the handler's path lock.
+func scopeCheckAppendState(stored *filer_pb.Entry, chunks []*filer_pb.FileChunk) error {
+	if len(chunks) == 0 {
+		return nil
+	}
+	if len(stored.GetContent()) > 0 {
+		return fmt.Errorf("chunks cannot be appended to an inline entry")
+	}
+	if stored != nil && stored.IsInRemoteOnly() {
+		return fmt.Errorf("chunks cannot be appended to a remote-only entry")
+	}
+	if stored.GetIsDirectory() || !os.FileMode(stored.GetAttributes().GetFileMode()).IsRegular() || stored.GetAttributes().GetSymlinkTarget() != "" {
+		return fmt.Errorf("chunks cannot be appended to a non-regular entry")
+	}
+	if err := scopeCheckChunkRanges(stored.GetChunks()); err != nil {
+		return err
+	}
+	extent := filer.TotalSize(stored.GetChunks())
+	if stored.GetAttributes().GetFileSize() > extent {
+		return fmt.Errorf("append offset is before the stored logical file end")
+	}
+	return scopeAppendChunkTotalFits(int64(extent), chunks)
 }
 
 func scopeChunkIdentity(fid string) string {
@@ -89,13 +141,16 @@ func scopeKeepsHardLink(stored, requested *filer_pb.Entry) error {
 	return nil
 }
 
-func checkScopeRetainedData(ctx context.Context, stored *filer.Entry, requested *filer_pb.Entry, chunkAuth map[string]string) error {
+func checkScopeRetainedData(ctx context.Context, stored *filer.Entry, requested *filer_pb.Entry, chunkAuth map[string]string, appending bool) error {
 	if !scopeKeepOnly(ctx) {
 		return nil
 	}
 	var current *filer_pb.Entry
 	if stored != nil {
 		current = stored.ToProtoEntry()
+	}
+	if err := scopeCheckSSEState(current, requested, appending); err != nil {
+		return status.Errorf(codes.PermissionDenied, "filer: scoped SSE mutation refused: %v", err)
 	}
 	var proven func(string) bool
 	if authority, ok := ctx.Value(scopeWriteAuthorityKey{}).(*scopeWriteAuthority); ok {

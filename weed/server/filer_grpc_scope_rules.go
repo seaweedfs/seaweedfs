@@ -7,6 +7,7 @@ package weed_server
 import (
 	"errors"
 	"fmt"
+	"math"
 	"path"
 	"reflect"
 	"strings"
@@ -112,6 +113,15 @@ func scopeCheckEntryShape(e *filer_pb.Entry) error {
 	}
 	if e.RemoteEntry != nil {
 		return errors.New("remote entries are not allowed")
+	}
+	if len(e.GetContent()) > 0 && len(e.GetChunks()) > 0 {
+		return errors.New("inline content and chunks cannot be combined")
+	}
+	if len(e.GetChunks()) > 0 && e.GetAttributes().GetFileSize() > math.MaxInt64 {
+		return errors.New("file size must fit a nonnegative signed offset")
+	}
+	if err := scopeCheckChunkRanges(e.GetChunks()); err != nil {
+		return err
 	}
 	for _, c := range e.GetChunks() {
 		if c == nil {

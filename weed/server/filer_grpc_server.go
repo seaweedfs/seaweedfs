@@ -300,7 +300,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	if err := checkScopeHardLinkWrite(ctx, existing, req.Entry); err != nil {
 		return &filer_pb.CreateEntryResponse{}, err
 	}
-	if err := checkScopeRetainedData(ctx, existing, req.Entry, req.GetChunkAuth()); err != nil {
+	if err := checkScopeRetainedData(ctx, existing, req.Entry, req.GetChunkAuth(), false); err != nil {
 		return &filer_pb.CreateEntryResponse{}, err
 	}
 
@@ -1012,7 +1012,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	if err := checkScopeHardLinkWrite(ctx, entry, req.Entry); err != nil {
 		return &filer_pb.UpdateEntryResponse{}, err
 	}
-	if err := checkScopeRetainedData(ctx, entry, req.Entry, req.GetChunkAuth()); err != nil {
+	if err := checkScopeRetainedData(ctx, entry, req.Entry, req.GetChunkAuth(), false); err != nil {
 		return &filer_pb.UpdateEntryResponse{}, err
 	}
 
@@ -1155,14 +1155,6 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 		}
 	} else if err != nil {
 		return nil, err
-	} else {
-		if scopeKeepOnly(ctx) && len(entry.Content) > 0 && len(req.GetChunks()) > 0 {
-			return &filer_pb.AppendToEntryResponse{}, status.Error(codes.PermissionDenied, "filer: scoped append cannot add chunks to an inline entry")
-		}
-		if scopeKeepOnly(ctx) && entry.IsInRemoteOnly() && len(req.GetChunks()) > 0 {
-			return &filer_pb.AppendToEntryResponse{}, status.Error(codes.PermissionDenied, "filer: scoped append cannot add chunks to a remote-only entry")
-		}
-		offset = int64(filer.TotalSize(entry.GetChunks()))
 	}
 	if err := fs.checkScopeWorm(ctx, string(fullpath)); err != nil {
 		return &filer_pb.AppendToEntryResponse{}, err
@@ -1170,9 +1162,15 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	if err := checkScopeHardLinkWrite(ctx, entry, &filer_pb.Entry{Chunks: req.Chunks, HardLinkId: entry.HardLinkId, HardLinkCounter: entry.HardLinkCounter}); err != nil {
 		return &filer_pb.AppendToEntryResponse{}, err
 	}
-	if err := checkScopeRetainedData(ctx, entry, &filer_pb.Entry{Chunks: req.Chunks, HardLinkId: entry.HardLinkId, HardLinkCounter: entry.HardLinkCounter}, req.GetChunkAuth()); err != nil {
+	if err := checkScopeRetainedData(ctx, entry, &filer_pb.Entry{Chunks: req.Chunks, HardLinkId: entry.HardLinkId, HardLinkCounter: entry.HardLinkCounter}, req.GetChunkAuth(), true); err != nil {
 		return &filer_pb.AppendToEntryResponse{}, err
 	}
+	if scopeKeepOnly(ctx) {
+		if err := scopeCheckAppendState(entry.ToProtoEntry(), req.GetChunks()); err != nil {
+			return &filer_pb.AppendToEntryResponse{}, status.Errorf(codes.PermissionDenied, "filer: scoped append refused: %v", err)
+		}
+	}
+	offset = int64(filer.TotalSize(entry.GetChunks()))
 
 	for _, chunk := range req.Chunks {
 		chunk.Offset = offset
@@ -1203,6 +1201,23 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	err = fs.filer.CreateEntry(context.Background(), entry, nil, false, false, nil, false, fs.filer.MaxFilenameLength)
 
 	return &filer_pb.AppendToEntryResponse{}, err
+}
+
+func scopeAppendChunkTotalFits(offset int64, chunks []*filer_pb.FileChunk) error {
+	if offset < 0 {
+		return errors.New("stored offset is negative")
+	}
+	end := uint64(offset)
+	for _, chunk := range chunks {
+		if chunk == nil {
+			return errors.New("request contains a nil chunk")
+		}
+		if chunk.Size > uint64(math.MaxInt64)-end {
+			return fmt.Errorf("chunk %s exceeds int64 file range", chunk.GetFileIdString())
+		}
+		end += chunk.Size
+	}
+	return nil
 }
 
 func maybeManifestizeChunks(ctx context.Context, save filer.SaveDataAsChunkFunctionType, deleteChunks func([]*filer_pb.FileChunk), chunks []*filer_pb.FileChunk) ([]*filer_pb.FileChunk, error) {
