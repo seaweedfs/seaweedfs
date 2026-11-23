@@ -64,6 +64,7 @@ func runCompact(cmd *Command, args []string) bool {
 		glog.Fatalf("unsupported compaction method %q", *compactMethod)
 	}
 	if err != nil {
+		v.Close()
 		for _, ext := range []string{".cpd", ".cpx"} {
 			if rmErr := os.Remove(v.FileName(ext)); rmErr != nil && !os.IsNotExist(rmErr) {
 				glog.Errorf("remove %s: %v", v.FileName(ext), rmErr)
