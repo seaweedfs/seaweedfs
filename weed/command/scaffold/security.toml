@@ -106,6 +106,8 @@ previous_key = ""
 # jti and exp, cannot introduce new chunk ids, and cannot call unruled methods.
 # Calls without a token retain their existing behavior. This is scope enforcement,
 # not mandatory authentication; restrict network access to the filer as before.
+# Rolling upgrades: older filers treat a read_prefixes-only token as an admin
+# token. Mint read-only tokens only after every filer runs this version or newer.
 [jwt.filer_signing]
 key = ""
 expires_after_seconds = 10           # seconds

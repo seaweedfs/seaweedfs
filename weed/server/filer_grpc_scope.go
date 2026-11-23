@@ -232,6 +232,7 @@ func (sc *scope) checkProtectedPath(method, p string, descendants bool) error {
 // checkClientEntry admits only chunks already stored at the checked target.
 // A hard-link id may be retained there, or a fresh id may be introduced by an
 // update of an existing unlinked entry. Attaching another path's id is refused.
+// Client signatures remain allowed for mount own-event filtering; tightening is deferred to the series.
 func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method, p string, e *filer_pb.Entry, allowNewHardLink bool) error {
 	if err := scopeCheckEntryShape(e); err != nil {
 		return sc.deny(method, err.Error())
