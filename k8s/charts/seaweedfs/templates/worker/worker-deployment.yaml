@@ -228,7 +228,7 @@ spec:
           {{- if .Values.worker.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.worker.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
-        {{- if include "seaweedfs.worker.lanceEnabled" . }}
+        {{- if include "seaweedfs.worker.lanceNamespaceUrl" . }}
         - name: worker-lance
           image: {{ template "seaweedfs.worker.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
@@ -237,15 +237,19 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            {{- /* admin names the S3 gateways' namespaces; this is the worker's fallback */}}
-            {{- if .Values.worker.namespaceUrl }}
+            {{- /* admin names the filers and namespaces; these are the fallback, and what a pinned worker before 4.56 needs */}}
             - name: WEED_LANCE_NAMESPACE
-              value: {{ .Values.worker.namespaceUrl | quote }}
+              value: {{ include "seaweedfs.worker.lanceNamespaceUrl" . | quote }}
+            - name: WEED_MASTERS
+              value: {{ include "seaweedfs.masterServerArg" . | quote }}
+            {{- if .Values.filer.filerGroup }}
+            - name: WEED_FILER_GROUP
+              value: {{ .Values.filer.filerGroup | quote }}
             {{- end }}
             {{- $mergedExtraEnvironmentVars := dict }}
             {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.worker "target" $mergedExtraEnvironmentVars) }}
-            {{- /* a duplicate would win over the chart's value and change --id or the namespace */}}
-            {{- $mergedExtraEnvironmentVars = omit $mergedExtraEnvironmentVars "POD_NAME" "WEED_LANCE_NAMESPACE" }}
+            {{- /* a duplicate would win over the chart's value and change --id or the cluster */}}
+            {{- $mergedExtraEnvironmentVars = omit $mergedExtraEnvironmentVars "POD_NAME" "WEED_LANCE_NAMESPACE" "WEED_MASTERS" "WEED_FILER_GROUP" }}
             {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
             {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
@@ -339,7 +343,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.worker.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" (list . .Values.worker.containerSecurityContext (tpl (.Values.worker.extraVolumeMounts | default "") .) (tpl (.Values.worker.extraVolumes | default "") .) (ne (include "seaweedfs.worker.lanceEnabled" .) "")) | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.worker.containerSecurityContext (tpl (.Values.worker.extraVolumeMounts | default "") .) (tpl (.Values.worker.extraVolumes | default "") .) (ne (include "seaweedfs.worker.lanceNamespaceUrl" .) "")) | nindent 8 }}
         {{- if eq .Values.worker.data.type "hostPath" }}
         - name: worker-data
           hostPath:

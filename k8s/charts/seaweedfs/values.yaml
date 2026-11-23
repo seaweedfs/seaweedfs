@@ -1842,7 +1842,7 @@ worker:
   # signed with that key.
 
   # Lance namespace URL, used only when admin names none (an admin or S3
-  # gateways older than 4.56); empty relies on admin.
+  # gateways older than 4.56); empty derives it from s3.lancePort.
   namespaceUrl: ""
 
   # Metrics port for the Lance worker container; the Go worker keeps metricsPort
