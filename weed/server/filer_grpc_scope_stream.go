@@ -4,8 +4,9 @@ package weed_server
 // handler is wrapped so that every request message is checked as it is
 // received and every response message is filtered as it is sent. A stream
 // keeps the grants of the token it was opened with and enforces expiry at
-// each message boundary. Idle streams await client or transport cancellation;
-// a client whose token changed reconnects.
+// each message boundary. Subscription handlers also end idle streams at expiry;
+// other idle streams await client or transport cancellation. A client whose
+// token changed reconnects.
 
 import (
 	"context"
@@ -52,6 +53,18 @@ func (s *filerGrpcScope) stream(srv any, ss grpc.ServerStream, info *grpc.Stream
 	}
 	w := &scopedStream{ServerStream: ss, sc: sc, ctx: s.withWriteAuthority(ss.Context(), sc)}
 	switch info.FullMethod {
+	case filer_pb.SeaweedFiler_SubscribeMetadata_FullMethodName, filer_pb.SeaweedFiler_SubscribeLocalMetadata_FullMethodName:
+		// Preserve the verified authority for the handler, including on mTLS.
+		// Its scoped stream applies the deadline, registration isolation and
+		// event filter without verifying this token against a different key.
+		w.ctx = context.WithValue(w.Context(), scopeSubscriptionContextKey{}, sc)
+		w.onRecv = func(m any) (bool, error) {
+			req, ok := m.(*filer_pb.SubscribeMetadataRequest)
+			if !ok {
+				return false, sc.deny(info.FullMethod, fmt.Sprintf("unexpected request %T", m))
+			}
+			return false, sc.checkSubscribe(info.FullMethod, req)
+		}
 	case filer_pb.SeaweedFiler_ListEntries_FullMethodName:
 		w.ctx = context.WithValue(w.Context(), scopeListContextKey{}, true)
 		var listedDir string
