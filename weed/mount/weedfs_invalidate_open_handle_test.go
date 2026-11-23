@@ -4,8 +4,10 @@ import (
 	"context"
 	"net"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -2231,6 +2233,112 @@ func TestPeerTruncateWaitsForBufferedWrites(t *testing.T) {
 	}
 	if base := fh.baseEntry.Load(); len(base.GetChunks()) != 2 {
 		t.Fatalf("base %v moved to the peer's truncate", base)
+	}
+}
+
+// A peer putting another file (another inode) at the path of a clean handle
+// must not hand the handle the newcomer: what the descriptor writes,
+// truncates or chmods next would land in it. This mount never looked the
+// rename's source up, so nothing reports the handle's inode as replaced. The
+// handle's file is gone, and its inode gives the name up.
+func TestPeerReplacementDetachesCleanHandle(t *testing.T) {
+	for _, name := range []string{"renamed-over", "replaced-in-place"} {
+		t.Run(name, func(t *testing.T) {
+			wfs := newInvalidateTestWFS(t)
+
+			path := util.FullPath("/dir/file")
+			inode := wfs.inodeToPath.Lookup(path, time.Now().Unix(), false, false, 0, true)
+			base := flushConditionEntry(1)
+			wfs.mapPbIdFromFilerToLocal(base)
+			fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, base, 0, 0)
+
+			replacement := flushConditionEntry(7)
+			replacement.Attributes.Inode = 99
+			old := flushConditionEntry(1)
+			if name == "renamed-over" {
+				old = proto.Clone(replacement).(*filer_pb.Entry)
+				old.Name = "file.new"
+			}
+			resp := &filer_pb.SubscribeMetadataResponse{
+				Directory: "/dir",
+				TsNs:      1500,
+				EventNotification: &filer_pb.EventNotification{
+					OldEntry:      old,
+					NewEntry:      replacement,
+					NewParentPath: "/dir",
+				},
+			}
+			if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), resp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+				t.Fatalf("apply: %v", err)
+			}
+			wfs.metaCache.WaitForEntryInvalidations()
+
+			if !fh.isDeleted {
+				t.Fatal("handle of the replaced file not marked deleted; its next write would go into the replacement")
+			}
+			if got := chunkFileKeys(fh.GetEntry().GetEntry()); len(got) != 1 || got[0] != 1 {
+				t.Fatalf("handle chunks %v, want its own", got)
+			}
+			if got := fh.baseEntry.Load().GetAttributes().GetInode(); got != 42 {
+				t.Fatalf("base inode %d, want the handle's own 42", got)
+			}
+			if got, found := wfs.inodeToPath.GetInode(path); found && got == inode {
+				t.Fatal("the name still answers to the replaced inode")
+			}
+			if runtime.GOOS == "linux" {
+				if status := wfs.pathlessInodeStatus(inode, fuse.ENOENT); status != fuse.Status(syscall.ESTALE) {
+					t.Fatalf("replaced inode answers %v, want ESTALE so the kernel walks the path again", status)
+				}
+			}
+		})
+	}
+}
+
+// An update in place keeps the file's inode, and an entry without an inode
+// cannot tell which file it is: a clean handle installs both, as before.
+func TestPeerUpdateOfTheSameFileStillInstalls(t *testing.T) {
+	for _, name := range []string{"same-inode", "event-without-inode", "handle-without-inode"} {
+		t.Run(name, func(t *testing.T) {
+			wfs := newInvalidateTestWFS(t)
+
+			path := util.FullPath("/dir/file")
+			inode := wfs.inodeToPath.Lookup(path, time.Now().Unix(), false, false, 0, true)
+			base := flushConditionEntry(1)
+			update := flushConditionEntry(7)
+			switch name {
+			case "event-without-inode":
+				update.Attributes.Inode = 0
+			case "handle-without-inode":
+				base.Attributes.Inode = 0
+				update.Attributes.Inode = 99
+			}
+			wfs.mapPbIdFromFilerToLocal(base)
+			fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, base, 0, 0)
+
+			resp := &filer_pb.SubscribeMetadataResponse{
+				Directory: "/dir",
+				TsNs:      1500,
+				EventNotification: &filer_pb.EventNotification{
+					OldEntry:      flushConditionEntry(1),
+					NewEntry:      update,
+					NewParentPath: "/dir",
+				},
+			}
+			if err := wfs.metaCache.ApplyMetadataResponse(context.Background(), resp, meta_cache.SubscriberMetadataResponseApplyOptions); err != nil {
+				t.Fatalf("apply: %v", err)
+			}
+			wfs.metaCache.WaitForEntryInvalidations()
+
+			if fh.isDeleted {
+				t.Fatal("handle marked deleted by an update of its own file; later writes would be dropped")
+			}
+			if got := chunkFileKeys(fh.GetEntry().GetEntry()); len(got) != 1 || got[0] != 7 {
+				t.Fatalf("handle chunks %v, want the update's", got)
+			}
+			if got, found := wfs.inodeToPath.GetInode(path); !found || got != inode {
+				t.Fatalf("the name answers to inode %d (found %v), want the handle's %d", got, found, inode)
+			}
+		})
 	}
 }
 

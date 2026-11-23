@@ -1174,6 +1174,20 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		}
 		return
 	}
+	// Another file has the name: a peer renamed it over the one this handle
+	// has open, from a source this mount never looked up, so no MovePath
+	// reported the handle's inode as replaced. Installing the newcomer would
+	// send every later write, truncate and chmod through this descriptor to
+	// it. The handle's file is gone instead, as after a delete, and its inode
+	// gives the name up as a replaced rename target does: the kernel walks
+	// the path again and reaches the newcomer under an inode of its own.
+	if replacedByAnotherFile(candidate, base) {
+		fh.isDeleted = true
+		fh.deleteEpoch++
+		wfs.inodeToPath.RemovePath(filePath, nil)
+		fh.advanceEntryVersion(candidateTsNs, 0)
+		return
+	}
 	// Dirty pages overlay content, so only a content change invalidates them:
 	// a metadata-only event (chmod, touch, or a committed copy's own event
 	// against an approximate base) leaves them valid.
@@ -1185,6 +1199,15 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	fh.baseEntry.Store(proto.Clone(candidate).(*filer_pb.Entry))
 	fh.advanceEntryVersion(candidateTsNs, 0)
 	return
+}
+
+// replacedByAnotherFile reports whether stored is provably not the file base
+// was: both carry an inode and the two differ. An update in place keeps the
+// inode, so does a hard link made of the file; an entry without one cannot
+// tell, and is not taken for another file.
+func replacedByAnotherFile(stored, base *filer_pb.Entry) bool {
+	storedInode, baseInode := stored.GetAttributes().GetInode(), base.GetAttributes().GetInode()
+	return storedInode != 0 && baseInode != 0 && storedInode != baseInode
 }
 
 // cachedEntrySince returns the meta cache's entry at path when its directory is
