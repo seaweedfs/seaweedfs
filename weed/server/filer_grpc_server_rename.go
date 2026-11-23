@@ -294,8 +294,8 @@ type metadataEvent struct {
 	oldEntry     *filer.Entry
 	newEntry     *filer.Entry
 	deleteChunks bool
-	// the old entry's remote object is deleted once the rename has committed:
-	// it was copied to the new key, and a rename that fails must not lose it
+	// The old entry's remote object is deleted once the rename has committed:
+	// it was copied to the new key, or belonged to an overwritten target.
 	deleteOldRemote bool
 }
 
@@ -468,7 +468,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 
 	var existingTarget *filer.Entry
 	if !skipTargetLookup {
-		if targetEntry, findErr := fs.filer.FindEntry(ctx, newPath); findErr == nil {
+		if targetEntry, findErr := fs.filer.FindEntryForOverwrite(ctx, newPath); findErr == nil {
 			existingTarget = targetEntry.ShallowClone()
 		} else if findErr != filer_pb.ErrNotFound {
 			return findErr
@@ -524,6 +524,12 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 
 	if existingTarget != nil && !inPlace {
 		targetCtx := filer.WithSuppressedMetadataEvents(ctx)
+		// A remote delete cannot be rolled back with the target's metadata.
+		// The queued target event performs it after commit unless a remote
+		// copy replaces that object (in which case it must be kept).
+		if existingTarget.Remote != nil {
+			targetCtx = filer.WithKeepRemoteObject(targetCtx)
+		}
 		if copiedRemote != nil || deferredCopy {
 			// the copy has replaced or still needs the target's object; keep it
 			targetCtx = filer.WithKeepRemoteObject(targetCtx)
@@ -652,8 +658,9 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 
 	if existingTarget != nil {
 		*metadataEvents = append(*metadataEvents, metadataEvent{
-			oldEntry:     existingTarget,
-			deleteChunks: true,
+			oldEntry:        existingTarget,
+			deleteChunks:    true,
+			deleteOldRemote: existingTarget.Remote != nil && copiedRemote == nil && !deferredCopy,
 		})
 	}
 	*metadataEvents = append(*metadataEvents, metadataEvent{
