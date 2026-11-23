@@ -260,3 +260,11 @@ func TestFixTruncatedDeleteKeepsKeyDeleted(t *testing.T) {
 		}
 	}
 }
+
+func TestSaveToIdxReportsOpenError(t *testing.T) {
+	nm := needle_map.NewMemDb()
+	defer nm.Close()
+	if err := SaveToIdx(&VolumeFileScanner4Fix{nm: nm}, t.TempDir()); err == nil {
+		t.Error("expected an error when the .idx path cannot be opened")
+	}
+}

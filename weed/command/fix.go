@@ -197,7 +197,7 @@ func fixEcxFromShardsInDir(basePath string, files []fs.DirEntry) bool {
 func SaveToIdx(scaner *VolumeFileScanner4Fix, idxName string) (ret error) {
 	idxFile, err := os.OpenFile(idxName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
-		return
+		return err
 	}
 	defer func() {
 		idxFile.Close()
