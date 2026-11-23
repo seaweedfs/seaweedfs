@@ -189,6 +189,10 @@ spec:
               {{- else }}
               -masters={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ include "seaweedfs.namespace" $ }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }} \
               {{- end }}
+              {{- /* admin lists the filers and S3 gateways the workers use from this group */}}
+              {{- if .Values.filer.filerGroup }}
+              -filerGroup={{ .Values.filer.filerGroup }} \
+              {{- end }}
               {{- if $urlPrefix }}
               -urlPrefix={{ $urlPrefix }} \
               {{- end }}
