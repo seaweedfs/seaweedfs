@@ -54,10 +54,12 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 			return false
 		}
 		for _, opt := range option.extraOptions {
-			switch opt {
-			case "allow_other", "allow_root", "rw":
-				glog.Errorf("-sseS3ReadEndpoint is incompatible with mount option %q", opt)
-				return false
+			for _, token := range strings.Split(opt, ",") {
+				switch token {
+				case "allow_other", "allow_root", "rw":
+					glog.Errorf("-sseS3ReadEndpoint is incompatible with mount option %q", token)
+					return false
+				}
 			}
 		}
 		var err error
