@@ -18,23 +18,33 @@ import (
 )
 
 const (
-	subscriptionFilerKey = "subscription-filer-key"
-	subscriptionTokenKey = "subscription-token-key"
+	subscriptionFilerKey         = "subscription-filer-key"
+	subscriptionPreviousFilerKey = "subscription-previous-filer-key"
+	subscriptionTokenKey         = "subscription-token-key"
 )
 
 func subscriptionScopeServer(withSubscriptionVerifier bool) *filerGrpcScope {
+	return subscriptionScopeServerWithKeys(
+		withSubscriptionVerifier,
+		security.SigningKey(subscriptionFilerKey),
+		nil,
+		security.SigningKey(subscriptionTokenKey),
+	)
+}
+
+func subscriptionScopeServerWithKeys(withSubscriptionVerifier bool, filerKey, previousFilerKey, subscribeKey security.SigningKey) *filerGrpcScope {
 	cfg := scopeConfig{
 		verificationKeys: func() (security.SigningKey, security.SigningKey) {
-			return security.SigningKey(subscriptionFilerKey), nil
+			return filerKey, previousFilerKey
 		},
 	}
 	if withSubscriptionVerifier {
 		cfg.subscriptionScope = func(ctx context.Context, method string) (*security.MetadataSubscriptionScope, error) {
 			return security.CheckGrpcMetadataSubscription(
 				ctx,
-				security.SigningKey(subscriptionTokenKey),
-				security.SigningKey(subscriptionFilerKey),
-				nil,
+				subscribeKey,
+				filerKey,
+				previousFilerKey,
 				method,
 			)
 		}
@@ -163,6 +173,97 @@ func TestScopeRejectsGeneralFilerScopesOnSubscriptionsWithOrWithoutVerifier(t *t
 					err := callSubscriptionStream(t, scope, method, subscriptionStreamContext(token), func() { called = true })
 					if status.Code(err) != codes.PermissionDenied || called {
 						t.Fatalf("general scoped subscription err=%v called=%v, want PermissionDenied before dispatch", err, called)
+					}
+				})
+			}
+		})
+	}
+}
+
+func subscriptionCompatibilityToken(t *testing.T, signingKey security.SigningKey, withJTI bool) string {
+	t.Helper()
+	if !withJTI {
+		token := string(security.GenJwtForMetadataSubscription(signingKey, 60, []string{aliceWS}))
+		if token == "" {
+			t.Fatal("failed to mint standard subscription token")
+		}
+		return token
+	}
+	claims := security.SeaweedFilerClaims{
+		AllowedPrefixes: []string{aliceWS},
+		AllowedMethods:  []string{security.MethodSubscribeMetadata, security.MethodSubscribeLocalMetadata},
+		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        "subscription-compatibility",
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute)),
+		},
+	}
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(signingKey))
+	if err != nil {
+		t.Fatalf("failed to mint jti subscription token: %v", err)
+	}
+	return token
+}
+
+func TestScopeSubscriptionKeyOverlapCompatibilityMatrix(t *testing.T) {
+	type tokenKeyCase struct {
+		name         string
+		filerKey     security.SigningKey
+		previousKey  security.SigningKey
+		subscribeKey security.SigningKey
+	}
+	cases := []tokenKeyCase{
+		{
+			name:         "separate subscription key",
+			filerKey:     security.SigningKey(subscriptionFilerKey),
+			subscribeKey: security.SigningKey(subscriptionTokenKey),
+		},
+		{
+			name:         "current filer key",
+			filerKey:     security.SigningKey(subscriptionFilerKey),
+			subscribeKey: security.SigningKey(subscriptionFilerKey),
+		},
+		{
+			name:         "previous filer key",
+			filerKey:     security.SigningKey(subscriptionFilerKey),
+			previousKey:  security.SigningKey(subscriptionPreviousFilerKey),
+			subscribeKey: security.SigningKey(subscriptionPreviousFilerKey),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scope := subscriptionScopeServerWithKeys(true, tc.filerKey, tc.previousKey, tc.subscribeKey)
+			for _, withJTI := range []bool{false, true} {
+				t.Run(map[bool]string{false: "without-jti", true: "with-jti"}[withJTI], func(t *testing.T) {
+					token := subscriptionCompatibilityToken(t, tc.subscribeKey, withJTI)
+					for _, method := range []string{security.MethodSubscribeMetadata, security.MethodSubscribeLocalMetadata} {
+						t.Run(method, func(t *testing.T) {
+							// The existing dedicated verifier accepts every token in this matrix,
+							// including the overlapping-key+jti case. That case is ambiguous:
+							// resolve treats it as a general scoped filer token first.
+							dedicatedScope, dedicatedErr := security.CheckGrpcMetadataSubscription(
+								subscriptionStreamContext(token),
+								tc.subscribeKey,
+								tc.filerKey,
+								tc.previousKey,
+								method,
+							)
+							if dedicatedErr != nil || dedicatedScope == nil {
+								t.Fatalf("dedicated verifier err=%v scope=%v, want a subscription scope", dedicatedErr, dedicatedScope)
+							}
+
+							called := false
+							err := callSubscriptionStream(t, scope, method, subscriptionStreamContext(token), func() { called = true })
+							if withJTI && tc.name != "separate subscription key" {
+								if status.Code(err) != codes.PermissionDenied || called {
+									t.Fatalf("overlapping-key+jti err=%v called=%v, want PermissionDenied before dispatch", err, called)
+								}
+								return
+							}
+							if err != nil || !called {
+								t.Fatalf("subscription token err=%v called=%v, want handler dispatch", err, called)
+							}
+						})
 					}
 				})
 			}

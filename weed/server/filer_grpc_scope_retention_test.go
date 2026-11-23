@@ -184,7 +184,7 @@ func TestScopeRetentionRechecksCreateAndUpdateUnderPathLock(t *testing.T) {
 				}
 
 				called := false
-				_, err := scope.unary(scopedRetentionContext(), req, &grpc.UnaryServerInfo{
+				resp, err := scope.unary(scopedRetentionContext(), req, &grpc.UnaryServerInfo{
 					FullMethod: scopeFilerMethodPrefix + method,
 				}, func(handlerCtx context.Context, handlerReq any) (any, error) {
 					called = true
@@ -200,6 +200,12 @@ func TestScopeRetentionRechecksCreateAndUpdateUnderPathLock(t *testing.T) {
 				})
 				if err != nil || !called {
 					t.Fatalf("unchanged %s err=%v called=%v, want successful handler", method, err, called)
+				}
+				if method == "CreateEntry" {
+					createResp, ok := resp.(*filer_pb.CreateEntryResponse)
+					if !ok || createResp == nil || createResp.GetError() != "" || createResp.GetErrorCode() != filer_pb.FilerError_OK {
+						t.Fatalf("unchanged CreateEntry response = %#v, want empty error and FilerError_OK", resp)
+					}
 				}
 				got, findErr := store.FindEntry(context.Background(), util.FullPath(path))
 				if findErr != nil {
