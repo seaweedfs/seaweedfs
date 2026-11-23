@@ -17,6 +17,7 @@ var jwtSigningKeySettings = []string{
 	"jwt.filer_signing.previous_key",
 	"jwt.filer_signing.read.key",
 	"jwt.filer_signing.read.previous_key",
+	"jwt.filer_signing.subscribe.key",
 }
 
 // CheckFips140HmacKey returns an error naming setting when GODEBUG=fips140=only
