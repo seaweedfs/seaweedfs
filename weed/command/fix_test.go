@@ -7,12 +7,14 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 )
 
 // TestSaveToIdxWritesOffsetOrder guards that weed fix rebuilds the .idx as an
@@ -199,4 +201,23 @@ func TestFixIgnoreErrorReportsIncompleteScan(t *testing.T) {
 			t.Errorf("existing .idx changed: %q, %v", b, err)
 		}
 	})
+}
+
+func TestLocalDatSizeIgnoresRemoteTier(t *testing.T) {
+	dir := t.TempDir()
+	base, _ := writeFixTestVolume(t, dir, 2)
+	info, err := os.Stat(base + ".dat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := localDatSize(dir, "fix_7"); got != info.Size() {
+		t.Fatalf("localDatSize = %d, want %d", got, info.Size())
+	}
+	vi := &volume_server_pb.VolumeInfo{Files: []*volume_server_pb.RemoteFile{{BackendType: "s3", Key: "fix_7.dat", FileSize: uint64(info.Size()) * 2}}}
+	if err := volume_info.SaveVolumeInfo(base+".vif", vi); err != nil {
+		t.Fatal(err)
+	}
+	if got := localDatSize(dir, "fix_7"); got != 0 {
+		t.Errorf("localDatSize with a remote .dat = %d, want 0", got)
+	}
 }

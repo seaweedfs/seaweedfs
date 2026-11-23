@@ -229,6 +229,18 @@ func SaveToIdx(scaner *VolumeFileScanner4Fix, idxName string) (ret error) {
 	return nil
 }
 
+// localDatSize is the length of the .dat the scan reads, or 0 when the volume
+// is read from a remote tier.
+func localDatSize(basepath, baseFileName string) int64 {
+	if _, hasRemoteFile, _, _ := volume_info.MaybeLoadVolumeInfo(path.Join(basepath, baseFileName+".vif")); hasRemoteFile {
+		return 0
+	}
+	if info, err := os.Stat(path.Join(basepath, baseFileName+".dat")); err == nil {
+		return info.Size()
+	}
+	return 0
+}
+
 func doFixOneVolume(basepath string, baseFileName string, collection string, volumeId int64, fixIncludeDeleted bool) {
 	indexFileName := path.Join(basepath, baseFileName+".idx")
 
@@ -256,9 +268,7 @@ func doFixOneVolume(basepath string, baseFileName string, collection string, vol
 		nmDeleted:      nmDeleted,
 		includeDeleted: fixIncludeDeleted,
 	}
-	if info, err := os.Stat(path.Join(basepath, baseFileName+".dat")); err == nil {
-		scanner.datSize = info.Size()
-	}
+	scanner.datSize = localDatSize(basepath, baseFileName)
 
 	if err := storage.ScanVolumeFile(basepath, collection, vid, storage.NeedleMapInMemory, scanner); err != nil {
 		err := fmt.Errorf("scan .dat File: %w", err)
