@@ -68,7 +68,10 @@ func (s *Store) forwardEcDeleteOfDeletedNeedle(ecVolume *erasure_coding.EcVolume
 	reported := false
 	var errs []error
 	for _, holder := range holders {
-		if _, deleted, _ := s.doReadRemoteEcShardInterval(context.Background(), holder, needleId, ecVolume.VolumeId, shardId, make([]byte, 1), offset, ecVolume.EncodeTsNs); !deleted {
+		ctx, cancel := context.WithTimeout(context.Background(), ecReadHintTimeout)
+		_, deleted, _ := s.doReadRemoteEcShardInterval(ctx, holder, needleId, ecVolume.VolumeId, shardId, make([]byte, 1), offset, ecVolume.EncodeTsNs)
+		cancel()
+		if !deleted {
 			continue
 		}
 		reported = true

@@ -477,3 +477,49 @@ func TestDeleteEcShardNeedleForwardsToTheHolderReadingDeleted(t *testing.T) {
 		t.Errorf("forwarded %d deletes to the unreadable holder, want 0", unreadable.deletes.Load())
 	}
 }
+
+// A holder that stops answering after the reporter took the delete does not
+// hold the delete's answer.
+func TestDeleteEcShardNeedleProbeSkipsAStalledHolder(t *testing.T) {
+	store := newTestStore(t, 1)
+	store.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+	const vid = needle.VolumeId(10)
+	_, n := writeEcVolumeFiles(t, store.Locations[0].Directory, vid)
+	for shardId := 1; shardId < erasure_coding.TotalShardsCount; shardId++ {
+		if err := store.MountEcShards("", vid, erasure_coding.ShardId(shardId), ""); err != nil {
+			t.Fatalf("mount shard %d: %v", shardId, err)
+		}
+	}
+	ecVolume, found := store.Locations[0].FindEcVolume(vid)
+	if !found {
+		t.Fatal("ec volume not mounted")
+	}
+	defer func(old time.Duration) { ecReadHintTimeout = old }(ecReadHintTimeout)
+	ecReadHintTimeout = 200 * time.Millisecond
+
+	reporter := &partlyDeletedEcShardPeer{}
+	reporterAddr := serveEcShardPeer(t, reporter)
+	seedShardLocations(ecVolume, reporterAddr)
+	ecVolume.ShardLocationsLock.Lock()
+	ecVolume.ShardLocations[0] = []pb.ServerAddress{reporterAddr, serveEcShardPeer(t, stalledPeer{})}
+	ecVolume.ShardLocationsLock.Unlock()
+
+	done := make(chan error, 1)
+	go func() {
+		got := new(needle.Needle)
+		got.Id = n.Id
+		_, err := store.DeleteEcShardNeedle(ecVolume, got, n.Cookie)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != ErrorDeleted {
+			t.Fatalf("delete of a needle read as deleted returned %v, want %v", err, ErrorDeleted)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("delete still waiting on the stalled holder")
+	}
+	if reporter.deletes.Load() != 1 {
+		t.Errorf("forwarded %d deletes to the holder reading it deleted, want 1", reporter.deletes.Load())
+	}
+}
