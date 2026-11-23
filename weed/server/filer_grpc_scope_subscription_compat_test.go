@@ -141,20 +141,31 @@ func TestScopeDedicatedSubscriptionTokenSurvivesVerifiedPeerFallback(t *testing.
 		}
 	})
 
-	t.Run("invalid token is still denied", func(t *testing.T) {
+	t.Run("invalid token keeps the verified peer's access", func(t *testing.T) {
 		scope := subscriptionScopeServer(true)
-		stream := &scopeExpiryServerStream{ctx: verifiedSubscriptionContext(wrongToken)}
 		called := false
-		err := scope.stream(nil, stream, &grpc.StreamServerInfo{
-			FullMethod: scopeFilerMethodPrefix + security.MethodSubscribeMetadata,
-		}, func(any, grpc.ServerStream) error {
-			called = true
-			return nil
-		})
-		if status.Code(err) != codes.Unauthenticated || called {
-			t.Fatalf("mTLS invalid dedicated subscription err=%v called=%v, want Unauthenticated before dispatch", err, called)
+		err := callSubscriptionStream(t, scope, security.MethodSubscribeMetadata, verifiedSubscriptionContext(wrongToken), func() { called = true })
+		if err != nil || !called {
+			t.Fatalf("mTLS invalid dedicated subscription err=%v called=%v, want handler dispatch", err, called)
 		}
 	})
+}
+
+func TestScopeSubscriptionWithoutSubscribeKeyIgnoresForeignBearer(t *testing.T) {
+	foreign := string(security.GenJwtForFilerAdmin(security.SigningKey("other-cluster-filer-key"), 60))
+	if foreign == "" {
+		t.Fatal("failed to mint foreign admin token")
+	}
+	scope := subscriptionScopeServerWithKeys(true, security.SigningKey(subscriptionFilerKey), nil, nil)
+	for _, method := range []string{security.MethodSubscribeMetadata, security.MethodSubscribeLocalMetadata} {
+		t.Run(method, func(t *testing.T) {
+			called := false
+			err := callSubscriptionStream(t, scope, method, subscriptionStreamContext(foreign), func() { called = true })
+			if err != nil || !called {
+				t.Fatalf("foreign bearer without subscribe key err=%v called=%v, want handler dispatch", err, called)
+			}
+		})
+	}
 }
 
 func TestScopeRejectsGeneralFilerScopesOnSubscriptionsWithOrWithoutVerifier(t *testing.T) {

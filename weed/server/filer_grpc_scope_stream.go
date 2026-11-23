@@ -15,7 +15,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/peer"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -26,17 +25,13 @@ func (s *filerGrpcScope) stream(srv any, ss grpc.ServerStream, info *grpc.Stream
 	}
 	sc, err := s.resolve(ss.Context())
 	if err != nil {
-		// Preserve the existing dedicated subscription-token verifier. General
-		// filer scopes still reach the ruleless-method denial below; this seam
-		// only accepts a credential verified as a dedicated subscription scope.
+		// A bearer that is no filer scope leaves a subscription to the existing
+		// verifier, as before scoped tokens: it admits an mTLS peer, or any
+		// caller when no subscription key is set, whatever the bearer.
 		method := strings.TrimPrefix(info.FullMethod, scopeFilerMethodPrefix)
 		if s.cfg.subscriptionScope != nil && (method == "SubscribeMetadata" || method == "SubscribeLocalMetadata") {
-			if raw, authErr := bearerFromMetadata(ss.Context()); authErr == nil && raw != "" {
-				// Authenticate the token itself even on mTLS: the existing verifier
-				// otherwise returns an unrestricted nil scope for a verified peer.
-				// The handler still receives the original peer/context unchanged.
-				verifyCtx := peer.NewContext(ss.Context(), &peer.Peer{})
-				if sub, subErr := s.cfg.subscriptionScope(verifyCtx, method); subErr == nil && sub != nil {
+			if _, authErr := bearerFromMetadata(ss.Context()); authErr == nil {
+				if _, subErr := s.cfg.subscriptionScope(ss.Context(), method); subErr == nil {
 					return handler(srv, ss)
 				}
 			}
