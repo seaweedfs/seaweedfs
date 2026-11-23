@@ -1146,7 +1146,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	} else {
 		offset = int64(filer.TotalSize(entry.GetChunks()))
 	}
-	if err := checkScopeRetainedData(ctx, entry, &filer_pb.Entry{Chunks: req.Chunks}); err != nil {
+	if err := checkScopeRetainedData(ctx, entry, &filer_pb.Entry{Chunks: req.Chunks, HardLinkId: entry.HardLinkId, HardLinkCounter: entry.HardLinkCounter}); err != nil {
 		return &filer_pb.AppendToEntryResponse{}, err
 	}
 

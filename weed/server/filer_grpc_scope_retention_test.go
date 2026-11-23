@@ -218,3 +218,70 @@ func TestScopeRetentionRechecksCreateAndUpdateUnderPathLock(t *testing.T) {
 		}
 	}
 }
+
+func TestScopeKeepsHardLink(t *testing.T) {
+	const storedFileID = "5,0c00000055"
+	id := []byte("shared-hard-link")
+	linked := &filer_pb.Entry{HardLinkId: id, HardLinkCounter: 2, Chunks: []*filer_pb.FileChunk{{FileId: storedFileID}}}
+	cases := []struct {
+		name      string
+		stored    *filer_pb.Entry
+		requested *filer_pb.Entry
+		wantErr   bool
+	}{
+		{name: "unlinked entry", stored: entryWith("f", storedFileID), requested: entryWith("f", storedFileID)},
+		{name: "same link and count", stored: linked, requested: &filer_pb.Entry{HardLinkId: id, HardLinkCounter: 2, Chunks: linked.Chunks}},
+		{name: "lowered count", stored: linked, requested: &filer_pb.Entry{HardLinkId: id, HardLinkCounter: 1, Chunks: linked.Chunks}, wantErr: true},
+		{name: "lowered count without chunks", stored: linked, requested: &filer_pb.Entry{HardLinkId: id, HardLinkCounter: 1}, wantErr: true},
+		{name: "chunks detached from the link", stored: linked, requested: entryWith("f", storedFileID), wantErr: true},
+		{name: "link dropped with the data", stored: linked, requested: &filer_pb.Entry{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := scopeKeepsHardLink(tc.stored, tc.requested)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("scopeKeepsHardLink err=%v, wantErr=%v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestScopeUpdateCannotFreeAnotherNamesHardLinkData(t *testing.T) {
+	const storedFileID = "5,0c00000055"
+	id := []byte("shared-hard-link")
+	for _, tc := range []struct {
+		name  string
+		entry *filer_pb.Entry
+	}{
+		{name: "lowered link count", entry: &filer_pb.Entry{Name: "f", HardLinkId: id, HardLinkCounter: 1, Chunks: []*filer_pb.FileChunk{{FileId: storedFileID}}}},
+		{name: "chunks detached from the link", entry: entryWith("f", storedFileID)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newRenameTestStore()
+			store.kv = make(map[string][]byte)
+			fs, scope := newScopeRetentionServer(t, store)
+			for _, p := range []string{aliceWS + "/f", "/bob/g"} {
+				e := &filer.Entry{FullPath: util.FullPath(p), HardLinkId: id, HardLinkCounter: 2, Attr: filer.Attr{Mode: 0644}, Chunks: []*filer_pb.FileChunk{{FileId: storedFileID}}}
+				if err := fs.filer.Store.InsertEntry(context.Background(), e); err != nil {
+					t.Fatalf("insert %s: %v", p, err)
+				}
+			}
+			req := &filer_pb.UpdateEntryRequest{Directory: aliceWS, Entry: tc.entry}
+			_, err := scope.unary(scopedRetentionContext(), req, &grpc.UnaryServerInfo{
+				FullMethod: scopeFilerMethodPrefix + "UpdateEntry",
+			}, func(handlerCtx context.Context, handlerReq any) (any, error) {
+				return fs.UpdateEntry(handlerCtx, handlerReq.(*filer_pb.UpdateEntryRequest))
+			})
+			if status.Code(err) != codes.PermissionDenied {
+				t.Fatalf("UpdateEntry err=%v, want PermissionDenied", err)
+			}
+			got, findErr := fs.filer.FindEntry(context.Background(), util.FullPath(aliceWS+"/f"))
+			if findErr != nil {
+				t.Fatalf("find %s/f: %v", aliceWS, findErr)
+			}
+			if !bytes.Equal(got.HardLinkId, id) || got.HardLinkCounter != 2 {
+				t.Fatalf("%s/f link=%x count=%d, want %x and 2", aliceWS, got.HardLinkId, got.HardLinkCounter, id)
+			}
+		})
+	}
+}

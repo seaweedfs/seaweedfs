@@ -32,6 +32,26 @@ func scopeRetainsData(stored, requested *filer_pb.Entry) error {
 	return nil
 }
 
+// scopeKeepsHardLink refuses a write that changes a stored hard link's count
+// or keeps its chunks on a name detached from it. Either way a later delete of
+// this name would delete chunks that another name of the file still reads.
+func scopeKeepsHardLink(stored, requested *filer_pb.Entry) error {
+	id := stored.GetHardLinkId()
+	if len(id) == 0 {
+		return nil
+	}
+	if bytes.Equal(requested.GetHardLinkId(), id) {
+		if requested.GetHardLinkCounter() != stored.GetHardLinkCounter() {
+			return fmt.Errorf("the link count of hard link %x cannot be changed", id)
+		}
+		return nil
+	}
+	if len(requested.GetChunks()) > 0 {
+		return fmt.Errorf("the chunks of hard link %x cannot be detached from it", id)
+	}
+	return nil
+}
+
 func checkScopeRetainedData(ctx context.Context, stored *filer.Entry, requested *filer_pb.Entry) error {
 	if !scopeKeepOnly(ctx) {
 		return nil
@@ -42,6 +62,9 @@ func checkScopeRetainedData(ctx context.Context, stored *filer.Entry, requested 
 	}
 	if err := scopeRetainsData(current, requested); err != nil {
 		return status.Errorf(codes.PermissionDenied, "filer: retained data changed before commit: %v", err)
+	}
+	if err := scopeKeepsHardLink(current, requested); err != nil {
+		return status.Errorf(codes.PermissionDenied, "filer: %v", err)
 	}
 	return nil
 }
