@@ -139,7 +139,8 @@ type FilerServer struct {
 	grpcDialOptionVolume grpc.DialOption
 	grpcDialOptionS3     grpc.DialOption
 
-	grpcScope *filerGrpcScope
+	grpcScope         *filerGrpcScope
+	grpcScopeSettings atomic.Pointer[grpcScopeSettings]
 
 	// metrics read from the master
 	metricsAddress     string
@@ -335,9 +336,12 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.basicAuthFile = basicAuthFile
 	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec, "", "")
 
+	fs.loadGrpcScopeConfig(v)
 	fs.grpcScope = newFilerGrpcScope(scopeConfig{
-		verificationKeys:  func() (security.SigningKey, security.SigningKey) { return fs.filerGuard.VerificationKeys(true) },
+		verificationKeys:  fs.grpcScopeVerificationKeys,
 		subscriptionScope: fs.metadataSubscriptionScope,
+		leeway:            func() time.Duration { return fs.grpcScopeSettings.Load().leeway },
+		assignLifetime:    func() time.Duration { return fs.grpcScopeSettings.Load().assignLifetime },
 	}, fs)
 
 	fs.checkWithMaster()
@@ -812,5 +816,48 @@ func (fs *FilerServer) Reload() {
 		"",
 		"",
 	)
+	if fresh, used := util.ReadConfiguration("security", ""); used != "" {
+		fs.loadGrpcScopeConfig(fresh)
+	}
 	util_http.ReloadJwtSigningReadConfig()
+}
+
+// grpcScopeSettings is replaced as one snapshot on configuration reload.
+type grpcScopeSettings struct {
+	key            security.SigningKey
+	previous       security.SigningKey
+	leeway         time.Duration
+	assignLifetime time.Duration
+}
+
+func (fs *FilerServer) loadGrpcScopeConfig(v *util.ViperProxy) {
+	v.SetDefault("jwt.filer_signing.assign_expires_after_seconds", int(security.DefaultAssignTokenLifetime/time.Second))
+	v.SetDefault("jwt.filer_signing.clock_leeway_seconds", 30)
+	key := security.SigningKey(v.GetString("jwt.filer_signing.grpc_key"))
+	// Removing a current key must not silently disable verification. Setting
+	// grpc_key explicitly to empty switches back to the filer's HTTP key.
+	if old := fs.grpcScopeSettings.Load(); old != nil && !v.IsSet("jwt.filer_signing.grpc_key") {
+		key = old.key
+	}
+	lifetime := time.Duration(v.GetInt("jwt.filer_signing.assign_expires_after_seconds")) * time.Second
+	if lifetime <= 0 {
+		lifetime = security.DefaultAssignTokenLifetime
+	}
+	leeway := time.Duration(v.GetInt("jwt.filer_signing.clock_leeway_seconds")) * time.Second
+	if leeway < 0 {
+		leeway = 0
+	}
+	fs.grpcScopeSettings.Store(&grpcScopeSettings{
+		key:            key,
+		previous:       security.SigningKey(v.GetString("jwt.filer_signing.previous_key")),
+		leeway:         leeway,
+		assignLifetime: lifetime,
+	})
+}
+
+func (fs *FilerServer) grpcScopeVerificationKeys() (security.SigningKey, security.SigningKey) {
+	if settings := fs.grpcScopeSettings.Load(); settings != nil && len(settings.key) > 0 {
+		return settings.key, settings.previous
+	}
+	return fs.filerGuard.VerificationKeys(true)
 }

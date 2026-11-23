@@ -1,13 +1,17 @@
 package security
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 )
@@ -216,6 +220,96 @@ func verificationKeySet(signingKey SigningKey, previousKeys []SigningKey) jwt.Ve
 // leeway support, using the same verification path as DecodeJwt.
 func DecodeJwtWith(signingKey, previousKey SigningKey, tokenString EncodedJwt, claims jwt.Claims, leeway time.Duration) (*jwt.Token, error) {
 	return decodeJwt(signingKey, []SigningKey{previousKey}, tokenString, claims, jwt.WithLeeway(leeway))
+}
+
+const DefaultAssignTokenLifetime = 24 * time.Hour
+
+// SeaweedAssignClaims is an assignment proof returned with AssignVolume to
+// the holder of a scoped filer token. The holder presents it when storing the
+// assigned chunk, and any filer with the signing key can verify it without
+// keeping assignment state.
+type SeaweedAssignClaims struct {
+	Fid   string `json:"fid"`
+	Count int32  `json:"cnt,omitempty"`
+	jwt.RegisteredClaims
+}
+
+// AssignSigningKey derives the signing key for assignment proofs from the
+// filer key. Domain separation prevents a proof from being accepted as any
+// other filer, admin, or volume credential.
+func AssignSigningKey(filerKey SigningKey) SigningKey {
+	if len(filerKey) == 0 {
+		return nil
+	}
+	h := hmac.New(sha256.New, []byte(filerKey))
+	_, _ = h.Write([]byte("seaweedfs/filer/assign"))
+	return SigningKey(h.Sum(nil))
+}
+
+// GenJwtForAssign mints an expiring assignment proof for fileID and holder.
+// A non-positive lifetime uses the safe default rather than minting a proof
+// without an expiry. count covers fileID and the derived fileID_N ids.
+func GenJwtForAssign(filerKey SigningKey, lifetime time.Duration, fileID, holder string, count int32) EncodedJwt {
+	key := AssignSigningKey(filerKey)
+	if len(key) == 0 || fileID == "" || holder == "" || count < 1 {
+		return ""
+	}
+	if lifetime <= 0 {
+		lifetime = DefaultAssignTokenLifetime
+	}
+	now := time.Now()
+	claims := SeaweedAssignClaims{
+		Fid:   fileID,
+		Count: count,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        holder,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(lifetime)),
+		},
+	}
+	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	encoded, err := t.SignedString([]byte(key))
+	if err != nil {
+		glog.V(0).Infof("Failed to sign assignment claims %+v: %v", t.Claims, err)
+		return ""
+	}
+	return EncodedJwt(encoded)
+}
+
+// VerifyAssignJwt reports whether token is a valid assignment proof for
+// fileID and holder under the current or previous filer key. A suffixed file
+// id is accepted only when its suffix is the canonical decimal form of an
+// index in [1, Count).
+func VerifyAssignJwt(filerKey, previousFilerKey SigningKey, token EncodedJwt, fileID, holder string, leeway time.Duration) bool {
+	if (len(filerKey) == 0 && len(previousFilerKey) == 0) || token == "" || fileID == "" || holder == "" {
+		return false
+	}
+	// DecodeJwtWith includes its primary key in the verification set. Never
+	// give it an empty primary key, including during a previous-only window.
+	if len(filerKey) == 0 {
+		filerKey, previousFilerKey = previousFilerKey, nil
+	}
+	claims := &SeaweedAssignClaims{}
+	parsed, err := DecodeJwtWith(AssignSigningKey(filerKey), AssignSigningKey(previousFilerKey), token, claims, leeway)
+	if err != nil || parsed == nil || !parsed.Valid || claims.ExpiresAt == nil || claims.Count < 1 || claims.ID != holder {
+		return false
+	}
+	base, err := needle.ParseFileIdFromString(claims.Fid)
+	if err != nil || base.String() != claims.Fid {
+		return false
+	}
+	if suffix, ok := strings.CutPrefix(fileID, claims.Fid+"_"); ok {
+		n, err := strconv.ParseUint(suffix, 10, 31)
+		return err == nil && n >= 1 && strconv.FormatUint(n, 10) == suffix &&
+			n < uint64(claims.Count) && n <= ^uint64(0)-uint64(base.Key)
+	}
+	// Structured FileChunk.Fid values render an allocated suffix as base.Key+N,
+	// with the same volume and cookie. Compare that exact range without an
+	// overflowing addition; do not accept noncanonical string aliases.
+	requested, err := needle.ParseFileIdFromString(fileID)
+	return err == nil && requested.String() == fileID && requested.VolumeId == base.VolumeId &&
+		requested.Cookie == base.Cookie && requested.Key >= base.Key &&
+		uint64(requested.Key-base.Key) < uint64(claims.Count)
 }
 
 // FilerJwtProvider signs the credential a filer's HTTP API expects. A nil

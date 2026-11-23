@@ -103,15 +103,28 @@ previous_key = ""
 # Filesystem gRPC callers may send authorization: Bearer <token> signed with
 # this key. allowed_prefixes grant read/write paths; read_prefixes grant reads.
 # allowed_methods optionally restricts gRPC method names. Scoped tokens require
-# jti and exp, cannot introduce new chunk ids, and cannot call unruled methods.
+# jti and exp, need assignment proofs for new chunk ids, and cannot call unruled
+# methods. New inline content is allowed within the token's writable paths.
 # Calls without a token retain their existing behavior. This is scope enforcement,
 # not mandatory authentication; restrict network access to the filer as before.
-# Rolling upgrades: older filers treat a read_prefixes-only token as an admin
-# token. Mint read-only tokens only after every filer runs this version or newer.
+# Rolling upgrades: enable scoped writers only after every filer runs this
+# version or newer. Scope-only filers refuse new chunk ids even with a proof;
+# older filers without scope enforcement treat scoped tokens as unscoped.
 [jwt.filer_signing]
 key = ""
 expires_after_seconds = 10           # seconds
 previous_key = ""
+# Optional filesystem gRPC signing key; when unset, key above is used. Setting
+# this alone enables gRPC scope checks without changing HTTP authentication.
+# previous_key verifies the prior gRPC key while it remains configured.
+# grpc_key = ""
+# AssignVolume returns a holder-bound proof in assign_auth. Return it under
+# the chunk's file id in chunk_auth when storing the entry. Auth remains the
+# separate volume-upload credential. Proofs always expire: zero or negative
+# lifetime uses the default of 86400 seconds.
+# assign_expires_after_seconds = 86400
+# Clock-skew allowance for scope and proof validation; negative means zero.
+# clock_leeway_seconds = 30
 
 # If this JWT key is configured, Filer only accepts reads over HTTP if they are signed with this JWT:
 # - f.e. the S3 API Shim generates the JWT

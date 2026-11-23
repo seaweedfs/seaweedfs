@@ -300,7 +300,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	if err := checkScopeHardLinkWrite(ctx, existing, req.Entry); err != nil {
 		return &filer_pb.CreateEntryResponse{}, err
 	}
-	if err := checkScopeRetainedData(ctx, existing, req.Entry); err != nil {
+	if err := checkScopeRetainedData(ctx, existing, req.Entry, req.GetChunkAuth()); err != nil {
 		return &filer_pb.CreateEntryResponse{}, err
 	}
 
@@ -1012,7 +1012,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	if err := checkScopeHardLinkWrite(ctx, entry, req.Entry); err != nil {
 		return &filer_pb.UpdateEntryResponse{}, err
 	}
-	if err := checkScopeRetainedData(ctx, entry, req.Entry); err != nil {
+	if err := checkScopeRetainedData(ctx, entry, req.Entry, req.GetChunkAuth()); err != nil {
 		return &filer_pb.UpdateEntryResponse{}, err
 	}
 
@@ -1164,7 +1164,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	if err := checkScopeHardLinkWrite(ctx, entry, &filer_pb.Entry{Chunks: req.Chunks, HardLinkId: entry.HardLinkId, HardLinkCounter: entry.HardLinkCounter}); err != nil {
 		return &filer_pb.AppendToEntryResponse{}, err
 	}
-	if err := checkScopeRetainedData(ctx, entry, &filer_pb.Entry{Chunks: req.Chunks, HardLinkId: entry.HardLinkId, HardLinkCounter: entry.HardLinkCounter}); err != nil {
+	if err := checkScopeRetainedData(ctx, entry, &filer_pb.Entry{Chunks: req.Chunks, HardLinkId: entry.HardLinkId, HardLinkCounter: entry.HardLinkCounter}, req.GetChunkAuth()); err != nil {
 		return &filer_pb.AppendToEntryResponse{}, err
 	}
 
@@ -1311,6 +1311,9 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 }
 
 func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVolumeRequest) (resp *filer_pb.AssignVolumeResponse, err error) {
+	if err := fs.checkScopeWorm(ctx, req.GetPath()); err != nil {
+		return nil, err
+	}
 
 	so, err := fs.resolveAssignStorageOption(ctx, req)
 	if err != nil {

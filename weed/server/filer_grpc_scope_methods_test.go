@@ -108,11 +108,11 @@ func TestScopeRejectsInvalidScopedClaimsBeforeDispatch(t *testing.T) {
 	}
 }
 
-func TestScopeAssignVolumeAndMountRegisterAreRefused(t *testing.T) {
+func TestScopeAssignVolumeAllowedAndMountRegisterRefused(t *testing.T) {
 	h := newScopeHarness(t)
 	c := h.client(scopedToken("alice", time.Hour, []string{aliceWS}, nil))
 
-	expectScopeDenied(t, h, "AssignVolume", "AssignVolume for an in-scope path", func() error {
+	expectScopeForwarded(t, h, "AssignVolume", "AssignVolume for an in-scope path", func() error {
 		_, err := c.AssignVolume(scopeCtx(t), &filer_pb.AssignVolumeRequest{Path: aliceWS + "/new"})
 		return err
 	})

@@ -143,6 +143,7 @@ func scopeLooksLikeNewHardLinkId(id []byte) bool {
 // rules in unaryScoped are selected by that type; a new RPC reusing a request
 // type cannot inherit permission accidentally. All absent methods are refused.
 var scopeUnaryMethods = map[string]reflect.Type{
+	"AssignVolume":           reflect.TypeOf((*filer_pb.AssignVolumeRequest)(nil)),
 	"LookupDirectoryEntry":   reflect.TypeOf((*filer_pb.LookupDirectoryEntryRequest)(nil)),
 	"LookupDirectoryEntries": reflect.TypeOf((*filer_pb.LookupDirectoryEntriesRequest)(nil)),
 	"TouchAccessTime":        reflect.TypeOf((*filer_pb.TouchAccessTimeRequest)(nil)),

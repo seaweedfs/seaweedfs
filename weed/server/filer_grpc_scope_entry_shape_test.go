@@ -86,7 +86,7 @@ func TestScopeKeepOnlyEntryWrites(t *testing.T) {
 	})
 }
 
-func TestScopeInlineContentKeepOnly(t *testing.T) {
+func TestScopeInlineContentWithinWritablePrefix(t *testing.T) {
 	h := newScopeHarness(t)
 	c := h.client(scopedToken("alice", time.Hour, []string{aliceWS}, nil))
 	h.fake.put(aliceWS+"/inline", &filer_pb.Entry{Name: "inline", Content: []byte("old")})
@@ -98,17 +98,18 @@ func TestScopeInlineContentKeepOnly(t *testing.T) {
 		})
 		return err
 	})
-	expectScopeDenied(t, h, "UpdateEntry", "changed inline content", func() error {
+	expectScopeForwarded(t, h, "UpdateEntry", "changed inline content", func() error {
 		_, err := c.UpdateEntry(scopeCtx(t), &filer_pb.UpdateEntryRequest{
 			Directory: aliceWS,
 			Entry:     &filer_pb.Entry{Name: "inline", Content: []byte("new")},
 		})
 		return err
 	})
-	expectScopeDenied(t, h, "CreateEntry", "new inline content", func() error {
+	expectScopeForwarded(t, h, "CreateEntry", "new inline content", func() error {
 		_, err := c.CreateEntry(scopeCtx(t), &filer_pb.CreateEntryRequest{
-			Directory: aliceWS,
-			Entry:     &filer_pb.Entry{Name: "new-inline", Content: []byte("new")},
+			Directory:                aliceWS,
+			Entry:                    &filer_pb.Entry{Name: "new-inline", Content: []byte("new")},
+			SkipCheckParentDirectory: true,
 		})
 		return err
 	})

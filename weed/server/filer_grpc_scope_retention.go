@@ -12,11 +12,12 @@ import (
 )
 
 // scopeRetainsData is used at admission and again under the handler's path
-// lock. This prevents queued mutations on this filer from reviving content
-// removed after admission. Shared-store transactions remain a separate concern.
-func scopeRetainsData(stored, requested *filer_pb.Entry) error {
-	if len(requested.GetContent()) > 0 && !bytes.Equal(requested.GetContent(), stored.GetContent()) {
-		return fmt.Errorf("new inline content is not allowed")
+// lock. A new chunk requires a live assignment proof; retaining one requires
+// it still to be stored at the target. Inline bytes need no volume capability.
+// Shared-store transactions remain a separate concern.
+func scopeRetainsData(stored, requested *filer_pb.Entry, proven func(string) bool) error {
+	if err := scopeCheckEntryShape(requested); err != nil {
+		return err
 	}
 	known := make(map[string]bool, len(stored.GetChunks()))
 	for _, chunk := range stored.GetChunks() {
@@ -25,8 +26,9 @@ func scopeRetainsData(stored, requested *filer_pb.Entry) error {
 		}
 	}
 	for _, chunk := range requested.GetChunks() {
-		if chunk == nil || !known[chunk.GetFileIdString()] {
-			return fmt.Errorf("new chunk file ids are not allowed")
+		fid := chunk.GetFileIdString()
+		if !known[fid] && (proven == nil || !proven(fid)) {
+			return fmt.Errorf("%s %s", filer_pb.ChunkProofRefused, fid)
 		}
 	}
 	return nil
@@ -52,7 +54,7 @@ func scopeKeepsHardLink(stored, requested *filer_pb.Entry) error {
 	return nil
 }
 
-func checkScopeRetainedData(ctx context.Context, stored *filer.Entry, requested *filer_pb.Entry) error {
+func checkScopeRetainedData(ctx context.Context, stored *filer.Entry, requested *filer_pb.Entry, chunkAuth map[string]string) error {
 	if !scopeKeepOnly(ctx) {
 		return nil
 	}
@@ -60,7 +62,14 @@ func checkScopeRetainedData(ctx context.Context, stored *filer.Entry, requested 
 	if stored != nil {
 		current = stored.ToProtoEntry()
 	}
-	if err := scopeRetainsData(current, requested); err != nil {
+	var proven func(string) bool
+	if authority, ok := ctx.Value(scopeWriteAuthorityKey{}).(*scopeWriteAuthority); ok {
+		if authority.sc.expired() {
+			return scopeExpiredError(authority.sc)
+		}
+		proven = func(fid string) bool { return authority.s.proven(authority.sc, chunkAuth, fid) }
+	}
+	if err := scopeRetainsData(current, requested, proven); err != nil {
 		return status.Errorf(codes.PermissionDenied, "filer: retained data changed before commit: %v", err)
 	}
 	if err := scopeKeepsHardLink(current, requested); err != nil {

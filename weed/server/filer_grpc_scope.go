@@ -2,7 +2,7 @@ package weed_server
 
 // Scoped filer tokens on the filesystem gRPC service. Tokenless calls retain
 // their existing behavior. A verified scoped token is confined to its path and
-// method grants, and may only retain data already stored at the target path.
+// method grants. New chunk references require holder-bound assignment proofs.
 // Unruled methods are refused. Streams recheck expiry on every message.
 
 import (
@@ -59,6 +59,8 @@ type scopeConfig struct {
 	signingKey        func() security.SigningKey
 	verificationKeys  func() (security.SigningKey, security.SigningKey)
 	subscriptionScope func(context.Context, string) (*security.MetadataSubscriptionScope, error)
+	leeway            func() time.Duration
+	assignLifetime    func() time.Duration
 }
 
 // filerGrpcScope holds the interceptors. It keeps no state across calls.
@@ -91,6 +93,7 @@ type scope struct {
 	// its prefixes. An empty list means no additional method restriction.
 	methods []string
 	peer    string
+	leeway  time.Duration
 }
 
 // methodAllowed reports whether the token may call fullMethod. A token without
@@ -110,7 +113,7 @@ func (sc *scope) methodAllowed(fullMethod string) bool {
 	return false
 }
 
-func (sc *scope) expired() bool { return !time.Now().Before(sc.exp) }
+func (sc *scope) expired() bool { return !time.Now().Before(sc.exp.Add(sc.leeway)) }
 
 // scopeExpiredError ends a call or stream whose token passed its expiry while
 // in use; the holder reconnects with a renewed token.
@@ -147,15 +150,29 @@ func scopePeer(ctx context.Context) string {
 	return "unknown"
 }
 
+func (s *filerGrpcScope) verificationKeys() (security.SigningKey, security.SigningKey) {
+	if s.cfg.verificationKeys != nil {
+		return s.cfg.verificationKeys()
+	}
+	if s.cfg.signingKey != nil {
+		return s.cfg.signingKey(), nil
+	}
+	return nil, nil
+}
+
+func (s *filerGrpcScope) proven(sc *scope, chunkAuth map[string]string, fid string) bool {
+	raw := chunkAuth[fid]
+	if raw == "" {
+		return false
+	}
+	key, previous := s.verificationKeys()
+	return security.VerifyAssignJwt(key, previous, security.EncodedJwt(raw), fid, sc.id, sc.leeway)
+}
+
 // resolve authenticates the call. It returns (nil, nil) for an unscoped call,
 // a *scope for a scoped token, and an error that refuses the call.
 func (s *filerGrpcScope) resolve(ctx context.Context) (*scope, error) {
-	var key, previous security.SigningKey
-	if s.cfg.verificationKeys != nil {
-		key, previous = s.cfg.verificationKeys()
-	} else if s.cfg.signingKey != nil {
-		key = s.cfg.signingKey()
-	}
+	key, previous := s.verificationKeys()
 	if len(key) == 0 {
 		return nil, nil
 	}
@@ -166,8 +183,15 @@ func (s *filerGrpcScope) resolve(ctx context.Context) (*scope, error) {
 	if raw == "" {
 		return nil, nil
 	}
+	leeway := time.Duration(0)
+	if s.cfg.leeway != nil {
+		leeway = s.cfg.leeway()
+		if leeway < 0 {
+			leeway = 0
+		}
+	}
 	claims := &security.SeaweedFilerClaims{}
-	token, err := security.DecodeJwtWith(key, previous, security.EncodedJwt(raw), claims, 0)
+	token, err := security.DecodeJwtWith(key, previous, security.EncodedJwt(raw), claims, leeway)
 	if errors.Is(err, jwt.ErrTokenExpired) {
 		// The claims are parsed before validation, so the id names the holder.
 		glog.V(1).Infof("filer grpc: token %s (%s) expired", claims.ID, scopePeer(ctx))
@@ -197,7 +221,7 @@ func (s *filerGrpcScope) resolve(ctx context.Context) (*scope, error) {
 	if err != nil {
 		return nil, status.Errorf(codes.PermissionDenied, "filer: scoped token: %v", err)
 	}
-	return &scope{id: claims.ID, exp: claims.ExpiresAt.Time, grants: grants, methods: claims.AllowedMethods, peer: scopePeer(ctx)}, nil
+	return &scope{id: claims.ID, exp: claims.ExpiresAt.Time, grants: grants, methods: claims.AllowedMethods, peer: scopePeer(ctx), leeway: leeway}, nil
 }
 
 // deny logs and builds the refusal of a scoped call.
@@ -229,11 +253,11 @@ func (sc *scope) checkProtectedPath(method, p string, descendants bool) error {
 	return nil
 }
 
-// checkClientEntry admits only chunks already stored at the checked target.
+// checkClientEntry admits retained chunks or chunks with valid assignment proofs.
 // A hard-link id may be retained there, or a fresh id may be introduced by an
 // update of an existing unlinked entry. Attaching another path's id is refused.
 // Client signatures stay allowed so mounts can filter their own events.
-func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method, p string, e *filer_pb.Entry, allowNewHardLink bool) error {
+func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method, p string, e *filer_pb.Entry, chunkAuth map[string]string, allowNewHardLink bool) error {
 	if err := scopeCheckEntryShape(e); err != nil {
 		return sc.deny(method, err.Error())
 	}
@@ -263,7 +287,7 @@ func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method
 		if err := load(); err != nil {
 			return err
 		}
-		if err := scopeRetainsData(stored, e); err != nil {
+		if err := scopeRetainsData(stored, e, func(fid string) bool { return s.proven(sc, chunkAuth, fid) }); err != nil {
 			return sc.deny(method, err.Error())
 		}
 	}
@@ -306,7 +330,7 @@ func (s *filerGrpcScope) checkCreate(ctx context.Context, sc *scope, m string, r
 			return err
 		}
 	}
-	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), false)
+	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), req.GetChunkAuth(), false)
 }
 
 func (s *filerGrpcScope) checkUpdate(ctx context.Context, sc *scope, m string, req *filer_pb.UpdateEntryRequest) error {
@@ -320,7 +344,7 @@ func (s *filerGrpcScope) checkUpdate(ctx context.Context, sc *scope, m string, r
 	if err != nil {
 		return err
 	}
-	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), true)
+	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), req.GetChunkAuth(), true)
 }
 
 func (s *filerGrpcScope) checkAppend(ctx context.Context, sc *scope, m string, req *filer_pb.AppendToEntryRequest) error {
@@ -331,7 +355,7 @@ func (s *filerGrpcScope) checkAppend(ctx context.Context, sc *scope, m string, r
 	if err := s.checkAncestors(ctx, sc, m, p); err != nil {
 		return err
 	}
-	return s.checkClientEntry(ctx, sc, m, p, &filer_pb.Entry{Name: req.GetEntryName(), Chunks: req.GetChunks()}, false)
+	return s.checkClientEntry(ctx, sc, m, p, &filer_pb.Entry{Name: req.GetEntryName(), Chunks: req.GetChunks()}, req.GetChunkAuth(), false)
 }
 
 // checkAncestors refuses a write at p that would make an ancestor outside the
@@ -458,7 +482,7 @@ func (s *filerGrpcScope) unary(ctx context.Context, req any, info *grpc.UnarySer
 	if !ok || reflect.TypeOf(req) != expected {
 		return nil, sc.deny(info.FullMethod, "not available to a scoped token")
 	}
-	return s.unaryScoped(withScopeKeepOnly(ctx), sc, req, handler)
+	return s.unaryScoped(s.withWriteAuthority(ctx, sc), sc, req, handler)
 }
 
 // isScopeFilerConf reports whether (dir, name) is the filer's per-path config
@@ -581,6 +605,46 @@ func (s *filerGrpcScope) unaryScoped(ctx context.Context, sc *scope, req any, ha
 			return nil, err
 		}
 		return handler(ctx, req)
+
+	case *filer_pb.AssignVolumeRequest:
+		const m = "AssignVolume"
+		if r.GetCount() < 0 {
+			return nil, sc.deny(m, "count must not be negative")
+		}
+		if r.GetPath() == "" {
+			return nil, sc.deny(m, "path is required")
+		}
+		dir, name := scopeSplitPath(r.GetPath())
+		p, err := sc.checkPath(m, dir, name, true)
+		if err != nil {
+			return nil, err
+		}
+		if p != r.GetPath() {
+			return nil, sc.deny(m, "path is not canonical")
+		}
+		if err := sc.checkProtectedPath(m, p, false); err != nil {
+			return nil, err
+		}
+		resp, err := handler(ctx, req)
+		if err != nil {
+			return resp, err
+		}
+		out, ok := resp.(*filer_pb.AssignVolumeResponse)
+		if !ok || out == nil || out.GetError() != "" || out.GetErrorCode() != filer_pb.FilerError_OK || out.GetFileId() == "" || out.GetCount() <= 0 {
+			return resp, nil
+		}
+		key, _ := s.verificationKeys()
+		lifetime := security.DefaultAssignTokenLifetime
+		if s.cfg.assignLifetime != nil {
+			if configured := s.cfg.assignLifetime(); configured > 0 {
+				lifetime = configured
+			}
+		}
+		out.AssignAuth = string(security.GenJwtForAssign(key, lifetime, out.GetFileId(), sc.id, out.GetCount()))
+		if out.AssignAuth == "" {
+			return nil, status.Error(codes.Internal, "filer: assignment proof could not be signed")
+		}
+		return out, nil
 
 	case *filer_pb.PosixLockRequest:
 		if err := s.checkPosixLock(ctx, sc, "PosixLock", r); err != nil {
