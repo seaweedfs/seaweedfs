@@ -36,7 +36,7 @@ func scopeRetainsData(stored, requested *filer_pb.Entry, proven func(string) boo
 		}
 	}
 	known := make(map[string]bool, len(stored.GetChunks()))
-	identities := make(map[string]string, len(stored.GetChunks())+len(requested.GetChunks()))
+	identities := make(map[string]string, len(stored.GetChunks()))
 	for _, chunk := range stored.GetChunks() {
 		if chunk != nil {
 			fid := chunk.GetFileIdString()
