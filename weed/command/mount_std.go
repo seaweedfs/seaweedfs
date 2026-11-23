@@ -3,6 +3,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -16,12 +17,15 @@ import (
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mount"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/mount/unmount"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 )
+
+var mountSSES3ReadEndpoint = cmdMount.Flag.String("sseS3ReadEndpoint", "", "S3 endpoint for SSE-S3 reads using the mount user's AWS credentials (single-user, read-only bucket mount)")
 
 func RunMount(option *MountOptions, umask os.FileMode) bool {
 	if err := configureMountMemory(option); err != nil {
@@ -42,6 +46,27 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	filerMountRootPath := *option.filerMountRootPath
+	var sseReader *mount.SSES3Reader
+	if *mountSSES3ReadEndpoint != "" {
+		bucketPath, ok := bucketPathForMountRoot(filerMountRootPath, bucketRootPath)
+		if !ok || !*option.readOnly || *option.allowOthers {
+			glog.Errorf("-sseS3ReadEndpoint requires a bucket-root mount, -readOnly and -allowOthers=false")
+			return false
+		}
+		for _, opt := range option.extraOptions {
+			switch opt {
+			case "allow_other", "allow_root", "rw":
+				glog.Errorf("-sseS3ReadEndpoint is incompatible with mount option %q", opt)
+				return false
+			}
+		}
+		var err error
+		sseReader, err = mount.NewSSES3Reader(context.Background(), *mountSSES3ReadEndpoint, bucketPath)
+		if err != nil {
+			glog.Errorf("configure SSE-S3 reads: %v", err)
+			return false
+		}
+	}
 
 	// clean up mount point
 	dir := util.ResolvePath(*option.dir)
@@ -212,6 +237,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	cacheDirForRead, cacheDirForWrite := resolveCacheDirs(option)
 
 	seaweedFileSystem := buildSeaweedFileSystem(option, fileSystemParams{
+		sseS3Reader:      sseReader,
 		dir:              dir,
 		mountRoot:        mountRoot,
 		filerAddresses:   filerAddresses,

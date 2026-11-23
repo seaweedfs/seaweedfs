@@ -177,6 +177,7 @@ func connectToFiler(option *MountOptions) (filerAddresses []pb.ServerAddress, gr
 // fileSystemParams are the pieces of a mount that each platform works out for
 // itself: where it is attached, and whose identity the entries carry.
 type fileSystemParams struct {
+	sseS3Reader      *mount.SSES3Reader
 	dir              string
 	mountRoot        string
 	filerAddresses   []pb.ServerAddress
@@ -205,6 +206,7 @@ func buildSeaweedFileSystem(option *MountOptions, p fileSystemParams) *mount.WFS
 		readerCacheSizeMB = *option.readerCacheSizeMB
 	}
 	return mount.NewSeaweedFileSystem(&mount.Option{
+		SSES3Reader:                 p.sseS3Reader,
 		MountDirectory:              p.dir,
 		FilerAddresses:              p.filerAddresses,
 		GrpcDialOption:              p.grpcDialOption,

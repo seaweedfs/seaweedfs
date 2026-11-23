@@ -80,7 +80,8 @@ type Option struct {
 	MountParentInode uint64
 
 	VolumeServerAccess   string // how to access volume servers
-	Cipher               bool   // whether encrypt data on volume server
+	SSES3Reader          *SSES3Reader
+	Cipher               bool // whether encrypt data on volume server
 	UidGidMapper         *meta_cache.UidGidMapper
 	IncludeSystemEntries bool
 
