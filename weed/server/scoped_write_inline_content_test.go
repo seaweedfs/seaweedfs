@@ -8,7 +8,11 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 func TestScopedInlineContentWritesPersistThroughUnaryHandlers(t *testing.T) {
@@ -98,4 +102,45 @@ func TestScopedInlineContentOutsidePrefixIsRefused(t *testing.T) {
 		})
 		return err
 	})
+}
+
+func TestScopedInlineAppendWithChunksIsRefusedBeforePersistence(t *testing.T) {
+	fs, store := newAppendLockServer(t)
+	close(store.release)
+
+	const newFid = "5,0c00000056"
+	entry := newFileEntry(appendLockTestPath, 1)
+	entry.Content = []byte("stored inline bytes")
+	entry.Chunks = nil
+	store.entries[appendLockTestPath] = entry
+
+	scope := newFilerGrpcScope(scopeConfig{
+		signingKey: func() security.SigningKey { return security.SigningKey(scopeTestKey) },
+	}, fs)
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
+		"authorization",
+		"Bearer "+scopedToken("append", time.Hour, []string{"/data"}, nil),
+	))
+	_, err := scope.unary(ctx, &filer_pb.AppendToEntryRequest{
+		Directory: "/data",
+		EntryName: "app.log",
+		Chunks:    []*filer_pb.FileChunk{{FileId: newFid, Size: 10}},
+		ChunkAuth: map[string]string{newFid: scopedChunkProof(t, "append", newFid, time.Hour)},
+	}, &grpc.UnaryServerInfo{FullMethod: scopeFilerMethodPrefix + "AppendToEntry"}, func(handlerCtx context.Context, req any) (any, error) {
+		return fs.AppendToEntry(handlerCtx, req.(*filer_pb.AppendToEntryRequest))
+	})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("scoped append to inline entry error = %v, want PermissionDenied", err)
+	}
+
+	stored, err := store.FindEntry(context.Background(), appendLockTestPath)
+	if err != nil {
+		t.Fatalf("find inline entry after refused append: %v", err)
+	}
+	if !bytes.Equal(stored.Content, entry.Content) {
+		t.Fatalf("inline content after refused append = %q, want %q", stored.Content, entry.Content)
+	}
+	if len(stored.GetChunks()) != 0 {
+		t.Fatalf("chunks after refused append = %v, want no chunks", stored.GetChunks())
+	}
 }

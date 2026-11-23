@@ -101,21 +101,31 @@ func TestScopeAssignVolumeDefaultLifetimeAlwaysExpires(t *testing.T) {
 }
 
 func TestGrpcScopeSeparateKeyAuthenticatesScopeAndPreservesOtherServices(t *testing.T) {
-	fs := &FilerServer{filerGuard: security.NewGuard(nil, "http-test-key", 10, "", 0, "", "")}
+	fs := &FilerServer{filerGuard: security.NewGuard(nil, "http-test-key", 10, "", 0, "http-previous-test-key", "")}
 	v := util.NewViperProxy(viper.New())
 	v.Set("jwt.filer_signing.grpc_key", "grpc-test-key")
+	v.Set("jwt.filer_signing.previous_key", "http-previous-test-key")
 	fs.loadGrpcScopeConfig(v)
 	s := newFilerGrpcScope(scopeConfig{verificationKeys: fs.grpcScopeVerificationKeys}, newScopeFakeFiler())
 	good := security.GenJwtForFilerScope(security.SigningKey("grpc-test-key"), time.Hour, "writer", []string{aliceWS}, nil)
-	bad := security.GenJwtForFilerScope(security.SigningKey("http-test-key"), time.Hour, "writer", []string{aliceWS}, nil)
+	badCurrent := security.GenJwtForFilerScope(security.SigningKey("http-test-key"), time.Hour, "writer", []string{aliceWS}, nil)
+	badPrevious := security.GenJwtForFilerScope(security.SigningKey("http-previous-test-key"), time.Hour, "writer", []string{aliceWS}, nil)
+	badAdminCurrent := security.GenJwtForFilerAdmin(security.SigningKey("http-test-key"), 60)
+	badAdminPrevious := security.GenJwtForFilerAdmin(security.SigningKey("http-previous-test-key"), 60)
 	for _, tc := range []struct {
 		token   security.EncodedJwt
 		method  string
 		allowed bool
 	}{
 		{good, scopeFilerMethodPrefix + "Ping", true},
-		{bad, scopeFilerMethodPrefix + "Ping", false},
-		{bad, "/iam_pb.SeaweedIdentityAccessManagement/GetUser", true},
+		{badCurrent, scopeFilerMethodPrefix + "Ping", false},
+		{badCurrent, "/iam_pb.SeaweedIdentityAccessManagement/GetUser", true},
+		{badPrevious, scopeFilerMethodPrefix + "Ping", false},
+		{badPrevious, "/iam_pb.SeaweedIdentityAccessManagement/GetUser", true},
+		{badAdminCurrent, scopeFilerMethodPrefix + "Ping", false},
+		{badAdminCurrent, "/iam_pb.SeaweedIdentityAccessManagement/GetUser", true},
+		{badAdminPrevious, scopeFilerMethodPrefix + "Ping", false},
+		{badAdminPrevious, "/iam_pb.SeaweedIdentityAccessManagement/GetUser", true},
 	} {
 		called := false
 		ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+string(tc.token)))
@@ -180,25 +190,45 @@ func TestGrpcScopeAssignmentConfigAndKeyRotation(t *testing.T) {
 			}
 		})
 	}
-	fs := &FilerServer{filerGuard: security.NewGuard(nil, "http-test-key", 10, "", 0, "", "")}
+	fs := &FilerServer{filerGuard: security.NewGuard(nil, "http-test-key", 10, "", 0, "http-previous-test-key", "")}
 	v := util.NewViperProxy(viper.New())
 	fs.loadGrpcScopeConfig(v)
 	if fs.grpcScopeSettings.Load().assignLifetime != security.DefaultAssignTokenLifetime {
 		t.Fatal("missing lifetime did not use the expiring default")
 	}
-	key, _ := fs.grpcScopeVerificationKeys()
+	key, previous := fs.grpcScopeVerificationKeys()
 	if string(key) != "http-test-key" {
 		t.Fatal("gRPC did not fall back to HTTP key")
+	}
+	if string(previous) != "http-previous-test-key" {
+		t.Fatal("shared HTTP previous key was not retained for gRPC rotation")
+	}
+	shared := newFilerGrpcScope(scopeConfig{verificationKeys: fs.grpcScopeVerificationKeys}, newScopeFakeFiler())
+	for name, token := range map[string]security.EncodedJwt{
+		"current shared key":  security.GenJwtForFilerScope(security.SigningKey("http-test-key"), time.Hour, "writer", []string{aliceWS}, nil),
+		"previous shared key": security.GenJwtForFilerScope(security.SigningKey("http-previous-test-key"), time.Hour, "writer", []string{aliceWS}, nil),
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+string(token)))
+			called := false
+			_, err := shared.unary(ctx, &filer_pb.PingRequest{}, &grpc.UnaryServerInfo{FullMethod: scopeFilerMethodPrefix + "Ping"}, func(context.Context, any) (any, error) {
+				called = true
+				return &filer_pb.PingResponse{}, nil
+			})
+			if err != nil || !called {
+				t.Fatalf("shared rotation token was refused: called=%v err=%v", called, err)
+			}
+		})
 	}
 	v.Set("jwt.filer_signing.grpc_key", "grpc-test-key")
 	v.Set("jwt.filer_signing.previous_key", "old-grpc-test-key")
 	fs.loadGrpcScopeConfig(v)
-	key, previous := fs.grpcScopeVerificationKeys()
-	if string(key) != "grpc-test-key" || string(previous) != "old-grpc-test-key" || string(fs.filerGuard.SigningKey()) != "http-test-key" {
-		t.Fatal("gRPC override changed HTTP key or lost rotation keys")
+	key, previous = fs.grpcScopeVerificationKeys()
+	if string(key) != "grpc-test-key" || len(previous) != 0 || string(fs.filerGuard.SigningKey()) != "http-test-key" {
+		t.Fatal("gRPC override imported HTTP rotation state or changed HTTP key")
 	}
-	// A fresh configuration without the previous key retires it. Omitting the
-	// current key keeps verification on, matching the existing guard reload.
+	// Omitting the current key keeps verification on, matching the existing
+	// guard reload; HTTP rotation state must still remain excluded.
 	fs.loadGrpcScopeConfig(util.NewViperProxy(viper.New()))
 	key, previous = fs.grpcScopeVerificationKeys()
 	if string(key) != "grpc-test-key" || len(previous) != 0 {

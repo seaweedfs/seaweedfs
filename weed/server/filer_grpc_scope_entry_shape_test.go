@@ -179,12 +179,12 @@ func TestScopeKeepOnlyHardLinkRules(t *testing.T) {
 	}
 }
 
-func TestScopeKeepOnlyUsesAuthoritativeFileID(t *testing.T) {
+func TestScopeKeepOnlyRejectsConflictingFileIDs(t *testing.T) {
 	h := newScopeHarness(t)
 	c := h.client(scopedToken("alice", time.Hour, []string{aliceWS}, nil))
 	const storedFileID = "5,0c00000055"
 	h.fake.put(aliceWS+"/authoritative", &filer_pb.Entry{Name: "authoritative", Chunks: []*filer_pb.FileChunk{{FileId: storedFileID}}})
-	expectScopeForwarded(t, h, "UpdateEntry", "legacy FileId takes precedence over a different Fid", func() error {
+	expectScopeDenied(t, h, "UpdateEntry", "retained FileId cannot hide a different Fid", func() error {
 		_, err := c.UpdateEntry(scopeCtx(t), &filer_pb.UpdateEntryRequest{
 			Directory: aliceWS,
 			Entry: &filer_pb.Entry{Name: "authoritative", Chunks: []*filer_pb.FileChunk{

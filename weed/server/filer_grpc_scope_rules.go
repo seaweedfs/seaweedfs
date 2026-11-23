@@ -117,6 +117,14 @@ func scopeCheckEntryShape(e *filer_pb.Entry) error {
 		if c == nil {
 			return errors.New("nil chunks are not allowed")
 		}
+		// Some readers use Fid directly. A suffixed FileId is not converted
+		// during serialization, so an unchecked Fid would survive alongside it.
+		if c.FileId != "" && c.Fid != nil {
+			structured := (&filer_pb.FileChunk{Fid: c.Fid}).GetFileIdString()
+			if c.FileId != structured {
+				return errors.New("chunk string and structured file ids must match")
+			}
+		}
 		if c.GetSourceFileId() != "" || c.GetSourceFid() != nil {
 			return fmt.Errorf("chunk %s: source file ids are not allowed", c.GetFileIdString())
 		}

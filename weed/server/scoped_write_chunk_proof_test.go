@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -48,17 +49,30 @@ func TestScopedChunkProofWritesPersistThroughUnaryHandlers(t *testing.T) {
 	for _, tc := range []struct {
 		method     string
 		structured bool
+		dual       bool
+		suffix     bool
 	}{
-		{"CreateEntry", false}, {"UpdateEntry", false},
-		{"CreateEntry", true}, {"UpdateEntry", true},
+		{"CreateEntry", false, false, false}, {"UpdateEntry", false, false, false},
+		{"CreateEntry", true, false, false}, {"UpdateEntry", true, false, false},
+		{"CreateEntry", true, true, false}, {"UpdateEntry", true, true, false},
+		{"CreateEntry", false, false, true}, {"UpdateEntry", false, false, true},
 	} {
 		method := tc.method
 		name := method + "/string"
 		if tc.structured {
 			name = method + "/structured"
 		}
+		if tc.dual {
+			name = method + "/consistent dual identity"
+		}
+		if tc.suffix {
+			name = method + "/suffixed string"
+		}
 		t.Run(name, func(t *testing.T) {
-			const fid = "5,0d00000055"
+			fid := "5,0d00000055"
+			if tc.suffix {
+				fid = "5,0c00000055_1"
+			}
 			store := newRenameTestStore()
 			store.entries[aliceWS] = newDirectoryEntry(aliceWS, 1)
 			fs, scope := newScopeRetentionServer(t, store)
@@ -82,6 +96,12 @@ func TestScopedChunkProofWritesPersistThroughUnaryHandlers(t *testing.T) {
 			if tc.structured {
 				requested.Chunks[0].FileId = ""
 				requested.Chunks[0].Fid = &filer_pb.FileId{VolumeId: 5, FileKey: 13, Cookie: 85}
+				proof = string(security.GenJwtForAssign(security.SigningKey(scopeTestKey), time.Hour, "5,0c00000055", "retention", 2))
+			}
+			if tc.dual {
+				requested.Chunks[0].FileId = fid
+			}
+			if tc.suffix {
 				proof = string(security.GenJwtForAssign(security.SigningKey(scopeTestKey), time.Hour, "5,0c00000055", "retention", 2))
 			}
 			var req any
@@ -131,6 +151,59 @@ func TestScopedChunkProofWritesPersistThroughUnaryHandlers(t *testing.T) {
 				t.Fatalf("persisted %s chunks = %v, want %s", method, stored.GetChunks(), fid)
 			}
 		})
+	}
+}
+
+func TestScopedChunkProofRejectsConflictingChunkIdentities(t *testing.T) {
+	const base = "5,0c00000055"
+	for _, fileID := range []string{base, base + "_1"} {
+		for _, field := range []string{"volume", "key", "cookie"} {
+			for _, afterAdmission := range []bool{false, true} {
+				stage := "admission"
+				if afterAdmission {
+					stage = "locked handler"
+				}
+				t.Run(fileID+"/"+field+"/"+stage, func(t *testing.T) {
+					store := newRenameTestStore()
+					store.entries[aliceWS] = newDirectoryEntry(aliceWS, 1)
+					fs, scope := newScopeRetentionServer(t, store)
+					chunk := &filer_pb.FileChunk{FileId: fileID, Size: 10}
+					conflict := &filer_pb.FileId{VolumeId: 5, FileKey: 12, Cookie: 85}
+					if fileID != base {
+						conflict.FileKey++
+					}
+					switch field {
+					case "volume":
+						conflict.VolumeId++
+					case "key":
+						conflict.FileKey++
+					case "cookie":
+						conflict.Cookie++
+					}
+					if !afterAdmission {
+						chunk.Fid = conflict
+					}
+					proof := security.GenJwtForAssign(security.SigningKey(scopeTestKey), time.Hour, base, "retention", 2)
+					req := &filer_pb.CreateEntryRequest{
+						Directory: aliceWS, SkipCheckParentDirectory: true,
+						Entry:     &filer_pb.Entry{Name: "conflict", Attributes: &filer_pb.FuseAttributes{FileMode: 0644}, Chunks: []*filer_pb.FileChunk{chunk}},
+						ChunkAuth: map[string]string{fileID: string(proof)},
+					}
+					called := false
+					_, err := scope.unary(scopedRetentionContext(), req, &grpc.UnaryServerInfo{FullMethod: scopeFilerMethodPrefix + "CreateEntry"}, func(ctx context.Context, request any) (any, error) {
+						called = true
+						chunk.Fid = conflict
+						return fs.CreateEntry(ctx, request.(*filer_pb.CreateEntryRequest))
+					})
+					if status.Code(err) != codes.PermissionDenied || called != afterAdmission {
+						t.Fatalf("conflicting identity err=%v called=%v, want PermissionDenied at %s", err, called, stage)
+					}
+					if _, err := store.FindEntry(context.Background(), util.NewFullPath(aliceWS, "conflict")); err != filer_pb.ErrNotFound {
+						t.Fatalf("conflicting chunk persisted: find error=%v", err)
+					}
+				})
+			}
+		}
 	}
 }
 

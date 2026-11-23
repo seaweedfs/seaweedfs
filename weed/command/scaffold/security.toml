@@ -116,7 +116,9 @@ expires_after_seconds = 10           # seconds
 previous_key = ""
 # Optional filesystem gRPC signing key; when unset, key above is used. Setting
 # this alone enables gRPC scope checks without changing HTTP authentication.
-# previous_key verifies the prior gRPC key while it remains configured.
+# When grpc_key is set, previous_key is ignored for gRPC scope checks so the
+# HTTP key rotation pair cannot authenticate under this separate key. When
+# grpc_key is unset, the shared HTTP current/previous pair is used.
 # grpc_key = ""
 # AssignVolume returns a holder-bound proof in assign_auth. Return it under
 # the chunk's file id in chunk_auth when storing the entry. Auth remains the

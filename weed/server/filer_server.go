@@ -825,7 +825,6 @@ func (fs *FilerServer) Reload() {
 // grpcScopeSettings is replaced as one snapshot on configuration reload.
 type grpcScopeSettings struct {
 	key            security.SigningKey
-	previous       security.SigningKey
 	leeway         time.Duration
 	assignLifetime time.Duration
 }
@@ -847,9 +846,12 @@ func (fs *FilerServer) loadGrpcScopeConfig(v *util.ViperProxy) {
 	if leeway < 0 {
 		leeway = 0
 	}
+	// An explicit gRPC key is a separate trust domain. The shared HTTP
+	// previous_key must not authenticate scoped gRPC calls under that key.
+	// When no gRPC key is configured, grpcScopeVerificationKeys falls back to
+	// filerGuard, which retains the shared current/previous rotation pair.
 	fs.grpcScopeSettings.Store(&grpcScopeSettings{
 		key:            key,
-		previous:       security.SigningKey(v.GetString("jwt.filer_signing.previous_key")),
 		leeway:         leeway,
 		assignLifetime: lifetime,
 	})
@@ -857,7 +859,7 @@ func (fs *FilerServer) loadGrpcScopeConfig(v *util.ViperProxy) {
 
 func (fs *FilerServer) grpcScopeVerificationKeys() (security.SigningKey, security.SigningKey) {
 	if settings := fs.grpcScopeSettings.Load(); settings != nil && len(settings.key) > 0 {
-		return settings.key, settings.previous
+		return settings.key, nil
 	}
 	return fs.filerGuard.VerificationKeys(true)
 }
