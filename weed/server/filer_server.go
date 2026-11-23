@@ -139,6 +139,8 @@ type FilerServer struct {
 	grpcDialOptionVolume grpc.DialOption
 	grpcDialOptionS3     grpc.DialOption
 
+	grpcScope *filerGrpcScope
+
 	// metrics read from the master
 	metricsAddress     string
 	metricsIntervalSec int
@@ -332,6 +334,11 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.basicAuth.Store(basicAuth)
 	fs.basicAuthFile = basicAuthFile
 	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec, "", "")
+
+	fs.grpcScope = newFilerGrpcScope(scopeConfig{
+		verificationKeys:  func() (security.SigningKey, security.SigningKey) { return fs.filerGuard.VerificationKeys(true) },
+		subscriptionScope: fs.metadataSubscriptionScope,
+	}, fs)
 
 	fs.checkWithMaster()
 

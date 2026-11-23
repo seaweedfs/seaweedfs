@@ -86,6 +86,9 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 		var hasEntries bool
 		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, int64(paginationLimit), req.Prefix, "", "", func(entry *filer.Entry) (bool, error) {
 			hasEntries = true
+			if scopeHideListEntry(stream.Context(), req.Directory, entry.Name()) {
+				return true, nil
+			}
 			pbEntry := entry.ToProtoEntry()
 			if req.OmitChunks {
 				// Stamp the size before dropping the only other thing carrying
@@ -213,6 +216,9 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		// a failed forward must not leave it nil.
 		var ownerResp *filer_pb.CreateEntryResponse
 		handled, forwardErr := fs.forwardToWriteOwner(ctx, entryRouteKey(fullpath), func(owner pb.ServerAddress) error {
+			if scopeKeepOnly(ctx) {
+				return status.Error(codes.PermissionDenied, "filer: scoped CreateEntry cannot be forwarded to the write owner")
+			}
 			glog.V(2).InfofCtx(ctx, "CreateEntry %s: forwarding to owner %s", fullpath, owner)
 			req.IsMoved = true
 			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -271,7 +277,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	// The fetched entry is then handed to CreateEntry below so it does not look
 	// the same path up again under the lock.
 	var existing *filer.Entry
-	if conditionIsSet(req.Condition) {
+	if conditionIsSet(req.Condition) || scopeKeepOnly(ctx) {
 		current, findErr := fs.filer.FindEntry(ctx, fullpath)
 		if findErr != nil && findErr != filer_pb.ErrNotFound {
 			return &filer_pb.CreateEntryResponse{}, fmt.Errorf("CreateEntry condition check %s: %w", fullpath, findErr)
@@ -279,7 +285,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		if findErr == filer_pb.ErrNotFound {
 			current = nil
 		}
-		if !writeConditionSatisfied(req.Condition, current) {
+		if conditionIsSet(req.Condition) && !writeConditionSatisfied(req.Condition, current) {
 			glog.V(3).InfofCtx(ctx, "CreateEntry %s: precondition failed: %v", fullpath, req.Condition)
 			return &filer_pb.CreateEntryResponse{
 				Error:     "precondition failed",
@@ -287,6 +293,15 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 			}, nil
 		}
 		existing = current
+	}
+	if err := fs.checkScopeWorm(ctx, string(fullpath)); err != nil {
+		return &filer_pb.CreateEntryResponse{}, err
+	}
+	if err := checkScopeHardLinkWrite(ctx, existing, req.Entry); err != nil {
+		return &filer_pb.CreateEntryResponse{}, err
+	}
+	if err := checkScopeRetainedData(ctx, existing, req.Entry); err != nil {
+		return &filer_pb.CreateEntryResponse{}, err
 	}
 
 	if req.Fsync {
@@ -938,6 +953,9 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	if !req.IsMoved && routed {
 		var ownerResp *filer_pb.UpdateEntryResponse
 		handled, forwardErr := fs.forwardToWriteOwner(ctx, entryRouteKey(util.FullPath(fullpath)), func(owner pb.ServerAddress) error {
+			if scopeKeepOnly(ctx) {
+				return status.Error(codes.PermissionDenied, "filer: scoped UpdateEntry cannot be forwarded to the write owner")
+			}
 			glog.V(2).InfofCtx(ctx, "UpdateEntry %s: forwarding to owner %s", fullpath, owner)
 			req.IsMoved = true
 			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -986,6 +1004,16 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	if conditionIsSet(req.Condition) && !writeConditionSatisfied(req.Condition, entry) {
 		glog.V(3).InfofCtx(ctx, "UpdateEntry %s: precondition failed: %v", fullpath, req.Condition)
 		return &filer_pb.UpdateEntryResponse{}, status.Errorf(codes.FailedPrecondition, "precondition failed: %s", fullpath)
+	}
+	if err := fs.checkScopeWorm(ctx, string(lockPath)); err != nil {
+		return &filer_pb.UpdateEntryResponse{}, err
+	}
+
+	if err := checkScopeHardLinkWrite(ctx, entry, req.Entry); err != nil {
+		return &filer_pb.UpdateEntryResponse{}, err
+	}
+	if err := checkScopeRetainedData(ctx, entry, req.Entry); err != nil {
+		return &filer_pb.UpdateEntryResponse{}, err
 	}
 
 	chunks, garbage, err2 := fs.cleanupChunks(ctx, fullpath, entry, req.Entry)
@@ -1081,7 +1109,7 @@ func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, exist
 		) // ignore readonly error for capacity needed to manifestize
 		// A failed fold leaves a flat list, which is still a correct entry --
 		// and the store rejects it by name if it cannot hold one this size.
-		folded, manifestErr := filer.MaybeManifestize(fs.saveAsChunk(ctx, so), fs.filer.DeleteChunksNotRecursive, chunks)
+		folded, manifestErr := maybeManifestizeChunks(ctx, fs.saveAsChunk(ctx, so), fs.filer.DeleteChunksNotRecursive, chunks)
 		if manifestErr != nil {
 			glog.V(0).InfofCtx(ctx, "MaybeManifestize %s: %v", fullpath, manifestErr)
 		}
@@ -1125,8 +1153,19 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 				Gid:    OS_GID,
 			},
 		}
+	} else if err != nil {
+		return nil, err
 	} else {
 		offset = int64(filer.TotalSize(entry.GetChunks()))
+	}
+	if err := fs.checkScopeWorm(ctx, string(fullpath)); err != nil {
+		return &filer_pb.AppendToEntryResponse{}, err
+	}
+	if err := checkScopeHardLinkWrite(ctx, entry, &filer_pb.Entry{Chunks: req.Chunks, HardLinkId: entry.HardLinkId, HardLinkCounter: entry.HardLinkCounter}); err != nil {
+		return &filer_pb.AppendToEntryResponse{}, err
+	}
+	if err := checkScopeRetainedData(ctx, entry, &filer_pb.Entry{Chunks: req.Chunks, HardLinkId: entry.HardLinkId, HardLinkCounter: entry.HardLinkCounter}); err != nil {
+		return &filer_pb.AppendToEntryResponse{}, err
 	}
 
 	for _, chunk := range req.Chunks {
@@ -1141,7 +1180,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 		return &filer_pb.AppendToEntryResponse{}, err
 	}
 	appended := entry.GetChunks()
-	entry.Chunks, err = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), fs.filer.DeleteChunksNotRecursive, appended)
+	entry.Chunks, err = maybeManifestizeChunks(ctx, fs.saveAsChunk(ctx, so), fs.filer.DeleteChunksNotRecursive, appended)
 	if err != nil {
 		// the append is still correct with the flat list
 		glog.V(0).InfofCtx(ctx, "MaybeManifestize %s: %v", fullpath, err)
@@ -1158,6 +1197,13 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	err = fs.filer.CreateEntry(context.Background(), entry, nil, false, false, nil, false, fs.filer.MaxFilenameLength)
 
 	return &filer_pb.AppendToEntryResponse{}, err
+}
+
+func maybeManifestizeChunks(ctx context.Context, save filer.SaveDataAsChunkFunctionType, deleteChunks func([]*filer_pb.FileChunk), chunks []*filer_pb.FileChunk) ([]*filer_pb.FileChunk, error) {
+	if scopeKeepOnly(ctx) {
+		return chunks, nil
+	}
+	return filer.MaybeManifestize(save, deleteChunks, chunks)
 }
 
 // deleteCutoff merges the conditional-delete guards into one cutoff:
@@ -1189,6 +1235,9 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 		if !req.IsMoved {
 			var ownerResp *filer_pb.DeleteEntryResponse
 			handled, forwardErr := fs.forwardToWriteOwner(ctx, entryRouteKey(fullpath), func(owner pb.ServerAddress) error {
+				if scopeKeepOnly(ctx) {
+					return status.Error(codes.PermissionDenied, "filer: scoped DeleteEntry cannot be forwarded to the write owner")
+				}
 				glog.V(2).InfofCtx(ctx, "DeleteEntry %s: forwarding to owner %s", fullpath, owner)
 				req.IsMoved = true
 				return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -1219,6 +1268,20 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 	// that are already on the deletion queue.
 	pathLock := fs.entryLockTable.AcquireLock("DeleteEntry", fullpath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
+	if err := fs.checkScopeWorm(ctx, string(fullpath)); err != nil {
+		return &filer_pb.DeleteEntryResponse{}, err
+	}
+	if scopeKeepOnly(ctx) && req.IsRecursive {
+		entry, findErr := fs.filer.FindEntry(ctx, fullpath)
+		if findErr != nil && findErr != filer_pb.ErrNotFound {
+			return &filer_pb.DeleteEntryResponse{}, findErr
+		}
+		if findErr == nil && entry.IsDirectory() {
+			if err := fs.checkScopeWormDirectory(ctx, string(fullpath)); err != nil {
+				return &filer_pb.DeleteEntryResponse{}, err
+			}
+		}
+	}
 
 	// Extended-attribute preconditions run here, under the lock the delete
 	// runs under: an attribute write that keeps Mtime can no longer slip

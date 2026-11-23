@@ -101,7 +101,7 @@ func IsFilerAdminToken(signingKey SigningKey, token EncodedJwt, previousKeys ...
 		return false
 	}
 	claims, ok := parsed.Claims.(*SeaweedFilerAdminClaims)
-	return ok && claims.SessionId == "" && len(claims.AllowedPrefixes) == 0 && len(claims.AllowedMethods) == 0
+	return ok && claims.SessionId == "" && len(claims.AllowedPrefixes) == 0 && len(claims.AllowedMethods) == 0 && len(claims.ReadPrefixes) == 0
 }
 
 // GrpcAdminPeerCredentials returns outgoing metadata carrying a Bearer token
