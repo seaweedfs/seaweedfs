@@ -837,9 +837,25 @@ func (r *Plugin) loadSchedulerClusterContext(ctx context.Context) (*plugin_pb.Cl
 	clusterCtx, cancel := context.WithTimeout(ctx, defaultClusterContextTimeout)
 	defer cancel()
 
-	clusterContext, err := r.clusterContextProvider(clusterCtx)
-	if err != nil {
-		return nil, err
+	// The provider may block on master discovery without watching its context.
+	type loaded struct {
+		clusterContext *plugin_pb.ClusterContext
+		err            error
+	}
+	done := make(chan loaded, 1)
+	go func() {
+		clusterContext, err := r.clusterContextProvider(clusterCtx)
+		done <- loaded{clusterContext, err}
+	}()
+	var clusterContext *plugin_pb.ClusterContext
+	select {
+	case result := <-done:
+		if result.err != nil {
+			return nil, result.err
+		}
+		clusterContext = result.clusterContext
+	case <-clusterCtx.Done():
+		return nil, fmt.Errorf("load cluster context: %w", clusterCtx.Err())
 	}
 	if clusterContext == nil {
 		return nil, fmt.Errorf("cluster context provider returned nil")
