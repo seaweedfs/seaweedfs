@@ -50,13 +50,15 @@ func TestAuxListenerBindFailureIsNonFatal(t *testing.T) {
 	if s3opt.icebergBound.Load() {
 		t.Error("icebergBound must stay false when the listener failed to bind")
 	}
-	s3opt.lanceServer = s3opt.newLanceServer(s3a)
-	if s := s3opt.startLanceServer(false); s != nil {
-		s.Close()
-		t.Error("startLanceServer on an occupied port should return nil")
+	if l, _ := s3opt.listenLance(false); l != nil {
+		l.Close()
+		t.Error("listenLance on an occupied port should return nil")
 	}
 	if s3opt.lanceBound.Load() {
 		t.Error("lanceBound must stay false when the listener failed to bind")
+	}
+	if port := s3opt.lancePort(); port != 0 {
+		t.Errorf("lancePort = %d for an unbound listener, want 0 so it is not advertised", port)
 	}
 }
 
