@@ -388,12 +388,28 @@ func (s *filerGrpcScope) checkPosixLock(ctx context.Context, sc *scope, m string
 	if req.GetIsMoved() || req.GetCoolingProbe() {
 		return sc.deny(m, "internal lock flags are not allowed")
 	}
+	// Mutating locks require write access, so a read-only grant cannot release
+	// even its own shared locks. Binding the client-supplied sid to an authenticated
+	// session is a follow-up; GET_LK remains available with a read grant.
+	write := req.GetOp() != filer_pb.PosixLockOp_GET_LK
 	key := req.GetKey()
 	if !strings.HasPrefix(key, scopePosixLockKeyPrefix) {
 		return sc.deny(m, fmt.Sprintf("lock key %q has no %q prefix", key, scopePosixLockKeyPrefix))
 	}
 	rest := strings.TrimPrefix(key, scopePosixLockKeyPrefix)
 	if strings.HasPrefix(rest, "hl:") {
+		if write {
+			hasWriteGrant := false
+			for _, grant := range sc.grants {
+				if grant.readWrite {
+					hasWriteGrant = true
+					break
+				}
+			}
+			if !hasWriteGrant {
+				return sc.deny(m, "write lock on a hard link requires a read-write scope")
+			}
+		}
 		id, decErr := hex.DecodeString(strings.TrimPrefix(rest, "hl:"))
 		if decErr != nil || len(id) == 0 {
 			return sc.deny(m, fmt.Sprintf("lock on hard link %q: malformed id", rest))
@@ -408,7 +424,7 @@ func (s *filerGrpcScope) checkPosixLock(ctx context.Context, sc *scope, m string
 		return nil
 	}
 	dir, name := scopeSplitPath(rest)
-	_, err := sc.checkPath(m, dir, name, false)
+	_, err := sc.checkPath(m, dir, name, write)
 	return err
 }
 
