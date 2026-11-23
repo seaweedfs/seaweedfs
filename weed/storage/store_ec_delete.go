@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
@@ -47,6 +48,10 @@ func (s *Store) DeleteEcShardNeedle(ecVolume *erasure_coding.EcVolume, n *needle
 
 }
 
+// ecDeleteRetryTimeout bounds each delete a retry sends, so a holder that
+// stops answering does not hold the reply or the holders after it.
+var ecDeleteRetryTimeout = 10 * time.Second
+
 // forwardEcDeleteOfDeletedNeedle retries a delete whose read found the needle
 // deleted. A holder's read checks one disk's deletion set, and a delete that
 // failed part way can leave its other disks live, so the delete goes to the
@@ -75,7 +80,10 @@ func (s *Store) forwardEcDeleteOfDeletedNeedle(ecVolume *erasure_coding.EcVolume
 			continue
 		}
 		reported = true
-		if err := s.doDeleteNeedleFromRemoteEcShard(holder, ecVolume.VolumeId, ecVolume.Collection, ecVolume.Version, needleId); err != nil {
+		ctx, cancel = context.WithTimeout(context.Background(), ecDeleteRetryTimeout)
+		err := s.doDeleteNeedleFromRemoteEcShard(ctx, holder, ecVolume.VolumeId, ecVolume.Collection, ecVolume.Version, needleId)
+		cancel()
+		if err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -142,7 +150,7 @@ func (s *Store) doDeleteNeedleFromRemoteEcShardServers(shardId erasure_coding.Sh
 	var lastErr error
 	for _, sourceDataNode := range sourceDataNodes {
 		glog.V(4).Infof("delete from remote ec shard %d.%d from %s", ecVolume.VolumeId, shardId, sourceDataNode)
-		if err := s.doDeleteNeedleFromRemoteEcShard(sourceDataNode, ecVolume.VolumeId, ecVolume.Collection, ecVolume.Version, needleId); err == nil {
+		if err := s.doDeleteNeedleFromRemoteEcShard(context.Background(), sourceDataNode, ecVolume.VolumeId, ecVolume.Collection, ecVolume.Version, needleId); err == nil {
 			return nil
 		} else {
 			lastErr = err
@@ -153,12 +161,12 @@ func (s *Store) doDeleteNeedleFromRemoteEcShardServers(shardId erasure_coding.Sh
 
 }
 
-func (s *Store) doDeleteNeedleFromRemoteEcShard(sourceDataNode pb.ServerAddress, vid needle.VolumeId, collection string, version needle.Version, needleId types.NeedleId) error {
+func (s *Store) doDeleteNeedleFromRemoteEcShard(ctx context.Context, sourceDataNode pb.ServerAddress, vid needle.VolumeId, collection string, version needle.Version, needleId types.NeedleId) error {
 
 	return operation.WithVolumeServerClient(false, sourceDataNode, s.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 
 		// copy data slice
-		_, err := client.VolumeEcBlobDelete(context.Background(), &volume_server_pb.VolumeEcBlobDeleteRequest{
+		_, err := client.VolumeEcBlobDelete(ctx, &volume_server_pb.VolumeEcBlobDeleteRequest{
 			VolumeId:   uint32(vid),
 			Collection: collection,
 			FileKey:    uint64(needleId),

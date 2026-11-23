@@ -523,3 +523,60 @@ func TestDeleteEcShardNeedleProbeSkipsAStalledHolder(t *testing.T) {
 		t.Errorf("forwarded %d deletes to the holder reading it deleted, want 1", reporter.deletes.Load())
 	}
 }
+
+// stalledDeleteEcShardPeer reads the needle as deleted but never answers a
+// delete.
+type stalledDeleteEcShardPeer struct {
+	deletingEcShardPeer
+}
+
+func (p *stalledDeleteEcShardPeer) VolumeEcBlobDelete(ctx context.Context, req *volume_server_pb.VolumeEcBlobDeleteRequest) (*volume_server_pb.VolumeEcBlobDeleteResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// A holder that reads the needle deleted but stalls on the delete holds
+// neither the reply nor the holders after it.
+func TestDeleteEcShardNeedleRetrySkipsAStalledDelete(t *testing.T) {
+	store := newTestStore(t, 1)
+	store.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+	const vid = needle.VolumeId(11)
+	_, n := writeEcVolumeFiles(t, store.Locations[0].Directory, vid)
+	for shardId := 1; shardId < erasure_coding.TotalShardsCount; shardId++ {
+		if err := store.MountEcShards("", vid, erasure_coding.ShardId(shardId), ""); err != nil {
+			t.Fatalf("mount shard %d: %v", shardId, err)
+		}
+	}
+	ecVolume, found := store.Locations[0].FindEcVolume(vid)
+	if !found {
+		t.Fatal("ec volume not mounted")
+	}
+	defer func(old time.Duration) { ecDeleteRetryTimeout = old }(ecDeleteRetryTimeout)
+	ecDeleteRetryTimeout = 200 * time.Millisecond
+
+	reporter := &partlyDeletedEcShardPeer{}
+	reporterAddr := serveEcShardPeer(t, reporter)
+	seedShardLocations(ecVolume, reporterAddr)
+	ecVolume.ShardLocationsLock.Lock()
+	ecVolume.ShardLocations[0] = []pb.ServerAddress{serveEcShardPeer(t, &stalledDeleteEcShardPeer{}), reporterAddr}
+	ecVolume.ShardLocationsLock.Unlock()
+
+	done := make(chan error, 1)
+	go func() {
+		got := new(needle.Needle)
+		got.Id = n.Id
+		_, err := store.DeleteEcShardNeedle(ecVolume, got, n.Cookie)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != ErrorDeleted {
+			t.Fatalf("delete of a needle read as deleted returned %v, want %v", err, ErrorDeleted)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("delete still waiting on the holder stalled in its delete")
+	}
+	if reporter.deletes.Load() != 1 {
+		t.Errorf("forwarded %d deletes to the holder after the stalled one, want 1", reporter.deletes.Load())
+	}
+}
