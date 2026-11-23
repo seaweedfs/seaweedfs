@@ -396,15 +396,7 @@ func TestDeleteEcShardNeedleForwardsWhenReadSaysDeleted(t *testing.T) {
 	}
 
 	peer := &partlyDeletedEcShardPeer{}
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	srv := grpc.NewServer()
-	volume_server_pb.RegisterVolumeServerServer(srv, peer)
-	go srv.Serve(lis)
-	t.Cleanup(srv.Stop)
-	seedShardLocations(ecVolume, pb.NewServerAddressWithGrpcPort("127.0.0.1:1", lis.Addr().(*net.TCPAddr).Port))
+	seedShardLocations(ecVolume, serveEcShardPeer(t, peer))
 
 	got := new(needle.Needle)
 	got.Id = n.Id
@@ -416,5 +408,72 @@ func TestDeleteEcShardNeedleForwardsWhenReadSaysDeleted(t *testing.T) {
 	}
 	if got := types.NeedleId(peer.fileKey.Load()); got != n.Id {
 		t.Errorf("forwarded the delete of needle %s, want %s", got, n.Id)
+	}
+}
+
+// unreadableEcShardPeer fails its shard reads, as a quarantined copy does, and
+// counts the deletes forwarded to it.
+type unreadableEcShardPeer struct {
+	volume_server_pb.UnimplementedVolumeServerServer
+	deletes atomic.Int64
+}
+
+func (p *unreadableEcShardPeer) VolumeEcShardRead(req *volume_server_pb.VolumeEcShardReadRequest, stream volume_server_pb.VolumeServer_VolumeEcShardReadServer) error {
+	return status.Error(codes.Unavailable, "shard unreadable")
+}
+
+func (p *unreadableEcShardPeer) VolumeEcBlobDelete(ctx context.Context, req *volume_server_pb.VolumeEcBlobDeleteRequest) (*volume_server_pb.VolumeEcBlobDeleteResponse, error) {
+	p.deletes.Add(1)
+	return &volume_server_pb.VolumeEcBlobDeleteResponse{}, nil
+}
+
+func serveEcShardPeer(t *testing.T, peer volume_server_pb.VolumeServerServer) pb.ServerAddress {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := grpc.NewServer()
+	volume_server_pb.RegisterVolumeServerServer(srv, peer)
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+	return pb.NewServerAddressWithGrpcPort("127.0.0.1:1", lis.Addr().(*net.TCPAddr).Port)
+}
+
+// The retry goes to the holder that answered the read deleted, not to the
+// first holder that takes a delete.
+func TestDeleteEcShardNeedleForwardsToTheHolderReadingDeleted(t *testing.T) {
+	store := newTestStore(t, 1)
+	store.grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+	const vid = needle.VolumeId(9)
+	_, n := writeEcVolumeFiles(t, store.Locations[0].Directory, vid)
+	for shardId := 1; shardId < erasure_coding.TotalShardsCount; shardId++ {
+		if err := store.MountEcShards("", vid, erasure_coding.ShardId(shardId), ""); err != nil {
+			t.Fatalf("mount shard %d: %v", shardId, err)
+		}
+	}
+	ecVolume, found := store.Locations[0].FindEcVolume(vid)
+	if !found {
+		t.Fatal("ec volume not mounted")
+	}
+
+	unreadable := &unreadableEcShardPeer{}
+	reporter := &partlyDeletedEcShardPeer{}
+	reporterAddr := serveEcShardPeer(t, reporter)
+	seedShardLocations(ecVolume, reporterAddr)
+	ecVolume.ShardLocationsLock.Lock()
+	ecVolume.ShardLocations[0] = []pb.ServerAddress{serveEcShardPeer(t, unreadable), reporterAddr}
+	ecVolume.ShardLocationsLock.Unlock()
+
+	got := new(needle.Needle)
+	got.Id = n.Id
+	if _, err := store.DeleteEcShardNeedle(ecVolume, got, n.Cookie); err != ErrorDeleted {
+		t.Fatalf("delete of a needle read as deleted returned %v, want %v", err, ErrorDeleted)
+	}
+	if reporter.deletes.Load() != 1 {
+		t.Errorf("forwarded %d deletes to the holder reading it deleted, want 1", reporter.deletes.Load())
+	}
+	if unreadable.deletes.Load() != 0 {
+		t.Errorf("forwarded %d deletes to the unreadable holder, want 0", unreadable.deletes.Load())
 	}
 }

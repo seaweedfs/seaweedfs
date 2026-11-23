@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
@@ -21,12 +22,9 @@ func (s *Store) DeleteEcShardNeedle(ecVolume *erasure_coding.EcVolume, n *needle
 	count, err := s.ReadEcShardNeedle(ecVolume.VolumeId, n, nil)
 
 	if errors.Is(err, ErrorDeleted) {
-		// The read sees one disk's deletion set, and a delete that failed
-		// part way can leave a sibling disk of the holder still live, so
-		// forward again; the holder skips the copies that already record it.
 		// A failed parse can overwrite n.Id, so use the requested id.
 		if _, size, locErr := ecVolume.FindNeedleFromEcx(needleId); locErr == nil && !size.IsDeleted() {
-			if fwdErr := s.doDeleteNeedleFromAtLeastOneRemoteEcShards(ecVolume, needleId); fwdErr != nil {
+			if fwdErr := s.forwardEcDeleteOfDeletedNeedle(ecVolume, needleId); fwdErr != nil {
 				glog.V(1).Infof("re-forward delete of deleted ec needle %d.%s: %v", ecVolume.VolumeId, needleId, fwdErr)
 			}
 		}
@@ -47,6 +45,41 @@ func (s *Store) DeleteEcShardNeedle(ecVolume *erasure_coding.EcVolume, n *needle
 
 	return int64(count), nil
 
+}
+
+// forwardEcDeleteOfDeletedNeedle retries a delete whose read found the needle
+// deleted. A holder's read checks one disk's deletion set, and a delete that
+// failed part way can leave its other disks live, so the delete goes to the
+// primary shard holders whose read answers deleted, which skip the disks
+// already recording it. Normal routing could stop at another copy instead.
+func (s *Store) forwardEcDeleteOfDeletedNeedle(ecVolume *erasure_coding.EcVolume, needleId types.NeedleId) error {
+	_, _, intervals, err := ecVolume.LocateEcShardNeedle(needleId, ecVolume.Version)
+	if err != nil {
+		return err
+	}
+	if len(intervals) == 0 {
+		return erasure_coding.NotFoundError
+	}
+	shardId, offset := ecVolume.IntervalToShardIdAndOffset(intervals[0])
+	ecVolume.ShardLocationsLock.RLock()
+	holders := slices.Clone(ecVolume.ShardLocations[shardId])
+	ecVolume.ShardLocationsLock.RUnlock()
+
+	reported := false
+	var errs []error
+	for _, holder := range holders {
+		if _, deleted, _ := s.doReadRemoteEcShardInterval(context.Background(), holder, needleId, ecVolume.VolumeId, shardId, make([]byte, 1), offset, ecVolume.EncodeTsNs); !deleted {
+			continue
+		}
+		reported = true
+		if err := s.doDeleteNeedleFromRemoteEcShard(holder, ecVolume.VolumeId, ecVolume.Collection, ecVolume.Version, needleId); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if !reported {
+		return s.doDeleteNeedleFromAtLeastOneRemoteEcShards(ecVolume, needleId)
+	}
+	return errors.Join(errs...)
 }
 
 // errEcShardMissing indicates that no data node in the topology currently
