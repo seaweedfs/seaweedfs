@@ -333,7 +333,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	snapshot := entry.GetChunks()
 	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(snapshot)
 
-	chunks, _, err := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
+	chunks, covered, err := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
 	if err != nil {
 		return fmt.Errorf("compact chunks of %s: %w", fileFullPath, err)
 	}
@@ -356,7 +356,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 			}
 			snapshot = entry.GetChunks()
 			manifestChunks, nonManifestChunks = filer.SeparateManifestChunks(snapshot)
-			if chunks, _, err = filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks); err != nil {
+			if chunks, covered, err = filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks); err != nil {
 				return fmt.Errorf("compact chunks of %s: %w", fileFullPath, err)
 			}
 		}
@@ -405,6 +405,7 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	// Snapshot with local ids before the request mapping mutates the clone:
 	// on ack this becomes the handle's base, judged against future events.
 	baseSnapshot := proto.Clone(requestEntry).(*filer_pb.Entry)
+	requestEntry.Chunks = append(requestEntry.Chunks, fh.unpublishedChunks(covered, requestEntry.Chunks)...)
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
 	// The chunk merge and the manifest above read and upload chunks, which can
@@ -713,6 +714,40 @@ func contentFileIdKey(c *filer_pb.FileChunk) string {
 		}
 	}
 	return fmt.Sprintf("%d,%x,%x", fid.VolumeId, fid.FileKey, fid.Cookie)
+}
+
+// unpublishedChunks returns the chunks of dropped that the handle's base does
+// not name and that chunks still covers. A commit deletes what it leaves out
+// of the stored entry and what its own chunk list covers, so a covered chunk no
+// stored entry ever named is only deleted if the request carries it. The filer
+// compacts only plain chunks, and merged chunks carry no modification time, so
+// a dropped chunk that would show through chunks again is not sent.
+func (fh *FileHandle) unpublishedChunks(dropped, chunks []*filer_pb.FileChunk) (unpublished []*filer_pb.FileChunk) {
+	inBase := make(map[string]bool)
+	for _, c := range fh.baseEntry.Load().GetChunks() {
+		inBase[contentFileIdKey(c)] = true
+	}
+	candidates := make(map[*filer_pb.FileChunk]bool)
+	_, plain := filer.SeparateManifestChunks(chunks)
+	for _, c := range dropped {
+		if !inBase[contentFileIdKey(c)] {
+			candidates[c] = true
+			plain = append(plain, c)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	_, covered, err := filer.CompactFileChunks(context.Background(), nil, plain)
+	if err != nil {
+		return nil
+	}
+	for _, c := range covered {
+		if candidates[c] {
+			unpublished = append(unpublished, c)
+		}
+	}
+	return unpublished
 }
 
 // ackedBase is the base an acknowledged create leaves: the entry the filer
