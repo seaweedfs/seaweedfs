@@ -224,49 +224,10 @@ impl Cluster {
     /// Chunks are encrypted for the volume servers when the filer is
     /// configured to (`weed filer -encryptVolumeData`), as `weed s3` does.
     pub async fn storage(&self, security: &Security) -> Result<DirectReads> {
-        // The filers are dialed as the masters are: grpc.client's credentials
-        // and server allowlist, through this crate's own connector.
-        let filer_dialer: Option<FilerDialer> = security
-            .grpc_client_tls("grpc.client", "grpc.filer")?
-            .map(|tls| {
-                Arc::new(move |addr: &str| {
-                    let channel = Endpoint::new(format!("http://{addr}"))?
-                        .connect_timeout(Duration::from_secs(10))
-                        .connect_with_connector_lazy(grpc_tls::connector(tls.clone()));
-                    Ok(sw_client::FilerClient::from_channel(addr, channel))
-                }) as FilerDialer
-            });
-        let conn = Connection {
-            filers: discover_filers(&self.masters, &self.filer_group, self.master_tls.as_ref())
-                .await?,
-            read_jwt_key: security.jwt_read_key(),
-            sse: security.sse(),
-            grpc_tls: None,
-            https_tls: security.https_client_tls()?,
-            filer_dialer,
-            filer_group: self.filer_group.clone(),
-        };
-        let storage = DirectReads::connect(&conn)
-            .await
-            .context("direct storage")?;
-        tracing::info!(
-            "tables kept through {storage:?}; filer gRPC {}, volume servers {}; SSE-S3 objects {}",
-            if conn.filer_dialer.is_some() {
-                "over TLS"
-            } else {
-                "plaintext"
-            },
-            if conn.https_tls.is_some() {
-                "over HTTPS"
-            } else {
-                "over HTTP"
-            },
-            if storage.sse_s3_configured() {
-                "are readable"
-            } else {
-                "need s3.sse.kek or s3.sse.key"
-            },
-        );
+        let mut conn = connection(security, self.filer_group.clone())?;
+        conn.filers =
+            discover_filers(&self.masters, &self.filer_group, self.master_tls.as_ref()).await?;
+        let storage = open_storage(&conn).await?;
         tokio::spawn(follow_filers(
             storage.clone(),
             self.masters.clone(),
@@ -275,6 +236,55 @@ impl Cluster {
         ));
         Ok(storage)
     }
+}
+
+/// How the storage is reached, from security.toml, before any filer is known.
+pub fn connection(security: &Security, filer_group: String) -> Result<Connection> {
+    // The filers are dialed as the masters are: grpc.client's credentials
+    // and server allowlist, through this crate's own connector.
+    let filer_dialer: Option<FilerDialer> = security
+        .grpc_client_tls("grpc.client", "grpc.filer")?
+        .map(|tls| {
+            Arc::new(move |addr: &str| {
+                let channel = Endpoint::new(format!("http://{addr}"))?
+                    .connect_timeout(Duration::from_secs(10))
+                    .connect_with_connector_lazy(grpc_tls::connector(tls.clone()));
+                Ok(sw_client::FilerClient::from_channel(addr, channel))
+            }) as FilerDialer
+        });
+    Ok(Connection {
+        filers: Vec::new(),
+        read_jwt_key: security.jwt_read_key(),
+        sse: security.sse(),
+        grpc_tls: None,
+        https_tls: security.https_client_tls()?,
+        filer_dialer,
+        filer_group,
+    })
+}
+
+/// Connects to the storage `conn` describes, and says how.
+pub async fn open_storage(conn: &Connection) -> Result<DirectReads> {
+    let storage = DirectReads::connect(conn).await.context("direct storage")?;
+    tracing::info!(
+        "tables kept through {storage:?}; filer gRPC {}, volume servers {}; SSE-S3 objects {}",
+        if conn.filer_dialer.is_some() {
+            "over TLS"
+        } else {
+            "plaintext"
+        },
+        if conn.https_tls.is_some() {
+            "over HTTPS"
+        } else {
+            "over HTTP"
+        },
+        if storage.sse_s3_configured() {
+            "are readable"
+        } else {
+            "need s3.sse.kek or s3.sse.key"
+        },
+    );
+    Ok(storage)
 }
 
 #[cfg(test)]

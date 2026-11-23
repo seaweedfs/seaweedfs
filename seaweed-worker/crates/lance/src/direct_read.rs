@@ -457,7 +457,7 @@ impl fmt::Debug for DirectReads {
 
 /// What direct reads connect to, as the cluster's security.toml configures
 /// weed processes.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Connection {
     /// The filers' gRPC `host:port`s as the masters list them; see
     /// [`DirectReads::set_filers`] for later changes.
@@ -472,7 +472,8 @@ pub struct Connection {
     /// Dials the filers in place of `grpc_tls`, for a TLS setup sw-client
     /// cannot express, such as a server allowlist.
     pub filer_dialer: Option<FilerDialer>,
-    /// The filer group, which the gateway prefixes a bucket's collection with.
+    /// The filer group, which the gateway prefixes a bucket's collection with;
+    /// empty takes the group the filers report.
     pub filer_group: String,
 }
 
@@ -545,7 +546,11 @@ impl DirectReads {
             let shared = Arc::get_mut(&mut reads.shared).expect("just created");
             shared.chunk_size = chunk_size;
             shared.cipher = config.cipher;
-            shared.filer_group = conn.filer_group.clone();
+            shared.filer_group = if conn.filer_group.is_empty() {
+                config.filer_group.clone()
+            } else {
+                conn.filer_group.clone()
+            };
         }
         reads.report_every(Duration::from_secs(30));
         Ok(reads)

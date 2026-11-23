@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
@@ -13,7 +14,8 @@ use seaweed_worker_core::pb::{
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
 use tracing::warn;
 
-use crate::catalog::{NamespaceClient, SigningKey, parse_id};
+use crate::admin_cluster::AdminCluster;
+use crate::catalog::parse_id;
 use crate::dataset::{self, OpenTable};
 use crate::jobs::vector_index::is_vector_table;
 use crate::jobs::{clamp, string_list, table_id};
@@ -37,18 +39,14 @@ const MAX_UNINDEXED_CEILING: i64 = 100_000_000;
 /// the reason a neglected Lance table is a correctness problem rather than a
 /// slow one.
 pub struct OptimizeIndicesHandler {
-    namespace_url: String,
-    storage: dataset::Storage,
-    signing_key: Option<SigningKey>,
+    cluster: Arc<AdminCluster>,
     metrics: Option<crate::metrics::LanceMetrics>,
 }
 
 impl OptimizeIndicesHandler {
-    pub fn new(namespace_url: String) -> Self {
+    pub fn new(cluster: Arc<AdminCluster>) -> Self {
         Self {
-            namespace_url,
-            storage: dataset::Storage::default(),
-            signing_key: None,
+            cluster,
             metrics: None,
         }
     }
@@ -56,20 +54,6 @@ impl OptimizeIndicesHandler {
     pub fn with_metrics(mut self, metrics: Option<crate::metrics::LanceMetrics>) -> Self {
         self.metrics = metrics;
         self
-    }
-
-    pub fn with_storage(mut self, storage: dataset::Storage) -> Self {
-        self.storage = storage;
-        self
-    }
-
-    pub fn with_signing_key(mut self, signing_key: Option<SigningKey>) -> Self {
-        self.signing_key = signing_key;
-        self
-    }
-
-    fn client(&self) -> NamespaceClient {
-        NamespaceClient::new(self.namespace_url.clone()).with_signing_key(self.signing_key.as_ref())
     }
 }
 
@@ -194,13 +178,14 @@ impl JobHandler for OptimizeIndicesHandler {
             MAX_UNINDEXED_FLOOR,
             MAX_UNINDEXED_CEILING,
         ) as u64;
-        let client = self.client();
+        let client = self.cluster.client()?;
+        let storage = self.cluster.storage()?;
         let tables = client.list_all_tables().await?;
 
         let mut proposals = Vec::new();
         for encoded in &tables {
             let id = parse_id(encoded);
-            let table = match dataset::open(&client, &id, &self.storage).await {
+            let table = match dataset::open(&client, &id, &storage).await {
                 Ok(table) => table,
                 Err(err) => {
                     if let Some(counters) = &self.metrics {
@@ -281,8 +266,9 @@ impl JobHandler for OptimizeIndicesHandler {
         let id = table_id(&job.parameters)
             .ok_or_else(|| anyhow!("job {} carried no table_id", job.job_id))?;
 
-        let client = self.client();
-        let mut table = dataset::open(&client, &id, &self.storage).await?;
+        let client = self.cluster.client()?;
+        let storage = self.cluster.storage()?;
+        let mut table = dataset::open(&client, &id, &storage).await?;
         let vector_table = is_vector_table(&id);
         let before = index_rows(&table, vector_table)
             .await?
@@ -359,7 +345,7 @@ mod tests {
 
     #[test]
     fn a_retrain_gets_a_builds_execution_timeout() {
-        let descriptor = OptimizeIndicesHandler::new(String::new()).descriptor();
+        let descriptor = OptimizeIndicesHandler::new(Default::default()).descriptor();
         let defaults = descriptor.admin_runtime_defaults.unwrap();
         assert_eq!(defaults.execution_timeout_seconds, 3600);
         assert_eq!(defaults.job_type_max_runtime_seconds, 3600);

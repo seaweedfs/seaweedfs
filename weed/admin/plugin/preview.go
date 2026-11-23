@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -53,14 +54,22 @@ func (r *Plugin) RequestObjectPreview(ctx context.Context, objectID []string, fo
 		r.pendingPreviewMu.Unlock()
 	}()
 
+	// A worker restarted since it reported the object knows nothing of the
+	// cluster until a request tells it.
+	clusterContext, err := r.loadSchedulerClusterContext(ctx)
+	if err != nil {
+		glog.V(1).Infof("preview %s: no cluster context: %v", requestID, err)
+	}
+
 	request := &plugin_pb.AdminToWorkerMessage{
 		RequestId: requestID,
 		SentAt:    timestamppb.Now(),
 		Body: &plugin_pb.AdminToWorkerMessage_RequestObjectPreview{
 			RequestObjectPreview: &plugin_pb.RequestObjectPreview{
-				ObjectId: objectID,
-				Format:   format,
-				RowLimit: requestedRows,
+				ObjectId:       objectID,
+				Format:         format,
+				RowLimit:       requestedRows,
+				ClusterContext: clusterContext,
 			},
 		},
 	}

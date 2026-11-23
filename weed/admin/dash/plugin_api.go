@@ -16,8 +16,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -781,6 +783,9 @@ func (s *AdminServer) parseOrBuildClusterContext(raw json.RawMessage) (*plugin_p
 	if len(contextMessage.S3GrpcAddresses) == 0 {
 		contextMessage.S3GrpcAddresses = append(contextMessage.S3GrpcAddresses, fallback.S3GrpcAddresses...)
 	}
+	if len(contextMessage.LanceNamespaceUrls) == 0 {
+		contextMessage.LanceNamespaceUrls = append(contextMessage.LanceNamespaceUrls, fallback.LanceNamespaceUrls...)
+	}
 	if contextMessage.Metadata == nil {
 		contextMessage.Metadata = map[string]string{}
 	}
@@ -857,6 +862,9 @@ func (s *AdminServer) buildDefaultPluginClusterContext() *plugin_pb.ClusterConte
 			}
 			s3Seen[address] = struct{}{}
 			clusterContext.S3GrpcAddresses = append(clusterContext.S3GrpcAddresses, address)
+			if url := lanceNamespaceURL(address, node.GetLancePort()); url != "" {
+				clusterContext.LanceNamespaceUrls = append(clusterContext.LanceNamespaceUrls, url)
+			}
 		}
 		return nil
 	}); err != nil {
@@ -867,8 +875,19 @@ func (s *AdminServer) buildDefaultPluginClusterContext() *plugin_pb.ClusterConte
 	sort.Strings(clusterContext.FilerAddresses)
 	sort.Strings(clusterContext.VolumeGrpcAddresses)
 	sort.Strings(clusterContext.S3GrpcAddresses)
+	sort.Strings(clusterContext.LanceNamespaceUrls)
 
 	return clusterContext
+}
+
+// lanceNamespaceURL is where the S3 gateway registered as gatewayAddress serves
+// its Lance Namespace, or "" when it serves none. The catalog listens on the
+// gateway's bind address, which is the host it registered under.
+func lanceNamespaceURL(gatewayAddress string, lancePort uint32) string {
+	if lancePort == 0 {
+		return ""
+	}
+	return "http://" + util.JoinHostPort(pb.ServerAddress(gatewayAddress).ToHost(), int(lancePort))
 }
 
 const parseProtoJSONBodyMaxBytes = 1 << 20 // 1 MB

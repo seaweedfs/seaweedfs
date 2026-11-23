@@ -116,6 +116,7 @@ func cloneClusterContext(in *plugin_pb.ClusterContext) *plugin_pb.ClusterContext
 		FilerAddresses:      in.FilerAddresses,
 		VolumeGrpcAddresses: in.VolumeGrpcAddresses,
 		S3GrpcAddresses:     in.S3GrpcAddresses,
+		LanceNamespaceUrls:  in.LanceNamespaceUrls,
 	}
 	if in.Metadata != nil {
 		out.Metadata = make(map[string]string, len(in.Metadata))

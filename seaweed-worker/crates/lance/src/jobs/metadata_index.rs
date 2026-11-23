@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
@@ -11,7 +12,8 @@ use seaweed_worker_core::pb::{
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
 use tracing::warn;
 
-use crate::catalog::{NamespaceClient, SigningKey, parse_id};
+use crate::admin_cluster::AdminCluster;
+use crate::catalog::parse_id;
 use crate::dataset;
 use crate::jobs::vector_index::{
     EXECUTION_TIMEOUT_SECONDS, declare_build_runtime, is_vector_table,
@@ -194,18 +196,14 @@ pub async fn run(
 /// indexes, as each index's table records them. The admin dispatches a job
 /// when an operator asks; detection finds the rest.
 pub struct MetadataIndexHandler {
-    namespace_url: String,
-    storage: dataset::Storage,
-    signing_key: Option<SigningKey>,
+    cluster: Arc<AdminCluster>,
     metrics: Option<crate::metrics::LanceMetrics>,
 }
 
 impl MetadataIndexHandler {
-    pub fn new(namespace_url: String) -> Self {
+    pub fn new(cluster: Arc<AdminCluster>) -> Self {
         Self {
-            namespace_url,
-            storage: dataset::Storage::default(),
-            signing_key: None,
+            cluster,
             metrics: None,
         }
     }
@@ -213,20 +211,6 @@ impl MetadataIndexHandler {
     pub fn with_metrics(mut self, metrics: Option<crate::metrics::LanceMetrics>) -> Self {
         self.metrics = metrics;
         self
-    }
-
-    pub fn with_storage(mut self, storage: dataset::Storage) -> Self {
-        self.storage = storage;
-        self
-    }
-
-    pub fn with_signing_key(mut self, signing_key: Option<SigningKey>) -> Self {
-        self.signing_key = signing_key;
-        self
-    }
-
-    fn client(&self) -> NamespaceClient {
-        NamespaceClient::new(self.namespace_url.clone()).with_signing_key(self.signing_key.as_ref())
     }
 }
 
@@ -328,7 +312,8 @@ impl JobHandler for MetadataIndexHandler {
     ) -> Result<()> {
         let (_, min_unindexed_rows) = settings(&request.worker_config_values);
         let max_results = usize::try_from(request.max_results).unwrap_or(0);
-        let client = self.client();
+        let client = self.cluster.client()?;
+        let storage = self.cluster.storage()?;
         let mut proposals = Vec::new();
         let mut has_more = false;
         'tables: for encoded in &client.list_all_tables().await? {
@@ -336,7 +321,7 @@ impl JobHandler for MetadataIndexHandler {
             if !is_vector_table(&id) {
                 continue;
             }
-            let table = match dataset::open(&client, &id, &self.storage).await {
+            let table = match dataset::open(&client, &id, &storage).await {
                 Ok(table) => table,
                 Err(err) => {
                     if let Some(counters) = &self.metrics {
@@ -412,8 +397,9 @@ impl JobHandler for MetadataIndexHandler {
             stage: format!("{} {key}", action.as_str()),
             ..Default::default()
         })?;
-        let client = self.client();
-        let mut table = dataset::open(&client, &id, &self.storage).await?;
+        let client = self.cluster.client()?;
+        let storage = self.cluster.storage()?;
+        let mut table = dataset::open(&client, &id, &storage).await?;
         let summary = run(
             &mut table.dataset,
             &key,

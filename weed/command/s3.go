@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -397,6 +398,8 @@ func (s3opt *S3Options) startS3Server() bool {
 		readerCacheSizeMB = *s3opt.readerCacheSizeMB
 	}
 
+	lanceListener, lanceLocalListener := s3opt.listenLance(listenOnLocalhost)
+
 	s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
 		Filers:                    filerAddresses,
 		HomeFiler:                 pb.ServerAddress(s3opt.homeFiler),
@@ -430,6 +433,7 @@ func (s3opt *S3Options) startS3Server() bool {
 
 		AllowUntrustedRemoteEndpoints: *s3opt.allowUntrustedRemoteEndpoints,
 		AllowBackslashInKey:           *s3opt.allowBackslashInKey,
+		LancePort:                     s3opt.lancePort(),
 		IamSelfServiceRequiresGrant:   *s3opt.iamSelfServiceRequiresGrant,
 		RoutedLookupTimeout:           *s3opt.routedLookupTimeout,
 		UnreachableOwnerTTL:           *s3opt.unreachableOwnerTTL,
@@ -454,10 +458,8 @@ func (s3opt *S3Options) startS3Server() bool {
 	// The S3 Vectors API resolves its tables through the catalog in process,
 	// whether or not the catalog's own port is served.
 	s3opt.lanceServer = s3opt.newLanceServer(s3ApiServer)
-	if s3opt.portLance != nil && *s3opt.portLance > 0 {
-		if httpS := s3opt.startLanceServer(listenOnLocalhost); httpS != nil {
-			httpServers = append(httpServers, httpS)
-		}
+	if lanceListener != nil {
+		httpServers = append(httpServers, s3opt.startLanceServer(lanceListener, lanceLocalListener))
 	}
 
 	// The Vectors API rides the main -port listener whenever a weed-vector
@@ -736,21 +738,38 @@ func (s3opt *S3Options) newLanceServer(s3ApiServer *s3api.S3ApiServer) *lance.Se
 	return lanceServer
 }
 
-// startLanceServer serves the Lance Namespace catalog on its own port.
-func (s3opt *S3Options) startLanceServer(listenOnLocalhost bool) *http.Server {
-	lanceRouter := mux.NewRouter().SkipClean(true)
-	lanceRouter.Use(util_http.EscapeSemicolonsInQuery)
-	s3opt.lanceServer.RegisterRoutes(lanceRouter)
+// lancePort is the port the Lance Namespace is served on, or 0 when it is not.
+func (s3opt *S3Options) lancePort() uint32 {
+	if !s3opt.lanceBound.Load() {
+		return 0
+	}
+	return uint32(*s3opt.portLance)
+}
 
+// listenLance binds the Lance Namespace port before the gateway registers
+// with the master, so a port that failed to bind is never advertised.
+func (s3opt *S3Options) listenLance(listenOnLocalhost bool) (lanceListener, lanceLocalListener net.Listener) {
+	if s3opt.portLance == nil || *s3opt.portLance <= 0 {
+		return nil, nil
+	}
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portLance)
 	lanceListener, lanceLocalListener, err := util.NewIpAndLocalListeners(
 		*s3opt.bindIp, *s3opt.portLance, idleTimeoutSeconds(s3opt.idleTimeout), listenOnLocalhost)
 	if err != nil {
 		glog.Errorf("Lance Namespace listener on %s error: %v", listenAddress, err)
-		return nil
+		return nil, nil
 	}
 	s3opt.lanceBound.Store(true)
+	return lanceListener, lanceLocalListener
+}
 
+// startLanceServer serves the Lance Namespace catalog on its own port.
+func (s3opt *S3Options) startLanceServer(lanceListener, lanceLocalListener net.Listener) *http.Server {
+	lanceRouter := mux.NewRouter().SkipClean(true)
+	lanceRouter.Use(util_http.EscapeSemicolonsInQuery)
+	s3opt.lanceServer.RegisterRoutes(lanceRouter)
+
+	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portLance)
 	glog.V(0).Infof("Start Lance Namespace Server at http://%s", listenAddress)
 
 	httpS := newHttpServer(lanceRouter, nil)

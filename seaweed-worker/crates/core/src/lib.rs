@@ -26,6 +26,6 @@ pub mod pb {
 
 pub use config::{TlsOptions, WorkerOptions};
 pub use metrics::Metrics;
-pub use registry::{JobHandler, Preview, PreviewProvider, Registry};
+pub use registry::{ClusterObserver, JobHandler, Preview, PreviewProvider, Registry};
 pub use senders::{DetectionSender, ExecutionSender};
 pub use stream::run;

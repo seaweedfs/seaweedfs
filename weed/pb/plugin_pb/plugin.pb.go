@@ -3643,8 +3643,10 @@ type ClusterContext struct {
 	VolumeGrpcAddresses []string          `protobuf:"bytes,3,rep,name=volume_grpc_addresses,json=volumeGrpcAddresses,proto3" json:"volume_grpc_addresses,omitempty"`
 	Metadata            map[string]string `protobuf:"bytes,4,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	S3GrpcAddresses     []string          `protobuf:"bytes,5,rep,name=s3_grpc_addresses,json=s3GrpcAddresses,proto3" json:"s3_grpc_addresses,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// Lance Namespace base URLs, one per S3 gateway that serves one.
+	LanceNamespaceUrls []string `protobuf:"bytes,6,rep,name=lance_namespace_urls,json=lanceNamespaceUrls,proto3" json:"lance_namespace_urls,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ClusterContext) Reset() {
@@ -3708,6 +3710,13 @@ func (x *ClusterContext) GetMetadata() map[string]string {
 func (x *ClusterContext) GetS3GrpcAddresses() []string {
 	if x != nil {
 		return x.S3GrpcAddresses
+	}
+	return nil
+}
+
+func (x *ClusterContext) GetLanceNamespaceUrls() []string {
+	if x != nil {
+		return x.LanceNamespaceUrls
 	}
 	return nil
 }
@@ -4154,10 +4163,11 @@ type RequestObjectPreview struct {
 	ObjectId []string               `protobuf:"bytes,1,rep,name=object_id,json=objectId,proto3" json:"object_id,omitempty"`
 	// The format admin believes this object is, so a worker that does not own it
 	// can decline instead of guessing.
-	Format        string `protobuf:"bytes,2,opt,name=format,proto3" json:"format,omitempty"`
-	RowLimit      int32  `protobuf:"varint,3,opt,name=row_limit,json=rowLimit,proto3" json:"row_limit,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Format         string          `protobuf:"bytes,2,opt,name=format,proto3" json:"format,omitempty"`
+	RowLimit       int32           `protobuf:"varint,3,opt,name=row_limit,json=rowLimit,proto3" json:"row_limit,omitempty"`
+	ClusterContext *ClusterContext `protobuf:"bytes,4,opt,name=cluster_context,json=clusterContext,proto3" json:"cluster_context,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *RequestObjectPreview) Reset() {
@@ -4209,6 +4219,13 @@ func (x *RequestObjectPreview) GetRowLimit() int32 {
 		return x.RowLimit
 	}
 	return 0
+}
+
+func (x *RequestObjectPreview) GetClusterContext() *ClusterContext {
+	if x != nil {
+		return x.ClusterContext
+	}
+	return nil
 }
 
 // ObjectPreviewResponse carries the sample back, already rendered as text. The
@@ -4697,13 +4714,14 @@ const file_plugin_proto_rawDesc = "" +
 	"\asummary\x18\x02 \x01(\tR\asummary\x1aT\n" +
 	"\x11OutputValuesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"\xcc\x02\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"\xfe\x02\n" +
 	"\x0eClusterContext\x122\n" +
 	"\x15master_grpc_addresses\x18\x01 \x03(\tR\x13masterGrpcAddresses\x12'\n" +
 	"\x0ffiler_addresses\x18\x02 \x03(\tR\x0efilerAddresses\x122\n" +
 	"\x15volume_grpc_addresses\x18\x03 \x03(\tR\x13volumeGrpcAddresses\x12@\n" +
 	"\bmetadata\x18\x04 \x03(\v2$.plugin.ClusterContext.MetadataEntryR\bmetadata\x12*\n" +
-	"\x11s3_grpc_addresses\x18\x05 \x03(\tR\x0fs3GrpcAddresses\x1a;\n" +
+	"\x11s3_grpc_addresses\x18\x05 \x03(\tR\x0fs3GrpcAddresses\x120\n" +
+	"\x14lance_namespace_urls\x18\x06 \x03(\tR\x12lanceNamespaceUrls\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb9\x02\n" +
@@ -4757,11 +4775,12 @@ const file_plugin_proto_rawDesc = "" +
 	"observedAt\x1aR\n" +
 	"\x0fAttributesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"h\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.plugin.ConfigValueR\x05value:\x028\x01\"\xa9\x01\n" +
 	"\x14RequestObjectPreview\x12\x1b\n" +
 	"\tobject_id\x18\x01 \x03(\tR\bobjectId\x12\x16\n" +
 	"\x06format\x18\x02 \x01(\tR\x06format\x12\x1b\n" +
-	"\trow_limit\x18\x03 \x01(\x05R\browLimit\"\xd6\x01\n" +
+	"\trow_limit\x18\x03 \x01(\x05R\browLimit\x12?\n" +
+	"\x0fcluster_context\x18\x04 \x01(\v2\x16.plugin.ClusterContextR\x0eclusterContext\"\xd6\x01\n" +
 	"\x15ObjectPreviewResponse\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x06 \x01(\tR\trequestId\x12\x18\n" +
@@ -5013,29 +5032,30 @@ var file_plugin_proto_depIdxs = []int32{
 	47,  // 90: plugin.WorkerObservations.observations:type_name -> plugin.ObjectObservation
 	71,  // 91: plugin.ObjectObservation.attributes:type_name -> plugin.ObjectObservation.AttributesEntry
 	72,  // 92: plugin.ObjectObservation.observed_at:type_name -> google.protobuf.Timestamp
-	50,  // 93: plugin.ObjectPreviewResponse.rows:type_name -> plugin.PreviewRow
-	23,  // 94: plugin.JobTypeDescriptor.WorkerDefaultValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 95: plugin.ConfigForm.DefaultValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 96: plugin.ValueMap.FieldsEntry.value:type_name -> plugin.ConfigValue
-	23,  // 97: plugin.RunDetectionRequest.AdminConfigValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 98: plugin.RunDetectionRequest.WorkerConfigValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 99: plugin.JobProposal.ParametersEntry.value:type_name -> plugin.ConfigValue
-	23,  // 100: plugin.ExecuteJobRequest.AdminConfigValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 101: plugin.ExecuteJobRequest.WorkerConfigValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 102: plugin.JobSpec.ParametersEntry.value:type_name -> plugin.ConfigValue
-	23,  // 103: plugin.JobProgressUpdate.MetricsEntry.value:type_name -> plugin.ConfigValue
-	23,  // 104: plugin.JobResult.OutputValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 105: plugin.ActivityEvent.DetailsEntry.value:type_name -> plugin.ConfigValue
-	23,  // 106: plugin.PersistedJobTypeConfig.AdminConfigValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 107: plugin.PersistedJobTypeConfig.WorkerConfigValuesEntry.value:type_name -> plugin.ConfigValue
-	23,  // 108: plugin.ObjectObservation.AttributesEntry.value:type_name -> plugin.ConfigValue
-	7,   // 109: plugin.PluginControlService.WorkerStream:input_type -> plugin.WorkerToAdminMessage
-	8,   // 110: plugin.PluginControlService.WorkerStream:output_type -> plugin.AdminToWorkerMessage
-	110, // [110:111] is the sub-list for method output_type
-	109, // [109:110] is the sub-list for method input_type
-	109, // [109:109] is the sub-list for extension type_name
-	109, // [109:109] is the sub-list for extension extendee
-	0,   // [0:109] is the sub-list for field type_name
+	41,  // 93: plugin.RequestObjectPreview.cluster_context:type_name -> plugin.ClusterContext
+	50,  // 94: plugin.ObjectPreviewResponse.rows:type_name -> plugin.PreviewRow
+	23,  // 95: plugin.JobTypeDescriptor.WorkerDefaultValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 96: plugin.ConfigForm.DefaultValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 97: plugin.ValueMap.FieldsEntry.value:type_name -> plugin.ConfigValue
+	23,  // 98: plugin.RunDetectionRequest.AdminConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 99: plugin.RunDetectionRequest.WorkerConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 100: plugin.JobProposal.ParametersEntry.value:type_name -> plugin.ConfigValue
+	23,  // 101: plugin.ExecuteJobRequest.AdminConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 102: plugin.ExecuteJobRequest.WorkerConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 103: plugin.JobSpec.ParametersEntry.value:type_name -> plugin.ConfigValue
+	23,  // 104: plugin.JobProgressUpdate.MetricsEntry.value:type_name -> plugin.ConfigValue
+	23,  // 105: plugin.JobResult.OutputValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 106: plugin.ActivityEvent.DetailsEntry.value:type_name -> plugin.ConfigValue
+	23,  // 107: plugin.PersistedJobTypeConfig.AdminConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 108: plugin.PersistedJobTypeConfig.WorkerConfigValuesEntry.value:type_name -> plugin.ConfigValue
+	23,  // 109: plugin.ObjectObservation.AttributesEntry.value:type_name -> plugin.ConfigValue
+	7,   // 110: plugin.PluginControlService.WorkerStream:input_type -> plugin.WorkerToAdminMessage
+	8,   // 111: plugin.PluginControlService.WorkerStream:output_type -> plugin.AdminToWorkerMessage
+	111, // [111:112] is the sub-list for method output_type
+	110, // [110:111] is the sub-list for method input_type
+	110, // [110:110] is the sub-list for extension type_name
+	110, // [110:110] is the sub-list for extension extendee
+	0,   // [0:110] is the sub-list for field type_name
 }
 
 func init() { file_plugin_proto_init() }

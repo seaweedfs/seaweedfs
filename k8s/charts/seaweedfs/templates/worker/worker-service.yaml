@@ -13,7 +13,7 @@ metadata:
     {{- with include "seaweedfs.commonLabels" $ }}{{ . | nindent 4 }}{{ end }}
 spec:
   clusterIP: None  # Headless service
-  {{- $lanceMetrics := and .Values.worker.lanceMetricsPort (include "seaweedfs.worker.lanceNamespaceUrl" .) }}
+  {{- $lanceMetrics := and .Values.worker.lanceMetricsPort (include "seaweedfs.worker.lanceEnabled" .) }}
   {{- if or .Values.worker.metricsPort $lanceMetrics }}
   ports:
   {{- if .Values.worker.metricsPort }}

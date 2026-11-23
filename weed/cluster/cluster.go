@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -25,6 +26,7 @@ type Rack string
 type ClusterNode struct {
 	Address    pb.ServerAddress
 	Version    string
+	LancePort  atomic.Uint32 // set after the node is listed, so read atomically
 	counter    int
 	CreatedTs  time.Time
 	DataCenter DataCenter
@@ -202,4 +204,16 @@ func buildClusterNodeUpdateMessage(isAdd bool, filerGroup FilerGroupName, nodeTy
 		},
 	})
 	return
+}
+
+// SetLancePort records the Lance Namespace port a registered S3 gateway serves.
+func (cluster *Cluster) SetLancePort(ns string, address pb.ServerAddress, port uint32) {
+	g := cluster.s3Groups
+	g.RLock()
+	defer g.RUnlock()
+	if m := g.getGroupMembers(FilerGroupName(ns), false); m != nil {
+		if node, found := m.members[address]; found {
+			node.LancePort.Store(port)
+		}
+	}
 }

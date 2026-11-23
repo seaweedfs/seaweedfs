@@ -4,7 +4,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::pb::{ExecuteJobRequest, JobTypeCapability, JobTypeDescriptor, RunDetectionRequest};
+use crate::pb::{
+    ClusterContext, ExecuteJobRequest, JobTypeCapability, JobTypeDescriptor, RunDetectionRequest,
+};
 use crate::senders::{DetectionSender, ExecutionSender};
 
 /// One job type, worker side. Mirrors the Go JobHandler interface in
@@ -47,12 +49,20 @@ pub trait PreviewProvider: Send + Sync {
     async fn preview(&self, object_id: &[String], row_limit: usize) -> Result<Preview>;
 }
 
+/// Learns the cluster from admin, which describes it on every request, as the
+/// Go worker reads request.ClusterContext. Runs before the request's handler.
+#[async_trait]
+pub trait ClusterObserver: Send + Sync {
+    async fn observe(&self, cluster: &ClusterContext);
+}
+
 /// The handlers one worker process serves. A process may serve several job
 /// types, which is why WorkerHello carries a list of capabilities.
 #[derive(Default, Clone)]
 pub struct Registry {
     handlers: HashMap<String, Arc<dyn JobHandler>>,
     previews: HashMap<String, Arc<dyn PreviewProvider>>,
+    observer: Option<Arc<dyn ClusterObserver>>,
 }
 
 impl Registry {
@@ -71,6 +81,18 @@ impl Registry {
         self
     }
 
+    pub fn with_cluster_observer(mut self, observer: Arc<dyn ClusterObserver>) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+
+    /// Hands a request's cluster context to the observer, if both exist.
+    pub async fn observe(&self, cluster: Option<&ClusterContext>) {
+        if let (Some(observer), Some(cluster)) = (&self.observer, cluster) {
+            observer.observe(cluster).await;
+        }
+    }
+
     pub fn get(&self, job_type: &str) -> Option<Arc<dyn JobHandler>> {
         self.handlers.get(job_type).cloned()
     }
@@ -85,5 +107,42 @@ impl Registry {
 
     pub fn is_empty(&self) -> bool {
         self.handlers.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Seen(Mutex<Vec<Vec<String>>>);
+
+    #[async_trait]
+    impl ClusterObserver for Seen {
+        async fn observe(&self, cluster: &ClusterContext) {
+            self.0.lock().unwrap().push(cluster.filer_addresses.clone());
+        }
+    }
+
+    #[tokio::test]
+    async fn observe_hands_the_context_to_the_observer() {
+        let seen = Arc::new(Seen::default());
+        let registry = Registry::new().with_cluster_observer(seen.clone());
+        registry
+            .observe(Some(&ClusterContext {
+                filer_addresses: vec!["f1:8888.18888".into()],
+                ..Default::default()
+            }))
+            .await;
+        // An older admin, or a request without one, has nothing to say.
+        registry.observe(None).await;
+        Registry::new()
+            .observe(Some(&ClusterContext::default()))
+            .await;
+        assert_eq!(
+            *seen.0.lock().unwrap(),
+            vec![vec!["f1:8888.18888".to_string()]]
+        );
     }
 }

@@ -228,7 +228,7 @@ spec:
           {{- if .Values.worker.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.worker.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
-        {{- if include "seaweedfs.worker.lanceNamespaceUrl" . }}
+        {{- if include "seaweedfs.worker.lanceEnabled" . }}
         - name: worker-lance
           image: {{ template "seaweedfs.worker.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
@@ -237,13 +237,21 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            {{- /* the URL crosses a shell line; metacharacters must arrive as data, not syntax */}}
-            - name: LANCE_NAMESPACE_URL
-              value: {{ include "seaweedfs.worker.lanceNamespaceUrl" . | quote }}
+            {{- /* only a worker pinned before 4.56 reads these; later ones learn the cluster from admin */}}
+            {{- with include "seaweedfs.worker.lanceNamespaceUrl" . }}
+            - name: WEED_LANCE_NAMESPACE
+              value: {{ . | quote }}
+            {{- end }}
+            - name: WEED_MASTERS
+              value: {{ include "seaweedfs.masterServerArg" . | quote }}
+            {{- if .Values.filer.filerGroup }}
+            - name: WEED_FILER_GROUP
+              value: {{ .Values.filer.filerGroup | quote }}
+            {{- end }}
             {{- $mergedExtraEnvironmentVars := dict }}
             {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.worker "target" $mergedExtraEnvironmentVars) }}
-            {{- /* a duplicate would win over the chart's value and change --id or --namespace */}}
-            {{- $mergedExtraEnvironmentVars = omit $mergedExtraEnvironmentVars "POD_NAME" "LANCE_NAMESPACE_URL" }}
+            {{- /* a duplicate would win over the chart's value and change --id or the cluster */}}
+            {{- $mergedExtraEnvironmentVars = omit $mergedExtraEnvironmentVars "POD_NAME" "WEED_LANCE_NAMESPACE" "WEED_MASTERS" "WEED_FILER_GROUP" }}
             {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
             {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
@@ -272,11 +280,6 @@ spec:
               {{- else }}
               --admin={{ template "seaweedfs.fullname" . }}-admin.{{ include "seaweedfs.namespace" . }}:{{ .Values.admin.port }}{{ if .Values.admin.grpcPort }}.{{ .Values.admin.grpcPort }}{{ end }} \
               {{- end }}
-              --namespace="$LANCE_NAMESPACE_URL" \
-              --masters={{ include "seaweedfs.masterServerArg" . }} \
-              {{- if .Values.filer.filerGroup }}
-              --filer-group={{ .Values.filer.filerGroup }} \
-              {{- end }}
               {{- if .Values.global.seaweedfs.enableSecurity }}
               --tls-ca=/usr/local/share/ca-certificates/ca/tls.crt \
               --tls-cert=/usr/local/share/ca-certificates/worker/tls.crt \
@@ -299,7 +302,7 @@ spec:
             - name: ca-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/ca/
-            {{- /* grpc.client, which the worker dials the masters and filers with */}}
+            {{- /* grpc.client, which the worker dials the filers with */}}
             - name: client-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/client/
@@ -342,7 +345,7 @@ spec:
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.worker.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
-        {{- include "seaweedfs.tmpDirVolume" (list . .Values.worker.containerSecurityContext (tpl (.Values.worker.extraVolumeMounts | default "") .) (tpl (.Values.worker.extraVolumes | default "") .) (ne (include "seaweedfs.worker.lanceNamespaceUrl" .) "")) | nindent 8 }}
+        {{- include "seaweedfs.tmpDirVolume" (list . .Values.worker.containerSecurityContext (tpl (.Values.worker.extraVolumeMounts | default "") .) (tpl (.Values.worker.extraVolumes | default "") .) (ne (include "seaweedfs.worker.lanceEnabled" .) "")) | nindent 8 }}
         {{- if eq .Values.worker.data.type "hostPath" }}
         - name: worker-data
           hostPath:

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
@@ -12,7 +13,8 @@ use seaweed_worker_core::pb::{
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
 use tracing::warn;
 
-use crate::catalog::{NamespaceClient, SigningKey, parse_id};
+use crate::admin_cluster::AdminCluster;
+use crate::catalog::parse_id;
 use crate::dataset;
 use crate::jobs::{FORMAT, clamp, observation, string_list, table_id};
 
@@ -33,18 +35,14 @@ const MIN_FRAGMENTS_CEILING: i64 = 4096;
 /// Lance writes one fragment per write batch, so a table fed by small appends
 /// accumulates small files the same way an Iceberg table does.
 pub struct CompactHandler {
-    namespace_url: String,
-    storage: dataset::Storage,
-    signing_key: Option<SigningKey>,
+    cluster: Arc<AdminCluster>,
     metrics: Option<crate::metrics::LanceMetrics>,
 }
 
 impl CompactHandler {
-    pub fn new(namespace_url: String) -> Self {
+    pub fn new(cluster: Arc<AdminCluster>) -> Self {
         Self {
-            namespace_url,
-            storage: dataset::Storage::default(),
-            signing_key: None,
+            cluster,
             metrics: None,
         }
     }
@@ -52,21 +50,6 @@ impl CompactHandler {
     pub fn with_metrics(mut self, metrics: Option<crate::metrics::LanceMetrics>) -> Self {
         self.metrics = metrics;
         self
-    }
-
-    /// Storage options to use where the namespace vends none.
-    pub fn with_storage(mut self, storage: dataset::Storage) -> Self {
-        self.storage = storage;
-        self
-    }
-
-    pub fn with_signing_key(mut self, signing_key: Option<SigningKey>) -> Self {
-        self.signing_key = signing_key;
-        self
-    }
-
-    fn client(&self) -> NamespaceClient {
-        NamespaceClient::new(self.namespace_url.clone()).with_signing_key(self.signing_key.as_ref())
     }
 }
 
@@ -145,14 +128,15 @@ impl JobHandler for CompactHandler {
             MIN_FRAGMENTS_FLOOR,
             MIN_FRAGMENTS_CEILING,
         ) as usize;
-        let client = self.client();
+        let client = self.cluster.client()?;
+        let storage = self.cluster.storage()?;
         let tables = client.list_all_tables().await?;
 
         let mut proposals = Vec::new();
         let mut observations = Vec::new();
         for encoded in &tables {
             let id = parse_id(encoded);
-            let table = match dataset::open(&client, &id, &self.storage).await {
+            let table = match dataset::open(&client, &id, &storage).await {
                 Ok(table) => table,
                 Err(err) => {
                     // A table that cannot be opened is the next run's problem,
@@ -266,10 +250,11 @@ impl JobHandler for CompactHandler {
             TARGET_ROWS_CEILING,
         ) as usize;
 
-        let client = self.client();
+        let client = self.cluster.client()?;
+        let storage = self.cluster.storage()?;
         // Re-resolve rather than trusting the location detection saw: the table
         // may have been repointed, and the vended credentials have expired.
-        let mut table = dataset::open(&client, &id, &self.storage).await?;
+        let mut table = dataset::open(&client, &id, &storage).await?;
         let before = table.stats().await?;
 
         sender.send_progress(JobProgressUpdate {

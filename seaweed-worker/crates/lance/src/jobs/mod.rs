@@ -43,48 +43,23 @@ pub(crate) fn table_id(parameters: &HashMap<String, ConfigValue>) -> Option<Vec<
 /// Every handler this worker serves. A worker process may serve several job
 /// types, which is why WorkerHello carries a list.
 pub fn handlers(
-    namespace_url: String,
-    storage: crate::dataset::Storage,
-    signing_key: Option<crate::catalog::SigningKey>,
+    cluster: Arc<crate::admin_cluster::AdminCluster>,
     metrics: Option<crate::metrics::LanceMetrics>,
 ) -> Vec<Arc<dyn JobHandler>> {
     vec![
+        Arc::new(compact::CompactHandler::new(cluster.clone()).with_metrics(metrics.clone())),
         Arc::new(
-            compact::CompactHandler::new(namespace_url.clone())
-                .with_storage(storage.clone())
-                .with_signing_key(signing_key.clone())
+            indices::OptimizeIndicesHandler::new(cluster.clone()).with_metrics(metrics.clone()),
+        ),
+        Arc::new(
+            vector_index::VectorIndexHandler::new(cluster.clone()).with_metrics(metrics.clone()),
+        ),
+        Arc::new(
+            metadata_index::MetadataIndexHandler::new(cluster.clone())
                 .with_metrics(metrics.clone()),
         ),
-        Arc::new(
-            indices::OptimizeIndicesHandler::new(namespace_url.clone())
-                .with_storage(storage.clone())
-                .with_signing_key(signing_key.clone())
-                .with_metrics(metrics.clone()),
-        ),
-        Arc::new(
-            vector_index::VectorIndexHandler::new(namespace_url.clone())
-                .with_storage(storage.clone())
-                .with_signing_key(signing_key.clone())
-                .with_metrics(metrics.clone()),
-        ),
-        Arc::new(
-            metadata_index::MetadataIndexHandler::new(namespace_url.clone())
-                .with_storage(storage.clone())
-                .with_signing_key(signing_key.clone())
-                .with_metrics(metrics.clone()),
-        ),
-        Arc::new(
-            sort::SortHandler::new(namespace_url.clone())
-                .with_storage(storage.clone())
-                .with_signing_key(signing_key.clone())
-                .with_metrics(metrics.clone()),
-        ),
-        Arc::new(
-            cleanup::CleanupVersionsHandler::new(namespace_url)
-                .with_storage(storage)
-                .with_signing_key(signing_key)
-                .with_metrics(metrics),
-        ),
+        Arc::new(sort::SortHandler::new(cluster.clone()).with_metrics(metrics.clone())),
+        Arc::new(cleanup::CleanupVersionsHandler::new(cluster).with_metrics(metrics)),
     ]
 }
 
