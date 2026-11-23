@@ -5,49 +5,153 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
+	"math/rand/v2"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
+	"google.golang.org/grpc"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
-var errSSES3Permission = errors.New("S3 gateway denied object read")
+var (
+	errSSES3Permission = errors.New("S3 gateway denied object read")
+	errNoS3Gateway     = errors.New("no S3 gateway is registered with the masters")
+)
 
 // SSES3Reader makes signed range requests for one mounted bucket. The S3
 // gateway owns the encryption keys and applies its normal GetObject policy.
 type SSES3Reader struct {
-	client *s3.Client
-	root   string
-	bucket string
+	cfg       aws.Config
+	endpoints func(context.Context) ([]string, error)
+	root      string
+	bucket    string
+
+	clientLock sync.Mutex
+	client     *s3.Client
 }
 
-func NewSSES3Reader(ctx context.Context, endpoint, bucketPath string) (*SSES3Reader, error) {
-	u, err := url.Parse(endpoint)
-	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return nil, errors.New("invalid S3 endpoint")
-	}
-	if u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || net.ParseIP(u.Hostname()).IsLoopback())) {
-		return nil, errors.New("S3 endpoint requires HTTPS or a loopback HTTP address")
-	}
+// NewSSES3Reader reads through the S3 gateways the filer's masters list for
+// its filer group.
+func NewSSES3Reader(ctx context.Context, bucketPath string, filers []pb.ServerAddress, grpcDialOption grpc.DialOption) (*SSES3Reader, error) {
 	cfg, err := config.LoadDefaultConfig(ctx, config.WithDefaultRegion("us-east-1"))
 	if err != nil {
 		return nil, err
 	}
-	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+	return &SSES3Reader{
+		cfg: cfg,
+		endpoints: func(ctx context.Context) ([]string, error) {
+			return listS3Endpoints(ctx, filers, grpcDialOption)
+		},
+		root:   bucketPath + "/",
+		bucket: path.Base(bucketPath),
+	}, nil
+}
+
+func listS3Endpoints(ctx context.Context, filers []pb.ServerAddress, grpcDialOption grpc.DialOption) ([]string, error) {
+	var masters []string
+	var filerGroup string
+	if err := pb.WithOneOfGrpcFilerClients(false, filers, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		masters, filerGroup = resp.Masters, resp.FilerGroup
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	var endpoints []string
+	var err error
+	// Only the leader lists the gateways, so a follower answers with none.
+	for _, master := range masters {
+		err = pb.WithMasterClient(ctx, false, pb.ServerAddress(master), grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+			resp, err := client.ListClusterNodes(ctx, &master_pb.ListClusterNodesRequest{ClientType: cluster.S3Type, FilerGroup: filerGroup})
+			if err != nil {
+				return err
+			}
+			for _, node := range resp.ClusterNodes {
+				if node.S3Endpoint != "" {
+					endpoints = append(endpoints, node.S3Endpoint)
+				}
+			}
+			return nil
+		})
+		if len(endpoints) > 0 {
+			return endpoints, nil
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return nil, errNoS3Gateway
+}
+
+// gatewayClient picks one of the registered gateways, preferring HTTPS, and
+// keeps it until a request cannot reach it.
+func (r *SSES3Reader) gatewayClient(ctx context.Context) (*s3.Client, error) {
+	r.clientLock.Lock()
+	defer r.clientLock.Unlock()
+	if r.client != nil {
+		return r.client, nil
+	}
+	endpoints, err := r.endpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	endpoints = slices.DeleteFunc(endpoints, func(endpoint string) bool {
+		u, err := url.Parse(endpoint)
+		return err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != ""
+	})
+	if https := slices.DeleteFunc(slices.Clone(endpoints), func(endpoint string) bool { return !strings.HasPrefix(endpoint, "https://") }); len(https) > 0 {
+		endpoints = https
+	}
+	if len(endpoints) == 0 {
+		return nil, errNoS3Gateway
+	}
+	endpoint := endpoints[rand.IntN(len(endpoints))]
+	r.client = s3.NewFromConfig(r.cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true
 	})
-	return &SSES3Reader{client: client, root: bucketPath + "/", bucket: path.Base(bucketPath)}, nil
+	return r.client, nil
+}
+
+// getObject retries once on a newly picked gateway when the current one
+// cannot be reached.
+func (r *SSES3Reader) getObject(ctx context.Context, req *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
+	for attempt := 0; ; attempt++ {
+		client, err := r.gatewayClient(ctx)
+		if err != nil {
+			return nil, err
+		}
+		obj, err := client.GetObject(ctx, req)
+		var sendErr *smithyhttp.RequestSendError
+		if !errors.As(err, &sendErr) || ctx.Err() != nil {
+			return obj, err
+		}
+		r.clientLock.Lock()
+		if r.client == client {
+			r.client = nil
+		}
+		r.clientLock.Unlock()
+		if attempt > 0 {
+			return nil, err
+		}
+	}
 }
 
 func sseObjectETag(entry *filer_pb.Entry) string {
@@ -87,13 +191,13 @@ func (r *SSES3Reader) readAt(ctx context.Context, fullPath, etag, version string
 	if version != "" && !currentNull {
 		req.VersionId = aws.String(version)
 	}
-	obj, err := r.client.GetObject(ctx, req)
+	obj, err := r.getObject(ctx, req)
 	if currentNull && (err == nil && aws.ToString(obj.VersionId) != "" && aws.ToString(obj.VersionId) != version || err != nil && !isS3PermissionError(err)) {
 		if err == nil {
 			obj.Body.Close()
 		}
 		req.VersionId = aws.String(version)
-		obj, err = r.client.GetObject(ctx, req)
+		obj, err = r.getObject(ctx, req)
 	}
 	if err != nil {
 		if isS3PermissionError(err) {

@@ -45,27 +45,27 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	filerMountRootPath := *option.filerMountRootPath
 	var sseReader *mount.SSES3Reader
-	if *option.sseS3ReadEndpoint != "" {
+	if *option.sseS3Read {
 		bucketPath, ok := bucketPathForMountRoot(filerMountRootPath, bucketRootPath)
 		if !ok || !*option.readOnly || *option.allowOthers {
-			glog.Errorf("-sseS3ReadEndpoint requires a bucket-root mount, -readOnly and -allowOthers=false")
+			glog.Errorf("-sseS3Read requires a bucket-root mount, -readOnly and -allowOthers=false")
 			return false
 		}
 		if resolveMountRoot(filerMountRootPath) != bucketPath {
-			glog.Errorf("-sseS3ReadEndpoint requires -filer.path=%s", bucketPath)
+			glog.Errorf("-sseS3Read requires -filer.path=%s", bucketPath)
 			return false
 		}
 		for _, opt := range option.extraOptions {
 			for _, token := range strings.Split(opt, ",") {
 				switch token {
 				case "allow_other", "allow_root", "rw":
-					glog.Errorf("-sseS3ReadEndpoint is incompatible with mount option %q", token)
+					glog.Errorf("-sseS3Read is incompatible with mount option %q", token)
 					return false
 				}
 			}
 		}
 		var err error
-		sseReader, err = mount.NewSSES3Reader(context.Background(), *option.sseS3ReadEndpoint, bucketPath)
+		sseReader, err = mount.NewSSES3Reader(context.Background(), bucketPath, filerAddresses, grpcDialOption)
 		if err != nil {
 			glog.Errorf("configure SSE-S3 reads: %v", err)
 			return false

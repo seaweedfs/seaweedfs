@@ -7,7 +7,19 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
 )
+
+func gatewayReader(t *testing.T, bucketPath string, endpoints ...string) *SSES3Reader {
+	t.Helper()
+	reader, err := NewSSES3Reader(context.Background(), bucketPath, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader.endpoints = func(context.Context) ([]string, error) { return endpoints, nil }
+	return reader
+}
 
 func TestSSES3GatewayReadAt(t *testing.T) {
 	t.Setenv("AWS_ACCESS_KEY_ID", "local-test-reader")
@@ -46,10 +58,7 @@ func TestSSES3GatewayReadAt(t *testing.T) {
 				_, _ = w.Write([]byte("345"))
 			}))
 			defer server.Close()
-			reader, err := NewSSES3Reader(context.Background(), server.URL, "/custom/bucket")
-			if err != nil {
-				t.Fatal(err)
-			}
+			reader := gatewayReader(t, "/custom/bucket", server.URL)
 			buf := make([]byte, 3)
 			n, err := reader.readAt(context.Background(), "/custom/bucket/dir/a+b", `"fixture"`, "v1", 10, buf, 3)
 			if tc.wantOK {
@@ -84,10 +93,7 @@ func TestSSES3GatewayReadAtVersionFile(t *testing.T) {
 		_, _ = w.Write([]byte("abc"))
 	}))
 	defer server.Close()
-	reader, err := NewSSES3Reader(context.Background(), server.URL, "/buckets/bucket")
-	if err != nil {
-		t.Fatal(err)
-	}
+	reader := gatewayReader(t, "/buckets/bucket", server.URL)
 	buf := make([]byte, 3)
 	n, err := reader.readAt(context.Background(), "/buckets/bucket/dir/report.csv.versions/v_v1", `"fixture"`, "v1", 3, buf, 0)
 	if err != nil || n != 3 || string(buf) != "abc" {
@@ -131,10 +137,7 @@ func TestSSES3GatewayReadAtNullVersion(t *testing.T) {
 				_, _ = w.Write([]byte("abc"))
 			}))
 			defer server.Close()
-			reader, err := NewSSES3Reader(context.Background(), server.URL, "/buckets/bucket")
-			if err != nil {
-				t.Fatal(err)
-			}
+			reader := gatewayReader(t, "/buckets/bucket", server.URL)
 			buf := make([]byte, 3)
 			n, err := reader.readAt(context.Background(), "/buckets/bucket/report.csv", `"fixture"`, "null", 3, buf, 0)
 			if err != nil || n != 3 || string(buf) != "abc" {
@@ -144,5 +147,49 @@ func TestSSES3GatewayReadAtNullVersion(t *testing.T) {
 				t.Fatalf("versionId requests = %q, want %q", got, tc.wantRequests)
 			}
 		})
+	}
+}
+
+func TestSSES3GatewayChoice(t *testing.T) {
+	reader := gatewayReader(t, "/buckets/bucket", "ftp://a:21", "http://b:8333", "https://user@c:8443", "https://d:8443")
+	client, err := reader.gatewayClient(context.Background())
+	if err != nil || aws.ToString(client.Options().BaseEndpoint) != "https://d:8443" {
+		t.Fatalf("gateway = %v, %v; want the valid HTTPS one", err, client)
+	}
+
+	reader = gatewayReader(t, "/buckets/bucket", "ftp://a:21")
+	if _, err := reader.gatewayClient(context.Background()); !errors.Is(err, errNoS3Gateway) {
+		t.Fatalf("no usable gateway: err = %v", err)
+	}
+}
+
+func TestSSES3GatewayReadAtPicksAnotherGateway(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "local-test-reader")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "local-test-secret")
+	t.Setenv("AWS_SESSION_TOKEN", "")
+	t.Setenv("AWS_REGION", "us-east-1")
+	stopped := httptest.NewServer(http.NotFoundHandler())
+	stopped.Close()
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("ETag", `"fixture"`)
+		w.Header().Set("Content-Range", "bytes 0-2/3")
+		w.Header().Set("Content-Length", "3")
+		w.Header().Set("X-Amz-Server-Side-Encryption", "AES256")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte("abc"))
+	}))
+	defer live.Close()
+
+	reader := gatewayReader(t, "/buckets/bucket")
+	reader.cfg.Retryer = func() aws.Retryer { return aws.NopRetryer{} }
+	lists := [][]string{{stopped.URL}, {live.URL}}
+	reader.endpoints = func(context.Context) ([]string, error) {
+		next := lists[0]
+		lists = lists[1:]
+		return next, nil
+	}
+	buf := make([]byte, 3)
+	if n, err := reader.readAt(context.Background(), "/buckets/bucket/a", `"fixture"`, "", 3, buf, 0); err != nil || string(buf[:n]) != "abc" {
+		t.Fatalf("read = %d, %v, bytes %q", n, err, buf)
 	}
 }
