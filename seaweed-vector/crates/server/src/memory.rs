@@ -1,6 +1,8 @@
 //! How much the engine caches: a share of the memory this process may use,
 //! so a small pod is not overcommitted and a large host is not left idle.
 
+use std::path::{Path, PathBuf};
+
 /// The read, index and metadata caches, in bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CacheSizes {
@@ -30,22 +32,52 @@ impl CacheSizes {
     }
 }
 
-/// The smaller of the cgroup's memory limit and the machine's memory.
+/// The smallest of the machine's memory and the limits of this process's
+/// memory cgroup and its ancestors: a systemd service is limited in its own
+/// group, a container usually at the root it sees.
 fn memory_limit() -> Option<u64> {
-    let total = std::fs::read_to_string("/proc/meminfo")
-        .ok()
-        .and_then(|info| mem_total(&info));
-    let cgroup = [
-        "/sys/fs/cgroup/memory.max",
-        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
-    ]
-    .iter()
-    .find_map(|path| std::fs::read_to_string(path).ok())
-    .and_then(|limit| cgroup_limit(&limit));
-    match (total, cgroup) {
-        (Some(total), Some(cgroup)) => Some(total.min(cgroup)),
-        (total, cgroup) => total.or(cgroup),
-    }
+    let read = |path: &Path| std::fs::read_to_string(path).ok();
+    let total = read(Path::new("/proc/meminfo")).and_then(|info| mem_total(&info));
+    let groups = read(Path::new("/proc/self/cgroup"))
+        .map(|groups| limit_files(&groups))
+        .unwrap_or_default();
+    groups
+        .iter()
+        .filter_map(|file| read(file).and_then(|limit| cgroup_limit(&limit)))
+        .chain(total)
+        .min()
+}
+
+/// The limit files of the memory cgroup `/proc/self/cgroup` names and of its
+/// ancestors: v1's memory controller where it has one, else v2's unified group.
+fn limit_files(self_cgroup: &str) -> Vec<PathBuf> {
+    let entries: Vec<(&str, &str)> = self_cgroup
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.splitn(3, ':');
+            fields.next()?;
+            Some((fields.next()?, fields.next()?))
+        })
+        .collect();
+    let v1 = entries
+        .iter()
+        .find(|(controllers, _)| controllers.split(',').any(|c| c == "memory"))
+        .map(|(_, group)| ("/sys/fs/cgroup/memory", *group, "memory.limit_in_bytes"));
+    let v2 = entries
+        .iter()
+        .find(|(controllers, _)| controllers.is_empty())
+        .map(|(_, group)| ("/sys/fs/cgroup", *group, "memory.max"));
+    let Some((root, group, file)) = v1.or(v2) else {
+        return Vec::new();
+    };
+    Path::new(group)
+        .ancestors()
+        .map(|dir| {
+            Path::new(root)
+                .join(dir.strip_prefix("/").unwrap_or(dir))
+                .join(file)
+        })
+        .collect()
 }
 
 fn mem_total(meminfo: &str) -> Option<u64> {
@@ -79,6 +111,35 @@ mod tests {
             (sizes.read, sizes.index, sizes.metadata),
             (512 << 20, 1024 << 20, 256 << 20)
         );
+    }
+
+    #[test]
+    fn looks_up_the_process_group_and_its_ancestors() {
+        let paths = |groups: &str| -> Vec<String> {
+            limit_files(groups)
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect()
+        };
+        assert_eq!(
+            paths("0::/system.slice/weed-vector.service\n"),
+            [
+                "/sys/fs/cgroup/system.slice/weed-vector.service/memory.max",
+                "/sys/fs/cgroup/system.slice/memory.max",
+                "/sys/fs/cgroup/memory.max",
+            ]
+        );
+        // A container's namespace shows its own group as the root.
+        assert_eq!(paths("0::/\n"), ["/sys/fs/cgroup/memory.max"]);
+        // On a hybrid host the memory controller is v1's.
+        assert_eq!(
+            paths("12:cpu,cpuacct:/a\n4:memory:/user.slice\n0::/user.slice\n"),
+            [
+                "/sys/fs/cgroup/memory/user.slice/memory.limit_in_bytes",
+                "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+            ]
+        );
+        assert!(paths("").is_empty());
     }
 
     #[test]
