@@ -84,6 +84,20 @@ pub(crate) fn rewrite(filter: Expr, ready: &HashMap<String, String>) -> (Expr, V
     (rewritten.unwrap_or(lit(true)), indexed)
 }
 
+pub(crate) fn columns(dataset: &Dataset, filter: &str) -> Result<Vec<String>> {
+    let mut scanner = dataset.scan();
+    scanner.filter(filter)?;
+    let expr = scanner.get_expr_filter()?.ok_or_else(|| {
+        crate::query::IndexedOnlyError("indexed-only requires an indexed metadata filter".into())
+    })?;
+    let count = split_conjunction_owned(expr.clone()).len();
+    let (_, indexed) = rewrite(expr, &ready_columns(dataset));
+    if indexed.len() != count {
+        return Err(crate::query::IndexedOnlyError("indexed-only supports conjunctions of string $eq/$in filters on ready metadata indexes".into()).into());
+    }
+    Ok(indexed.into_iter().map(|i| i.column).collect())
+}
+
 fn and(left: Option<Expr>, right: Expr) -> Expr {
     match left {
         Some(left) => Expr::BinaryExpr(BinaryExpr::new(
@@ -624,7 +638,7 @@ mod tests {
         let few = |q: Query| {
             let (dataset, table) = (&dataset, &table);
             async move {
-                query::few_indexed_matches(dataset, table, &q)
+                query::few_indexed_matches(dataset, table, &q, None)
                     .await
                     .unwrap()
             }
@@ -654,6 +668,97 @@ mod tests {
                     "{got:?} vs {exact:?}"
                 );
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn indexed_only_intersects_metadata_and_vector_coverage() {
+        use futures::TryStreamExt;
+        let dir = TempDir::new().unwrap();
+        let mut dataset = dataset(&dir, 300).await;
+        let batches = dataset
+            .scan()
+            .try_into_stream()
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        let batch = &batches[0];
+        let mut columns = batch.columns().to_vec();
+        let key = batch.schema().index_of("key").unwrap();
+        columns[key] = Arc::new(StringArray::from(
+            (0..batch.num_rows())
+                .map(|i| format!("new{i}"))
+                .collect::<Vec<_>>(),
+        ));
+        let batch = RecordBatch::try_new(batch.schema(), columns).unwrap();
+        let reader = RecordBatchIterator::new(vec![Ok(batch.clone())], batch.schema());
+        dataset.append(reader, None).await.unwrap();
+        dataset
+            .optimize_indices(&lance_index::optimize::OptimizeOptions::append())
+            .await
+            .unwrap();
+        let table = VectorTable::resolve(&dataset, None, None).unwrap();
+        let query = Query {
+            vector: vec![1.0, 2.0, 3.0, 4.0],
+            k: 1000,
+            filter: Some(eq("author", "\"rare\"")),
+            postfilter: false,
+            distance: DistanceType::L2,
+            nprobes: Some(4),
+            index_segments: None,
+            fragments: None,
+            exact_match_limit: None,
+        };
+        let reader = RecordBatchIterator::new(vec![Ok(batch.clone())], batch.schema());
+        dataset.append(reader, None).await.unwrap();
+        crate::index::build(&mut dataset, "vector", crate::index::INDEX_NAME, 4, true)
+            .await
+            .unwrap();
+        let tail = Query {
+            fragments: Some(vec![dataset.fragments().last().unwrap().id]),
+            ..query.clone()
+        };
+        let (hits, excluded) = query::indexed_only(&dataset, &table, &tail).await.unwrap();
+        assert!(hits.is_empty());
+        assert_eq!(excluded, 1);
+        for limit in [None, Some(0)] {
+            let query = Query {
+                exact_match_limit: limit,
+                ..query.clone()
+            };
+            let all = query::ann(&dataset, &table, &query).await.unwrap();
+            let (indexed, excluded) = query::indexed_only(&dataset, &table, &query).await.unwrap();
+            assert_eq!(excluded, 1);
+            assert!(all.len() > indexed.len());
+            assert!(indexed.len() >= 30);
+        }
+        for file in &dataset.fragments().last().unwrap().files {
+            std::fs::remove_file(dir.path().join("data").join(&file.path)).unwrap();
+        }
+        for limit in [None, Some(0)] {
+            let query = Query {
+                exact_match_limit: limit,
+                ..query.clone()
+            };
+            assert!(query::indexed_only(&dataset, &table, &query).await.is_ok());
+        }
+        for filter in [
+            eq("other", "\"rare\""),
+            eq("author", "true"),
+            format!("NOT {}", eq("author", "\"rare\"")),
+        ] {
+            let query = Query {
+                filter: Some(filter),
+                ..query.clone()
+            };
+            assert!(
+                query::indexed_only(&dataset, &table, &query)
+                    .await
+                    .unwrap_err()
+                    .is::<query::IndexedOnlyError>()
+            );
         }
     }
 
