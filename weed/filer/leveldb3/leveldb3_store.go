@@ -3,7 +3,6 @@ package leveldb
 import (
 	"bytes"
 	"context"
-	"crypto/fips140"
 	"crypto/md5"
 	"fmt"
 	"io"
@@ -139,7 +138,7 @@ func (store *LevelDB3Store) loadDB(name string) (*leveldb_handle.DB, error) {
 		glog.Errorf("filer store open dir %s: %v", dbFolder, dbErr)
 		return nil, dbErr
 	}
-	if err := leveldb_handle.CheckKeyHash([]*leveldb_handle.DB{db}, fips140.Enforced(), store.ReadOnly); err != nil {
+	if err := leveldb_handle.CheckKeyHash([]*leveldb_handle.DB{db}, weed_util.DigestIsSha256(), store.ReadOnly); err != nil {
 		db.Close()
 		return nil, err
 	}

@@ -3,7 +3,6 @@ package weed_server
 import (
 	"bytes"
 	"context"
-	"crypto/fips140"
 	"errors"
 	"fmt"
 	"io"
@@ -65,7 +64,7 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 		}
 	} else if reply != nil {
-		if len(md5bytes) > 0 && !fips140.Enforced() {
+		if len(md5bytes) > 0 && !util.DigestIsSha256() {
 			md5InBase64 := util.Base64Encode(md5bytes)
 			w.Header().Set("Content-MD5", md5InBase64)
 		}
@@ -715,10 +714,10 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 }
 
 // contentMd5Mismatch compares the body digest with the client's Content-MD5,
-// base64 or hex. Under fips140=only the digest is not an MD5, so Content-MD5
+// base64 or hex. Under digest sha256 the digest is not an MD5, so Content-MD5
 // goes unchecked.
 func contentMd5Mismatch(md5bytes []byte, headerMd5 string) bool {
-	if headerMd5 == "" || fips140.Enforced() {
+	if headerMd5 == "" || util.DigestIsSha256() {
 		return false
 	}
 	return util.Base64Encode(md5bytes) != headerMd5 && fmt.Sprintf("%x", md5bytes) != headerMd5

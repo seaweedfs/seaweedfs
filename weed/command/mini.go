@@ -495,6 +495,7 @@ func initMiniFilerFlags() {
 	miniFilerOptions.tusMaxSizeMB = cmdMini.Flag.Int("filer.tusMaxSizeMB", 5*1024, "maximum TUS upload size in MB")
 	miniFilerOptions.tusSessionExpiry = cmdMini.Flag.Duration("filer.tusSessionExpiry", 24*time.Hour, "incomplete TUS upload sessions are cleaned up after this duration")
 	miniFilerOptions.allowUntrustedRemoteEndpoints = cmdMini.Flag.Bool("filer.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
+	miniFilerOptions.digest = cmdMini.Flag.String("filer.digest", "", filerDigestUsage)
 	miniFilerOptions.remoteCacheEvictThreshold = cmdMini.Flag.Float64("filer.remoteCacheEvictThreshold", 0.9, "evict remote-cached objects (oldest first) when any volume disk exceeds this usage fraction; 0 disables")
 	miniFilerOptions.idleTimeout = cmdMini.Flag.Int("filer.idleTimeout", 10, "connection idle seconds")
 }

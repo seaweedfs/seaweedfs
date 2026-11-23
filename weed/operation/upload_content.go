@@ -3,7 +3,6 @@ package operation
 import (
 	"bytes"
 	"context"
-	"crypto/fips140"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -615,7 +614,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	if option.IsInputCompressed {
 		h.Set("Content-Encoding", "gzip")
 	}
-	if option.Md5 != "" && !fips140.Enforced() {
+	if option.Md5 != "" && !util.DigestIsSha256() {
 		h.Set("Content-MD5", option.Md5)
 	}
 
@@ -870,10 +869,10 @@ func (b *watchdogBody) Close() error {
 }
 
 // uploadedContentMd5 is the Content-MD5 the volume server checked and echoed.
-// Under fips140=only the digest is not an MD5 and is never sent, so the
+// Under digest sha256 the digest is not an MD5 and is never sent, so the
 // caller's own digest stands.
 func uploadedContentMd5(resp *http.Response, option *UploadOption) string {
-	if fips140.Enforced() {
+	if util.DigestIsSha256() {
 		return option.Md5
 	}
 	return resp.Header.Get("Content-MD5")

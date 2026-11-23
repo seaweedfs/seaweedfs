@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"crypto/fips140"
 	"crypto/md5"
 	"encoding/base64"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // setFIPS140Enforced overrides fips140Enforced for the duration of the test.
@@ -197,5 +199,27 @@ func TestFIPS140OnlySHA1ChunkedTrailer(t *testing.T) {
 				t.Errorf("got %v, want %v", code, want)
 			}
 		})
+	}
+}
+
+func TestContentMd5MatchesFollowsDigest(t *testing.T) {
+	if fips140.Enforced() {
+		t.Skip("GODEBUG=fips140=only refuses digest md5")
+	}
+	t.Cleanup(func() { util.SetDigest("") })
+	digest := []byte("0123456789abcdef")
+	wrong := []byte("fedcba9876543210")
+
+	if err := util.SetDigest(util.DigestMd5); err != nil {
+		t.Fatal(err)
+	}
+	if contentMd5Matches(digest, wrong) {
+		t.Fatal("digest md5: a wrong Content-MD5 matched")
+	}
+	if err := util.SetDigest(util.DigestSha256); err != nil {
+		t.Fatal(err)
+	}
+	if !contentMd5Matches(digest, wrong) {
+		t.Fatal("digest sha256: Content-MD5 was checked against a SHA-256 digest")
 	}
 }

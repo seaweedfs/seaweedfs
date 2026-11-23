@@ -51,6 +51,9 @@ var (
 // S3 gateway, whose remote-mount read paths dial the mounted endpoint directly.
 const allowUntrustedRemoteEndpointsUsage = "if true, a read of a remote-only entry accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints."
 
+// filerDigestUsage documents -digest, shared by weed filer, server and mini.
+const filerDigestUsage = "[md5|sha256] hash behind ETags, chunk digests and leveldb directory keys; S3, mount, WebDAV, SFTP and the other clients of this filer use it too. Empty follows GODEBUG: sha256 under fips140=only, md5 otherwise. GODEBUG=fips140=only refuses md5. Existing data keeps the digest it was written with."
+
 // iamSelfServiceRequiresGrantUsage documents the flag shared by every command
 // that runs the embedded IAM API.
 const iamSelfServiceRequiresGrantUsage = "if true, an identity needs an explicit iam: grant to manage its own access keys (CreateAccessKey, DeleteAccessKey, UpdateAccessKey, ListAccessKeys, GetUser), as on AWS. Default allows it to every authenticated identity."
@@ -117,6 +120,7 @@ type FilerOptions struct {
 	tusMaxSizeMB              *int
 	tusSessionExpiry          *time.Duration
 	s3ConfigFile              *string // optional path to static S3 identity config
+	digest                    *string
 
 	allowUntrustedRemoteEndpoints *bool
 	remoteCacheEvictThreshold     *float64
@@ -177,6 +181,7 @@ func init() {
 	f.tusSessionExpiry = cmdFiler.Flag.Duration("tusSessionExpiry", 24*time.Hour, "incomplete TUS upload sessions are cleaned up after this duration, e.g. \"48h\", \"7h30m\"")
 	f.allowUntrustedRemoteEndpoints = cmdFiler.Flag.Bool("allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 	f.remoteCacheEvictThreshold = cmdFiler.Flag.Float64("remoteCacheEvictThreshold", 0.9, "evict remote-cached objects (oldest first) when any volume disk exceeds this usage fraction; 0 disables")
+	f.digest = cmdFiler.Flag.String("digest", "", filerDigestUsage)
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -394,6 +399,9 @@ func runFiler(cmd *Command, args []string) bool {
 }
 
 func (fo *FilerOptions) startFiler() {
+	if err := util.SetDigest(*fo.digest); err != nil {
+		glog.Fatalf("filer -digest: %v", err)
+	}
 
 	defaultMux := http.NewServeMux()
 	publicVolumeMux := defaultMux
