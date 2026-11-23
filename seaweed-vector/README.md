@@ -15,11 +15,11 @@ Point an AWS S3 Vectors client at the S3 endpoint, normally `http://localhost:83
 | `--masters` | Required | Comma-separated master addresses |
 | `--listen` | `127.0.0.1:8090` | gRPC listener and registered address |
 | `--filer-group` | Empty | Filer group used for table storage |
-| `--read-cache-mb` | `512` | Immutable data/index read cache; zero disables it |
-| `--nprobes` | Automatic | ANN partitions searched per query |
 | `--metrics-port` | `0` | HTTP metrics and health listener; zero disables it |
 | `--metrics-ip` | `127.0.0.1` | HTTP listener address |
 | `--security-toml` | Discovered | Cluster certificates, signing keys and encryption keys |
+
+The engine caches a quarter of the memory it may use (its cgroup limit, else the machine's), split 2:4:1 between file reads, loaded indexes and table metadata, and logs the sizes at startup. Each query probes a tenth of the index's partitions, at least 8, and more under a filter.
 
 The HTTP listener provides `/health`, `/ready`, and `/metrics`. Readiness requires an active registration with the master. The gRPC listener also implements the standard health service for `vector_pb.VectorService` and the whole server. These health statuses follow master registration.
 
@@ -35,6 +35,6 @@ The S3 gateway separately publishes `SeaweedFS_s3_` request metrics with `type="
 
 For mutual TLS, configure `[grpc.vector]` for the engine's server certificate, `[grpc.client]` for its master/filer connections, and the cluster CA. HTTPS volume reads also use `[https.client]`. The engine follows the same signing and encryption configuration as the other cluster clients.
 
-Run the Lance maintenance worker against the same masters and Lance namespace to build and update ANN indexes. Queries can scan data that has not been indexed yet. See the [maintenance worker documentation](../seaweed-worker/README.md) and [Helm chart](../k8s/charts/seaweedfs/README.md) for deployment settings.
+Run the Lance maintenance worker against the cluster's admin to build and update ANN indexes. Queries can scan data that has not been indexed yet. See the [maintenance worker documentation](../seaweed-worker/README.md) and [Helm chart](../k8s/charts/seaweedfs/README.md) for deployment settings.
 
 The integration suite at `test/s3vectors` runs the same API and observability checks against both Go and Rust volume servers, including mutual TLS, signed volume reads, and encrypted volume data.

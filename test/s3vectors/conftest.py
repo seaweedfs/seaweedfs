@@ -333,11 +333,11 @@ def run_cluster(param, tmp_path_factory, identities):
                 return response.status == 200
         wait_for(vector_ready, processes, "vector engine did not register with master")
 
-        def restart_engine(env=None):
-            """Restart the single engine with `env` added to its environment."""
+        def restart_engine():
+            """Restart the single engine, so a workload starts with empty caches."""
             old = processes["vector"]
             stop(old)
-            start("vector", old.args, env=env)
+            start("vector", old.args)
             wait_for(vector_ready, processes, "vector engine did not come back")
 
         if os.environ.get("VECTOR_TLS"):

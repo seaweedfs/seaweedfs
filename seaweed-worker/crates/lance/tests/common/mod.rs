@@ -115,7 +115,7 @@ pub async fn storage() -> weed_lance_worker::dataset::Storage {
 }
 
 fn security() -> weed_lance_worker::security::Security {
-    weed_lance_worker::security::Security::load(None, None).expect("security.toml")
+    weed_lance_worker::security::Security::load(None).expect("security.toml")
 }
 
 /// The cluster token the namespace authenticates its processes by, from

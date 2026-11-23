@@ -55,7 +55,10 @@ func startMiniVector() error {
 		args = append(args, fmt.Sprintf("--metrics-port=%d", *miniVectorMetricsPort), "--metrics-ip="+bindIP)
 	}
 	if directory := util.ConfigurationFileDirectory.String(); directory != "" {
-		args = append(args, "--config-dir="+util.ResolvePath(directory))
+		path := filepath.Join(util.ResolvePath(directory), "security.toml")
+		if _, explicit := os.LookupEnv("WEED_VECTOR_SECURITY_TOML"); !explicit && util.FileExists(path) {
+			args = append(args, "--security-toml="+path)
+		}
 	}
 	command := exec.CommandContext(miniClientsCtx(), binary, args...)
 	command.Stdout, command.Stderr = os.Stdout, os.Stderr

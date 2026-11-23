@@ -2,35 +2,27 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
 use weed_lance_worker::catalog::{NamespaceClient, SigningKey, TableDescription, parse_id};
+use weed_lance_worker::cluster::Cluster;
 use weed_lance_worker::dataset::{self, Storage};
 use weed_vector_core::coverage;
 use weed_vector_core::index;
 use weed_vector_core::query::{self, Query};
 use weed_vector_core::table::VectorTable;
 
-/// Mirrors `weed-worker`'s flags where the two touch the same thing: the
-/// namespace that says where a table is, and the masters whose filers hold
-/// it.
+/// Finds everything through the masters: the S3 gateway whose Lance Namespace
+/// says where a table is, and the filers that hold it.
 #[derive(Parser, Debug)]
 #[command(
     name = "weed-vector",
     about = "Describe, query and index S3 Vectors tables"
 )]
 struct Args {
-    /// Lance namespace the tables live in.
-    #[arg(
-        long,
-        default_value = "http://localhost:9101",
-        env = "WEED_LANCE_NAMESPACE"
-    )]
-    namespace: String,
-
-    /// Comma-separated master addresses, whose filers the tables are kept
-    /// through. A table named by a local URI needs none.
+    /// Comma-separated master addresses. A table named by a local path needs
+    /// none.
     #[arg(long, alias = "master", env = "WEED_MASTERS")]
     masters: Option<String>,
 
-    /// The filer group whose filers hold the tables.
+    /// The filer group whose gateways and filers hold the tables.
     #[arg(
         long,
         alias = "filer.group",
@@ -45,7 +37,7 @@ struct Args {
     filer_signing_key: Option<String>,
 
     /// The cluster's security.toml; by default the file weed processes find
-    /// in -config_dir, ., ~/.seaweedfs and /etc/seaweedfs.
+    /// in ., ~/.seaweedfs and /etc/seaweedfs.
     #[arg(long, env = "WEED_VECTOR_SECURITY_TOML")]
     security_toml: Option<std::path::PathBuf>,
 
@@ -146,34 +138,44 @@ enum IndexAction {
     },
 }
 
-/// `id` is a delimiter-joined table id; when it looks like a URI the dataset
-/// is opened directly, skipping the namespace: an `s3://` URI on the
-/// cluster's storage, a local path (`/path/...`, `file://...`) as it is.
-async fn open_dataset(
-    client: &NamespaceClient,
-    id: &str,
-    storage: &Storage,
-) -> Result<lance::Dataset> {
-    let on_cluster = id.starts_with("s3://");
-    if !on_cluster && (id.contains("://") || id.starts_with('/')) {
-        return lance::dataset::builder::DatasetBuilder::from_uri(id)
-            .load()
-            .await
-            .with_context(|| format!("open {id}"));
-    }
-    if storage.0.is_none() {
-        bail!("{id} is kept on the cluster and needs --masters");
-    }
-    if on_cluster {
-        let description = TableDescription {
-            location: id.to_string(),
-            storage_options: Default::default(),
-            managed_versioning: false,
+/// Where tables are found: through the cluster the masters name, or, for a
+/// local path, nowhere in particular.
+struct Tables {
+    cluster: Option<Cluster>,
+    storage: Storage,
+    signing_key: Option<SigningKey>,
+}
+
+impl Tables {
+    /// `id` is a delimiter-joined table id, looked up in the namespace of a
+    /// gateway the masters name; when it looks like a URI the dataset is
+    /// opened directly: an `s3://` URI on the cluster's storage, a local path
+    /// (`/path/...`, `file://...`) as it is.
+    async fn open(&self, id: &str) -> Result<lance::Dataset> {
+        let on_cluster = id.starts_with("s3://");
+        if !on_cluster && (id.contains("://") || id.starts_with('/')) {
+            return lance::dataset::builder::DatasetBuilder::from_uri(id)
+                .load()
+                .await
+                .with_context(|| format!("open {id}"));
+        }
+        let Some(cluster) = &self.cluster else {
+            bail!("{id} is kept on the cluster and needs --masters");
         };
-        return dataset::open_at(&description, storage.wrapper(id).await?, None).await;
+        if on_cluster {
+            let description = TableDescription {
+                location: id.to_string(),
+                storage_options: Default::default(),
+                managed_versioning: false,
+            };
+            return dataset::open_at(&description, self.storage.wrapper(id).await?, None).await;
+        }
+        let client = NamespaceClient::new(cluster.lance_namespace().await?)
+            .with_signing_key(self.signing_key.as_ref());
+        Ok(dataset::open(&client, &parse_id(id), &self.storage)
+            .await?
+            .dataset)
     }
-    let table = dataset::open(client, &parse_id(id), storage).await?;
-    Ok(table.dataset)
 }
 
 #[tokio::main]
@@ -188,20 +190,26 @@ async fn main() -> Result<()> {
         .init();
     let args = Args::parse();
 
-    let security =
-        weed_lance_worker::security::Security::load(args.security_toml.as_deref(), None)?;
+    let security = weed_lance_worker::security::Security::load(args.security_toml.as_deref())?;
     let signing_key = SigningKey::new(
         args.filer_signing_key
             .or_else(|| security.get("jwt.filer_signing.key")),
     );
-    let client = NamespaceClient::new(args.namespace).with_signing_key(signing_key.as_ref());
-    let storage = match &args.masters {
+    let tables = match &args.masters {
         Some(masters) => {
-            let cluster =
-                weed_lance_worker::cluster::Cluster::new(masters, &args.filer_group, &security)?;
-            Storage(Some(cluster.storage(&security).await?))
+            let cluster = Cluster::new(masters, &args.filer_group, &security)?;
+            let storage = Storage(Some(cluster.storage(&security).await?));
+            Tables {
+                cluster: Some(cluster),
+                storage,
+                signing_key,
+            }
         }
-        None => Storage::default(),
+        None => Tables {
+            cluster: None,
+            storage: Storage::default(),
+            signing_key,
+        },
     };
 
     match args.command {
@@ -210,7 +218,7 @@ async fn main() -> Result<()> {
             vector_column,
             key_column,
         } => {
-            let dataset = open_dataset(&client, &id, &storage).await?;
+            let dataset = tables.open(&id).await?;
             let schema: arrow_schema::Schema = dataset.schema().into();
             let resolved =
                 VectorTable::resolve(&dataset, vector_column.as_deref(), key_column.as_deref());
@@ -250,7 +258,7 @@ async fn main() -> Result<()> {
             vector_column,
             key_column,
         } => {
-            let dataset = open_dataset(&client, &id, &storage).await?;
+            let dataset = tables.open(&id).await?;
             let vector =
                 VectorTable::resolve(&dataset, vector_column.as_deref(), key_column.as_deref())?;
             let coverages = coverage::coverage(&dataset, &vector.vector_column).await?;
@@ -262,7 +270,7 @@ async fn main() -> Result<()> {
             vector_column,
             key_column,
         } => {
-            let dataset = open_dataset(&client, &id, &storage).await?;
+            let dataset = tables.open(&id).await?;
             let vector =
                 VectorTable::resolve(&dataset, vector_column.as_deref(), key_column.as_deref())?;
             for batch in query::get(&dataset, &vector, &keys, None).await? {
@@ -282,7 +290,7 @@ async fn main() -> Result<()> {
             key_column,
             nprobes,
         } => {
-            let opened = open_dataset(&client, &id, &storage).await?;
+            let opened = tables.open(&id).await?;
             let dataset = match version {
                 Some(v) => opened.checkout_version(v).await?,
                 None => opened,
@@ -327,7 +335,7 @@ async fn main() -> Result<()> {
                     id, vector_column, ..
                 } => (id.clone(), vector_column.clone()),
             };
-            let mut dataset = open_dataset(&client, &id, &storage).await?;
+            let mut dataset = tables.open(&id).await?;
             let table = VectorTable::resolve(&dataset, vector_column.as_deref(), None)?;
             let started = std::time::Instant::now();
             match action {
@@ -404,6 +412,17 @@ mod tests {
         .unwrap();
         assert_eq!(args.masters.as_deref(), Some("m:9333"));
         assert_eq!(args.filer_group, "eu");
+        assert!(
+            Args::try_parse_from([
+                "weed-vector",
+                "--namespace",
+                "http://s3:9101",
+                "describe",
+                "t"
+            ])
+            .is_err(),
+            "the namespace comes from the masters"
+        );
         assert!(
             Args::try_parse_from(["weed-vector", "--encryptVolumeData", "describe", "t"]).is_err(),
             "volume encryption follows the filer"

@@ -705,7 +705,6 @@ pub struct VectorServer {
     pub(crate) handles: moka::sync::Cache<(String, bool), (u64, Dataset)>,
     lance_cache_bytes: (usize, usize),
     leases: SharedLeases,
-    nprobes: Option<usize>,
     exact_match_limit: Option<usize>,
     filter_stats: crate::filter_stats::FilterStats,
     /// URI schemes a table's location may have.
@@ -730,7 +729,6 @@ impl VectorServer {
             lance_cache_bytes: (DEFAULT_INDEX_CACHE_BYTES, DEFAULT_METADATA_CACHE_BYTES),
             handles: moka::sync::Cache::new(MAX_HANDLES),
             leases: SharedLeases::default(),
-            nprobes: None,
             exact_match_limit: None,
             filter_stats: Default::default(),
             schemes: &["s3"],
@@ -744,15 +742,10 @@ impl VectorServer {
         self
     }
 
-    /// Partitions every query probes, instead of the index's own default.
-    pub fn with_nprobes(mut self, nprobes: Option<usize>) -> Self {
-        self.nprobes = nprobes;
-        self
-    }
-
     /// Matches of a filter's indexed metadata keys scored exactly instead of
     /// searched through the vector index, at most; None keeps the default.
-    pub fn with_exact_match_limit(mut self, limit: Option<usize>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn with_exact_match_limit(mut self, limit: Option<usize>) -> Self {
         self.exact_match_limit = limit;
         self
     }
@@ -1180,7 +1173,7 @@ impl VectorService for VectorServer {
             },
             postfilter: req.postfilter,
             distance,
-            nprobes: self.nprobes,
+            nprobes: None,
             index_segments: None,
             fragments: None,
             exact_match_limit: self.exact_match_limit,

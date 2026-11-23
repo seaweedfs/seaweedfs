@@ -10,6 +10,7 @@ use tonic::transport::{Channel, Endpoint};
 
 use crate::direct_read::{Connection, DirectReads, FilerDialer};
 use crate::grpc_tls;
+use crate::master_pb::list_cluster_nodes_response::ClusterNode;
 use crate::master_pb::{ListClusterNodesRequest, seaweed_client::SeaweedClient};
 use crate::security::{GrpcTls, Security};
 
@@ -102,22 +103,32 @@ pub async fn list_filers(
     }
 }
 
-async fn filers_of(master: &str, filer_group: &str, tls: Option<&GrpcTls>) -> Result<Vec<String>> {
+/// The nodes of `client_type` in `filer_group` that `master` lists.
+async fn cluster_nodes(
+    master: &str,
+    client_type: &str,
+    filer_group: &str,
+    tls: Option<&GrpcTls>,
+) -> Result<Vec<ClusterNode>> {
     let channel = connect(master, tls).await?;
     let request = ListClusterNodesRequest {
-        client_type: "filer".into(),
+        client_type: client_type.into(),
         filer_group: filer_group.into(),
         ..Default::default()
     };
-    let nodes = tokio::time::timeout(
+    Ok(tokio::time::timeout(
         CONNECT_TIMEOUT,
         SeaweedClient::new(channel).list_cluster_nodes(request),
     )
     .await
     .context("master did not answer")??
     .into_inner()
-    .cluster_nodes;
-    Ok(nodes
+    .cluster_nodes)
+}
+
+async fn filers_of(master: &str, filer_group: &str, tls: Option<&GrpcTls>) -> Result<Vec<String>> {
+    Ok(cluster_nodes(master, "filer", filer_group, tls)
+        .await?
         .iter()
         .filter_map(|node| match filer_grpc_addr(&node.address) {
             Ok(addr) => Some(addr),
@@ -127,6 +138,13 @@ async fn filers_of(master: &str, filer_group: &str, tls: Option<&GrpcTls>) -> Re
             }
         })
         .collect())
+}
+
+/// Where an S3 gateway registered as `host:grpc` serves its Lance
+/// Namespace, or None when it serves none.
+fn lance_namespace_url(node: &ClusterNode) -> Option<String> {
+    let (host, _) = node.address.rsplit_once(':')?;
+    (node.lance_port > 0).then(|| format!("http://{host}:{}", node.lance_port))
 }
 
 /// A filer registers as `host:port.grpc`, or `host:port` with its gRPC at
@@ -220,6 +238,25 @@ impl Cluster {
         })
     }
 
+    /// The Lance Namespace of an S3 gateway in the filer group, from the first
+    /// master that names one.
+    pub async fn lance_namespace(&self) -> Result<String> {
+        let mut last = None;
+        for master in &self.masters {
+            match cluster_nodes(master, "s3", &self.filer_group, self.master_tls.as_ref()).await {
+                Ok(nodes) => {
+                    if let Some(url) = nodes.iter().find_map(lance_namespace_url) {
+                        return Ok(url);
+                    }
+                }
+                Err(err) => last = Some(err),
+            }
+        }
+        Err(last.unwrap_or_else(|| {
+            anyhow::anyhow!("the masters list no S3 gateway that serves a Lance Namespace")
+        }))
+    }
+
     /// Connects to the cluster's storage and follows the masters' filer list.
     /// Chunks are encrypted for the volume servers when the filer is
     /// configured to (`weed filer -encryptVolumeData`), as `weed s3` does.
@@ -290,6 +327,24 @@ pub async fn open_storage(conn: &Connection) -> Result<DirectReads> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_gateway_serves_its_namespace_on_its_registered_host() {
+        let node = |address: &str, lance_port| ClusterNode {
+            address: address.into(),
+            lance_port,
+            ..Default::default()
+        };
+        assert_eq!(
+            lance_namespace_url(&node("10.0.0.5:18333", 9101)).as_deref(),
+            Some("http://10.0.0.5:9101")
+        );
+        assert_eq!(
+            lance_namespace_url(&node("[fd00::5]:18333", 9101)).as_deref(),
+            Some("http://[fd00::5]:9101")
+        );
+        assert_eq!(lance_namespace_url(&node("10.0.0.5:18333", 0)), None);
+    }
 
     #[test]
     fn an_empty_master_list_is_refused() {

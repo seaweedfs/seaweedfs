@@ -5,6 +5,7 @@ use clap::Parser;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use weed_lance_worker::cluster::Cluster;
+use weed_vector_server::memory::CacheSizes;
 use weed_vector_server::pb::vector::vector_service_server::VectorServiceServer;
 use weed_vector_server::read_cache::ReadCache;
 use weed_vector_server::security::Security;
@@ -38,30 +39,11 @@ struct Args {
         default_value = ""
     )]
     filer_group: String,
-    /// Memory for caching reads of write-once table files, in MiB; 0 disables.
-    #[arg(long, env = "WEED_VECTOR_READ_CACHE_MB", default_value_t = 512)]
-    read_cache_mb: u64,
-    /// Memory for indexes loaded by queries, kept for the next query, in MiB.
-    #[arg(long, env = "WEED_VECTOR_INDEX_CACHE_MB", default_value_t = 1024)]
-    index_cache_mb: usize,
-    /// Memory for table metadata (manifests, file footers) kept across
-    /// queries, in MiB.
-    #[arg(long, env = "WEED_VECTOR_METADATA_CACHE_MB", default_value_t = 256)]
-    metadata_cache_mb: usize,
-    /// Partitions each query probes in a table's vector index. Default: a
-    /// tenth of the index's partitions, at least 8; more under a filter.
-    #[arg(long, env = "WEED_VECTOR_NPROBES")]
-    nprobes: Option<std::num::NonZeroUsize>,
-    /// A filtered query whose indexed metadata keys match at most this many
-    /// rows scores them exactly instead of searching the vector index; 0
-    /// never does.
-    #[arg(long, env = "WEED_VECTOR_EXACT_MATCH_LIMIT", default_value_t = weed_vector_core::query::DEFAULT_EXACT_MATCH_LIMIT)]
-    exact_match_limit: usize,
     /// The cluster's security.toml: [grpc.vector] for this server,
     /// [grpc.client] for the masters and filers, https.client for volume
     /// servers under HTTPS, jwt.signing.read.key for signed volume reads,
     /// s3.sse.kek or s3.sse.key for SSE-S3 buckets. By default the file weed
-    /// processes find in -config_dir, ., ~/.seaweedfs and /etc/seaweedfs.
+    /// processes find in ., ~/.seaweedfs and /etc/seaweedfs.
     #[arg(long, env = "WEED_VECTOR_SECURITY_TOML")]
     security_toml: Option<PathBuf>,
     #[arg(
@@ -78,11 +60,6 @@ struct Args {
         default_value = "127.0.0.1"
     )]
     metrics_ip: String,
-
-    /// The directory weed's -config_dir names, searched for security.toml
-    /// first.
-    #[arg(long, alias = "config_dir", env = "WEED_VECTOR_CONFIG_DIR")]
-    config_dir: Option<PathBuf>,
 }
 
 // weed tools take Go-style single-dash long flags; normalize_args converts
@@ -153,7 +130,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse_from(normalize_args(std::env::args().collect()));
     weed_lance_worker::tls::install_default_crypto_provider();
-    let security = Security::load(args.security_toml.as_deref(), args.config_dir.as_deref())?;
+    let security = Security::load(args.security_toml.as_deref())?;
     if let Some(path) = security.path() {
         tracing::info!("security settings from {}", path.display());
     }
@@ -171,16 +148,18 @@ async fn main() -> Result<()> {
     let (health, health_service) = tonic_health::server::health_reporter();
     let metrics = Metrics::new()?.with_health(health);
     metrics.set_connected(false).await;
-    let cache = (args.read_cache_mb > 0)
-        .then(|| ReadCache::new(args.read_cache_mb << 20).with_metrics(metrics.clone()));
-    let mut service = VectorServer::new()
-        .with_nprobes(args.nprobes.map(std::num::NonZeroUsize::get))
-        .with_exact_match_limit(Some(args.exact_match_limit))
-        .with_lance_caches(args.index_cache_mb << 20, args.metadata_cache_mb << 20)
-        .with_storage(reads);
-    if let Some(cache) = &cache {
-        service = service.with_read_cache(cache.clone());
-    }
+    let sizes = CacheSizes::detect();
+    tracing::info!(
+        "caching {} MiB of file reads, {} MiB of indexes, {} MiB of table metadata",
+        sizes.read >> 20,
+        sizes.index >> 20,
+        sizes.metadata >> 20
+    );
+    let cache = ReadCache::new(sizes.read).with_metrics(metrics.clone());
+    let service = VectorServer::new()
+        .with_lance_caches(sizes.index as usize, sizes.metadata as usize)
+        .with_storage(reads)
+        .with_read_cache(cache.clone());
     if args.metrics_port > 0 {
         let ip = args
             .metrics_ip
@@ -191,7 +170,7 @@ async fn main() -> Result<()> {
             tokio::net::TcpListener::bind(std::net::SocketAddr::new(ip, args.metrics_port)).await?;
         let metrics = metrics.clone();
         tokio::spawn(async move {
-            if let Err(error) = metrics::serve_listener(metrics, listener, cache).await {
+            if let Err(error) = metrics::serve_listener(metrics, listener, Some(cache)).await {
                 tracing::error!(%error, "vector metrics server stopped");
             }
         });
@@ -261,16 +240,6 @@ mod tests {
             advertised_addr("127.0.0.1:8090", &[], Some("vector.example:8090")),
             "vector.example:8090"
         );
-    }
-
-    #[test]
-    fn nprobes_must_be_positive() {
-        let parse = |nprobes: &str| {
-            Args::try_parse_from(["weed-vector", "--masters", "m:9333", "--nprobes", nprobes])
-        };
-        assert!(parse("0").is_err());
-        let args = parse("12").unwrap();
-        assert_eq!(args.nprobes.map(std::num::NonZeroUsize::get), Some(12));
     }
 
     #[test]
