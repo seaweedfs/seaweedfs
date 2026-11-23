@@ -264,13 +264,28 @@ func (s *datVerifier) candidateOK(h *needle.Needle, chunk []byte, i int, off int
 	if len(n.Data) > 0 {
 		return true // the payload CRC matched; a false positive is not realistic
 	}
-	// no payload to checksum (tombstone, empty needle): require the next needle to verify too
+	// No payload to checksum. Only a tombstone as the volume server writes it (size 0) may be
+	// accepted without a verifiable successor, and then only at the very end of the file; a
+	// timestamp that is set but not believable rejects it. Any other payload-less needle needs
+	// the next needle to verify.
 	end := off + disk
-	if end == s.size || s.size-end < types.NeedleHeaderSize {
-		return true
+	if h.Size == 0 {
+		stamped := s.version != needle.Version3 || n.AppendAtNs != 0
+		if s.version == needle.Version3 && stamped && !plausibleAppendAtNs(n.AppendAtNs) {
+			return false
+		}
+		if end == s.size || (stamped && s.size-end < types.NeedleHeaderSize) {
+			return true
+		}
 	}
 	_, _, err = s.readNeedleAt(end)
 	return err == nil
+}
+
+// plausibleAppendAtNs tells a real append timestamp (v3 needles) from garbage.
+func plausibleAppendAtNs(ns uint64) bool {
+	return ns >= uint64(time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano()) &&
+		ns <= uint64(time.Now().Add(48*time.Hour).UnixNano())
 }
 
 // findNext scans from the given offset at needle alignment for the next

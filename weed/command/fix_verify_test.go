@@ -528,3 +528,28 @@ func TestSuperBlockExtraIsRejectedCleanly(t *testing.T) {
 		t.Fatalf("want a clear super block error, got %v", err)
 	}
 }
+
+// Garbage over the header of the last data needle leaves a few payload-less
+// bytes (the needle's tail and the delete record behind it) that must not be
+// mistaken for a needle, while the real delete record must still be found.
+func TestVerifyDatFileNoFalsePositiveAfterDamagedLastHeader(t *testing.T) {
+	datName, layout := buildVerifyFixture(t, 20)
+	garbage := make([]byte, 16)
+	for i := range garbage {
+		garbage[i] = 0xa5
+	}
+	patchDat(t, datName, layout[19].offset, garbage)
+
+	sum, anomalies, seen := runVerify(t, datName)
+	for id := range seen {
+		if id < 1 || id > 19 {
+			t.Errorf("needle id %d does not exist in the volume", id)
+		}
+	}
+	if len(seen) != 19 || seen[20] {
+		t.Fatalf("want needles 1..19, got %d (20 seen: %v)", len(seen), seen[20])
+	}
+	if sum.Tombstones != 1 || sum.TailGarbage || len(anomalies) != 1 {
+		t.Errorf("the delete record behind the damage must survive: tombstones=%d tail=%v anomalies=%+v", sum.Tombstones, sum.TailGarbage, anomalies)
+	}
+}
