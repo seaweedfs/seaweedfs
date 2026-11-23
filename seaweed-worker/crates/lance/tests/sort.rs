@@ -12,7 +12,7 @@ use seaweed_worker_core::pb::{
 use weed_lance_worker::jobs::sort::{JOB_TYPE, SortHandler};
 
 mod common;
-use common::{Recorder, client, namespace_url, signing_key, storage};
+use common::{Recorder, client, cluster, namespace_url, storage};
 
 /// One live gateway and one shared catalog, and `list_all_tables` sweeps
 /// everything, so these tests take a lock the way the compaction ones do.
@@ -156,9 +156,7 @@ async fn sorts_a_table_and_stops_proposing_it() {
         "the seeded table was already sorted, so the test proves nothing"
     );
 
-    let handler = SortHandler::new(url.clone())
-        .with_storage(storage().await)
-        .with_signing_key(signing_key());
+    let handler = SortHandler::new(cluster(&url).await);
     let recorder = Recorder::default();
     let detection = RunDetectionRequest {
         request_id: "detect-sort".to_string(),
@@ -253,9 +251,7 @@ async fn leaves_a_table_that_declares_no_order_alone() {
         .await
         .expect("seed a table with no declared order");
 
-    let handler = SortHandler::new(url.clone())
-        .with_storage(storage().await)
-        .with_signing_key(signing_key());
+    let handler = SortHandler::new(cluster(&url).await);
     let recorder = Recorder::default();
     handler
         .detect(
@@ -298,9 +294,7 @@ async fn proposes_a_replacement_that_barely_changes_the_row_count() {
         .await
         .expect("seed an unsorted table");
 
-    let handler = SortHandler::new(url.clone())
-        .with_storage(storage().await)
-        .with_signing_key(signing_key());
+    let handler = SortHandler::new(cluster(&url).await);
     // A threshold no realistic append would cross, so nothing but the identity
     // of the data can be what proposes this table.
     let detection = RunDetectionRequest {
@@ -393,9 +387,7 @@ async fn deletions_do_not_hide_appended_rows() {
         .await
         .expect("seed an unsorted table");
 
-    let handler = SortHandler::new(url.clone())
-        .with_storage(storage().await)
-        .with_signing_key(signing_key());
+    let handler = SortHandler::new(cluster(&url).await);
     let detection = RunDetectionRequest {
         request_id: "detect-delete".to_string(),
         job_type: JOB_TYPE.to_string(),

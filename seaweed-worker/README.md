@@ -38,10 +38,7 @@ binary for the runner's platform, resolved from the version in `Cargo.lock`.
     cargo run -p weed-lance-worker -- --admin 127.0.0.1:12535
 
 Admin is all it needs, as with `weed worker`: every request admin sends names
-the filers, and the Lance Namespaces the S3 gateways serve. An admin or gateways
-from before 4.56 name no namespace, and the worker then uses `--namespace`
-(`WEED_LANCE_NAMESPACE`). `--masters` and `--filer-group` are accepted and
-ignored.
+the filers, and the Lance Namespaces the S3 gateways serve.
 
 The admin's *HTTP* address is what an operator has; the gRPC port is derived
 from it the way the Go side does. Dialling the HTTP port fails as "frame with
@@ -121,8 +118,8 @@ All three jobs are implemented and tested end to end against a live gateway:
 
 `cargo test -p weed-lance-worker` runs them when `WEED_LANCE_NAMESPACE` names a
 live namespace and skips otherwise, the way the Go integration tests skip
-without Docker. A live namespace needs `WEED_MASTERS` naming its cluster's
-masters, and `WEED_JWT_FILER_SIGNING_KEY` (or security.toml) where the
+without Docker. A live namespace needs `WEED_FILER` naming its cluster's
+filer as the master lists it (`host:port.grpc`), and `WEED_JWT_FILER_SIGNING_KEY` (or security.toml) where the
 namespace authenticates cluster processes; the tests fail without the first
 and are refused without the second. Each test seeds the table it needs, including building a vector
 index and then appending rows outside it, so a run does not depend on what the

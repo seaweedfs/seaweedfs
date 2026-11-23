@@ -23,23 +23,12 @@ struct Args {
     #[arg(long, default_value = "lance-worker", env = "WEED_WORKER_ID")]
     id: String,
 
-    /// Lance Namespace to use when admin names none. Admin names the S3
-    /// gateways' own; an admin or gateways older than that name none.
-    #[arg(long, env = "WEED_LANCE_NAMESPACE")]
-    namespace: Option<String>,
-
     #[arg(long, default_value = "10", env = "WEED_HEARTBEAT_SECONDS")]
     heartbeat_seconds: u64,
 
     #[arg(long, default_value = "1")]
     max_concurrency: i32,
 
-    /// Ignored: admin names the filers. Accepted so that a command line
-    /// written for an older worker still starts.
-    #[arg(long, alias = "master", env = "WEED_MASTERS", hide = true)]
-    masters: Option<String>,
-    #[arg(long, alias = "filer.group", env = "WEED_FILER_GROUP", hide = true)]
-    filer_group: Option<String>,
     /// The cluster's security.toml; by default the file weed processes find
     /// in -config_dir, ., ~/.seaweedfs and /etc/seaweedfs.
     #[arg(long, env = "WEED_WORKER_SECURITY_TOML")]
@@ -139,9 +128,6 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
-    if args.masters.is_some() || args.filer_group.is_some() {
-        tracing::info!("--masters and --filer-group are ignored: admin names the filers");
-    }
     let tls = args.tls()?;
     // One security.toml for everything: the admin stream's and the catalog's
     // signing key, and the cluster connection.
@@ -180,11 +166,10 @@ async fn main() -> Result<()> {
         ..Default::default()
     };
 
-    let admin_cluster = Arc::new(AdminCluster::new(weed_lance_worker::cluster::connection(
-        &security,
-        String::new(),
-    )?));
-    let namespace = args.namespace.unwrap_or_default();
+    let cluster = Arc::new(AdminCluster::new(
+        weed_lance_worker::cluster::connection(&security, String::new())?,
+        signing_key,
+    ));
 
     let metrics = Metrics::new(&options.worker_id, &options.worker_version)?;
     let lance_metrics = LanceMetrics::new(&metrics)?;
@@ -196,13 +181,11 @@ async fn main() -> Result<()> {
     }
 
     let mut registry = Registry::new()
-        .with_cluster_observer(admin_cluster.clone())
-        .with_preview(Arc::new(
-            weed_lance_worker::preview::LancePreview::new(namespace.clone(), Default::default())
-                .with_admin(Some(admin_cluster.clone()))
-                .with_signing_key(signing_key.clone()),
-        ));
-    for handler in handlers(namespace, admin_cluster, signing_key, Some(lance_metrics)) {
+        .with_cluster_observer(cluster.clone())
+        .with_preview(Arc::new(weed_lance_worker::preview::LancePreview::new(
+            cluster.clone(),
+        )));
+    for handler in handlers(cluster, Some(lance_metrics)) {
         registry = registry.register(handler);
     }
 

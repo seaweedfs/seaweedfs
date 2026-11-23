@@ -15,8 +15,8 @@ use seaweed_worker_core::pb::{
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
 use tracing::warn;
 
-use crate::admin_cluster::{AdminCluster, Locator};
-use crate::catalog::{NamespaceClient, SigningKey, parse_id};
+use crate::admin_cluster::AdminCluster;
+use crate::catalog::parse_id;
 use crate::dataset;
 use crate::jobs::purge::{self, Retention};
 use crate::jobs::{clamp, string_list, table_id};
@@ -36,16 +36,14 @@ const MAX_MIN_VERSIONS: i64 = 1000;
 /// retention in its own config, and may ask for a purge (see [`purge`]), which
 /// this job carries out ahead of the retention window.
 pub struct CleanupVersionsHandler {
-    locator: Locator,
-    signing_key: Option<SigningKey>,
+    cluster: Arc<AdminCluster>,
     metrics: Option<crate::metrics::LanceMetrics>,
 }
 
 impl CleanupVersionsHandler {
-    pub fn new(namespace_url: String) -> Self {
+    pub fn new(cluster: Arc<AdminCluster>) -> Self {
         Self {
-            locator: Locator::new(namespace_url),
-            signing_key: None,
+            cluster,
             metrics: None,
         }
     }
@@ -53,26 +51,6 @@ impl CleanupVersionsHandler {
     pub fn with_metrics(mut self, metrics: Option<crate::metrics::LanceMetrics>) -> Self {
         self.metrics = metrics;
         self
-    }
-
-    pub fn with_storage(mut self, storage: dataset::Storage) -> Self {
-        self.locator = self.locator.with_storage(storage);
-        self
-    }
-
-    pub fn with_signing_key(mut self, signing_key: Option<SigningKey>) -> Self {
-        self.signing_key = signing_key;
-        self
-    }
-
-    pub fn with_admin(mut self, admin: Option<Arc<AdminCluster>>) -> Self {
-        self.locator = self.locator.with_admin(admin);
-        self
-    }
-
-    fn client(&self) -> Result<NamespaceClient> {
-        Ok(NamespaceClient::new(self.locator.namespace_url()?)
-            .with_signing_key(self.signing_key.as_ref()))
     }
 }
 
@@ -194,8 +172,8 @@ impl JobHandler for CleanupVersionsHandler {
             1,
             MAX_MIN_VERSIONS,
         ) as usize;
-        let client = self.client()?;
-        let storage = self.locator.storage()?;
+        let client = self.cluster.client()?;
+        let storage = self.cluster.storage()?;
         let tables = client.list_all_tables().await?;
 
         let mut proposals = Vec::new();
@@ -318,8 +296,8 @@ impl JobHandler for CleanupVersionsHandler {
             MAX_MIN_VERSIONS,
         ) as usize;
 
-        let client = self.client()?;
-        let storage = self.locator.storage()?;
+        let client = self.cluster.client()?;
+        let storage = self.cluster.storage()?;
         let mut table = dataset::open(&client, &id, &storage).await?;
         let before = table.stats().await?;
 
@@ -477,7 +455,7 @@ mod tests {
 
     #[test]
     fn a_purge_gets_a_builds_execution_timeout() {
-        let descriptor = CleanupVersionsHandler::new(String::new()).descriptor();
+        let descriptor = CleanupVersionsHandler::new(Default::default()).descriptor();
         let defaults = descriptor.admin_runtime_defaults.unwrap();
         assert_eq!(defaults.execution_timeout_seconds, 3600);
         assert_eq!(defaults.job_type_max_runtime_seconds, 3600);

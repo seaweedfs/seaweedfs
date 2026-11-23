@@ -15,7 +15,7 @@ use weed_lance_worker::jobs::indices::OptimizeIndicesHandler;
 use weed_lance_worker::preview::LancePreview;
 
 mod common;
-use common::{Recorder, client, int_config, namespace_url, signing_key, storage};
+use common::{Recorder, client, cluster, int_config, namespace_url, storage};
 
 /// These tests drive one live gateway and one shared catalog: `list_all_tables`
 /// sweeps everything, so a table another test is writing shows up in this test's
@@ -144,9 +144,7 @@ async fn compacts_a_fragmented_table() {
     let encoded = seed_fragmented_table(&url, "compactme", 12)
         .await
         .expect("seed a fragmented table");
-    let handler = CompactHandler::new(url)
-        .with_storage(storage().await)
-        .with_signing_key(signing_key());
+    let handler = CompactHandler::new(cluster(&url).await);
     let recorder = Recorder::default();
 
     let request = RunDetectionRequest {
@@ -234,9 +232,7 @@ async fn cleans_up_old_versions() {
         .await
         .expect("seed a table with versions to clean");
 
-    let handler = CleanupVersionsHandler::new(url)
-        .with_storage(storage().await)
-        .with_signing_key(signing_key());
+    let handler = CleanupVersionsHandler::new(cluster(&url).await);
     let recorder = Recorder::default();
 
     let request = RunDetectionRequest {
@@ -300,9 +296,7 @@ async fn skips_tables_without_indices() {
         .await
         .expect("seed a table without an index");
 
-    let handler = OptimizeIndicesHandler::new(url)
-        .with_storage(storage().await)
-        .with_signing_key(signing_key());
+    let handler = OptimizeIndicesHandler::new(cluster(&url).await);
     let recorder = Recorder::default();
 
     let request = RunDetectionRequest {
@@ -341,9 +335,7 @@ async fn reindexes_rows_an_index_does_not_cover() {
     let encoded = seed_table(&url, "reindexme", 2, 512, true)
         .await
         .expect("seed an indexed table with uncovered rows");
-    let handler = OptimizeIndicesHandler::new(url)
-        .with_storage(storage().await)
-        .with_signing_key(signing_key());
+    let handler = OptimizeIndicesHandler::new(cluster(&url).await);
     let recorder = Recorder::default();
 
     let request = RunDetectionRequest {
@@ -416,7 +408,7 @@ async fn previews_rows_of_a_table() {
         .await
         .expect("seed a table to preview");
 
-    let provider = LancePreview::new(url, storage().await);
+    let provider = LancePreview::new(cluster(&url).await);
     let id = vec!["vec".to_string(), "ml".to_string(), "previewme".to_string()];
     let preview = provider.preview(&id, 4).await.expect("preview the table");
 

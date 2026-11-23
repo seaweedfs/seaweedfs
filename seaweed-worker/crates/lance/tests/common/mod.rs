@@ -6,14 +6,16 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use seaweed_worker_core::pb::ClusterContext;
 use seaweed_worker_core::pb::{
     ActivityEvent, ConfigValue, DetectionComplete, DetectionProposals, JobCompleted,
     JobProgressUpdate, JobProposal, ObjectObservation, WorkerObservations, config_value::Kind,
 };
-use seaweed_worker_core::{DetectionSender, ExecutionSender};
+use seaweed_worker_core::{ClusterObserver, DetectionSender, ExecutionSender};
+use weed_lance_worker::admin_cluster::AdminCluster;
 use weed_lance_worker::catalog::{NamespaceClient, SigningKey};
 
 /// Keeps everything a handler reports, so a test can assert on it afterwards.
@@ -82,18 +84,34 @@ pub fn int_config(name: &str, value: i64) -> HashMap<String, ConfigValue> {
     values
 }
 
-/// The cluster's storage, from the masters WEED_MASTERS names. A live
-/// namespace without them would have the tests seed tables through lance's
-/// own S3 store, which reaches nothing, so the pair is required together.
-pub async fn storage() -> weed_lance_worker::dataset::Storage {
-    let masters = std::env::var("WEED_MASTERS")
+/// The cluster as admin would describe it to the worker: the namespace at
+/// `url` and the filer WEED_FILER names, as the master lists it (`host:port` or
+/// `host:port.grpc`). A live namespace without the filer would have the tests
+/// seed tables through lance's own S3 store, which reaches nothing.
+pub async fn cluster(url: &str) -> Arc<AdminCluster> {
+    let filer = std::env::var("WEED_FILER")
         .ok()
         .filter(|s| !s.is_empty())
-        .expect("WEED_LANCE_NAMESPACE names a live namespace; WEED_MASTERS must name its masters");
-    let security = security();
-    let cluster =
-        weed_lance_worker::cluster::Cluster::new(&masters, "", &security).expect("masters");
-    weed_lance_worker::dataset::Storage(Some(cluster.storage(&security).await.expect("storage")))
+        .expect("WEED_LANCE_NAMESPACE names a live namespace; WEED_FILER must name its filer");
+    let connection =
+        weed_lance_worker::cluster::connection(&security(), String::new()).expect("security.toml");
+    let cluster = AdminCluster::new(connection, signing_key());
+    cluster
+        .observe(&ClusterContext {
+            lance_namespace_urls: vec![url.to_string()],
+            filer_addresses: vec![filer],
+            ..Default::default()
+        })
+        .await;
+    Arc::new(cluster)
+}
+
+/// The cluster's storage, for seeding and reading tables beside a handler.
+pub async fn storage() -> weed_lance_worker::dataset::Storage {
+    cluster(&namespace_url().unwrap_or_default())
+        .await
+        .storage()
+        .expect("storage")
 }
 
 fn security() -> weed_lance_worker::security::Security {

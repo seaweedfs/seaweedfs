@@ -12,32 +12,17 @@ use seaweed_worker_core::{Preview, PreviewProvider};
 
 use std::sync::Arc;
 
-use crate::admin_cluster::{AdminCluster, Locator};
-use crate::catalog::{NamespaceClient, SigningKey};
-use crate::dataset::{self, Storage};
+use crate::admin_cluster::AdminCluster;
+use crate::dataset;
 use crate::jobs::FORMAT;
 
 pub struct LancePreview {
-    locator: Locator,
-    signing_key: Option<SigningKey>,
+    cluster: Arc<AdminCluster>,
 }
 
 impl LancePreview {
-    pub fn new(namespace_url: String, storage: Storage) -> Self {
-        Self {
-            locator: Locator::new(namespace_url).with_storage(storage),
-            signing_key: None,
-        }
-    }
-
-    pub fn with_admin(mut self, admin: Option<Arc<AdminCluster>>) -> Self {
-        self.locator = self.locator.with_admin(admin);
-        self
-    }
-
-    pub fn with_signing_key(mut self, signing_key: Option<SigningKey>) -> Self {
-        self.signing_key = signing_key;
-        self
+    pub fn new(cluster: Arc<AdminCluster>) -> Self {
+        Self { cluster }
     }
 }
 
@@ -48,9 +33,8 @@ impl PreviewProvider for LancePreview {
     }
 
     async fn preview(&self, object_id: &[String], row_limit: usize) -> Result<Preview> {
-        let client = NamespaceClient::new(self.locator.namespace_url()?)
-            .with_signing_key(self.signing_key.as_ref());
-        let table = dataset::open(&client, object_id, &self.locator.storage()?).await?;
+        let client = self.cluster.client()?;
+        let table = dataset::open(&client, object_id, &self.cluster.storage()?).await?;
 
         let total_rows = table.dataset.count_rows(None).await.unwrap_or(0) as i64;
         let mut scanner = table.dataset.scan();

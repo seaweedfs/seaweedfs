@@ -12,8 +12,8 @@ use seaweed_worker_core::pb::{
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
 use tracing::warn;
 
-use crate::admin_cluster::{AdminCluster, Locator};
-use crate::catalog::{NamespaceClient, SigningKey, parse_id};
+use crate::admin_cluster::AdminCluster;
+use crate::catalog::parse_id;
 use crate::dataset::{self, OpenTable};
 use crate::jobs::{clamp, string_list, table_id};
 use crate::vector_index::{INDEX_NAME, build, index_names, partitions_for};
@@ -46,16 +46,14 @@ pub(crate) fn declare_build_runtime(parameters: &mut HashMap<String, ConfigValue
 /// written after a build, are searched exactly; `lance_optimize_indices` then
 /// keeps the index covering.
 pub struct VectorIndexHandler {
-    locator: Locator,
-    signing_key: Option<SigningKey>,
+    cluster: Arc<AdminCluster>,
     metrics: Option<crate::metrics::LanceMetrics>,
 }
 
 impl VectorIndexHandler {
-    pub fn new(namespace_url: String) -> Self {
+    pub fn new(cluster: Arc<AdminCluster>) -> Self {
         Self {
-            locator: Locator::new(namespace_url),
-            signing_key: None,
+            cluster,
             metrics: None,
         }
     }
@@ -63,26 +61,6 @@ impl VectorIndexHandler {
     pub fn with_metrics(mut self, metrics: Option<crate::metrics::LanceMetrics>) -> Self {
         self.metrics = metrics;
         self
-    }
-
-    pub fn with_storage(mut self, storage: dataset::Storage) -> Self {
-        self.locator = self.locator.with_storage(storage);
-        self
-    }
-
-    pub fn with_signing_key(mut self, signing_key: Option<SigningKey>) -> Self {
-        self.signing_key = signing_key;
-        self
-    }
-
-    pub fn with_admin(mut self, admin: Option<Arc<AdminCluster>>) -> Self {
-        self.locator = self.locator.with_admin(admin);
-        self
-    }
-
-    fn client(&self) -> Result<NamespaceClient> {
-        Ok(NamespaceClient::new(self.locator.namespace_url()?)
-            .with_signing_key(self.signing_key.as_ref()))
     }
 }
 
@@ -173,8 +151,8 @@ impl JobHandler for VectorIndexHandler {
             MIN_ROWS_CEILING,
         ) as usize;
         let max_results = usize::try_from(request.max_results).unwrap_or(0);
-        let client = self.client()?;
-        let storage = self.locator.storage()?;
+        let client = self.cluster.client()?;
+        let storage = self.cluster.storage()?;
         let tables = client.list_all_tables().await?;
 
         let mut proposals = Vec::new();
@@ -276,8 +254,8 @@ impl JobHandler for VectorIndexHandler {
         let id = table_id(&job.parameters)
             .ok_or_else(|| anyhow!("job {} carried no table_id", job.job_id))?;
 
-        let client = self.client()?;
-        let storage = self.locator.storage()?;
+        let client = self.cluster.client()?;
+        let storage = self.cluster.storage()?;
         let mut table = dataset::open(&client, &id, &storage).await?;
         let rows = table.dataset.count_rows(None).await?;
         let partitions = partitions_for(rows);
@@ -372,7 +350,7 @@ mod tests {
 
     #[test]
     fn a_build_gets_longer_than_the_default_execution_timeout() {
-        let descriptor = VectorIndexHandler::new(String::new()).descriptor();
+        let descriptor = VectorIndexHandler::new(Default::default()).descriptor();
         let defaults = descriptor.admin_runtime_defaults.unwrap();
         assert_eq!(defaults.execution_timeout_seconds, 3600);
         assert_eq!(defaults.job_type_max_runtime_seconds, 3600);
