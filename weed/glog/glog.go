@@ -837,14 +837,15 @@ func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoTo
 			os.Exit(1)
 		}
 		// Dump all goroutine stacks before exiting.
-		// First, make sure we see the trace for the current goroutine on standard error.
-		// If -logtostderr has been specified, the loop below will do that anyway
-		// as the first stack in the full dump.
-		if !l.toStderr {
+		// With -logtostderr there are no files, so the full dump goes to standard
+		// error; otherwise standard error gets the current goroutine's trace.
+		trace := stacks(true)
+		if l.toStderr {
+			os.Stderr.Write(trace)
+		} else {
 			os.Stderr.Write(stacks(false))
 		}
 		// Write the stack trace for all goroutines to the files.
-		trace := stacks(true)
 		logExitFunc = func(error) {} // If we get a write error, we'll still exit below.
 		for log := fatalLog; log >= infoLog; log-- {
 			if f := l.file[log]; f != nil { // Can be nil if -logtostderr is set.
