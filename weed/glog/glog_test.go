@@ -18,8 +18,12 @@ package glog
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	stdLog "log"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -530,5 +534,44 @@ func TestAlsoLogToStderrFlag(t *testing.T) {
 	}
 	if err := b.Set("bogus"); err == nil {
 		t.Fatal("Set(bogus) succeeded")
+	}
+}
+
+// A FATAL under -log_json -logtostderr must leave only JSON lines on stderr,
+// the goroutine dump included. Fatal exits, so it runs in a child process.
+func TestFatalJSONStderrIsJSONLines(t *testing.T) {
+	if os.Getenv("GLOG_TEST_FATAL_JSON") == "1" {
+		logging.toStderr = true
+		SetJSONMode(true)
+		Fatal("fatal for test")
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestFatalJSONStderrIsJSONLines$")
+	cmd.Env = append(os.Environ(), "GLOG_TEST_FATAL_JSON=1")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 255 {
+		t.Fatalf("child exit = %v, want status 255; stderr:\n%s", err, stderr.String())
+	}
+	lines := strings.Split(strings.TrimRight(stderr.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d stderr lines, want the fatal record and the dump record:\n%s", len(lines), stderr.String())
+	}
+	for i, ln := range lines {
+		var rec struct {
+			Level string `json:"level"`
+			Msg   string `json:"msg"`
+		}
+		if err := json.Unmarshal([]byte(ln), &rec); err != nil {
+			t.Fatalf("stderr line %d is not JSON: %v\n%s", i, err, ln)
+		}
+		if rec.Level != "FATAL" {
+			t.Errorf("stderr line %d level = %q, want FATAL", i, rec.Level)
+		}
+	}
+	if !strings.Contains(lines[1], "goroutine ") {
+		t.Errorf("second record does not hold the goroutine dump: %s", lines[1])
 	}
 }

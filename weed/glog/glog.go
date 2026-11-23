@@ -839,11 +839,12 @@ func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoTo
 		// Dump all goroutine stacks before exiting.
 		// With -logtostderr there are no files, so the full dump goes to standard
 		// error; otherwise standard error gets the current goroutine's trace.
-		trace := stacks(true)
+		// In JSON mode each dump is one more FATAL record, so output stays JSON lines.
+		trace := l.fatalStackRecord(stacks(true), file, line)
 		if l.toStderr {
 			os.Stderr.Write(trace)
 		} else {
-			os.Stderr.Write(stacks(false))
+			os.Stderr.Write(l.fatalStackRecord(stacks(false), file, line))
 		}
 		// Write the stack trace for all goroutines to the files.
 		logExitFunc = func(error) {} // If we get a write error, we'll still exit below.
