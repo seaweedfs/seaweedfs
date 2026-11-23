@@ -776,11 +776,11 @@ func (l *loggingT) writesToStderr(s severity, bridged bool) bool {
 		return true
 	}
 	thresholdSet := atomic.LoadInt32(&l.stderrThresholdSet) != 0
-	if l.toStderr {
-		return !thresholdSet || s >= l.stderrThreshold.get()
-	}
 	if l.alsoToStderr.value && (l.alsoToStderr.explicit || !thresholdSet) {
 		return true
+	}
+	if l.toStderr {
+		return !thresholdSet || s >= l.stderrThreshold.get()
 	}
 	return s >= l.stderrThreshold.get()
 }

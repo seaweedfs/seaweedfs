@@ -502,6 +502,8 @@ func TestWritesToStderr(t *testing.T) {
 		{"alsologtostderr=false with threshold", false, presetBool{value: false, explicit: true}, "INFO", false, [4]bool{true, true, true, true}},
 		{"logtostderr writes all", true, presetBool{value: true}, "", false, [4]bool{true, true, true, true}},
 		{"logtostderr with threshold", true, presetBool{value: true}, "ERROR", false, [4]bool{false, false, true, true}},
+		{"logtostderr with explicit alsologtostderr=true wins", true, presetBool{value: true, explicit: true}, "ERROR", false, [4]bool{true, true, true, true}},
+		{"logtostderr with alsologtostderr=false and threshold", true, presetBool{value: false, explicit: true}, "ERROR", false, [4]bool{false, false, true, true}},
 		{"bridged always written", true, presetBool{value: true}, "FATAL", true, [4]bool{true, true, true, true}},
 	}
 	for _, tt := range tests {
