@@ -1008,7 +1008,7 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 	// the handle's own path bookkeeping. This is for the rest: the kernel goes
 	// on addressing a moved inode by nodeid whether or not anything holds it
 	// open.
-	handled, replacedInode := wfs.invalidateOpenFileHandle(invalidation)
+	handled, replacedInode, detached := wfs.invalidateOpenFileHandle(invalidation)
 	if !handled && invalidation.RenamedTo != "" {
 		_, replacedInode = wfs.inodeToPath.MovePath(invalidation.Path, invalidation.RenamedTo)
 	} else if !handled && invalidation.Deleted && len(invalidation.LiveHardLinkId) > 0 {
@@ -1023,6 +1023,32 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 	// no other handle's lock.
 	if replacedInode != 0 {
 		wfs.markHandleDeleted(replacedInode)
+	}
+	// The kernel still resolves the name to the inode whose handle just lost
+	// it, for as long as it trusts its lookup. With that lookup dropped, a
+	// call by path reaches the file that has the name now.
+	if detached {
+		wfs.invalidateKernelEntry(invalidation.Path)
+	}
+}
+
+// invalidateKernelEntry drops the kernel's cached lookup of path, so its next
+// use of the name asks again. Called from the invalidation worker with no
+// handle lock held, for the reasons invalidateKernelDirListing gives: the
+// kernel takes the parent directory's lock for it, and waits there for any
+// request on that directory this mount is still serving.
+func (wfs *WFS) invalidateKernelEntry(path util.FullPath) {
+	server := wfs.fuseServer
+	if server == nil {
+		return
+	}
+	dir, name := path.DirAndName()
+	dirInode, found := wfs.inodeToPath.GetInode(util.FullPath(dir))
+	if !found {
+		return
+	}
+	if status := server.EntryNotify(dirInode, name); status != fuse.OK && status != fuse.ENOENT && status != fuse.ENOSYS {
+		glog.V(4).Infof("invalidate kernel lookup of %s: %v", path, status)
 	}
 }
 
@@ -1060,8 +1086,10 @@ func (wfs *WFS) MountRoot() util.FullPath {
 // open, reporting whether it found one: a handle owns its inode's rename
 // bookkeeping, and the caller moves the table only for inodes without one. Any
 // inode a rename destroyed comes back for the caller to mark, since marking it
-// here would hold two handle locks at once.
-func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidation) (handled bool, replacedInode uint64) {
+// here would hold two handle locks at once. detached reports that the handle's
+// inode gave the event's path up to another file, for the caller to tell the
+// kernel once the handle's locks are released.
+func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidation) (handled bool, replacedInode uint64, detached bool) {
 	filePath, eventEntry, eventTsNs := invalidation.Path, invalidation.Entry, invalidation.TsNs
 	inode, inodeFound := wfs.inodeToPath.GetInode(filePath)
 	if !inodeFound {
@@ -1082,8 +1110,10 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	// below - a fence that skipped it would strand the inode and the handle on
 	// a name the filer has vacated. MovePath reports whether the source was
 	// still ours to move, which is what makes a replayed rename a no-op here.
+	moved := false
 	if invalidation.RenamedTo != "" {
 		if sourceInode, replaced := wfs.inodeToPath.MovePath(filePath, invalidation.RenamedTo); sourceInode != 0 {
+			moved = true
 			if replaced != inode {
 				replacedInode = replaced
 			}
@@ -1115,11 +1145,17 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	// A cached parent's store entry is the ordered merge of this event and
 	// anything applied since. An uncached parent takes no store writes, so a
 	// hit there is a stale leftover — use the event entry instead.
+	//
+	// A handle that just followed its file to another name has nothing to
+	// learn at the path it left: whatever the cache holds there by now is
+	// another file's. The rename's event for the new path brings the entry.
 	var candidate *filer_pb.Entry
 	candidateTsNs := eventTsNs
-	if storeEntry, storeVersionTsNs, found := wfs.cachedEntrySince(filePath, eventTsNs); found {
-		candidate = storeEntry.ToProtoEntry()
-		candidateTsNs = storeVersionTsNs
+	if !moved {
+		if storeEntry, storeVersionTsNs, found := wfs.cachedEntrySince(filePath, eventTsNs); found {
+			candidate = storeEntry.ToProtoEntry()
+			candidateTsNs = storeVersionTsNs
+		}
 	}
 	if candidate == nil && eventEntry != nil {
 		candidate = proto.Clone(eventEntry).(*filer_pb.Entry)
@@ -1140,7 +1176,7 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		if invalidation.Deleted {
 			// The next flush reads the survivor's stored entry before
 			// publishing, so the version stays where it was.
-			if len(invalidation.LiveHardLinkId) > 0 && wfs.followSurvivingLink(fh, filePath) {
+			if len(invalidation.LiveHardLinkId) > 0 && wfs.followSurvivingLink(fh, inode, filePath) {
 				fh.linkRefresh = invalidation.LiveHardLinkId
 				return
 			}
@@ -1175,6 +1211,35 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		}
 		return
 	}
+	// Another file has the name: a peer renamed it over the one this handle
+	// has open, from a source this mount never looked up, so no MovePath
+	// reported the handle's inode as replaced. Installing the newcomer would
+	// send every later write, truncate and chmod through this descriptor to
+	// it. The inode gives the name up instead, as a replaced rename target
+	// does: the kernel walks the path again and reaches the newcomer under an
+	// inode of its own.
+	if replacedByAnotherFile(candidate, base) {
+		// A hard-linked file lives on under its other names, and the handle
+		// with it under one this mount knows, as after a peer's unlink of
+		// one name. The next flush reads the survivor's stored entry before
+		// publishing, so the version stays where it was.
+		if len(base.HardLinkId) > 0 && wfs.followSurvivingLink(fh, inode, filePath) {
+			detached = true
+			fh.linkRefresh = base.HardLinkId
+			return
+		}
+		// A local rename may have moved the inode off the name since it was
+		// looked up; the file then lives on under its new one.
+		if !wfs.inodeToPath.RemovePathOf(inode, filePath) {
+			return
+		}
+		// No name left here: the handle's file is gone, as after a delete.
+		detached = true
+		fh.isDeleted = true
+		fh.deleteEpoch++
+		fh.advanceEntryVersion(candidateTsNs, 0)
+		return
+	}
 	// Dirty pages overlay content, so only a content change invalidates them:
 	// a metadata-only event (chmod, touch, or a committed copy's own event
 	// against an approximate base) leaves them valid.
@@ -1186,6 +1251,15 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	fh.baseEntry.Store(proto.Clone(candidate).(*filer_pb.Entry))
 	fh.advanceEntryVersion(candidateTsNs, 0)
 	return
+}
+
+// replacedByAnotherFile reports whether stored is provably not the file base
+// was: both carry an inode and the two differ. An update in place keeps the
+// inode, so does a hard link made of the file; an entry without one cannot
+// tell, and is not taken for another file.
+func replacedByAnotherFile(stored, base *filer_pb.Entry) bool {
+	storedInode, baseInode := stored.GetAttributes().GetInode(), base.GetAttributes().GetInode()
+	return storedInode != 0 && baseInode != 0 && storedInode != baseInode
 }
 
 // cachedEntrySince returns the meta cache's entry at path when its directory is
@@ -1204,9 +1278,9 @@ func (wfs *WFS) cachedEntrySince(path util.FullPath, tsNs int64) (*filer.Entry, 
 
 // followSurvivingLink drops a hard link name another client deleted and
 // keeps the handle on a name of the inode this mount still knows, reporting
-// false when it knows none.
-func (wfs *WFS) followSurvivingLink(fh *FileHandle, removed util.FullPath) bool {
-	survivor, ok := wfs.inodeToPath.RemoveAlias(removed)
+// false when it knows none or the removed name no longer belongs to owner.
+func (wfs *WFS) followSurvivingLink(fh *FileHandle, owner uint64, removed util.FullPath) bool {
+	survivor, ok := wfs.inodeToPath.RemoveAliasOf(owner, removed)
 	if ok {
 		fh.RememberPath(survivor)
 		wfs.readAuth.TrackHandle(survivor, fh)

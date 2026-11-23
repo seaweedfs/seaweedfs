@@ -41,11 +41,14 @@
 //
 //	-logtostderr=false
 //		Logs are written to standard error instead of to files.
-//	-alsologtostderr=false
+//	-alsologtostderr=true
 //		Logs are written to standard error as well as to files.
+//		When not given, it is false if -stderrthreshold is given.
 //	-stderrthreshold=ERROR
 //		Log events at or above this severity are logged to standard
-//		error as well as to files.
+//		error as well as to files. When given, it also filters standard
+//		error under -logtostderr. When not given, it applies only with
+//		-alsologtostderr=false.
 //	-logdir=""
 //		Log files will be written to this directory instead of the
 //		default temporary directory.
@@ -148,7 +151,44 @@ func (s *severity) Set(value string) error {
 		threshold = severity(v)
 	}
 	logging.stderrThreshold.set(threshold)
+	atomic.StoreInt32(&logging.stderrThresholdSet, 1)
 	return nil
+}
+
+// presetBool is a boolean flag that remembers whether it was given explicitly,
+// so a default can yield to a related flag the user did set.
+type presetBool struct {
+	value    bool
+	explicit bool
+}
+
+// String is part of the flag.Value interface.
+func (b *presetBool) String() string {
+	if b == nil {
+		return "false"
+	}
+	return strconv.FormatBool(b.value)
+}
+
+// Get is part of the flag.Value interface.
+func (b *presetBool) Get() interface{} {
+	return b.value
+}
+
+// Set is part of the flag.Value interface.
+func (b *presetBool) Set(value string) error {
+	v, err := strconv.ParseBool(value)
+	if err != nil {
+		return err
+	}
+	b.value = v
+	b.explicit = true
+	return nil
+}
+
+// IsBoolFlag lets the flag be given as a bare -alsologtostderr.
+func (b *presetBool) IsBoolFlag() bool {
+	return true
 }
 
 func severityByName(s string) (severity, bool) {
@@ -397,9 +437,10 @@ type flushSyncWriter interface {
 
 func init() {
 	flag.BoolVar(&logging.toStderr, "logtostderr", false, "log to standard error instead of files")
-	flag.BoolVar(&logging.alsoToStderr, "alsologtostderr", true, "log to standard error as well as files")
+	logging.alsoToStderr.value = true
+	flag.Var(&logging.alsoToStderr, "alsologtostderr", "log to standard error as well as files; when not set, true unless -stderrthreshold is set")
 	flag.Var(&logging.verbosity, "v", "log levels [0|1|2|3|4], default to 0")
-	flag.Var(&logging.stderrThreshold, "stderrthreshold", "logs at or above this threshold go to stderr")
+	flag.Var(&logging.stderrThreshold, "stderrthreshold", "logs at or above this threshold go to stderr [INFO|WARNING|ERROR|FATAL], also with -logtostderr; ERROR when -alsologtostderr=false and it is not set")
 	flag.Var(&logging.vmodule, "vmodule", "comma-separated list of pattern=N settings for file-filtered logging")
 	flag.Var(&logging.traceLocation, "log_backtrace_at", "when logging hits line file:N, emit a stack trace")
 
@@ -420,11 +461,14 @@ type loggingT struct {
 	// Boolean flags. Not handled atomically because the flag.Value interface
 	// does not let us avoid the =true, and that shorthand is necessary for
 	// compatibility. TODO: does this matter enough to fix? Seems unlikely.
-	toStderr     bool // The -logtostderr flag.
-	alsoToStderr bool // The -alsologtostderr flag.
+	toStderr     bool       // The -logtostderr flag.
+	alsoToStderr presetBool // The -alsologtostderr flag.
 
 	// Level flag. Handled atomically.
 	stderrThreshold severity // The -stderrthreshold flag.
+
+	// stderrThresholdSet is non-zero once -stderrthreshold was given. Handled atomically.
+	stderrThresholdSet int32
 
 	// freeList is a list of byte buffers, maintained under freeListMu.
 	freeList *buffer
@@ -722,6 +766,25 @@ func (l *loggingT) printWithFileLine(s severity, file string, line int, alsoToSt
 	l.output(s, buf, file, line, alsoToStderr)
 }
 
+// writesToStderr reports whether a message of severity s goes to standard error.
+// An explicit -stderrthreshold filters standard error in every mode: with
+// -logtostderr, and over the default -alsologtostderr=true. An explicit
+// -alsologtostderr=true still sends everything. Messages bridged from the
+// standard log package always go.
+func (l *loggingT) writesToStderr(s severity, bridged bool) bool {
+	if bridged {
+		return true
+	}
+	thresholdSet := atomic.LoadInt32(&l.stderrThresholdSet) != 0
+	if l.alsoToStderr.value && (l.alsoToStderr.explicit || !thresholdSet) {
+		return true
+	}
+	if l.toStderr {
+		return !thresholdSet || s >= l.stderrThreshold.get()
+	}
+	return s >= l.stderrThreshold.get()
+}
+
 // output writes the data to the log files and releases the buffer.
 func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoToStderr bool) {
 	l.mu.Lock()
@@ -731,12 +794,10 @@ func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoTo
 		}
 	}
 	data := buf.Bytes()
-	if l.toStderr {
+	if l.writesToStderr(s, alsoToStderr) {
 		os.Stderr.Write(data)
-	} else {
-		if alsoToStderr || l.alsoToStderr || s >= l.stderrThreshold.get() {
-			os.Stderr.Write(data)
-		}
+	}
+	if !l.toStderr {
 		if l.file[s] == nil {
 			if err := l.createFiles(s); err != nil {
 				os.Stderr.Write(data) // Make sure the message appears somewhere.
@@ -776,14 +837,16 @@ func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoTo
 			os.Exit(1)
 		}
 		// Dump all goroutine stacks before exiting.
-		// First, make sure we see the trace for the current goroutine on standard error.
-		// If -logtostderr has been specified, the loop below will do that anyway
-		// as the first stack in the full dump.
-		if !l.toStderr {
-			os.Stderr.Write(stacks(false))
+		// With -logtostderr there are no files, so the full dump goes to standard
+		// error; otherwise standard error gets the current goroutine's trace.
+		// In JSON mode each dump is one more FATAL record, so output stays JSON lines.
+		trace := l.fatalStackRecord(stacks(true), file, line)
+		if l.toStderr {
+			os.Stderr.Write(trace)
+		} else {
+			os.Stderr.Write(l.fatalStackRecord(stacks(false), file, line))
 		}
 		// Write the stack trace for all goroutines to the files.
-		trace := stacks(true)
 		logExitFunc = func(error) {} // If we get a write error, we'll still exit below.
 		for log := fatalLog; log >= infoLog; log-- {
 			if f := l.file[log]; f != nil { // Can be nil if -logtostderr is set.

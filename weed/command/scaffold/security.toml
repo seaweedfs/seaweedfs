@@ -100,6 +100,14 @@ previous_key = ""
 #       write the IAM store under /etc/iam; if the filer gRPC port is reachable
 #       beyond a trusted network, enable [grpc.filer] mTLS below.
 # the jwt defaults to expire after 10 seconds.
+# Filesystem gRPC callers may send authorization: Bearer <token> signed with
+# this key. allowed_prefixes grant read/write paths; read_prefixes grant reads.
+# allowed_methods optionally restricts gRPC method names. Scoped tokens require
+# jti and exp, cannot introduce new chunk ids, and cannot call unruled methods.
+# Calls without a token retain their existing behavior. This is scope enforcement,
+# not mandatory authentication; restrict network access to the filer as before.
+# Rolling upgrades: older filers treat a read_prefixes-only token as an admin
+# token. Mint read-only tokens only after every filer runs this version or newer.
 [jwt.filer_signing]
 key = ""
 expires_after_seconds = 10           # seconds

@@ -200,7 +200,7 @@ func TestReadErrorsCarryTheServerMessage(t *testing.T) {
 	if _, _, err := ReadUrlAsReaderCloser(server.URL, "", ""); err == nil || err.Error() != want {
 		t.Errorf("ReadUrlAsReaderCloser: got %v, want %q", err, want)
 	}
-	if _, _, err := readUrlDirectToBuffer(context.Background(), server.URL, "", make([]byte, 16)); err == nil || err.Error() != want {
+	if _, _, err := readUrlDirectToBuffer(context.Background(), server.URL, "", make([]byte, 16), nil); err == nil || err.Error() != want {
 		t.Errorf("readUrlDirectToBuffer: got %v, want %q", err, want)
 	}
 	if _, _, err := GetAuthenticated(context.Background(), server.URL, ""); err == nil || err.Error() != want {

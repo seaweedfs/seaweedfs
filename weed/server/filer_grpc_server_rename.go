@@ -55,6 +55,20 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 		if err != nil {
 			return false, fmt.Errorf("%s/%s not found: %v", req.OldDirectory, req.OldName, err)
 		}
+		if err := fs.checkScopeWorm(ctx, string(oldParent.Child(req.OldName))); err != nil {
+			return false, err
+		}
+		if err := fs.checkScopeWorm(ctx, string(newParent.Child(req.NewName))); err != nil {
+			return false, err
+		}
+		if oldEntry.IsDirectory() {
+			if err := fs.checkScopeWormDirectory(ctx, string(oldParent.Child(req.OldName))); err != nil {
+				return false, err
+			}
+			if err := fs.checkScopeWormDirectory(ctx, string(newParent.Child(req.NewName))); err != nil {
+				return false, err
+			}
+		}
 
 		// The check runs under the rename path locks, which CreateEntry on the same
 		// filer also takes, so a target created concurrently cannot slip through.
@@ -93,12 +107,29 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 	defer fs.acquireRenamePathLocks("StreamRenameEntry", oldParent.Child(req.OldName), newParent.Child(req.NewName))()
 
 	afterCommitCtx := context.Background()
+	if scopeKeepOnly(stream.Context()) {
+		afterCommitCtx = withScopeKeepOnly(afterCommitCtx)
+	}
 	var held *renameResponseBuffer
 	effects, err := fs.runRenameTransaction(afterCommitCtx, fmt.Sprintf("%s/%s", req.OldDirectory, req.OldName), func(ctx context.Context, effects *renameEffects) (bool, error) {
 		held = nil
 		oldEntry, err := fs.filer.FindEntry(ctx, oldParent.Child(req.OldName))
 		if err != nil {
 			return false, fmt.Errorf("%s/%s not found: %v", req.OldDirectory, req.OldName, err)
+		}
+		if err := fs.checkScopeWorm(ctx, string(oldParent.Child(req.OldName))); err != nil {
+			return false, err
+		}
+		if err := fs.checkScopeWorm(ctx, string(newParent.Child(req.NewName))); err != nil {
+			return false, err
+		}
+		if oldEntry.IsDirectory() {
+			if err := fs.checkScopeWormDirectory(ctx, string(oldParent.Child(req.OldName))); err != nil {
+				return false, err
+			}
+			if err := fs.checkScopeWormDirectory(ctx, string(newParent.Child(req.NewName))); err != nil {
+				return false, err
+			}
 		}
 
 		if oldEntry.IsDirectory() {

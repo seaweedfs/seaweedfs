@@ -148,7 +148,7 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(snapshotChunks)
 
 	// Compact chunks to remove fully overlapped ones
-	compactedChunks, _, err := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
+	compactedChunks, covered, err := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
 	if err != nil {
 		return fmt.Errorf("compact chunks of %s: %w", fileFullPath, err)
 	}
@@ -188,6 +188,7 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	// Snapshot with local ids before the request mapping mutates the clone:
 	// on ack this becomes the handle's base, judged against future events.
 	baseSnapshot := proto.Clone(requestEntry).(*filer_pb.Entry)
+	requestEntry.Chunks = append(requestEntry.Chunks, fh.unpublishedChunks(covered, requestEntry.Chunks)...)
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
 	resp, merged, err := wfs.createContentEntry(context.Background(), fh, request, baseSnapshot, true, &contentPublication{})

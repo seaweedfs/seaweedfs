@@ -90,6 +90,26 @@ func (l *loggingT) formatJSON(s severity, depth int) (*buffer, string, int) {
 	return buf, file, line
 }
 
+// fatalStackRecord returns a FATAL goroutine dump as written to the logs: the raw
+// dump in text mode, or one FATAL JSON record carrying the fatal call's file and
+// line in JSON mode. It is called with l.mu held, so it must not call output.
+func (l *loggingT) fatalStackRecord(trace []byte, file string, line int) []byte {
+	if !IsJSONMode() {
+		return trace
+	}
+	var b strings.Builder
+	b.WriteString(`{"ts":"`)
+	b.WriteString(timeNow().UTC().Format(time.RFC3339Nano))
+	b.WriteString(`","level":"FATAL","file":"`)
+	b.WriteString(jsonEscapeString(file))
+	b.WriteString(`","line":`)
+	b.WriteString(itoa(line))
+	b.WriteString(`,"msg":"`)
+	b.WriteString(jsonEscapeString(strings.TrimRight(string(trace), "\n")))
+	b.WriteString("\"}\n")
+	return []byte(b.String())
+}
+
 // finishJSON closes the JSON object and adds a newline.
 func finishJSON(buf *buffer) {
 	buf.WriteString("\"}\n")

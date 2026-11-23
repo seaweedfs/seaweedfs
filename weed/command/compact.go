@@ -1,6 +1,7 @@
 package command
 
 import (
+	"os"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -56,15 +57,21 @@ func runCompact(cmd *Command, args []string) bool {
 	}
 	switch strings.ToLower(*compactMethod) {
 	case "data":
-		if err = v.CompactByVolumeData(opts); err != nil {
-			glog.Fatalf("Compact Volume [ERROR] %s\n", err)
-		}
+		err = v.CompactByVolumeData(opts)
 	case "index":
-		if err = v.CompactByIndex(opts); err != nil {
-			glog.Fatalf("Compact Volume [ERROR] %s\n", err)
-		}
+		err = v.CompactByIndex(opts)
 	default:
 		glog.Fatalf("unsupported compaction method %q", *compactMethod)
+	}
+	if err != nil {
+		v.Close()
+		for _, ext := range []string{".cpd", ".cpx"} {
+			if rmErr := os.Remove(v.FileName(ext)); rmErr != nil && !os.IsNotExist(rmErr) {
+				glog.Errorf("remove %s: %v", v.FileName(ext), rmErr)
+			}
+		}
+		glog.Errorf("Compact Volume [ERROR] %s", err)
+		SetCommandExitStatus(1)
 	}
 
 	return true
