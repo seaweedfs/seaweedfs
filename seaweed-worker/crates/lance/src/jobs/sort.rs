@@ -23,6 +23,7 @@ use seaweed_worker_sort::{
 };
 use tracing::warn;
 
+use crate::admin_cluster::{AdminCluster, Locator};
 use crate::catalog::{NamespaceClient, SigningKey, parse_id};
 use crate::dataset;
 use crate::jobs::{FORMAT, clamp, observation, string_list, table_id};
@@ -52,8 +53,7 @@ const BYTES_PER_MB: u64 = 1024 * 1024;
 /// so nothing but a rewrite establishes that order, and nothing but another
 /// rewrite restores it once rows have been appended.
 pub struct SortHandler {
-    namespace_url: String,
-    storage: dataset::Storage,
+    locator: Locator,
     signing_key: Option<SigningKey>,
     metrics: Option<crate::metrics::LanceMetrics>,
 }
@@ -61,8 +61,7 @@ pub struct SortHandler {
 impl SortHandler {
     pub fn new(namespace_url: String) -> Self {
         Self {
-            namespace_url,
-            storage: dataset::Storage::default(),
+            locator: Locator::new(namespace_url),
             signing_key: None,
             metrics: None,
         }
@@ -75,7 +74,7 @@ impl SortHandler {
 
     /// Storage options to use where the namespace vends none.
     pub fn with_storage(mut self, storage: dataset::Storage) -> Self {
-        self.storage = storage;
+        self.locator = self.locator.with_storage(storage);
         self
     }
 
@@ -84,8 +83,14 @@ impl SortHandler {
         self
     }
 
-    fn client(&self) -> NamespaceClient {
-        NamespaceClient::new(self.namespace_url.clone()).with_signing_key(self.signing_key.as_ref())
+    pub fn with_admin(mut self, admin: Option<Arc<AdminCluster>>) -> Self {
+        self.locator = self.locator.with_admin(admin);
+        self
+    }
+
+    fn client(&self) -> Result<NamespaceClient> {
+        Ok(NamespaceClient::new(self.locator.namespace_url()?)
+            .with_signing_key(self.signing_key.as_ref()))
     }
 }
 
@@ -198,14 +203,15 @@ impl JobHandler for SortHandler {
             MIN_UNSORTED_ROWS_CEILING,
         ) as u64;
 
-        let client = self.client();
+        let client = self.client()?;
+        let storage = self.locator.storage()?;
         let tables = client.list_all_tables().await?;
 
         let mut proposals = Vec::new();
         let mut observations = Vec::new();
         for encoded in &tables {
             let id = parse_id(encoded);
-            let table = match dataset::open(&client, &id, &self.storage).await {
+            let table = match dataset::open(&client, &id, &storage).await {
                 Ok(table) => table,
                 Err(err) => {
                     // One unreadable table must not end the sweep: the tables
@@ -355,11 +361,12 @@ impl JobHandler for SortHandler {
             MAX_ROWS_PER_FILE_CEILING,
         ) as usize;
 
-        let client = self.client();
+        let client = self.client()?;
+        let storage = self.locator.storage()?;
         // Re-resolve rather than trusting what detection saw: the table may have
         // been repointed, its declared order changed, and the vended credentials
         // have expired.
-        let table = dataset::open(&client, &id, &self.storage).await?;
+        let table = dataset::open(&client, &id, &storage).await?;
         let before = table.stats().await?;
         let config = table.dataset.config().clone();
         let spec = resolve(

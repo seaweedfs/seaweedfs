@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
@@ -11,6 +12,7 @@ use seaweed_worker_core::pb::{
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
 use tracing::warn;
 
+use crate::admin_cluster::{AdminCluster, Locator};
 use crate::catalog::{NamespaceClient, SigningKey, parse_id};
 use crate::dataset::{self, OpenTable};
 use crate::jobs::{clamp, string_list, table_id};
@@ -44,8 +46,7 @@ pub(crate) fn declare_build_runtime(parameters: &mut HashMap<String, ConfigValue
 /// written after a build, are searched exactly; `lance_optimize_indices` then
 /// keeps the index covering.
 pub struct VectorIndexHandler {
-    namespace_url: String,
-    storage: dataset::Storage,
+    locator: Locator,
     signing_key: Option<SigningKey>,
     metrics: Option<crate::metrics::LanceMetrics>,
 }
@@ -53,8 +54,7 @@ pub struct VectorIndexHandler {
 impl VectorIndexHandler {
     pub fn new(namespace_url: String) -> Self {
         Self {
-            namespace_url,
-            storage: dataset::Storage::default(),
+            locator: Locator::new(namespace_url),
             signing_key: None,
             metrics: None,
         }
@@ -66,7 +66,7 @@ impl VectorIndexHandler {
     }
 
     pub fn with_storage(mut self, storage: dataset::Storage) -> Self {
-        self.storage = storage;
+        self.locator = self.locator.with_storage(storage);
         self
     }
 
@@ -75,8 +75,14 @@ impl VectorIndexHandler {
         self
     }
 
-    fn client(&self) -> NamespaceClient {
-        NamespaceClient::new(self.namespace_url.clone()).with_signing_key(self.signing_key.as_ref())
+    pub fn with_admin(mut self, admin: Option<Arc<AdminCluster>>) -> Self {
+        self.locator = self.locator.with_admin(admin);
+        self
+    }
+
+    fn client(&self) -> Result<NamespaceClient> {
+        Ok(NamespaceClient::new(self.locator.namespace_url()?)
+            .with_signing_key(self.signing_key.as_ref()))
     }
 }
 
@@ -167,7 +173,8 @@ impl JobHandler for VectorIndexHandler {
             MIN_ROWS_CEILING,
         ) as usize;
         let max_results = usize::try_from(request.max_results).unwrap_or(0);
-        let client = self.client();
+        let client = self.client()?;
+        let storage = self.locator.storage()?;
         let tables = client.list_all_tables().await?;
 
         let mut proposals = Vec::new();
@@ -177,7 +184,7 @@ impl JobHandler for VectorIndexHandler {
             if !is_vector_table(&id) {
                 continue;
             }
-            let table = match dataset::open(&client, &id, &self.storage).await {
+            let table = match dataset::open(&client, &id, &storage).await {
                 Ok(table) => table,
                 Err(err) => {
                     if let Some(counters) = &self.metrics {
@@ -269,8 +276,9 @@ impl JobHandler for VectorIndexHandler {
         let id = table_id(&job.parameters)
             .ok_or_else(|| anyhow!("job {} carried no table_id", job.job_id))?;
 
-        let client = self.client();
-        let mut table = dataset::open(&client, &id, &self.storage).await?;
+        let client = self.client()?;
+        let storage = self.locator.storage()?;
+        let mut table = dataset::open(&client, &id, &storage).await?;
         let rows = table.dataset.count_rows(None).await?;
         let partitions = partitions_for(rows);
         let mut output: HashMap<String, ConfigValue> = HashMap::new();

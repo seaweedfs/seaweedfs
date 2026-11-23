@@ -9,6 +9,7 @@
 // than the default to prove its future Send.
 #![recursion_limit = "256"]
 
+pub mod admin_cluster;
 pub mod catalog;
 pub mod cluster;
 pub mod dataset;

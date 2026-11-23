@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
@@ -14,6 +15,7 @@ use seaweed_worker_core::pb::{
 use seaweed_worker_core::{DetectionSender, ExecutionSender, JobHandler};
 use tracing::warn;
 
+use crate::admin_cluster::{AdminCluster, Locator};
 use crate::catalog::{NamespaceClient, SigningKey, parse_id};
 use crate::dataset;
 use crate::jobs::purge::{self, Retention};
@@ -34,8 +36,7 @@ const MAX_MIN_VERSIONS: i64 = 1000;
 /// retention in its own config, and may ask for a purge (see [`purge`]), which
 /// this job carries out ahead of the retention window.
 pub struct CleanupVersionsHandler {
-    namespace_url: String,
-    storage: dataset::Storage,
+    locator: Locator,
     signing_key: Option<SigningKey>,
     metrics: Option<crate::metrics::LanceMetrics>,
 }
@@ -43,8 +44,7 @@ pub struct CleanupVersionsHandler {
 impl CleanupVersionsHandler {
     pub fn new(namespace_url: String) -> Self {
         Self {
-            namespace_url,
-            storage: dataset::Storage::default(),
+            locator: Locator::new(namespace_url),
             signing_key: None,
             metrics: None,
         }
@@ -56,7 +56,7 @@ impl CleanupVersionsHandler {
     }
 
     pub fn with_storage(mut self, storage: dataset::Storage) -> Self {
-        self.storage = storage;
+        self.locator = self.locator.with_storage(storage);
         self
     }
 
@@ -65,8 +65,14 @@ impl CleanupVersionsHandler {
         self
     }
 
-    fn client(&self) -> NamespaceClient {
-        NamespaceClient::new(self.namespace_url.clone()).with_signing_key(self.signing_key.as_ref())
+    pub fn with_admin(mut self, admin: Option<Arc<AdminCluster>>) -> Self {
+        self.locator = self.locator.with_admin(admin);
+        self
+    }
+
+    fn client(&self) -> Result<NamespaceClient> {
+        Ok(NamespaceClient::new(self.locator.namespace_url()?)
+            .with_signing_key(self.signing_key.as_ref()))
     }
 }
 
@@ -188,13 +194,14 @@ impl JobHandler for CleanupVersionsHandler {
             1,
             MAX_MIN_VERSIONS,
         ) as usize;
-        let client = self.client();
+        let client = self.client()?;
+        let storage = self.locator.storage()?;
         let tables = client.list_all_tables().await?;
 
         let mut proposals = Vec::new();
         for encoded in &tables {
             let id = parse_id(encoded);
-            let table = match dataset::open(&client, &id, &self.storage).await {
+            let table = match dataset::open(&client, &id, &storage).await {
                 Ok(table) => table,
                 Err(err) => {
                     if let Some(counters) = &self.metrics {
@@ -311,8 +318,9 @@ impl JobHandler for CleanupVersionsHandler {
             MAX_MIN_VERSIONS,
         ) as usize;
 
-        let client = self.client();
-        let mut table = dataset::open(&client, &id, &self.storage).await?;
+        let client = self.client()?;
+        let storage = self.locator.storage()?;
+        let mut table = dataset::open(&client, &id, &storage).await?;
         let before = table.stats().await?;
 
         if let Some(token) = purge::pending(table.dataset.config()) {

@@ -44,44 +44,44 @@ pub(crate) fn table_id(parameters: &HashMap<String, ConfigValue>) -> Option<Vec<
 /// types, which is why WorkerHello carries a list.
 pub fn handlers(
     namespace_url: String,
-    storage: crate::dataset::Storage,
+    admin: Arc<crate::admin_cluster::AdminCluster>,
     signing_key: Option<crate::catalog::SigningKey>,
     metrics: Option<crate::metrics::LanceMetrics>,
 ) -> Vec<Arc<dyn JobHandler>> {
     vec![
         Arc::new(
             compact::CompactHandler::new(namespace_url.clone())
-                .with_storage(storage.clone())
+                .with_admin(Some(admin.clone()))
                 .with_signing_key(signing_key.clone())
                 .with_metrics(metrics.clone()),
         ),
         Arc::new(
             indices::OptimizeIndicesHandler::new(namespace_url.clone())
-                .with_storage(storage.clone())
+                .with_admin(Some(admin.clone()))
                 .with_signing_key(signing_key.clone())
                 .with_metrics(metrics.clone()),
         ),
         Arc::new(
             vector_index::VectorIndexHandler::new(namespace_url.clone())
-                .with_storage(storage.clone())
+                .with_admin(Some(admin.clone()))
                 .with_signing_key(signing_key.clone())
                 .with_metrics(metrics.clone()),
         ),
         Arc::new(
             metadata_index::MetadataIndexHandler::new(namespace_url.clone())
-                .with_storage(storage.clone())
+                .with_admin(Some(admin.clone()))
                 .with_signing_key(signing_key.clone())
                 .with_metrics(metrics.clone()),
         ),
         Arc::new(
             sort::SortHandler::new(namespace_url.clone())
-                .with_storage(storage.clone())
+                .with_admin(Some(admin.clone()))
                 .with_signing_key(signing_key.clone())
                 .with_metrics(metrics.clone()),
         ),
         Arc::new(
             cleanup::CleanupVersionsHandler::new(namespace_url)
-                .with_storage(storage)
+                .with_admin(Some(admin))
                 .with_signing_key(signing_key)
                 .with_metrics(metrics),
         ),

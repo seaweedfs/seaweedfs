@@ -288,6 +288,7 @@ fn spawn_preview(
 ) {
     tokio::spawn(async move {
         let limit = request.row_limit.max(1) as usize;
+        registry.observe(request.cluster_context.as_ref()).await;
         let response = match registry.preview_provider(&request.format) {
             None => ObjectPreviewResponse {
                 request_id,
@@ -376,6 +377,7 @@ fn spawn_detection(
         // Held until the sweep finishes, so the worker keeps to the capacity it
         // advertised and the heartbeat reports the truth while it works.
         let _permit = slots.detection.acquire().await;
+        registry.observe(request.cluster_context.as_ref()).await;
         let metered = MeteredSender::new(&sender);
         let started = Instant::now();
         let outcome = handler.detect(&request, &metered).await;
@@ -429,6 +431,7 @@ fn spawn_execution(
         let Some(handler) = registry.get(&job_type) else {
             return;
         };
+        registry.observe(request.cluster_context.as_ref()).await;
         let metered = MeteredSender::new(&sender);
         let started = Instant::now();
         let outcome = handler.execute(&request, &metered).await;
