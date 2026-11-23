@@ -369,10 +369,12 @@ func TestReadEcShardNeedleAnswersDeletedWhenRecoveryFallsShort(t *testing.T) {
 type partlyDeletedEcShardPeer struct {
 	deletingEcShardPeer
 	deletes atomic.Int64
+	fileKey atomic.Uint64
 }
 
 func (p *partlyDeletedEcShardPeer) VolumeEcBlobDelete(ctx context.Context, req *volume_server_pb.VolumeEcBlobDeleteRequest) (*volume_server_pb.VolumeEcBlobDeleteResponse, error) {
 	p.deletes.Add(1)
+	p.fileKey.Store(req.FileKey)
 	return &volume_server_pb.VolumeEcBlobDeleteResponse{}, nil
 }
 
@@ -411,5 +413,8 @@ func TestDeleteEcShardNeedleForwardsWhenReadSaysDeleted(t *testing.T) {
 	}
 	if peer.deletes.Load() != 1 {
 		t.Errorf("forwarded %d deletes to the holder, want 1", peer.deletes.Load())
+	}
+	if got := types.NeedleId(peer.fileKey.Load()); got != n.Id {
+		t.Errorf("forwarded the delete of needle %s, want %s", got, n.Id)
 	}
 }
