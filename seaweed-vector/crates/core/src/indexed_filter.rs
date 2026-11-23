@@ -737,6 +737,8 @@ mod tests {
         for file in &dataset.fragments().last().unwrap().files {
             std::fs::remove_file(dir.path().join("data").join(&file.path)).unwrap();
         }
+        let dataset = Dataset::open(dir.path().to_str().unwrap()).await.unwrap();
+        assert!(query::ann(&dataset, &table, &query).await.is_err());
         for limit in [None, Some(0)] {
             let query = Query {
                 exact_match_limit: limit,

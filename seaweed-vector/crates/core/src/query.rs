@@ -167,7 +167,8 @@ async fn indexed_fragments(
     Ok(covered)
 }
 
-async fn ann_with_scope(
+/// ANN and exact fallbacks restricted to the supplied fragments.
+pub async fn ann_with_scope(
     dataset: &Dataset,
     table: &VectorTable,
     query: &Query,
