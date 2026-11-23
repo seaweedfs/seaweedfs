@@ -167,6 +167,17 @@ func TestSSES3GatewayChoice(t *testing.T) {
 	if client, _, err := reader.gatewayClient(context.Background(), "https://d:8443"); !errors.Is(err, errNoS3Gateway) {
 		t.Fatalf("retry after the only HTTPS gateway failed = %v, %v; want no plain-HTTP fallback", err, client)
 	}
+
+	for range 20 {
+		reader = gatewayReader(t, "/buckets/bucket", "http://b:8333", "HTTPS://d:8443")
+		if client, _, err := reader.gatewayClient(context.Background(), ""); err != nil || aws.ToString(client.Options().BaseEndpoint) != "HTTPS://d:8443" {
+			t.Fatalf("mixed-case HTTPS scheme: gateway = %v, %v; want the HTTPS one", err, client)
+		}
+	}
+	reader = gatewayReader(t, "/buckets/bucket", "http://b:8333", "HTTPS://d:8443")
+	if client, _, err := reader.gatewayClient(context.Background(), "HTTPS://d:8443"); !errors.Is(err, errNoS3Gateway) {
+		t.Fatalf("retry after the mixed-case HTTPS gateway failed = %v, %v; want no plain-HTTP fallback", err, client)
+	}
 }
 
 func TestSSES3GatewayReadAtPicksAnotherGateway(t *testing.T) {

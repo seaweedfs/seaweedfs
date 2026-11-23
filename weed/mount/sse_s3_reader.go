@@ -119,7 +119,11 @@ func (r *SSES3Reader) gatewayClient(ctx context.Context, failed string) (*s3.Cli
 		u, err := url.Parse(endpoint)
 		return err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != ""
 	})
-	if https := slices.DeleteFunc(slices.Clone(endpoints), func(endpoint string) bool { return !strings.HasPrefix(endpoint, "https://") }); len(https) > 0 {
+	isHTTPS := func(endpoint string) bool {
+		u, err := url.Parse(endpoint)
+		return err == nil && u.Scheme == "https"
+	}
+	if https := slices.DeleteFunc(slices.Clone(endpoints), func(endpoint string) bool { return !isHTTPS(endpoint) }); len(https) > 0 {
 		endpoints = https
 	}
 	endpoints = slices.DeleteFunc(endpoints, func(endpoint string) bool { return endpoint == failed })
@@ -127,7 +131,7 @@ func (r *SSES3Reader) gatewayClient(ctx context.Context, failed string) (*s3.Cli
 		return nil, "", errNoS3Gateway
 	}
 	endpoint := endpoints[rand.IntN(len(endpoints))]
-	if strings.HasPrefix(endpoint, "http://") {
+	if !isHTTPS(endpoint) {
 		glog.Warningf("-sseS3Read: no HTTPS S3 gateway is registered, reading %s over plain HTTP", endpoint)
 	}
 	r.client = s3.NewFromConfig(r.cfg, func(o *s3.Options) {
