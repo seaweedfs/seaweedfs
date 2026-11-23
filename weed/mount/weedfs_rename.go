@@ -191,9 +191,9 @@ renameat2()
 */
 const (
 	RenameEmptyFlag = 0
-	RenameNoReplace = 1
-	RenameExchange  = 2
-	RenameWhiteout  = 3
+	RenameNoReplace = 1 << 0
+	RenameExchange  = 1 << 1
+	RenameWhiteout  = 1 << 2
 )
 
 func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string, newName string) (code fuse.Status) {
@@ -210,12 +210,13 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		return s
 	}
 
+	// The filer's rename moves one entry. It cannot swap two (RENAME_EXCHANGE)
+	// or leave a whiteout behind (RENAME_WHITEOUT), and going on as a plain
+	// rename would move the source over the target and destroy it. EINVAL is
+	// what renameat2(2) answers for a flag the file system does not support.
 	switch in.Flags {
 	case RenameEmptyFlag:
 	case RenameNoReplace:
-	case RenameExchange:
-	case RenameWhiteout:
-		return fuse.ENOTSUP
 	default:
 		return fuse.EINVAL
 	}
