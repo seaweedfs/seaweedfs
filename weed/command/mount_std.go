@@ -51,6 +51,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 			glog.Errorf("-sseS3ReadEndpoint requires a bucket-root mount, -readOnly and -allowOthers=false")
 			return false
 		}
+		if resolveMountRoot(filerMountRootPath) != bucketPath {
+			glog.Errorf("-sseS3ReadEndpoint requires -filer.path=%s", bucketPath)
+			return false
+		}
 		for _, opt := range option.extraOptions {
 			for _, token := range strings.Split(opt, ",") {
 				switch token {
