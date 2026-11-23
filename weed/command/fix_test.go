@@ -221,3 +221,42 @@ func TestLocalDatSizeIgnoresRemoteTier(t *testing.T) {
 		t.Errorf("localDatSize with a remote .dat = %d, want 0", got)
 	}
 }
+
+func TestFixTruncatedDeleteKeepsKeyDeleted(t *testing.T) {
+	dir := t.TempDir()
+	base, _ := writeFixTestVolume(t, dir, 3)
+	f, err := os.OpenFile(base+".dat", os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	datBackend := backend.NewDiskFile(f)
+	deletion := &needle.Needle{Id: types.Uint64ToNeedleId(2)}
+	offset, _, _, err := deletion.Append(datBackend, needle.GetCurrentVersion())
+	datBackend.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(base+".dat", int64(offset)+types.NeedleHeaderSize+2); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, includeDeleted := range []bool{true, false} {
+		doFixOneVolume(dir, "fix_7", "fix", 7, includeDeleted)
+		f, err := os.Open(base + ".idx")
+		if err != nil {
+			t.Fatal(err)
+		}
+		live := map[uint64]bool{}
+		err = idx.WalkIndexFile(f, 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
+			live[uint64(key)] = !offset.IsZero() && size.IsValid()
+			return nil
+		})
+		f.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if live[2] || !live[1] || !live[3] {
+			t.Errorf("includeDeleted=%v: live keys %v, want 1 and 3 only", includeDeleted, live)
+		}
+	}
+}

@@ -71,6 +71,10 @@ func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64
 	glog.V(2).Infof("key %v offset %d size %d disk_size %d compressed %v", n.Id, offset, n.Size, n.DiskSize(scanner.version), n.IsCompressed())
 	if scanner.datSize > 0 && offset+n.DiskSize(scanner.version) > scanner.datSize {
 		glog.Warningf("needle %v at offset %d needs %d bytes but the .dat ends at %d; not indexing it", n.Id, offset, n.DiskSize(scanner.version), scanner.datSize)
+		// The key was rewritten or deleted here, so an older record must not become current again.
+		if pe := scanner.nm.Delete(n.Id); pe != nil {
+			return fmt.Errorf("delete %v with error %v", n.Id, pe)
+		}
 		return io.EOF
 	}
 	if n.Size.IsValid() {
