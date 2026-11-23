@@ -815,3 +815,96 @@ async fn a_dropped_and_recreated_index_serves_nothing_old() {
     let author = stats().await.unwrap().into_inner().keys;
     assert_eq!((author.len(), author[0].queries), (1, 1));
 }
+
+#[tokio::test]
+async fn indexed_queries_acknowledge_coverage_and_skip_recent_writes() {
+    let fixture = Fixture::new().await;
+    fixture
+        .put(
+            (0..64)
+                .map(|i| row(i, Some(serde_json::json!("alice"))))
+                .collect(),
+        )
+        .await;
+    fixture.index_author().await;
+    let mut dataset = fixture.dataset(0).await;
+    weed_vector_core::index::build(
+        &mut dataset,
+        "vector",
+        weed_vector_core::index::INDEX_NAME,
+        4,
+        false,
+    )
+    .await
+    .unwrap();
+    fixture
+        .put(vec![row(100, Some(serde_json::json!("alice")))])
+        .await;
+    let request = pb::QueryVectorsRequest {
+        table: Some(fixture.table.clone()),
+        query_vector: vector_of(100),
+        top_k: 10,
+        filter: FILTERS[0].1.to_string(),
+        return_distance: true,
+        return_metadata: true,
+        ..Default::default()
+    };
+    let all = fixture
+        .server
+        .query_vectors(Request::new(request.clone()))
+        .await
+        .unwrap();
+    assert_eq!(all.get_ref().vectors[0].key, "k100");
+    let indexed = fixture
+        .server
+        .query_indexed_vectors(Request::new(request.clone()))
+        .await
+        .unwrap();
+    assert_eq!(
+        indexed
+            .metadata()
+            .get("x-seaweedfs-vector-search-mode")
+            .unwrap(),
+        "indexed-only"
+    );
+    assert_eq!(
+        indexed
+            .metadata()
+            .get("x-seaweedfs-vector-excluded-fragments")
+            .unwrap(),
+        "1"
+    );
+    assert_eq!(indexed.get_ref().vectors.len(), 10);
+    assert!(
+        indexed
+            .get_ref()
+            .vectors
+            .iter()
+            .all(|v| v.key != "k100" && v.metadata.is_some())
+    );
+    let mut dataset = fixture.dataset(0).await;
+    dataset
+        .optimize_indices(&lance_index::optimize::OptimizeOptions::append())
+        .await
+        .unwrap();
+    let indexed = fixture
+        .server
+        .query_indexed_vectors(Request::new(request.clone()))
+        .await
+        .unwrap();
+    assert_eq!(indexed.get_ref().vectors[0].key, "k100");
+    assert_eq!(
+        indexed
+            .metadata()
+            .get("x-seaweedfs-vector-excluded-fragments")
+            .unwrap(),
+        "0"
+    );
+    fixture.set_state(State::Building).await;
+    let err = fixture
+        .server
+        .query_indexed_vectors(Request::new(request))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), tonic::Code::InvalidArgument);
+}

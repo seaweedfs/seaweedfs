@@ -326,6 +326,27 @@ func (d *vectorDiscovery) QueryVectors(ctx context.Context, in *vector_pb.QueryV
 	return nil, err
 }
 
+func (d *vectorDiscovery) QueryIndexedVectors(ctx context.Context, in *vector_pb.QueryVectorsRequest, opts ...grpc.CallOption) (resp *vector_pb.QueryVectorsResponse, err error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		var c vector_pb.VectorServiceClient
+		if c, err = d.cli(ctx); err != nil {
+			return nil, err
+		}
+		resp, err = c.QueryIndexedVectors(ctx, in, opts...)
+		if isTransportError(err) {
+			d.reset(c)
+		}
+		d.release(c)
+		if err == nil {
+			return resp, nil
+		}
+		if !isTransportError(err) {
+			return nil, err
+		}
+	}
+	return nil, err
+}
+
 func (d *vectorDiscovery) FilterStats(ctx context.Context, in *vector_pb.FilterStatsRequest, opts ...grpc.CallOption) (resp *vector_pb.FilterStatsResponse, err error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		var c vector_pb.VectorServiceClient
