@@ -19,6 +19,17 @@ func (s *Store) DeleteEcShardNeedle(ecVolume *erasure_coding.EcVolume, n *needle
 
 	count, err := s.ReadEcShardNeedle(ecVolume.VolumeId, n, nil)
 
+	if errors.Is(err, ErrorDeleted) {
+		// The read sees one disk's deletion set, and a delete that failed
+		// part way can leave a sibling disk of the holder still live, so
+		// forward again; the holder skips the copies that already record it.
+		if _, size, locErr := ecVolume.FindNeedleFromEcx(n.Id); locErr == nil && !size.IsDeleted() {
+			if fwdErr := s.doDeleteNeedleFromAtLeastOneRemoteEcShards(ecVolume, n.Id); fwdErr != nil {
+				glog.V(1).Infof("re-forward delete of deleted ec needle %d.%s: %v", ecVolume.VolumeId, n.Id, fwdErr)
+			}
+		}
+		return 0, err
+	}
 	if err != nil {
 		return 0, err
 	}
