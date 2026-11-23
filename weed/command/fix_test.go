@@ -163,3 +163,40 @@ func TestFixSkipsRecordPastEndOfDat(t *testing.T) {
 		})
 	}
 }
+
+func TestFixIgnoreErrorReportsIncompleteScan(t *testing.T) {
+	savedIgnore, savedStatus := *fixIgnoreError, commandExitStatus
+	*fixIgnoreError = true
+	defer func() { *fixIgnoreError, commandExitStatus = savedIgnore, savedStatus }()
+
+	t.Run("bad header", func(t *testing.T) {
+		dir := t.TempDir()
+		base, offsets := writeFixTestVolume(t, dir, 5)
+		overwriteAt(t, base+".dat", offsets[2], bytes.Repeat([]byte{0xa5}, 16))
+		commandExitStatus = 0
+		doFixOneVolume(dir, "fix_7", "fix", 7, false)
+		if CommandExitStatus() == 0 {
+			t.Error("expected a non-zero exit status for a scan that stopped before the end of the .dat")
+		}
+		if got := indexedKeys(t, base+".idx"); !slices.Equal(got, []uint64{1, 2}) {
+			t.Errorf("indexed keys %v, want [1 2]", got)
+		}
+	})
+
+	t.Run("bad super block keeps the existing index", func(t *testing.T) {
+		dir := t.TempDir()
+		base, _ := writeFixTestVolume(t, dir, 3)
+		overwriteAt(t, base+".dat", 0, bytes.Repeat([]byte{0xa5}, 8))
+		if err := os.WriteFile(base+".idx", []byte("previous index"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		commandExitStatus = 0
+		doFixOneVolume(dir, "fix_7", "fix", 7, true)
+		if CommandExitStatus() == 0 {
+			t.Error("expected a non-zero exit status for an unreadable super block")
+		}
+		if b, err := os.ReadFile(base + ".idx"); err != nil || string(b) != "previous index" {
+			t.Errorf("existing .idx changed: %q, %v", b, err)
+		}
+	})
+}
