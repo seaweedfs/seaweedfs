@@ -294,6 +294,9 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		}
 		existing = current
 	}
+	if err := fs.checkScopeWorm(ctx, string(fullpath)); err != nil {
+		return &filer_pb.CreateEntryResponse{}, err
+	}
 	if err := checkScopeRetainedData(ctx, existing, req.Entry); err != nil {
 		return &filer_pb.CreateEntryResponse{}, err
 	}
@@ -999,6 +1002,9 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		glog.V(3).InfofCtx(ctx, "UpdateEntry %s: precondition failed: %v", fullpath, req.Condition)
 		return &filer_pb.UpdateEntryResponse{}, status.Errorf(codes.FailedPrecondition, "precondition failed: %s", fullpath)
 	}
+	if err := fs.checkScopeWorm(ctx, string(lockPath)); err != nil {
+		return &filer_pb.UpdateEntryResponse{}, err
+	}
 
 	if err := checkScopeRetainedData(ctx, entry, req.Entry); err != nil {
 		return &filer_pb.UpdateEntryResponse{}, err
@@ -1146,6 +1152,9 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	} else {
 		offset = int64(filer.TotalSize(entry.GetChunks()))
 	}
+	if err := fs.checkScopeWorm(ctx, string(fullpath)); err != nil {
+		return &filer_pb.AppendToEntryResponse{}, err
+	}
 	if err := checkScopeRetainedData(ctx, entry, &filer_pb.Entry{Chunks: req.Chunks, HardLinkId: entry.HardLinkId, HardLinkCounter: entry.HardLinkCounter}); err != nil {
 		return &filer_pb.AppendToEntryResponse{}, err
 	}
@@ -1217,6 +1226,10 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 		if !req.IsMoved {
 			var ownerResp *filer_pb.DeleteEntryResponse
 			handled, forwardErr := fs.forwardToWriteOwner(ctx, entryRouteKey(fullpath), func(owner pb.ServerAddress) error {
+				// Peer scope propagation belongs to PR-4; forwarding now would bypass scoped WORM checks.
+				if scopeKeepOnly(ctx) {
+					return status.Error(codes.PermissionDenied, "filer: scoped DeleteEntry cannot be forwarded to the write owner")
+				}
 				glog.V(2).InfofCtx(ctx, "DeleteEntry %s: forwarding to owner %s", fullpath, owner)
 				req.IsMoved = true
 				return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -1247,6 +1260,9 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 	// that are already on the deletion queue.
 	pathLock := fs.entryLockTable.AcquireLock("DeleteEntry", fullpath, util.ExclusiveLock)
 	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
+	if err := fs.checkScopeWorm(ctx, string(fullpath)); err != nil {
+		return &filer_pb.DeleteEntryResponse{}, err
+	}
 
 	// Extended-attribute preconditions run here, under the lock the delete
 	// runs under: an attribute write that keeps Mtime can no longer slip
