@@ -22,6 +22,7 @@ pub mod master_pb {
     tonic::include_proto!("master_pb");
 }
 pub mod master_client;
+pub mod memory;
 pub mod security {
     pub use weed_lance_worker::security::*;
 }

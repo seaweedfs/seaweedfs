@@ -30,7 +30,7 @@ struct Args {
     max_concurrency: i32,
 
     /// The cluster's security.toml; by default the file weed processes find
-    /// in -config_dir, ., ~/.seaweedfs and /etc/seaweedfs.
+    /// in ., ~/.seaweedfs and /etc/seaweedfs.
     #[arg(long, env = "WEED_WORKER_SECURITY_TOML")]
     security_toml: Option<std::path::PathBuf>,
 
@@ -131,8 +131,7 @@ async fn main() -> Result<()> {
     let tls = args.tls()?;
     // One security.toml for everything: the admin stream's and the catalog's
     // signing key, and the cluster connection.
-    let security =
-        weed_lance_worker::security::Security::load(args.security_toml.as_deref(), None)?;
+    let security = weed_lance_worker::security::Security::load(args.security_toml.as_deref())?;
     let filer_signing = match args.filer_signing_key.filter(|key| !key.is_empty()) {
         Some(key) => Some((key, 0)),
         None => security

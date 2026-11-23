@@ -1,5 +1,5 @@
 //! The cluster's `security.toml`, found and read the way weed processes do:
-//! the file in `-config_dir`, `.`, `~/.seaweedfs`, `/usr/local/etc/seaweedfs`
+//! the file in `.`, `~/.seaweedfs`, `/usr/local/etc/seaweedfs`
 //! or `/etc/seaweedfs`, with `WEED_*` environment variables over it.
 
 use std::path::{Path, PathBuf};
@@ -77,23 +77,8 @@ impl std::fmt::Debug for Security {
     }
 }
 
-// weed's util.ResolvePath for "~" and "~/..."
-fn resolve_path(path: &Path, home: Option<&Path>) -> PathBuf {
-    match (path.strip_prefix("~"), home) {
-        (Ok(rest), Some(home)) => home.join(rest),
-        _ => path.to_path_buf(),
-    }
-}
-
-fn candidates(
-    config_dir: Option<&Path>,
-    current_dir: Option<&Path>,
-    home: Option<&Path>,
-) -> Vec<PathBuf> {
+fn candidates(current_dir: Option<&Path>, home: Option<&Path>) -> Vec<PathBuf> {
     let mut found = Vec::new();
-    if let Some(dir) = config_dir {
-        found.push(resolve_path(dir, home).join(FILE_NAME));
-    }
     if let Some(dir) = current_dir {
         found.push(dir.join(FILE_NAME));
     }
@@ -130,21 +115,17 @@ fn entry<'a>(table: &'a toml::Table, key: &str) -> Option<&'a toml::Value> {
 }
 
 impl Security {
-    /// Reads `path`, or the first `security.toml` where weed looks: the
-    /// `-config_dir`, then `.`, `~/.seaweedfs`, `/usr/local/etc/seaweedfs`
-    /// and `/etc/seaweedfs`. Without one, only the environment applies.
-    pub fn load(path: Option<&Path>, config_dir: Option<&Path>) -> Result<Self> {
+    /// Reads `path`, or the first `security.toml` where weed looks: `.`,
+    /// `~/.seaweedfs`, `/usr/local/etc/seaweedfs` and `/etc/seaweedfs`.
+    /// Without one, only the environment applies.
+    pub fn load(path: Option<&Path>) -> Result<Self> {
         let path = match path {
             Some(path) => Some(path.to_path_buf()),
             None => {
                 let home = std::env::var_os("HOME").map(PathBuf::from);
-                candidates(
-                    config_dir,
-                    std::env::current_dir().ok().as_deref(),
-                    home.as_deref(),
-                )
-                .into_iter()
-                .find(|p| p.is_file())
+                candidates(std::env::current_dir().ok().as_deref(), home.as_deref())
+                    .into_iter()
+                    .find(|p| p.is_file())
             }
         };
         Self::from_file(path, Box::new(|name| std::env::var(name).ok()))
@@ -559,15 +540,10 @@ mod tests {
 
     #[test]
     fn the_file_is_searched_where_weed_looks() {
-        let found = candidates(
-            Some(Path::new("/etc/weed")),
-            Some(Path::new("/cwd")),
-            Some(Path::new("/home/u")),
-        );
+        let found = candidates(Some(Path::new("/cwd")), Some(Path::new("/home/u")));
         assert_eq!(
             found,
             [
-                "/etc/weed/security.toml",
                 "/cwd/security.toml",
                 "/home/u/.seaweedfs/security.toml",
                 "/usr/local/etc/seaweedfs/security.toml",
@@ -575,32 +551,14 @@ mod tests {
             ]
             .map(PathBuf::from)
         );
-        let home = Some(Path::new("/home/u"));
-        for (dir, want) in [
-            ("~", "/home/u/security.toml"),
-            ("~/cluster", "/home/u/cluster/security.toml"),
-            ("~other/cluster", "~other/cluster/security.toml"),
-            ("/srv/~/cluster", "/srv/~/cluster/security.toml"),
-        ] {
-            assert_eq!(
-                candidates(Some(Path::new(dir)), None, home)[0],
-                PathBuf::from(want),
-                "{dir}"
-            );
-        }
     }
 
     #[test]
-    fn load_takes_the_config_dir_before_the_usual_places() {
+    fn an_explicit_file_wins() {
         let dir = tempfile::tempdir().unwrap();
-        let in_config_dir = dir.path().join(FILE_NAME);
-        std::fs::write(&in_config_dir, "").unwrap();
-        let loaded = Security::load(None, Some(dir.path())).unwrap();
-        assert_eq!(loaded.path(), Some(in_config_dir.as_path()));
-        // An explicit file still wins.
         let explicit = dir.path().join("other.toml");
         std::fs::write(&explicit, "").unwrap();
-        let loaded = Security::load(Some(&explicit), Some(dir.path())).unwrap();
+        let loaded = Security::load(Some(&explicit)).unwrap();
         assert_eq!(loaded.path(), Some(explicit.as_path()));
     }
 }
