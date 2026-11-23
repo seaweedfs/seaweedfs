@@ -252,6 +252,9 @@ func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method
 		if err != nil {
 			return sc.deny(method, fmt.Sprintf("the entry stored at %s could not be read: %v", p, err))
 		}
+		if err := scopeWritesSharedHardLink(stored, e); err != nil {
+			return sc.deny(method, err.Error())
+		}
 		return nil
 	}
 	// Inline content and chunk references are rechecked against the locked
