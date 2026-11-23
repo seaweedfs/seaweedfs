@@ -88,7 +88,10 @@ func (r *SSES3Reader) readAt(ctx context.Context, fullPath, etag, version string
 		req.VersionId = aws.String(version)
 	}
 	obj, err := r.client.GetObject(ctx, req)
-	if err != nil && currentNull && !isS3PermissionError(err) {
+	if currentNull && (err == nil && aws.ToString(obj.VersionId) != "" && aws.ToString(obj.VersionId) != version || err != nil && !isS3PermissionError(err)) {
+		if err == nil {
+			obj.Body.Close()
+		}
 		req.VersionId = aws.String(version)
 		obj, err = r.client.GetObject(ctx, req)
 	}

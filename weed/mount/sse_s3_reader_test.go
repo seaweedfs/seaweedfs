@@ -107,6 +107,7 @@ func TestSSES3GatewayReadAtNullVersion(t *testing.T) {
 	}{
 		{"current", `"fixture"`, []string{""}},
 		{"superseded", `"newer"`, []string{"", "null"}},
+		{"superseded by identical bytes", `"fixture"`, []string{"", "null"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got []string
@@ -121,7 +122,11 @@ func TestSSES3GatewayReadAtNullVersion(t *testing.T) {
 				w.Header().Set("Content-Range", "bytes 0-2/3")
 				w.Header().Set("Content-Length", "3")
 				w.Header().Set("X-Amz-Server-Side-Encryption", "AES256")
-				w.Header().Set("X-Amz-Version-Id", "null")
+				if versionId == "" && tc.name == "superseded by identical bytes" {
+					w.Header().Set("X-Amz-Version-Id", "v2")
+				} else {
+					w.Header().Set("X-Amz-Version-Id", "null")
+				}
 				w.WriteHeader(http.StatusPartialContent)
 				_, _ = w.Write([]byte("abc"))
 			}))
