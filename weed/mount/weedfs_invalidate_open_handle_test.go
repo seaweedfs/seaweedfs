@@ -2428,6 +2428,9 @@ func TestRenamedHandleIgnoresWhatTookItsOldName(t *testing.T) {
 
 	// hold the worker at its first invalidation until both events are cached
 	gate := make(chan struct{})
+	var openGate sync.Once
+	release := func() { openGate.Do(func() { close(gate) }) }
+	t.Cleanup(release)
 	var first atomic.Bool
 	wfs.SetEntryChangeListener(func(meta_cache.EntryInvalidation) {
 		if first.CompareAndSwap(false, true) {
@@ -2449,7 +2452,7 @@ func TestRenamedHandleIgnoresWhatTookItsOldName(t *testing.T) {
 			t.Fatalf("apply: %v", err)
 		}
 	}
-	close(gate)
+	release()
 	wfs.metaCache.WaitForEntryInvalidations()
 
 	if fh.isDeleted {
