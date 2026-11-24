@@ -250,3 +250,14 @@ func TestWriteAndSetstatRefuseProtectedEntries(t *testing.T) {
 		t.Fatalf("setstat of an unprotected entry: %v", err)
 	}
 }
+
+func TestRenameOntoItselfKeepsProtectedEntry(t *testing.T) {
+	p := "/buckets/b/f.versions/v_1"
+	fs, _ := newLockTestServer(t, map[string]*filer_pb.Entry{
+		"/buckets/b/f.versions": {Name: "f.versions", IsDirectory: true},
+		p:                       lockedEntry("v_1", map[string]string{s3_constants.ExtLegalHoldKey: s3_constants.LegalHoldOn}),
+	})
+	if err := fs.renameEntry(p, p); err != nil {
+		t.Fatalf("rename onto itself: %v", err)
+	}
+}
