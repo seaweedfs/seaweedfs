@@ -389,6 +389,12 @@ func applyMultipartSSES3HeadersFromUploadEntry(dst *filer_pb.Entry, sses3Info *m
 
 func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *s3.CompleteMultipartUploadInput, parts *CompleteMultipartUpload, uploadDirectory, entryName, dirName string, completedPartNumbers []int, completedPartMap map[int][]string, maxPartNo int) (*multipartCompletionState, *CompleteMultipartUploadResult, s3err.ErrorCode) {
 	if output, _ := s3a.committedCompletion(r, input); output != nil {
+		parentCtx, cancel := context.WithTimeout(context.Background(), createLookupTimeout)
+		defer cancel()
+		if err := s3a.ensureObjectParent(parentCtx, *input.Bucket, dirName); err != nil {
+			glog.Errorf("completeMultipartUpload %s/%s: committed object's directory %s is missing: %v", *input.Bucket, *input.Key, dirName, err)
+			return nil, nil, s3err.ErrInternalError
+		}
 		cleanupEntries, _, cleanupErr := s3a.uploadFiler(*input.Bucket, *input.Key).list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
 		if cleanupErr != nil && !errors.Is(cleanupErr, filer_pb.ErrNotFound) {
 			glog.Warningf("completeMultipartUpload: failed to list stale upload directory %s for cleanup: %v", uploadDirectory, cleanupErr)
@@ -1045,6 +1051,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			return s3a.checkConditionalHeaders(r, *input.Bucket, *input.Key)
 		}, completionBody)
 	}
+	var parentErr error
 	if finalizeCode != s3err.ErrNone {
 		// A finalize can fail after its commit. When the key now holds this
 		// upload's object, answer as a retry would.
@@ -1066,7 +1073,14 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		if !sameFileChunks(committedEntry.GetChunks(), completionState.finalParts) {
 			completionState.metadataOnlyCleanup = true
 		}
-		output = committed
+		parentCtx, cancel := context.WithTimeout(context.Background(), createLookupTimeout)
+		parentErr = s3a.ensureObjectParent(parentCtx, *input.Bucket, dirName)
+		cancel()
+		if parentErr != nil {
+			glog.Errorf("completeMultipartUpload %s/%s upload %s: committed object's directory %s is missing: %v", *input.Bucket, *input.Key, *input.UploadId, dirName, parentErr)
+		} else {
+			output = committed
+		}
 	}
 
 	if completionState != nil {
@@ -1079,13 +1093,19 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			// still references the chunks; removing it metadata-only orphans them.
 			if err := s3a.deleteUnusedPartEntries(cleanupCtx, uploadDirectory, *input.Bucket, *input.Key, *input.UploadId, completionState); err != nil {
 				glog.V(1).Infof("completeMultipartUpload cleanup %s upload %s: %v", *input.Bucket, *input.UploadId, err)
-			} else if err := s3a.uploadFiler(*input.Bucket, *input.Key).rm(cleanupCtx, s3a.genUploadsFolder(*input.Bucket), *input.UploadId, false, true); err != nil {
-				glog.V(1).Infof("completeMultipartUpload cleanup %s upload %s: %v", *input.Bucket, *input.UploadId, err)
+			} else if parentErr == nil {
+				// Otherwise the upload stays for the retry that creates the directory.
+				if err := s3a.uploadFiler(*input.Bucket, *input.Key).rm(cleanupCtx, s3a.genUploadsFolder(*input.Bucket), *input.UploadId, false, true); err != nil {
+					glog.V(1).Infof("completeMultipartUpload cleanup %s upload %s: %v", *input.Bucket, *input.UploadId, err)
+				}
 			}
 		}
 		if len(completionState.supersededPartManifests) > 0 {
 			s3a.deleteOrphanedChunks(completionState.supersededPartManifests)
 		}
+	}
+	if parentErr != nil {
+		return nil, finalizeCode
 	}
 
 	return
