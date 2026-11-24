@@ -1,7 +1,7 @@
 {{- include "seaweedfs.compat" . -}}
 {{- if .Values.s3.enabled }}
 {{- $preStopSeconds := .Values.s3.preStopSeconds | int }}
-{{- $s3ConfigReloader := .Values.s3.configReloader.enabled }}
+{{- $s3ConfigReloader := (.Values.s3.configReloader | default dict).enabled }}
 {{- if and $s3ConfigReloader (not .Values.s3.enableAuth) }}
 {{- fail "s3.configReloader.enabled needs s3.enableAuth: it reloads the identities file that mounts" }}
 {{- end }}
@@ -50,10 +50,12 @@ spec:
       {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- $podAnnotations := mergeOverwrite (deepCopy (.Values.podAnnotations | default dict)) (.Values.s3.podAnnotations | default dict) }}
-      {{- /* With the config reloader, a change to the existing Secret is applied by SIGHUP, not by a restart. */}}
-      {{- if and .Values.s3.existingConfigSecret (not $s3ConfigReloader) }}
+      {{- if .Values.s3.existingConfigSecret }}
+      {{- /* With the config reloader, a change to the existing Secret is applied by SIGHUP, so nothing in it may restart the pod. */}}
+      {{- if not $s3ConfigReloader }}
       {{- $configSecret := (lookup "v1" "Secret" (include "seaweedfs.namespace" .) .Values.s3.existingConfigSecret) | default dict }}
       {{- $_ := set $podAnnotations "checksum/s3config" ($configSecret | toYaml | sha256sum) }}
+      {{- end }}
       {{- else }}
       {{- $_ := set $podAnnotations "checksum/s3config" (include "seaweedfs.s3.configChecksum" .) }}
       {{- end }}

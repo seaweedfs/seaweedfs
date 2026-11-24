@@ -332,10 +332,10 @@ and does not resolve these references.
 
 #### Reload identities without a restart
 
-The chart restarts the filer and S3 pods when the content of `existingConfigSecret`
-changes, so every identity change briefly takes S3 down, completely so with a single
-filer. SeaweedFS also reloads the identities file on SIGHUP, which `configReloader` uses
-instead:
+The chart hashes `existingConfigSecret` into the filer and S3 pod templates when it renders,
+so the first Helm upgrade after the Secret's content changes restarts those pods, and every
+identity change briefly takes S3 down, completely so with a single filer. SeaweedFS also
+reloads the identities file on SIGHUP, which `configReloader` uses instead:
 
 ```yaml
 filer:
@@ -351,12 +351,18 @@ filer:
 
 - An `s3-config-reloader` sidecar checks the mounted identities file every second, and
   sends SIGHUP to SeaweedFS when it changes and once when it starts. Kubelet updates the
-  file at its next sync of the pod, within about 90 seconds of a change to the Secret;
-  changing any annotation on the pod makes that happen right away.
-- Changes to the content of `existingConfigSecret` no longer restart the pod. Adding,
-  changing, disabling and deleting identities apply without a restart. Other files in the
-  Secret, such as an audit log config, still need one, and so do changes to the values
-  the chart generates its own Secret from, such as `s3.credentials`.
+  file at its next sync of the pod. With the kubelet's default settings (a one-minute sync
+  period and the `Watch` Secret change detection strategy) that is within about 90 seconds
+  of a change to the Secret, and changing any annotation on the pod makes it happen within
+  seconds. Other kubelet settings can make it slower.
+- Changes to the content of `existingConfigSecret` no longer restart the pod: the chart
+  leaves `checksum/s3config` off it. Adding, changing, disabling and deleting identities
+  apply without a restart. Other files in the Secret, such as an audit log config, still
+  need one, and so do changes to the values the chart generates its own Secret from, such
+  as `s3.credentials`.
+- Every reload also re-creates the KMS providers configured in the identities file. The
+  `local` provider keeps its keys in memory, so a reload replaces them, as a restart does;
+  use another provider for objects that must stay readable.
 - The pod shares its process namespace (see [Sharing the process namespace](#sharing-the-process-namespace)),
   so the sidecar can see SeaweedFS. It uses the component's image and container security
   context, because it must run as the same user as SeaweedFS to signal it. If it can't
