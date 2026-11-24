@@ -91,3 +91,19 @@ func TestHasObjectsWithActiveLocksUnlockedDirectory(t *testing.T) {
 		t.Fatalf("expected no active lock for an ordinary prefix and object")
 	}
 }
+
+func TestHasObjectsWithActiveLocksBelowLiteralVersionsDirectory(t *testing.T) {
+	client := &fakeFilerClient{dirs: map[string][]*filer_pb.Entry{
+		"/buckets/b":                  {{Name: s3_constants.VersionsFolder, IsDirectory: true}},
+		"/buckets/b/.versions":        {{Name: "nested", IsDirectory: true}},
+		"/buckets/b/.versions/nested": {{Name: "held", Extended: map[string][]byte{s3_constants.ExtLegalHoldKey: []byte(s3_constants.LegalHoldOn)}}},
+	}}
+
+	has, err := HasObjectsWithActiveLocks(context.Background(), client, "/buckets/b")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !has {
+		t.Fatalf("expected the held object below a literal .versions directory to be reported")
+	}
+}
