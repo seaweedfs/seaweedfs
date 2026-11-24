@@ -200,6 +200,10 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 	// The bucket load above brings its policy into the engine.
+	if errCode := s3a.recheckTagConditionedPolicyWithLookup(policyReq, bucket, object, "", string(s3_constants.ACTION_WRITE), "PostPolicyBucketHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 	if !s3a.iam.isEnabled() && postRequestsAcl(r) {
 		if errCode := s3a.checkPutObjectACLPolicy(policyReq, bucket, object); errCode != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, errCode)
