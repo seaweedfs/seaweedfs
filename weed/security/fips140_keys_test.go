@@ -44,7 +44,9 @@ func TestUpdateSigningKeysUnderFIPS140Only(t *testing.T) {
 	oldKey, newKey, short := "0123456789abcdefghij", "abcdefghij0123456789", "0123456789"
 
 	g := NewGuard(nil, oldKey, 10, oldKey, 10, "", "")
-	g.UpdateSigningKeys(newKey, 10, newKey, 10, short, short)
+	if !g.UpdateSigningKeys(newKey, 10, newKey, 10, short, short) {
+		t.Fatal("reload with long current keys and short previous keys reported failure")
+	}
 	st := g.state.Load()
 	if string(st.signingKey) != newKey || string(st.readSigningKey) != newKey {
 		t.Fatalf("current keys after reload with short previous keys: %q, %q; want the new key", st.signingKey, st.readSigningKey)
@@ -53,7 +55,9 @@ func TestUpdateSigningKeysUnderFIPS140Only(t *testing.T) {
 		t.Fatalf("short previous keys kept: %q, %q", st.previousSigningKey, st.previousReadSigningKey)
 	}
 
-	g.UpdateSigningKeys(short, 10, newKey, 10, "", "")
+	if g.UpdateSigningKeys(short, 10, newKey, 10, "", "") {
+		t.Fatal("reload with a short current key reported success")
+	}
 	if st := g.state.Load(); string(st.signingKey) != newKey {
 		t.Fatalf("a short current key replaced the key in effect: %q", st.signingKey)
 	}
