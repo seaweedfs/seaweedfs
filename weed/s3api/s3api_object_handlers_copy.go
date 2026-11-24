@@ -397,6 +397,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			if errCode = s3a.validateConditionalHeaders(r, headers, currentEntry, dstBucket, dstObject); errCode != s3err.ErrNone {
 				return errCode
 			}
+			if errCode = s3a.recheckPolicyWithObjectEntry(dstPolicyReq, dstBucket, dstObject, string(s3_constants.ACTION_WRITE), currentEntry.Extended, "CopyObjectHandler"); errCode != s3err.ErrNone {
+				return errCode
+			}
 			if err := ValidateCopyEncryption(currentEntry.Extended, r.Header); err != nil {
 				return MapCopyValidationError(err)
 			}
