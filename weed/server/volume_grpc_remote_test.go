@@ -1167,6 +1167,20 @@ func TestBuildGuardedRemoteStorageClientS3EnvironmentCredentials(t *testing.T) {
 	}
 }
 
+// A keyed s3 remote reads the credentials mode too, so an unknown value fails its next build instead of returning the cached client.
+func TestBuildGuardedRemoteStorageClientS3KeysFollowTheCredentialsMode(t *testing.T) {
+	guardedCacheTest(t, nil)
+	t.Setenv("WEED_REMOTE_S3_CREDENTIALS", "")
+	conf := &remote_pb.RemoteConf{Name: "keyed", Type: "s3", S3AccessKey: "a", S3SecretKey: "b", S3Region: "us-east-1", S3Endpoint: "https://93.184.216.34"}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), conf, false); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	t.Setenv("WEED_REMOTE_S3_CREDENTIALS", "bogus")
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), conf, false); err == nil {
+		t.Fatal("an unknown credentials mode must fail the build of a cached keyed client")
+	}
+}
+
 func TestGuardedCredentialsVersionFollowsTheWorkloadSource(t *testing.T) {
 	conf := &remote_pb.RemoteConf{Type: "s3", Name: "r", S3Region: "us-east-1"}
 	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", "http://169.254.170.23/v1/credentials")
