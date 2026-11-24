@@ -1,7 +1,9 @@
 package iceberg
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path"
@@ -288,5 +290,44 @@ func TestDropKeepsRecordReplacedAfterLookup(t *testing.T) {
 				t.Errorf("files dated after the looked-up record were purged")
 			}
 		})
+	}
+}
+
+// A record that claims the location while the drop scans it keeps the files.
+func TestDropPurgeKeepsLocationClaimedDuringScan(t *testing.T) {
+	fc := newMemFiler()
+	seedNamespace(fc, ownerTestBucket, "finance", "alice")
+	otherPath := s3tables.GetTablePath(ownerTestBucket, "finance", "other")
+	fc.seed(otherPath, &filer_pb.Entry{Name: "other", IsDirectory: true})
+	fc.seed(otherPath+"/data", &filer_pb.Entry{Name: "data", IsDirectory: true})
+	fc.seed(otherPath+"/data/f.parquet", &filer_pb.Entry{Name: "f.parquet", Content: []byte("x")})
+	meta, err := json.Marshal(map[string]any{
+		"name":             "fresh",
+		"namespace":        "finance",
+		"format":           "ICEBERG",
+		"ownerAccountId":   "alice",
+		"versionToken":     "v1",
+		"metadataVersion":  1,
+		"metadataLocation": "s3://" + ownerTestBucket + "/finance/other/metadata/v1.metadata.json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	holdsFiles := func(filer_pb.SeaweedFilerClient, string) (bool, error) {
+		fc.seed(s3tables.GetTablePath(ownerTestBucket, "finance", "fresh"), &filer_pb.Entry{
+			Name:        "fresh",
+			IsDirectory: true,
+			Extended:    map[string][]byte{s3tables.ExtendedKeyMetadata: meta},
+		})
+		return false, nil
+	}
+	s := NewServer(fc, nil)
+
+	err = s.cleanupStaleTableLocation(context.Background(), ownerTestBucket, "finance/other", holdsFiles)
+	if !errors.Is(err, s3tables.ErrLocationInUse) {
+		t.Fatalf("err = %v, want %v", err, s3tables.ErrLocationInUse)
+	}
+	if _, ok := fc.entries[otherPath+"/data/f.parquet"]; !ok {
+		t.Errorf("the purge deleted the files of a table that claimed the location during the scan")
 	}
 }
