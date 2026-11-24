@@ -819,9 +819,10 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 				f.entry.Attributes.Mtime = time.Now().Unix()
 
 				request := &filer_pb.UpdateEntryRequest{
-					Directory:  dir,
-					Entry:      f.entry,
-					Signatures: []int32{f.fs.signature},
+					Directory:        dir,
+					Entry:            f.entry,
+					Signatures:       []int32{f.fs.signature},
+					ExpectedExtended: objectLockState(f.entry),
 				}
 
 				if _, err := client.UpdateEntry(ctx, request); err != nil {
