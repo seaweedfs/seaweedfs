@@ -1171,7 +1171,9 @@ func TestGuardedCredentialsVersionFollowsTheWorkloadSource(t *testing.T) {
 	conf := &remote_pb.RemoteConf{Type: "s3", Name: "r", S3Region: "us-east-1"}
 	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", "http://169.254.170.23/v1/credentials")
 	for _, k := range []string{"AWS_CONTAINER_AUTHORIZATION_TOKEN", "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
-		"AWS_ROLE_SESSION_NAME", "AWS_REGION", "AWS_DEFAULT_REGION", "AWS_STS_REGIONAL_ENDPOINTS"} {
+		"AWS_ROLE_SESSION_NAME", "AWS_REGION", "AWS_DEFAULT_REGION", "AWS_STS_REGIONAL_ENDPOINTS",
+		"AWS_EC2_METADATA_SERVICE_ENDPOINT", "AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE",
+		"AWS_EC2_METADATA_DISABLED", "AWS_EC2_METADATA_V1_DISABLED"} {
 		t.Setenv(k, "")
 		before := guardedCredentialsVersion(conf)
 		t.Setenv(k, "changed")
