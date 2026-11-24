@@ -264,6 +264,29 @@ func assertWebDavRename(t *testing.T, fs *WebDavFileSystem, fake *webDavLockFile
 	}
 }
 
+func TestWebDavOpenFileRefusesToReplaceProtectedEntries(t *testing.T) {
+	for _, tt := range webDavProtectionCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			fs, fake := newWebDavLockFS(t, map[string]*filer_pb.Entry{tt.path: tt.entry})
+			if tt.path != "/buckets/b/f" {
+				fake.entries[path.Dir(tt.path)] = &filer_pb.Entry{Name: path.Base(path.Dir(tt.path)), IsDirectory: true, Attributes: &filer_pb.FuseAttributes{FileMode: uint32(os.ModeDir | 0755)}}
+			}
+			f, err := fs.OpenFile(context.Background(), tt.path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+			_, _, creates := fake.counts()
+			if tt.refused {
+				if !errors.Is(err, os.ErrPermission) || creates != 0 {
+					t.Fatalf("put: got %v with %d filer creates, want os.ErrPermission and none", err, creates)
+				}
+				return
+			}
+			if err != nil || creates != 1 {
+				t.Fatalf("put: got %v with %d filer creates, want one", err, creates)
+			}
+			f.Close()
+		})
+	}
+}
+
 func bytesEqualMap(a, b map[string][]byte) bool {
 	if len(a) != len(b) {
 		return false

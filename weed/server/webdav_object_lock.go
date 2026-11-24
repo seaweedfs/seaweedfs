@@ -25,6 +25,22 @@ func (fs *WebDavFileSystem) getEntry(ctx context.Context, p string) (*filer_pb.E
 	return entry, err
 }
 
+// checkWritable refuses a write that would replace a protected file; a file
+// over a directory is left for the filer to refuse.
+func (fs *WebDavFileSystem) checkWritable(ctx context.Context, p string) error {
+	entry, err := fs.getEntry(ctx, p)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if entry.IsDirectory {
+		return nil
+	}
+	return fs.checkEntryProtected(ctx, p, entry)
+}
+
 // checkEntryProtected refuses to change an entry that the S3 API or the filer
 // HTTP API would refuse to change: one under an active Object Lock or WORM.
 func (fs *WebDavFileSystem) checkEntryProtected(ctx context.Context, p string, entry *filer_pb.Entry) error {

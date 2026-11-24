@@ -507,6 +507,9 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		if err := fs.checkParentDir(ctx, dir); err != nil {
 			return nil, err
 		}
+		if err := fs.checkWritable(ctx, fullFilePath); err != nil {
+			return nil, err
+		}
 
 		var resp *filer_pb.CreateEntryResponse
 		err = fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
