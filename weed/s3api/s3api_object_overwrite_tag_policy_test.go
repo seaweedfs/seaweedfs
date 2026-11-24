@@ -115,6 +115,14 @@ func TestOverwriteHonorsExistingObjectTagDeny(t *testing.T) {
 	}
 	require.NotEqual(t, http.StatusForbidden, complete("fresh.txt").Code, "CompleteMultipartUpload of a new key")
 
+	// A replayed completion of the upload that wrote the tagged object returns
+	// its committed result instead of being refused as an overwrite.
+	filer.mu.Lock()
+	filer.entries["/buckets/vault/secret.txt"].Extended[s3_constants.SeaweedFSUploadId] = []byte(s3a.generateUploadID("secret.txt"))
+	filer.mu.Unlock()
+	rec := complete("secret.txt")
+	require.Equal(t, http.StatusOK, rec.Code, "replayed CompleteMultipartUpload: %s", rec.Body.String())
+
 	// A bucket default encryption is not caller input: a policy refusing an
 	// explicit SSE header must not block a headerless copy over an object.
 	s3a.bucketConfigCache.Set("vault", &BucketConfig{Name: "vault", Encryption: &s3_pb.EncryptionConfiguration{SseAlgorithm: EncryptionTypeAES256}})

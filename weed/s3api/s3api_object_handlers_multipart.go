@@ -191,10 +191,6 @@ func (s3a *S3ApiServer) CompleteMultipartUploadHandler(w http.ResponseWriter, r 
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
-	if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, "", string(s3_constants.ACTION_WRITE), "CompleteMultipartUploadHandler"); errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
-		return
-	}
 
 	response, errCode := s3a.completeMultipartUpload(r, &s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(bucket),

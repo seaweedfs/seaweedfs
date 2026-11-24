@@ -393,6 +393,9 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 		}
 		return &multipartCompletionState{deleteEntries: cleanupEntries, metadataOnlyCleanup: true}, output, s3err.ErrNone
 	}
+	if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, *input.Bucket, *input.Key, "", string(s3_constants.ACTION_WRITE), "CompleteMultipartUploadHandler"); errCode != s3err.ErrNone {
+		return nil, nil, errCode
+	}
 
 	entries, _, err := s3a.uploadFiler(*input.Bucket, *input.Key).list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
 	if err != nil {
