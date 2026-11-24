@@ -150,8 +150,9 @@ func recursivelyCheckLocksWithClient(ctx context.Context, client filer_pb.Seawee
 			return true, nil // Stop iteration
 		}
 
-		// Skip special directories
-		if entry.Name == s3_constants.MultipartUploadsFolder {
+		// A multipart upload's directory holds the lock settings for an object
+		// that does not exist yet.
+		if entry.IsDirectory && len(entry.Extended[s3_constants.ExtMultipartObjectKey]) > 0 {
 			return false, nil // Continue
 		}
 

@@ -153,3 +153,29 @@ func TestHasObjectsWithActiveLocksNamesWithBackslashes(t *testing.T) {
 		}
 	}
 }
+
+func TestHasObjectsWithActiveLocksUploadsDirectories(t *testing.T) {
+	held := map[string][]byte{s3_constants.ExtLegalHoldKey: []byte(s3_constants.LegalHoldOn)}
+	upload := lockedDirMarker("upload-id")
+	upload.Extended[s3_constants.ExtMultipartObjectKey] = []byte("k")
+	for _, tt := range []struct {
+		name string
+		dirs map[string][]*filer_pb.Entry
+		want bool
+	}{
+		{"pending upload", map[string][]*filer_pb.Entry{
+			"/buckets/b":          {{Name: s3_constants.MultipartUploadsFolder, IsDirectory: true}},
+			"/buckets/b/.uploads": {upload},
+		}, false},
+		{"object below a .uploads prefix", map[string][]*filer_pb.Entry{
+			"/buckets/b":            {{Name: "a", IsDirectory: true}},
+			"/buckets/b/a":          {{Name: s3_constants.MultipartUploadsFolder, IsDirectory: true}},
+			"/buckets/b/a/.uploads": {{Name: "c", Extended: held}},
+		}, true},
+	} {
+		has, err := HasObjectsWithActiveLocks(context.Background(), &fakeFilerClient{dirs: tt.dirs}, "/buckets/b")
+		if err != nil || has != tt.want {
+			t.Fatalf("%s: got %v, %v, want %v", tt.name, has, err, tt.want)
+		}
+	}
+}
