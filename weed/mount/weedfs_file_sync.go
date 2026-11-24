@@ -722,8 +722,8 @@ func contentFileIdKey(c *filer_pb.FileChunk) string {
 // not name and that chunks still covers. A commit deletes what it leaves out
 // of the stored entry and what its own chunk list covers, so a covered chunk no
 // stored entry ever named is only deleted if the request carries it. The filer
-// compacts only plain chunks, and merged chunks carry no modification time, so
-// each one is sent only if newer plain chunks of the request hide all of it.
+// compacts only plain chunks, so each one is sent only if newer plain chunks of
+// the request hide all of it.
 func (fh *FileHandle) unpublishedChunks(dropped, chunks []*filer_pb.FileChunk) (unpublished []*filer_pb.FileChunk) {
 	inBase := make(map[string]bool)
 	for _, c := range fh.baseEntry.Load().GetChunks() {
@@ -817,6 +817,7 @@ func (wfs *WFS) maybeMergeChunks(fileFullPath util.FullPath, compactedChunks []*
 	defer reader.Close()
 
 	saveFunc := wfs.saveDataAsChunk(fileFullPath)
+	tsNs := filer.LatestModifiedTsNs(allChunks)
 	chunkSize := wfs.option.ChunkSizeLimit
 	if int64(fileSize) < chunkSize {
 		chunkSize = int64(fileSize)
@@ -829,7 +830,7 @@ func (wfs *WFS) maybeMergeChunks(fileFullPath util.FullPath, compactedChunks []*
 	for {
 		n, readErr := io.ReadFull(reader, buf)
 		if n > 0 {
-			chunk, uploadErr := saveFunc(bytes.NewReader(buf[:n]), "", offset, 0, uint64(n))
+			chunk, uploadErr := saveFunc(bytes.NewReader(buf[:n]), "", offset, tsNs, uint64(n))
 			if uploadErr != nil {
 				return nil, uploadErr
 			}

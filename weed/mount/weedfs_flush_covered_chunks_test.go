@@ -94,7 +94,7 @@ func TestFlushSendsUnpublishedCoveredChunks(t *testing.T) {
 }
 
 // A dropped chunk goes out only while newer plain chunks of the request hide
-// all of it: merged chunks are stamped 0, the filer does not look into a
+// all of it: an unstamped chunk hides nothing, the filer does not look into a
 // manifest, and another dropped chunk is not sent to hide it either.
 func TestUnpublishedChunksStayCovered(t *testing.T) {
 	chunk := func(key uint64, offset, size, ts int64) *filer_pb.FileChunk {
@@ -110,7 +110,7 @@ func TestUnpublishedChunksStayCovered(t *testing.T) {
 		{"covered", []*filer_pb.FileChunk{chunk(4, 0, 1, 4), chunk(5, 1, 1, 5)}, []uint64{2, 3}},
 		{"between", []*filer_pb.FileChunk{chunk(4, 0, 2, 3)}, []uint64{2}},
 		{"partly", []*filer_pb.FileChunk{chunk(4, 0, 1, 4)}, nil},
-		{"merged", []*filer_pb.FileChunk{chunk(4, 0, 2, 0)}, nil},
+		{"unstamped", []*filer_pb.FileChunk{chunk(4, 0, 2, 0)}, nil},
 		{"manifest", []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 4, Cookie: 1}, Size: 2, ModifiedTsNs: 4, IsChunkManifest: true}}, nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
