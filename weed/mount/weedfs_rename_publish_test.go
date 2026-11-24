@@ -190,10 +190,7 @@ func renameFile(wfs *WFS, oldDirInode, newDirInode uint64, oldName, newName stri
 	}, oldName, newName)
 }
 
-// renameat2(RENAME_EXCHANGE) asks for the two names to be swapped. The mount
-// cannot do that, and must say so instead of renaming the source over the
-// target, which destroys the target and reports success. The same goes for
-// the other flags it does not implement.
+// An unsupported flag must not fall through to a plain rename over the target.
 func TestRenameRefusesFlagsItDoesNotImplement(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

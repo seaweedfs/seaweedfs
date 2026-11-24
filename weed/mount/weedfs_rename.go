@@ -210,10 +210,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		return s
 	}
 
-	// The filer's rename moves one entry. It cannot swap two (RENAME_EXCHANGE)
-	// or leave a whiteout behind (RENAME_WHITEOUT), and going on as a plain
-	// rename would move the source over the target and destroy it. EINVAL is
-	// what renameat2(2) answers for a flag the file system does not support.
+	// The filer moves one entry: it can neither swap two nor leave a whiteout.
 	switch in.Flags {
 	case RenameEmptyFlag:
 	case RenameNoReplace:
