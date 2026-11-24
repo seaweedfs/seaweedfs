@@ -800,17 +800,15 @@ func shouldMergeChunks(compactedChunks []*filer_pb.FileChunk, manifestChunks []*
 // oldestVisibleTsNs is the stamp of the oldest data in [start, stop), or 0 if
 // part of it is a hole. A merged chunk stamped so still yields to any write
 // newer than some byte it holds.
-func oldestVisibleTsNs(visibles *filer.IntervalList[*filer.VisibleInterval], start, stop int64) int64 {
+func oldestVisibleTsNs(visibles []*filer.Interval[*filer.VisibleInterval], start, stop int64) int64 {
 	tsNs := int64(math.MaxInt64)
-	for x := visibles.Front(); x != nil && start < stop; x = x.Next {
-		if x.StopOffset <= start {
-			continue
-		}
-		if x.StartOffset > start {
+	i := sort.Search(len(visibles), func(i int) bool { return visibles[i].StopOffset > start })
+	for ; i < len(visibles) && start < stop; i++ {
+		if visibles[i].StartOffset > start {
 			return 0
 		}
-		tsNs = min(tsNs, x.TsNs)
-		start = x.StopOffset
+		tsNs = min(tsNs, visibles[i].TsNs)
+		start = visibles[i].StopOffset
 	}
 	if start < stop {
 		return 0
@@ -837,9 +835,13 @@ func (wfs *WFS) maybeMergeChunks(fileFullPath util.FullPath, compactedChunks []*
 	reader := filer.NewChunkStreamReaderFromLookup(ctx, wfs.LookupFn(), allChunks)
 	defer reader.Close()
 
-	visibles, err := filer.NonOverlappingVisibleIntervals(ctx, wfs.LookupFn(), allChunks, 0, int64(fileSize))
+	list, err := filer.NonOverlappingVisibleIntervals(ctx, wfs.LookupFn(), allChunks, 0, int64(fileSize))
 	if err != nil {
 		return nil, err
+	}
+	var visibles []*filer.Interval[*filer.VisibleInterval]
+	for x := list.Front(); x != nil; x = x.Next {
+		visibles = append(visibles, x)
 	}
 
 	saveFunc := wfs.saveDataAsChunk(fileFullPath)

@@ -130,16 +130,23 @@ func TestOldestVisibleTsNs(t *testing.T) {
 	chunk := func(key uint64, offset, size, ts int64) *filer_pb.FileChunk {
 		return &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: key, Cookie: 1}, Offset: offset, Size: uint64(size), ModifiedTsNs: ts}
 	}
-	visibles, err := filer.NonOverlappingVisibleIntervals(context.Background(), nil, []*filer_pb.FileChunk{chunk(1, 0, 8, 1), chunk(2, 4, 4, 5), chunk(3, 12, 4, 3)}, 0, 16)
+	list, err := filer.NonOverlappingVisibleIntervals(context.Background(), nil, []*filer_pb.FileChunk{chunk(1, 0, 8, 1), chunk(2, 4, 4, 5), chunk(3, 12, 4, 3)}, 0, 16)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var visibles []*filer.Interval[*filer.VisibleInterval]
+	for x := list.Front(); x != nil; x = x.Next {
+		visibles = append(visibles, x)
 	}
 	for _, tt := range []struct {
 		start, stop, want int64
 	}{
 		{0, 8, 1},
 		{4, 8, 5},
+		{6, 7, 5},
 		{12, 16, 3},
+		{13, 15, 3},
+		{8, 12, 0},
 		{4, 16, 0},
 		{0, 16, 0},
 	} {
