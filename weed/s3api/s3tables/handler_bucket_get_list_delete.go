@@ -191,18 +191,16 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 					continue
 				}
 
-				bucketPath := GetTableBucketPath(entry.Entry.Name)
-				bucketPolicy := ""
-				policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
+				current, err := filer_pb.LookupEntry(r.Context(), client, &filer_pb.LookupDirectoryEntryRequest{
+					Directory: TablesPath,
+					Name:      entry.Entry.Name,
+				})
 				if err != nil {
-					if !errors.Is(err, ErrAttributeNotFound) {
-						continue
-					}
-				} else {
-					bucketPolicy = string(policyData)
+					continue
 				}
+				bucketPolicy := string(current.Entry.Extended[ExtendedKeyPolicy])
 				var bucketTags map[string]string
-				if tagData, ok := entry.Entry.Extended[ExtendedKeyTags]; ok && bucketPolicy != "" {
+				if tagData, ok := current.Entry.Extended[ExtendedKeyTags]; ok && bucketPolicy != "" {
 					if err := json.Unmarshal(tagData, &bucketTags); err != nil {
 						continue
 					}
