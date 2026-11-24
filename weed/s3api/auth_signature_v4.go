@@ -297,7 +297,7 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 			authInfo.AccessKey, keyCount, iam.isAuthEnabled)
 		return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
 	}
-	if errCode = refuseFips140ShortSecret(cred); errCode != s3err.ErrNone {
+	if errCode = refuseFips140ShortSecret(r.Context(), s3err.RemoteIP(r), identity, cred); errCode != s3err.ErrNone {
 		return nil, nil, "", nil, errCode
 	}
 
@@ -922,7 +922,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(ctx context.Cont
 		return nil, s3err.ErrAccessDenied
 	}
 
-	if errCode := refuseFips140ShortSecret(cred); errCode != s3err.ErrNone {
+	if errCode := refuseFips140ShortSecret(ctx, "", identity, cred); errCode != s3err.ErrNone {
 		return nil, errCode
 	}
 

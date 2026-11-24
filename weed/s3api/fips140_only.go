@@ -2,12 +2,14 @@ package s3api
 
 import (
 	"bytes"
+	"context"
 	"crypto/fips140"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	iamlib "github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 )
 
 // fips140Enforced reports whether the process runs with GODEBUG=fips140=only.
@@ -38,8 +40,8 @@ func warnFips140ShortSecrets(config *iam_pb.S3ApiConfiguration) {
 	}
 	warn := func(owner string, cred *iam_pb.Credential) {
 		if cred != nil && fips140SecretTooShort(cred.SecretKey) {
-			glog.Errorf("access key %s of %s: secret is shorter than %d characters, which SigV4 cannot use under GODEBUG=fips140=only; requests signed with it are refused",
-				cred.AccessKey, owner, iamlib.Fips140MinSecretAccessKeyLength)
+			glog.Errorf("this process runs with GODEBUG=fips140=only, and refuses all S3 requests signed with access key %s (%s) because its secret is shorter than the %d characters FIPS 140 needs for SigV4 secrets; give that access key a new secret of at least %d characters",
+				cred.AccessKey, owner, iamlib.Fips140MinSecretAccessKeyLength, iamlib.Fips140MinSecretAccessKeyLength)
 		}
 	}
 	for _, ident := range config.Identities {
@@ -56,12 +58,21 @@ func warnFips140ShortSecrets(config *iam_pb.S3ApiConfiguration) {
 // that says the key cannot be used in this mode, when cred's secret is too
 // short for SigV4 under fips140=only, where deriving the signing key from it
 // would panic. The key exists, so InvalidAccessKeyId would send the client
-// looking for a missing key.
-func refuseFips140ShortSecret(cred *Credential) s3err.ErrorCode {
+// looking for a missing key. The log line carries the request ID the client
+// gets back, the client's address when known, and the identity.
+func refuseFips140ShortSecret(ctx context.Context, clientIP string, identity *Identity, cred *Credential) s3err.ErrorCode {
 	if !fips140SecretTooShort(cred.SecretKey) {
 		return s3err.ErrNone
 	}
-	glog.Warningf("AccessDenied: access key %s has a secret shorter than %d characters, which SigV4 cannot use under GODEBUG=fips140=only",
-		cred.AccessKey, iamlib.Fips140MinSecretAccessKeyLength)
+	from := ""
+	if clientIP != "" {
+		from = " from " + clientIP
+	}
+	owner := ""
+	if identity != nil {
+		owner = " (identity " + identity.Name + ")"
+	}
+	glog.Warningf("refused S3 request %s%s (AccessDenied): access key %s%s has a secret too short for SigV4 under FIPS 140; see the error logged when S3 loaded its identities",
+		request_id.Get(ctx), from, cred.AccessKey, owner)
 	return s3err.ErrFips140SecretTooShort
 }

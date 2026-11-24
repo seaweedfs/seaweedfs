@@ -43,35 +43,35 @@ func TestCheckFips140SigningKeys(t *testing.T) {
 		cfg[setting] = "0123456789"
 
 		setFIPS140Enforced(t, true)
-		if err := CheckFips140SigningKeys(cfg); err == nil || !strings.Contains(err.Error(), setting) {
+		if err := CheckFips140SigningKeys("security.toml", cfg); err == nil || !strings.Contains(err.Error(), setting) {
 			t.Errorf("short %s, enforced: got %v, want an error naming it", setting, err)
 		}
 		setFIPS140Enforced(t, false)
-		if err := CheckFips140SigningKeys(cfg); err != nil {
+		if err := CheckFips140SigningKeys("security.toml", cfg); err != nil {
 			t.Errorf("short %s, not enforced: got %v", setting, err)
 		}
 	}
 	setFIPS140Enforced(t, true)
-	if err := CheckFips140SigningKeys(mapConfig{}); err != nil {
+	if err := CheckFips140SigningKeys("security.toml", mapConfig{}); err != nil {
 		t.Errorf("no keys, enforced: got %v", err)
 	}
 }
 
 func TestShortJwtKeyWarning(t *testing.T) {
 	setFIPS140Enforced(t, false)
-	if w := shortJwtKeyWarning("jwt.signing.key", []byte("0123456789")); !strings.Contains(w, "jwt.signing.key is 10 bytes") || !strings.Contains(w, "future release") || !strings.Contains(w, "previous_key") {
+	if w := shortJwtKeyWarning("/etc/seaweedfs/security.toml", "jwt.signing.key", []byte("0123456789")); !strings.HasPrefix(w, "/etc/seaweedfs/security.toml: ") || !strings.Contains(w, "jwt.signing.key works, but under GODEBUG=fips140=only this server would not start") || !strings.Contains(w, "(it has 10)") || !strings.Contains(w, JwtSigningKeysWiki) {
 		t.Errorf("short key, not enforced: got %q", w)
 	}
-	if w := shortJwtKeyWarning("jwt.signing.previous_key", []byte("0123456789")); !strings.Contains(w, "clear it once the key rotation is done") || strings.Contains(w, "future release") {
+	if w := shortJwtKeyWarning("security.toml", "jwt.signing.previous_key", []byte("0123456789")); w != "" {
 		t.Errorf("short previous key, not enforced: got %q", w)
 	}
 	for _, key := range []string{"", "0123456789abcd"} {
-		if w := shortJwtKeyWarning("jwt.signing.key", []byte(key)); w != "" {
+		if w := shortJwtKeyWarning("security.toml", "jwt.signing.key", []byte(key)); w != "" {
 			t.Errorf("%d-byte key, not enforced: got %q, want no warning", len(key), w)
 		}
 	}
 	setFIPS140Enforced(t, true)
-	if w := shortJwtKeyWarning("jwt.signing.key", []byte("0123456789")); w != "" {
+	if w := shortJwtKeyWarning("security.toml", "jwt.signing.key", []byte("0123456789")); w != "" {
 		t.Errorf("short key, enforced: got %q, want no warning (the key is refused)", w)
 	}
 }
@@ -85,7 +85,10 @@ func TestCheckFips140HmacKeysNamesEveryShortKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("two short keys, enforced: got no error")
 	}
-	for _, want := range []string{"jwt.signing.key is 10 bytes", "jwt.filer_signing.key is 8 bytes"} {
+	if want := "jwt.signing.key (10 characters) and jwt.filer_signing.key (8 characters) are shorter than the 14 characters FIPS 140 needs for HMAC keys"; err.Error() != want {
+		t.Errorf("got %q, want %q", err, want)
+	}
+	for _, want := range []string{"jwt.signing.key (10 characters)", "jwt.filer_signing.key (8 characters)"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not contain %q", err, want)
 		}
@@ -93,7 +96,7 @@ func TestCheckFips140HmacKeysNamesEveryShortKey(t *testing.T) {
 	if strings.Contains(err.Error(), "jwt.signing.read.key") {
 		t.Errorf("error %q names the 16-byte key", err)
 	}
-	if one := CheckFips140HmacKeys([]string{"jwt.signing.key"}, []string{"0123456789"}); one == nil || one.Error() != CheckFips140HmacKey("jwt.signing.key", []byte("0123456789")).Error() {
-		t.Errorf("one short key: got %v, want the CheckFips140HmacKey error", one)
+	if one := CheckFips140HmacKeys([]string{"jwt.signing.key"}, []string{"0123456789"}); one == nil || one.Error() != "jwt.signing.key (10 characters) is shorter than the 14 characters FIPS 140 needs for HMAC keys" {
+		t.Errorf("one short key: got %v", one)
 	}
 }

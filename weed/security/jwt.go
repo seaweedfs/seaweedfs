@@ -238,7 +238,7 @@ func LoadFilerJwtFromFile(configFile string) (FilerJwtProvider, error) {
 		return nil, fmt.Errorf("failed to read security config %s: %v", configFile, err)
 	}
 
-	if err := util.CheckFips140SigningKeys(v); err != nil {
+	if err := util.CheckFips140SigningKeys(configFile, v); err != nil {
 		return nil, fmt.Errorf("security config %s: %v", configFile, err)
 	}
 	signingKey := SigningKey(v.GetString("jwt.filer_signing.key"))
