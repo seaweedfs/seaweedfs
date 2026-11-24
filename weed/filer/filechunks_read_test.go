@@ -294,7 +294,7 @@ func TestReadResolvedChunksTiedTimestamps(t *testing.T) {
 	for x := visibles.Front(); x != nil; x = x.Next {
 		got = append(got, span{x.Value.start, x.Value.stop, x.Value.fileId})
 	}
-	want := []span{{0, 100, "1,aaa"}, {100, 150, "2,bbb"}}
+	want := []span{{0, 50, "1,aaa"}, {50, 150, "2,bbb"}}
 	if len(got) != len(want) {
 		t.Fatalf("visibles = %+v, want %+v", got, want)
 	}
@@ -309,18 +309,27 @@ func TestRandomizedReadResolvedChunksTiedTimestamps(t *testing.T) {
 	const limit = 4096
 	for round := 0; round < 200; round++ {
 		var chunks []*filer_pb.FileChunk
+		incremental := NewIntervalList[*VisibleInterval]()
 		for i := 0; i < 32; i++ {
 			start := rand.Int63n(limit)
 			size := 1 + rand.Int63n(256)
 			if start+size > limit {
 				size = limit - start
 			}
-			chunks = append(chunks, &filer_pb.FileChunk{
+			chunk := &filer_pb.FileChunk{
 				FileId:       fmt.Sprintf("%d,%d", round, i),
 				Offset:       start,
 				Size:         uint64(size),
 				ModifiedTsNs: rand.Int63n(4), // lots of ties
-			})
+			}
+			chunks = append(chunks, chunk)
+			MergeIntoVisibles(incremental, start, start+size, chunk)
+		}
+		var wantFileId [limit]string
+		for x := incremental.Front(); x != nil; x = x.Next {
+			for i := x.Value.start; i < x.Value.stop; i++ {
+				wantFileId[i] = x.Value.fileId
+			}
 		}
 
 		// expected max ts at each position, -1 when nothing covers it
@@ -344,6 +353,9 @@ func TestRandomizedReadResolvedChunksTiedTimestamps(t *testing.T) {
 			for i := v.start; i < v.stop; i++ {
 				if got[i] != -1 {
 					t.Fatalf("round %d: position %d covered twice", round, i)
+				}
+				if v.fileId != wantFileId[i] {
+					t.Fatalf("round %d: position %d reads %s, MergeIntoVisibles has %s", round, i, v.fileId, wantFileId[i])
 				}
 				got[i] = v.modifiedTsNs
 			}
