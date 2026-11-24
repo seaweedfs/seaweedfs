@@ -38,7 +38,7 @@ func (s3a *S3ApiServer) mkdirExclusive(parentDirectoryPath string, dirName strin
 // leaves an object GET finds but no listing shows. Each level is checked, as a
 // failed mkdir can leave a lower directory stored without its parent. The
 // bucket directory and upload directories are never created here.
-func (s3a *S3ApiServer) ensureObjectParent(bucket, dir string) error {
+func (s3a *S3ApiServer) ensureObjectParent(ctx context.Context, bucket, dir string) error {
 	bucketDir, uploads := s3a.bucketDir(bucket), s3a.genUploadsFolder(bucket)
 	if !strings.HasPrefix(dir, bucketDir+"/") || dir == uploads || strings.HasPrefix(dir, uploads+"/") {
 		return nil
@@ -48,10 +48,10 @@ func (s3a *S3ApiServer) ensureObjectParent(bucket, dir string) error {
 		if name == "" {
 			continue
 		}
-		if exists, err := s3a.exists(parent, name, true); err != nil || !exists {
-			if err := s3a.mkdirExclusive(parent, name, nil); errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+		if exists, err := filer_pb.Exists(ctx, s3a, parent, name, true); err != nil || !exists {
+			if err := filer_pb.MkdirExclusive(ctx, s3a, parent, name, nil); errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
 				// A file left there by a failed promotion is not a directory a listing descends.
-				if exists, err = s3a.exists(parent, name, true); err == nil && !exists {
+				if exists, err = filer_pb.Exists(ctx, s3a, parent, name, true); err == nil && !exists {
 					err = fmt.Errorf("%s/%s is not a directory", parent, name)
 				}
 				if err != nil {

@@ -387,7 +387,9 @@ func applyMultipartSSES3HeadersFromUploadEntry(dst *filer_pb.Entry, sses3Info *m
 
 func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *s3.CompleteMultipartUploadInput, parts *CompleteMultipartUpload, uploadDirectory, entryName, dirName string, completedPartNumbers []int, completedPartMap map[int][]string, maxPartNo int) (*multipartCompletionState, *CompleteMultipartUploadResult, s3err.ErrorCode) {
 	if output, _ := s3a.committedCompletion(r, input); output != nil {
-		if err := s3a.ensureObjectParent(*input.Bucket, dirName); err != nil {
+		parentCtx, cancel := context.WithTimeout(context.Background(), createLookupTimeout)
+		defer cancel()
+		if err := s3a.ensureObjectParent(parentCtx, *input.Bucket, dirName); err != nil {
 			glog.Errorf("completeMultipartUpload %s/%s: committed object's directory %s is missing: %v", *input.Bucket, *input.Key, dirName, err)
 			return nil, nil, s3err.ErrInternalError
 		}
@@ -1066,7 +1068,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		if !sameFileChunks(committedEntry.GetChunks(), completionState.finalParts) {
 			completionState.metadataOnlyCleanup = true
 		}
-		if parentErr = s3a.ensureObjectParent(*input.Bucket, dirName); parentErr != nil {
+		parentCtx, cancel := context.WithTimeout(context.Background(), createLookupTimeout)
+		parentErr = s3a.ensureObjectParent(parentCtx, *input.Bucket, dirName)
+		cancel()
+		if parentErr != nil {
 			glog.Errorf("completeMultipartUpload %s/%s upload %s: committed object's directory %s is missing: %v", *input.Bucket, *input.Key, *input.UploadId, dirName, parentErr)
 		} else {
 			output = committed

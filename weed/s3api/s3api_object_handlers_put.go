@@ -1322,7 +1322,7 @@ func (s3a *S3ApiServer) createAfterAmbiguousRoute(filePath, bucket, object strin
 				glog.Warningf("putToFiler: ambiguous routed PUT for %s cannot prove an empty stored entry is its own; not claiming it", filePath)
 				return s3err.ErrServiceUnavailable
 			}
-			if err := s3a.ensureObjectParent(bucket, dir); err != nil {
+			if err := s3a.ensureObjectParent(lookupCtx, bucket, dir); err != nil {
 				glog.Errorf("putToFiler: ambiguous routed PUT for %s stored the entry but its directory is still missing: %v", filePath, err)
 				return s3err.ErrInternalError
 			}
@@ -1461,7 +1461,7 @@ func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object, routeObjec
 				return s3err.ErrNone
 			}
 		}
-		if err := s3a.ensureObjectParent(bucket, dir); err != nil {
+		if err := s3a.ensureObjectParent(lookupCtx, bucket, dir); err != nil {
 			glog.Errorf("putToFiler: create entry for %s failed and its directory is still missing: %v", filePath, err)
 			return s3err.ErrNone
 		}

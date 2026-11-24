@@ -130,7 +130,7 @@ func TestEnsureObjectParentChecksEveryLevel(t *testing.T) {
 		f := newParentFailFiler()
 		s3a := parentRecoveryServer(t, f)
 		f.put("/buckets/b/a", &filer_pb.Entry{Name: "c", IsDirectory: true})
-		if err := s3a.ensureObjectParent("b", "/buckets/b/a/c"); err != nil {
+		if err := s3a.ensureObjectParent(context.Background(), "b", "/buckets/b/a/c"); err != nil {
 			t.Fatal(err)
 		}
 		if !f.isDir("/buckets/b", "a") {
@@ -141,7 +141,7 @@ func TestEnsureObjectParentChecksEveryLevel(t *testing.T) {
 		f := newParentFailFiler()
 		s3a := parentRecoveryServer(t, f)
 		f.put("/buckets/b", &filer_pb.Entry{Name: "d"})
-		if err := s3a.ensureObjectParent("b", "/buckets/b/d"); err == nil {
+		if err := s3a.ensureObjectParent(context.Background(), "b", "/buckets/b/d"); err == nil {
 			t.Fatal("accepted a file as the object's directory")
 		}
 	})
@@ -153,7 +153,7 @@ func TestEnsureObjectParentSkipsBucketAndUploads(t *testing.T) {
 	f := newParentFailFiler()
 	s3a := parentRecoveryServer(t, f)
 	for _, dir := range []string{s3a.bucketDir("b"), s3a.genUploadsFolder("b"), s3a.genUploadsFolder("b") + "/u1", "/buckets"} {
-		if err := s3a.ensureObjectParent("b", dir); err != nil {
+		if err := s3a.ensureObjectParent(context.Background(), "b", dir); err != nil {
 			t.Fatalf("%s: %v", dir, err)
 		}
 	}
