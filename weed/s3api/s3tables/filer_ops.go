@@ -908,17 +908,34 @@ func (w *markRemovalWrites) UpdateEntry(ctx context.Context, in *filer_pb.Update
 // dirListPageSize is how many entries DirHoldsFiles reads per ListEntries call.
 const dirListPageSize = 1024
 
-// DirHoldsFiles reports whether any file sits under dirPath, at any depth. A
-// non-zero before counts only files created no later than its second (file
-// times have second granularity), other than Iceberg metadata files in
-// dirPath/metadata, which a create stages ahead of its record. It walks
-// breadth-first, pages through each directory, and stops at the first file it
-// sees. Returning at that file abandons the page being read, so the listings
-// run on a context of their own that ends with the call: otherwise the filer
-// keeps producing that page until the whole request is over.
+// DirHoldsFiles reports whether any file sits under dirPath, at any depth, or
+// an S3 object is stored on dirPath or a directory under it. A non-zero before
+// counts only those created no later than its second (file times have second
+// granularity), other than Iceberg metadata files in dirPath/metadata, which a
+// create stages ahead of its record. It walks breadth-first, pages through
+// each directory, and stops at the first file it sees. Returning at that file
+// abandons the page being read, so the listings run on a context of their own
+// that ends with the call: otherwise the filer keeps producing that page until
+// the whole request is over.
 func DirHoldsFiles(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath string, before time.Time) (bool, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	counts := func(dir string, entry *filer_pb.Entry) bool {
+		if entry.IsDirectory && !entry.IsDirectoryKeyObject() {
+			return false
+		}
+		return before.IsZero() || (entry.GetAttributes().GetCrtime() <= before.Unix() &&
+			!(dir == path.Join(dirPath, "metadata") && strings.HasSuffix(entry.Name, ".metadata.json")))
+	}
+	parent, name := path.Split(dirPath)
+	if resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: strings.TrimSuffix(parent, "/"), Name: name}); err == nil {
+		if counts(parent, resp.Entry) {
+			return true, nil
+		}
+	} else if !errors.Is(err, filer_pb.ErrNotFound) {
+		return false, err
+	}
 
 	pending := []string{dirPath}
 	for len(pending) > 0 {
@@ -955,14 +972,12 @@ func DirHoldsFiles(ctx context.Context, client filer_pb.SeaweedFilerClient, dirP
 				}
 				received = true
 				lastFileName = entry.Entry.Name
-				if !entry.Entry.IsDirectory {
-					if before.IsZero() || (entry.Entry.GetAttributes().GetCrtime() <= before.Unix() &&
-						!(dir == path.Join(dirPath, "metadata") && strings.HasSuffix(entry.Entry.Name, ".metadata.json"))) {
-						return true, nil
-					}
-					continue
+				if counts(dir, entry.Entry) {
+					return true, nil
 				}
-				pending = append(pending, path.Join(dir, entry.Entry.Name))
+				if entry.Entry.IsDirectory {
+					pending = append(pending, path.Join(dir, entry.Entry.Name))
+				}
 			}
 			if !received {
 				break

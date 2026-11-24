@@ -1,10 +1,12 @@
 package s3tables
 
 import (
+	"context"
 	"path"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables/s3tablestest"
 
 	"github.com/stretchr/testify/assert"
@@ -85,4 +87,36 @@ func TestDeleteKeepsFilesOlderThanTheRecord(t *testing.T) {
 		assert.Nil(t, fs.Get(nsPath, "t2"))
 		assert.Nil(t, fs.Get(tablePath+"/data", "file.parquet"))
 	})
+}
+
+// An S3 object stored on a directory entry, below the walked path or on it,
+// counts like a file.
+func TestDirHoldsFilesCountsDirectoryObjects(t *testing.T) {
+	older := time.Now().Add(-time.Hour)
+	nsPath := GetNamespacePath(renameTestBucket, "ns")
+	dirObject := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, IsDirectory: true, Content: []byte("x"),
+			Attributes: &filer_pb.FuseAttributes{Mime: "text/plain", Crtime: older.Unix()}}
+	}
+	fs, _ := startRenameManager(t)
+	ctx := context.Background()
+
+	fs.Put(nsPath, "below", nil)
+	_, err := fs.CreateEntry(ctx, &filer_pb.CreateEntryRequest{Directory: path.Join(nsPath, "below"), Entry: dirObject("checkpoint")})
+	require.NoError(t, err)
+	holds, err := DirHoldsFiles(ctx, fs.Client, path.Join(nsPath, "below"), time.Now())
+	require.NoError(t, err)
+	assert.True(t, holds, "object on a directory under the path")
+
+	_, err = fs.CreateEntry(ctx, &filer_pb.CreateEntryRequest{Directory: nsPath, Entry: dirObject("on")})
+	require.NoError(t, err)
+	holds, err = DirHoldsFiles(ctx, fs.Client, path.Join(nsPath, "on"), time.Now())
+	require.NoError(t, err)
+	assert.True(t, holds, "object on the path itself")
+
+	fs.Put(nsPath, "plain", nil)
+	fs.Put(path.Join(nsPath, "plain"), "sub", nil)
+	holds, err = DirHoldsFiles(ctx, fs.Client, path.Join(nsPath, "plain"), time.Now())
+	require.NoError(t, err)
+	assert.False(t, holds, "plain directories hold nothing")
 }
