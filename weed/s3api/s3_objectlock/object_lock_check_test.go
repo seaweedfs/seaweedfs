@@ -179,3 +179,17 @@ func TestHasObjectsWithActiveLocksUploadsDirectories(t *testing.T) {
 		}
 	}
 }
+
+func TestListEntriesPageDropsInlineContent(t *testing.T) {
+	held := map[string][]byte{s3_constants.ExtLegalHoldKey: []byte(s3_constants.LegalHoldOn)}
+	client := &fakeFilerClient{dirs: map[string][]*filer_pb.Entry{
+		"/buckets/b": {{Name: "a", Content: make([]byte, 1<<20), Extended: held}},
+	}}
+	page, err := listEntriesPage(context.Background(), client, "/buckets/b", "")
+	if err != nil || len(page) != 1 {
+		t.Fatalf("got %v, %v", page, err)
+	}
+	if page[0].Content != nil || page[0].Name != "a" || !EntryHasActiveLock(page[0], time.Now()) {
+		t.Fatalf("page entry %+v", page[0])
+	}
+}

@@ -133,8 +133,8 @@ func listEntriesPage(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 			}
 			return nil, fmt.Errorf("failed to receive entry from %s: %w", dir, recvErr)
 		}
-		if entryResp.Entry != nil {
-			page = append(page, entryResp.Entry)
+		if e := entryResp.Entry; e != nil {
+			page = append(page, &filer_pb.Entry{Name: e.Name, IsDirectory: e.IsDirectory, Extended: e.Extended})
 		}
 	}
 }
