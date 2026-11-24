@@ -51,6 +51,8 @@ type scopeBackend interface {
 	scopeFindEntry(ctx context.Context, p string) (*filer_pb.Entry, error)
 	// scopeKvGet returns the value stored under key, or nil when there is none.
 	scopeKvGet(ctx context.Context, key []byte) ([]byte, error)
+	// scopeCollection resolves the path's collection using the assignment rules.
+	scopeCollection(ctx context.Context, p string) (string, error)
 }
 
 // scopeConfig is the jwt.filer_signing configuration the scope reads, as
@@ -160,13 +162,29 @@ func (s *filerGrpcScope) verificationKeys() (security.SigningKey, security.Signi
 	return nil, nil
 }
 
-func (s *filerGrpcScope) proven(sc *scope, chunkAuth map[string]string, fid string) bool {
+func (s *filerGrpcScope) proven(sc *scope, chunkAuth map[string]string, fid, collection string) bool {
 	raw := chunkAuth[fid]
 	if raw == "" {
 		return false
 	}
 	key, previous := s.verificationKeys()
-	return security.VerifyAssignJwt(key, previous, security.EncodedJwt(raw), fid, sc.id, sc.leeway)
+	return security.VerifyAssignJwt(key, previous, security.EncodedJwt(raw), fid, sc.id, sc.leeway, collection)
+}
+
+// Resolve only when a new chunk needs a proof, once per check. The handler
+// creates a fresh verifier under its path lock so changes since admission are
+// seen there. Retained chunks and chunkless mount creates need no resolution.
+func (s *filerGrpcScope) proofVerifier(ctx context.Context, sc *scope, chunkAuth map[string]string, p string) func(string) bool {
+	var collection string
+	var err error
+	resolved := false
+	return func(fid string) bool {
+		if !resolved {
+			collection, err = s.backend.scopeCollection(ctx, p)
+			resolved = true
+		}
+		return err == nil && s.proven(sc, chunkAuth, fid, collection)
+	}
 }
 
 // resolve authenticates the call. It returns (nil, nil) for an unscoped call,
@@ -291,7 +309,7 @@ func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method
 		if err := scopeCheckSSEState(stored, e, method == "AppendToEntry"); err != nil {
 			return sc.deny(method, err.Error())
 		}
-		if err := scopeRetainsData(stored, e, func(fid string) bool { return s.proven(sc, chunkAuth, fid) }); err != nil {
+		if err := scopeRetainsData(stored, e, s.proofVerifier(ctx, sc, chunkAuth, p)); err != nil {
 			return sc.deny(method, err.Error())
 		}
 		if method == "AppendToEntry" {
@@ -649,7 +667,7 @@ func (s *filerGrpcScope) unaryScoped(ctx context.Context, sc *scope, req any, ha
 				lifetime = configured
 			}
 		}
-		out.AssignAuth = string(security.GenJwtForAssign(key, lifetime, out.GetFileId(), sc.id, out.GetCount()))
+		out.AssignAuth = string(security.GenJwtForAssign(key, lifetime, out.GetFileId(), sc.id, out.GetCount(), out.GetCollection()))
 		if out.AssignAuth == "" {
 			return nil, status.Error(codes.Internal, "filer: assignment proof could not be signed")
 		}
@@ -675,6 +693,15 @@ func (s *filerGrpcScope) unaryScoped(ctx context.Context, sc *scope, req any, ha
 		return handler(ctx, req)
 	}
 	return nil, sc.deny(fmt.Sprintf("%T", req), "not available to a scoped token")
+}
+
+// scopeCollection uses the same path rules and bucket defaults as AssignVolume.
+func (fs *FilerServer) scopeCollection(ctx context.Context, p string) (string, error) {
+	so, err := fs.resolveAssignStorageOption(ctx, &filer_pb.AssignVolumeRequest{Path: p})
+	if err != nil {
+		return "", err
+	}
+	return so.Collection, nil
 }
 
 // scopeFindEntry implements scopeBackend on the filer.

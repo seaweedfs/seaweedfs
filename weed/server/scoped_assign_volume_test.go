@@ -27,7 +27,7 @@ func TestScopeAssignVolumeBindsProofToHolderAndAllocatedRange(t *testing.T) {
 		if req != request || !scopeKeepOnly(ctx) {
 			t.Fatal("assignment lost the request or scoped context")
 		}
-		return &filer_pb.AssignVolumeResponse{FileId: fid, Count: 3, Auth: string(volumeAuth)}, nil
+		return &filer_pb.AssignVolumeResponse{FileId: fid, Count: 3, Auth: string(volumeAuth), Collection: "resolved-collection"}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -43,9 +43,12 @@ func TestScopeAssignVolumeBindsProofToHolderAndAllocatedRange(t *testing.T) {
 		{fid, "retention", true}, {fid + "_1", "retention", true}, {fid + "_2", "retention", true},
 		{fid + "_3", "retention", false}, {fid + "_01", "retention", false}, {fid, "other", false},
 	} {
-		if got := security.VerifyAssignJwt(key, nil, security.EncodedJwt(out.AssignAuth), tc.fid, tc.holder, 0); got != tc.want {
+		if got := security.VerifyAssignJwt(key, nil, security.EncodedJwt(out.AssignAuth), tc.fid, tc.holder, 0, "resolved-collection"); got != tc.want {
 			t.Errorf("proof fid=%s holder=%s valid=%v, want %v", tc.fid, tc.holder, got, tc.want)
 		}
+	}
+	if security.VerifyAssignJwt(key, nil, security.EncodedJwt(out.AssignAuth), fid, "retention", 0, "other-collection") {
+		t.Fatal("assignment proof accepted outside the handler's resolved collection")
 	}
 }
 

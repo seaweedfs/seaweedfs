@@ -141,7 +141,7 @@ func scopeKeepsHardLink(stored, requested *filer_pb.Entry) error {
 	return nil
 }
 
-func checkScopeRetainedData(ctx context.Context, stored *filer.Entry, requested *filer_pb.Entry, chunkAuth map[string]string, appending bool) error {
+func checkScopeRetainedData(ctx context.Context, p string, stored *filer.Entry, requested *filer_pb.Entry, chunkAuth map[string]string, appending bool) error {
 	if !scopeKeepOnly(ctx) {
 		return nil
 	}
@@ -157,7 +157,7 @@ func checkScopeRetainedData(ctx context.Context, stored *filer.Entry, requested 
 		if authority.sc.expired() {
 			return scopeExpiredError(authority.sc)
 		}
-		proven = func(fid string) bool { return authority.s.proven(authority.sc, chunkAuth, fid) }
+		proven = authority.s.proofVerifier(ctx, authority.sc, chunkAuth, p)
 	}
 	if err := scopeRetainsData(current, requested, proven); err != nil {
 		return status.Errorf(codes.PermissionDenied, "filer: retained data changed before commit: %v", err)

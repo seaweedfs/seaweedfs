@@ -44,7 +44,7 @@ func TestScopedChunkProofRefusesPhysicalIdentityAliases(t *testing.T) {
 						fid = canonical
 					}
 					requested := &filer_pb.Entry{Name: "alias", Attributes: &filer_pb.FuseAttributes{FileMode: 0644}, Chunks: []*filer_pb.FileChunk{chunk}}
-					proof := security.GenJwtForAssign(security.SigningKey(scopeTestKey), time.Hour, "5,0c00000055", "retention", 2)
+					proof := security.GenJwtForAssign(security.SigningKey(scopeTestKey), time.Hour, "5,0c00000055", "retention", 2, "")
 					auth := map[string]string{fid: string(proof)}
 					var req any = &filer_pb.UpdateEntryRequest{Directory: aliceWS, Entry: requested, ChunkAuth: auth}
 					if method == "CreateEntry" {
@@ -85,7 +85,7 @@ func TestScopedChunkProofRefusesAliasesWithinNewEntry(t *testing.T) {
 	store := newRenameTestStore()
 	store.entries[aliceWS] = newDirectoryEntry(aliceWS, 1)
 	fs, scope := newScopeRetentionServer(t, store)
-	proof := string(security.GenJwtForAssign(security.SigningKey(scopeTestKey), time.Hour, "5,0c00000055", "retention", 2))
+	proof := string(security.GenJwtForAssign(security.SigningKey(scopeTestKey), time.Hour, "5,0c00000055", "retention", 2, ""))
 	req := &filer_pb.CreateEntryRequest{
 		Directory: aliceWS, SkipCheckParentDirectory: true,
 		Entry: &filer_pb.Entry{Name: "aliases", Attributes: &filer_pb.FuseAttributes{FileMode: 0644}, Chunks: []*filer_pb.FileChunk{

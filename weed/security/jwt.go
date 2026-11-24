@@ -231,6 +231,8 @@ const DefaultAssignTokenLifetime = 24 * time.Hour
 type SeaweedAssignClaims struct {
 	Fid   string `json:"fid"`
 	Count int32  `json:"cnt,omitempty"`
+	// A pointer distinguishes the default empty collection from a missing claim.
+	Collection *string `json:"collection"`
 	jwt.RegisteredClaims
 }
 
@@ -246,10 +248,10 @@ func AssignSigningKey(filerKey SigningKey) SigningKey {
 	return SigningKey(h.Sum(nil))
 }
 
-// GenJwtForAssign mints an expiring assignment proof for fileID and holder.
+// GenJwtForAssign mints an expiring assignment proof for fileID, holder and collection.
 // A non-positive lifetime uses the safe default rather than minting a proof
 // without an expiry. count covers fileID and the derived fileID_N ids.
-func GenJwtForAssign(filerKey SigningKey, lifetime time.Duration, fileID, holder string, count int32) EncodedJwt {
+func GenJwtForAssign(filerKey SigningKey, lifetime time.Duration, fileID, holder string, count int32, collection string) EncodedJwt {
 	key := AssignSigningKey(filerKey)
 	if len(key) == 0 || fileID == "" || holder == "" || count < 1 {
 		return ""
@@ -259,8 +261,9 @@ func GenJwtForAssign(filerKey SigningKey, lifetime time.Duration, fileID, holder
 	}
 	now := time.Now()
 	claims := SeaweedAssignClaims{
-		Fid:   fileID,
-		Count: count,
+		Fid:        fileID,
+		Count:      count,
+		Collection: &collection,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        holder,
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -277,10 +280,10 @@ func GenJwtForAssign(filerKey SigningKey, lifetime time.Duration, fileID, holder
 }
 
 // VerifyAssignJwt reports whether token is a valid assignment proof for
-// fileID and holder under the current or previous filer key. A suffixed file
+// fileID, holder and collection under the current or previous filer key. A suffixed file
 // id is accepted only when its suffix is the canonical decimal form of an
 // index in [1, Count).
-func VerifyAssignJwt(filerKey, previousFilerKey SigningKey, token EncodedJwt, fileID, holder string, leeway time.Duration) bool {
+func VerifyAssignJwt(filerKey, previousFilerKey SigningKey, token EncodedJwt, fileID, holder string, leeway time.Duration, collection string) bool {
 	if (len(filerKey) == 0 && len(previousFilerKey) == 0) || token == "" || fileID == "" || holder == "" {
 		return false
 	}
@@ -291,7 +294,7 @@ func VerifyAssignJwt(filerKey, previousFilerKey SigningKey, token EncodedJwt, fi
 	}
 	claims := &SeaweedAssignClaims{}
 	parsed, err := DecodeJwtWith(AssignSigningKey(filerKey), AssignSigningKey(previousFilerKey), token, claims, leeway)
-	if err != nil || parsed == nil || !parsed.Valid || claims.ExpiresAt == nil || claims.Count < 1 || claims.ID != holder {
+	if err != nil || parsed == nil || !parsed.Valid || claims.ExpiresAt == nil || claims.Count < 1 || claims.ID != holder || claims.Collection == nil || *claims.Collection != collection {
 		return false
 	}
 	base, err := needle.ParseFileIdFromString(claims.Fid)

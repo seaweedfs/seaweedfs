@@ -9,7 +9,7 @@ import (
 func TestVerifyAssignJwtAcceptsOnlyCanonicalAllocatedCountSuffixes(t *testing.T) {
 	key := SigningKey("assignment-count-key-0123456789")
 	base := "3,0100000011"
-	token := GenJwtForAssign(key, time.Hour, base, "session-1", 3)
+	token := GenJwtForAssign(key, time.Hour, base, "session-1", 3, "")
 
 	for _, tc := range []struct {
 		name string
@@ -35,7 +35,7 @@ func TestVerifyAssignJwtAcceptsOnlyCanonicalAllocatedCountSuffixes(t *testing.T)
 		{name: "uint64 suffix overflow", fid: base + "_18446744073709551616"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := VerifyAssignJwt(key, nil, token, tc.fid, "session-1", 0); got != tc.want {
+			if got := VerifyAssignJwt(key, nil, token, tc.fid, "session-1", 0, ""); got != tc.want {
 				t.Fatalf("VerifyAssignJwt(%q) = %v, want %v", tc.fid, got, tc.want)
 			}
 		})
@@ -52,7 +52,7 @@ func TestVerifyAssignJwtRejectsInvalidAssignmentCounts(t *testing.T) {
 				Count:            count,
 				RegisteredClaims: jwtRegisteredClaims("session-1", time.Now().Add(time.Hour)),
 			})
-			if VerifyAssignJwt(key, nil, token, base, "session-1", 0) {
+			if VerifyAssignJwt(key, nil, token, base, "session-1", 0, "") {
 				t.Fatal("assignment proof with invalid count was accepted")
 			}
 		})
@@ -62,12 +62,12 @@ func TestVerifyAssignJwtRejectsInvalidAssignmentCounts(t *testing.T) {
 func TestVerifyAssignJwtAllocationCannotWrapNeedleID(t *testing.T) {
 	key := SigningKey("assignment-overflow-test-key")
 	const base = "3,ffffffffffffffff00000011"
-	token := GenJwtForAssign(key, time.Hour, base, "session-1", 2)
-	if !VerifyAssignJwt(key, nil, token, base, "session-1", 0) {
+	token := GenJwtForAssign(key, time.Hour, base, "session-1", 2, "")
+	if !VerifyAssignJwt(key, nil, token, base, "session-1", 0, "") {
 		t.Fatal("base allocation was refused")
 	}
 	for _, fid := range []string{base + "_1", "3,0000000011"} {
-		if VerifyAssignJwt(key, nil, token, fid, "session-1", 0) {
+		if VerifyAssignJwt(key, nil, token, fid, "session-1", 0, "") {
 			t.Fatalf("overflowed allocation %s was accepted", fid)
 		}
 	}

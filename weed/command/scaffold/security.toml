@@ -20,6 +20,9 @@
 #                                         HTTP API
 #   WEED_JWT_FILER_SIGNING_READ_KEY       filer, s3, and clients of the filer HTTP API
 #   WEED_JWT_FILER_SIGNING_SUBSCRIBE_KEY  filer metadata subscriptions
+#   WEED_JWT_FILER_SIGNING_GRPC_KEY       filer filesystem gRPC scope and assignment proofs
+#   WEED_JWT_FILER_SIGNING_GRPC_PREVIOUS_KEY
+#                                         previous gRPC scope and assignment-proof key during rotation
 # A set env var wins over the file, so the file can stay empty (or absent).
 
 # comma separated origins allowed to make requests to the filer and s3 gateway.
@@ -116,14 +119,17 @@ expires_after_seconds = 10           # seconds
 previous_key = ""
 # Optional filesystem gRPC signing key; when unset, key above is used. Setting
 # this alone enables gRPC scope checks without changing HTTP authentication.
-# When grpc_key is set, previous_key is ignored for gRPC scope checks so the
-# HTTP key rotation pair cannot authenticate under this separate key. When
-# grpc_key is unset, the shared HTTP current/previous pair is used.
+# When grpc_key is set, grpc_previous_key is also accepted for gRPC scope
+# tokens and assignment proofs. The HTTP previous_key remains excluded from
+# this separate trust domain. Keep grpc_previous_key configured for at least
+# assign_expires_after_seconds plus the scoped token lifetime after rotating.
+# When grpc_key is unset, the shared HTTP current/previous pair is used.
 # grpc_key = ""
-# AssignVolume returns a holder-bound proof in assign_auth. Return it under
-# the chunk's file id in chunk_auth when storing the entry. Auth remains the
-# separate volume-upload credential. Proofs always expire: zero or negative
-# lifetime uses the default of 86400 seconds.
+# grpc_previous_key = ""
+# AssignVolume returns a proof bound to the holder, chunk-ID range and resolved
+# collection in assign_auth. Return it under the chunk's file id in chunk_auth
+# when storing the entry. Auth remains the separate volume-upload credential.
+# Proofs always expire: zero or negative lifetime uses the default of 86400 seconds.
 # assign_expires_after_seconds = 86400
 # Clock-skew allowance for scope and proof validation; negative means zero.
 # clock_leeway_seconds = 30

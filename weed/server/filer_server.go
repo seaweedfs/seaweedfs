@@ -829,6 +829,7 @@ func (fs *FilerServer) Reload() {
 // grpcScopeSettings is replaced as one snapshot on configuration reload.
 type grpcScopeSettings struct {
 	key            security.SigningKey
+	previousKey    security.SigningKey
 	leeway         time.Duration
 	assignLifetime time.Duration
 }
@@ -837,6 +838,7 @@ func (fs *FilerServer) loadGrpcScopeConfig(v *util.ViperProxy) {
 	v.SetDefault("jwt.filer_signing.assign_expires_after_seconds", int(security.DefaultAssignTokenLifetime/time.Second))
 	v.SetDefault("jwt.filer_signing.clock_leeway_seconds", 30)
 	key := security.SigningKey(v.GetString("jwt.filer_signing.grpc_key"))
+	previousKey := security.SigningKey(v.GetString("jwt.filer_signing.grpc_previous_key"))
 	lifetime := time.Duration(v.GetInt("jwt.filer_signing.assign_expires_after_seconds")) * time.Second
 	if lifetime <= 0 {
 		lifetime = security.DefaultAssignTokenLifetime
@@ -851,6 +853,7 @@ func (fs *FilerServer) loadGrpcScopeConfig(v *util.ViperProxy) {
 	// filerGuard, which retains the shared current/previous rotation pair.
 	fs.grpcScopeSettings.Store(&grpcScopeSettings{
 		key:            key,
+		previousKey:    previousKey,
 		leeway:         leeway,
 		assignLifetime: lifetime,
 	})
@@ -858,7 +861,7 @@ func (fs *FilerServer) loadGrpcScopeConfig(v *util.ViperProxy) {
 
 func (fs *FilerServer) grpcScopeVerificationKeys() (security.SigningKey, security.SigningKey) {
 	if settings := fs.grpcScopeSettings.Load(); settings != nil && len(settings.key) > 0 {
-		return settings.key, nil
+		return settings.key, settings.previousKey
 	}
 	return fs.filerGuard.VerificationKeys(true)
 }

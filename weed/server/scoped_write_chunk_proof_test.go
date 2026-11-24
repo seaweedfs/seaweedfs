@@ -20,7 +20,7 @@ import (
 
 func scopedChunkProof(t *testing.T, holder, fid string, lifetime time.Duration) string {
 	t.Helper()
-	proof := security.GenJwtForAssign(security.SigningKey(scopeTestKey), lifetime, fid, holder, 1)
+	proof := security.GenJwtForAssign(security.SigningKey(scopeTestKey), lifetime, fid, holder, 1, "")
 	if proof == "" {
 		t.Fatalf("mint assignment proof for %s", fid)
 	}
@@ -29,9 +29,11 @@ func scopedChunkProof(t *testing.T, holder, fid string, lifetime time.Duration) 
 
 func expiredScopedChunkProof(t *testing.T, holder, fid string) string {
 	t.Helper()
+	collection := ""
 	claims := security.SeaweedAssignClaims{
-		Fid:   fid,
-		Count: 1,
+		Fid:        fid,
+		Count:      1,
+		Collection: &collection,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        holder,
 			IssuedAt:  jwt.NewNumericDate(time.Unix(0, 0)),
@@ -96,13 +98,13 @@ func TestScopedChunkProofWritesPersistThroughUnaryHandlers(t *testing.T) {
 			if tc.structured {
 				requested.Chunks[0].FileId = ""
 				requested.Chunks[0].Fid = &filer_pb.FileId{VolumeId: 5, FileKey: 13, Cookie: 85}
-				proof = string(security.GenJwtForAssign(security.SigningKey(scopeTestKey), time.Hour, "5,0c00000055", "retention", 2))
+				proof = string(security.GenJwtForAssign(security.SigningKey(scopeTestKey), time.Hour, "5,0c00000055", "retention", 2, ""))
 			}
 			if tc.dual {
 				requested.Chunks[0].FileId = fid
 			}
 			if tc.suffix {
-				proof = string(security.GenJwtForAssign(security.SigningKey(scopeTestKey), time.Hour, "5,0c00000055", "retention", 2))
+				proof = string(security.GenJwtForAssign(security.SigningKey(scopeTestKey), time.Hour, "5,0c00000055", "retention", 2, ""))
 			}
 			var req any
 			if method == "CreateEntry" {
@@ -183,7 +185,7 @@ func TestScopedChunkProofRejectsConflictingChunkIdentities(t *testing.T) {
 					if !afterAdmission {
 						chunk.Fid = conflict
 					}
-					proof := security.GenJwtForAssign(security.SigningKey(scopeTestKey), time.Hour, base, "retention", 2)
+					proof := security.GenJwtForAssign(security.SigningKey(scopeTestKey), time.Hour, base, "retention", 2, "")
 					req := &filer_pb.CreateEntryRequest{
 						Directory: aliceWS, SkipCheckParentDirectory: true,
 						Entry:     &filer_pb.Entry{Name: "conflict", Attributes: &filer_pb.FuseAttributes{FileMode: 0644}, Chunks: []*filer_pb.FileChunk{chunk}},
