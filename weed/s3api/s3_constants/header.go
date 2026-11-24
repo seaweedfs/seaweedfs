@@ -67,6 +67,7 @@ const (
 	SeaweedFSMultipartPartsCount     = "X-Seaweedfs-Multipart-Parts-Count"
 	SeaweedFSMultipartPartBoundaries = "X-Seaweedfs-Multipart-Part-Boundaries" // JSON: [{part:1,start:0,end:2,etag:"abc"},{part:2,start:2,end:3,etag:"def"}]
 	SeaweedFSExpiresS3               = "X-Seaweedfs-Expires-S3"
+	SeaweedFSVectorSearchMode        = "x-seaweedfs-vector-search-mode"
 	AmzMpPartsCount                  = "x-amz-mp-parts-count"
 
 	// S3 ACL headers

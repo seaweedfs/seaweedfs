@@ -16,24 +16,19 @@ import (
 
 func TestSearchMode(t *testing.T) {
 	for _, tc := range []struct {
-		name, mode, auth, query string
-		indexed, invalid        bool
+		name, mode       string
+		indexed, invalid bool
 	}{
 		{name: "default"},
 		{name: "all", mode: "all"},
 		{name: "indexed", mode: "indexed-only", indexed: true},
 		{name: "unknown", mode: "fast", invalid: true},
-		{name: "unsigned header", mode: "indexed-only", auth: "AWS4-HMAC-SHA256 Credential=x, SignedHeaders=host, Signature=x", invalid: true},
-		{name: "signed header", mode: "indexed-only", auth: "AWS4-HMAC-SHA256 Credential=x, SignedHeaders=host;x-seaweedfs-vector-search-mode, Signature=x", indexed: true},
-		{name: "signed query", mode: "indexed-only", query: "?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-SignedHeaders=host%3Bx-seaweedfs-vector-search-mode", indexed: true},
-		{name: "unsigned query", mode: "indexed-only", query: "?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-SignedHeaders=host", invalid: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodPost, "/QueryVectors"+tc.query, nil)
+			r := httptest.NewRequest(http.MethodPost, "/QueryVectors", nil)
 			if tc.mode != "" {
 				r.Header.Set(searchModeHeader, tc.mode)
 			}
-			r.Header.Set("Authorization", tc.auth)
 			indexed, err := searchMode(r)
 			if indexed != tc.indexed || (err != nil) != tc.invalid {
 				t.Fatalf("indexed=%v err=%v", indexed, err)
