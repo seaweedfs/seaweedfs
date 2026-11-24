@@ -237,3 +237,46 @@ func TestExtractZipHonorsMemberExistingObjectTagDeny(t *testing.T) {
 	require.Equal(t, "original", string(filerImpl.entries["/buckets/b/dir/secret.txt"].Content))
 	require.Equal(t, "original", string(filerImpl.entries["/buckets/b/dir/archive.zip"].Content))
 }
+
+// A copy reads its source after the first destination check, so a tagged
+// object stored at the destination meanwhile must still stop the commit.
+func TestCopyObjectRechecksDestinationTagsAtCommit(t *testing.T) {
+	util_http.InitGlobalHttpClient()
+	volume := startFakeVolumeServer(t)
+	filer := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{
+		"/buckets/vault/target.txt": taggedEntry("target.txt", ""),
+		"/buckets/vault/source.txt": taggedEntry("source.txt", ""),
+	}}
+	destinationRead := false
+	filer.beforeLookup = func(key string) {
+		if key == "/buckets/vault/target.txt" && !destinationRead {
+			destinationRead = true
+			return
+		}
+		if destinationRead {
+			filer.entries["/buckets/vault/target.txt"] = taggedEntry("target.txt", "confidential")
+		}
+	}
+	addr := startFakeFiler(t, filer)
+	s3a := newPutTestServer(t, addr)
+	s3a.iam = &IdentityAccessManagement{}
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("vault", &BucketConfig{Name: "vault"})
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, addr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{addr}, 1)
+	s3a.policyEngine = NewBucketPolicyEngine()
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("vault", existingTagDenyPutPolicy("vault")))
+	identity := &Identity{Name: "writer", PrincipalArn: "arn:aws:iam::123456789012:user/writer"}
+
+	req := httptest.NewRequest(http.MethodPut, "/vault/target.txt", nil)
+	req.Header.Set("X-Amz-Copy-Source", "/vault/source.txt")
+	req = mux.SetURLVars(req, map[string]string{"bucket": "vault", "object": "target.txt"})
+	req = req.WithContext(s3_constants.SetIdentityInContext(req.Context(), identity))
+	rec := httptest.NewRecorder()
+	s3a.CopyObjectHandler(rec, req)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	filer.mu.Lock()
+	defer filer.mu.Unlock()
+	require.Equal(t, "confidential", string(filer.entries["/buckets/vault/target.txt"].Extended[s3_constants.AmzObjectTaggingPrefix+"classification"]))
+	require.Equal(t, "original", string(filer.entries["/buckets/vault/target.txt"].Content))
+}
