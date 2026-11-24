@@ -675,6 +675,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	applyPutObjectACL(r, dstEntry)
 
 	finalizeCode := s3a.withObjectWriteLock(dstBucket, dstObject, func() s3err.ErrorCode {
+		if errCode := s3a.recheckTagConditionedPolicyWithLookup(dstPolicyReq, dstBucket, dstObject, "", string(s3_constants.ACTION_WRITE), "CopyObjectHandler"); errCode != s3err.ErrNone {
+			return errCode
+		}
 		return s3a.checkConditionalHeaders(r, dstBucket, dstObject)
 	}, func() s3err.ErrorCode {
 		var finalizeErr error
