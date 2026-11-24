@@ -4,6 +4,7 @@ package fuse_dlm
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -47,7 +48,7 @@ func TestConcurrentCreateWithoutDLM(t *testing.T) {
 			if err != nil {
 				// Refusing the second exclusive create up front is also correct.
 				require.NoError(t, fa.Close())
-				t.Logf("open on mount 1: %v", err)
+				require.True(t, tc.flags&os.O_EXCL != 0 && errors.Is(err, os.ErrExist), "open on mount 1: %v", err)
 				return
 			}
 			_, err = fa.Write(wantA)
