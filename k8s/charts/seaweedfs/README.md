@@ -629,6 +629,10 @@ The volume servers do not require client certificates, because kubelet probes ca
 
 `commonLabels` adds labels to the metadata of every object the chart creates. It may be a map or a template string rendering to one. The chart's own labels cannot be overridden, and pods (see `podLabels`) and `volumeClaimTemplates` are left unchanged.
 
+## Sharing the process namespace
+
+`filer.shareProcessNamespace` and `s3.shareProcessNamespace` let the containers in the filer and S3 pods see each other's processes, so a sidecar can signal SeaweedFS, for example with SIGHUP to reload the S3 identities file. SeaweedFS is then no longer PID 1 in its container, and every container in the pod can read the other containers' processes and files through `/proc`. Both are off by default.
+
 ## Pod and container security contexts
 
 Pod and container security contexts are configurable independently for every built-in workload and remain empty by default for backwards compatibility. The examples in `values.yaml` show how to enable a `RuntimeDefault` seccomp profile, disable privilege escalation and privileged mode, drop all Linux capabilities, and use a read-only root filesystem.
