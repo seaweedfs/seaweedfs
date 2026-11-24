@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/stretchr/testify/require"
@@ -113,6 +114,13 @@ func TestOverwriteHonorsExistingObjectTagDeny(t *testing.T) {
 		require.Equal(t, http.StatusOK, copyTo(object).Code, "CopyObject %s", object)
 	}
 	require.NotEqual(t, http.StatusForbidden, complete("fresh.txt").Code, "CompleteMultipartUpload of a new key")
+
+	// A bucket default encryption is not caller input: a policy refusing an
+	// explicit SSE header must not block a headerless copy over an object.
+	s3a.bucketConfigCache.Set("vault", &BucketConfig{Name: "vault", Encryption: &s3_pb.EncryptionConfiguration{SseAlgorithm: EncryptionTypeAES256}})
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("vault", strings.Replace(existingTagDenyPutPolicy("vault"), `"Condition": {"StringEquals": {"s3:ExistingObjectTag/classification": "confidential"}}`,
+		`"Condition": {"Null": {"s3:x-amz-server-side-encryption": "false"}}`, 1)))
+	require.NotEqual(t, http.StatusForbidden, copyTo("plain.txt").Code, "headerless CopyObject over an object in a default-encrypted bucket")
 }
 
 func TestPostObjectOverwriteHonorsExistingObjectTagDeny(t *testing.T) {
