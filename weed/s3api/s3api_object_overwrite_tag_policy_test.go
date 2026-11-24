@@ -132,6 +132,40 @@ func TestOverwriteHonorsExistingObjectTagDeny(t *testing.T) {
 	require.NotEqual(t, http.StatusForbidden, copyTo("plain.txt").Code, "headerless CopyObject over an object in a default-encrypted bucket")
 }
 
+// A policy stored on the bucket reaches the engine when the bucket loads, so
+// the first PutObject after a restart still honors it.
+func TestPutObjectOverwriteHonorsExistingObjectTagDenyOnColdBucket(t *testing.T) {
+	util_http.InitGlobalHttpClient()
+	volume := startFakeVolumeServer(t)
+	filer := &ambiguousPutFiler{volume: volume, apply: true, entries: map[string]*filer_pb.Entry{
+		"/buckets/vault": {
+			Name:        "vault",
+			IsDirectory: true,
+			Attributes:  &filer_pb.FuseAttributes{Mtime: time.Now().Unix()},
+			Extended:    map[string][]byte{BUCKET_POLICY_METADATA_KEY: []byte(existingTagDenyPutPolicy("vault"))},
+		},
+		"/buckets/vault/secret.txt": taggedEntry("secret.txt", "confidential"),
+	}}
+	addr := startFakeFiler(t, filer)
+	s3a := newPutTestServer(t, addr)
+	s3a.iam = &IdentityAccessManagement{}
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, addr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{addr}, 1)
+	s3a.policyEngine = NewBucketPolicyEngine()
+	identity := &Identity{Name: "writer", PrincipalArn: "arn:aws:iam::123456789012:user/writer"}
+
+	r := httptest.NewRequest(http.MethodPut, "/vault/secret.txt", strings.NewReader("replaced"))
+	r = mux.SetURLVars(r, map[string]string{"bucket": "vault", "object": "secret.txt"})
+	r = r.WithContext(s3_constants.SetIdentityInContext(r.Context(), identity))
+	rec := httptest.NewRecorder()
+	s3a.PutObjectHandler(rec, r)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	filer.mu.Lock()
+	require.Equal(t, "original", string(filer.entries["/buckets/vault/secret.txt"].Content))
+	filer.mu.Unlock()
+}
+
 func TestPostObjectOverwriteHonorsExistingObjectTagDeny(t *testing.T) {
 	s3a, filer := newPostAclWriterServer(t)
 	s3a.bucketConfigCache.Set(postAuthzBucket, &BucketConfig{Name: postAuthzBucket})
