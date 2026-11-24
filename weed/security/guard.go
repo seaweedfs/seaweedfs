@@ -213,20 +213,13 @@ func (g *Guard) ReloadSigningKeys(section string) {
 	)
 }
 
-// checkFips140SigningKeys is util.CheckFips140HmacKey for the four keys a
+// checkFips140SigningKeys is util.CheckFips140HmacKeys for the four keys a
 // Guard holds.
 func checkFips140SigningKeys(signingKey, readSigningKey, previousSigningKey, previousReadSigningKey string) error {
-	for _, k := range []struct{ name, key string }{
-		{"signing key", signingKey},
-		{"read signing key", readSigningKey},
-		{"previous signing key", previousSigningKey},
-		{"previous read signing key", previousReadSigningKey},
-	} {
-		if err := util.CheckFips140HmacKey(k.name, []byte(k.key)); err != nil {
-			return err
-		}
-	}
-	return nil
+	return util.CheckFips140HmacKeys(
+		[]string{"signing key", "read signing key", "previous signing key", "previous read signing key"},
+		[]string{signingKey, readSigningKey, previousSigningKey, previousReadSigningKey},
+	)
 }
 
 // freshKey returns name as the fresh read sets it, else its merged value, so

@@ -35,20 +35,34 @@ func CheckFips140HmacKey(setting string, key []byte) error {
 	return fmt.Errorf("%s is %d bytes; GODEBUG=fips140=only requires HMAC keys of at least %d bytes", setting, len(key), Fips140MinHmacKeyBytes)
 }
 
-// CheckFips140SigningKeys runs CheckFips140HmacKey on every JWT signing key
+// CheckFips140HmacKeys is CheckFips140HmacKey for several keys, settings[i]
+// naming keys[i]. Its error names every key that is too short, so one startup
+// shows them all.
+func CheckFips140HmacKeys(settings []string, keys []string) error {
+	var short []string
+	for i, setting := range settings {
+		if CheckFips140HmacKey(setting, []byte(keys[i])) != nil {
+			short = append(short, fmt.Sprintf("%s is %d bytes", setting, len(keys[i])))
+		}
+	}
+	if len(short) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s; GODEBUG=fips140=only requires HMAC keys of at least %d bytes", strings.Join(short, ", "), Fips140MinHmacKeyBytes)
+}
+
+// CheckFips140SigningKeys runs CheckFips140HmacKeys on every JWT signing key
 // setting in v. Outside fips140=only, where a short key works, it logs
 // shortJwtKeyWarning for each one instead.
 func CheckFips140SigningKeys(v interface{ GetString(string) string }) error {
-	for _, setting := range jwtSigningKeySettings {
-		key := []byte(v.GetString(setting))
-		if err := CheckFips140HmacKey(setting, key); err != nil {
-			return err
-		}
-		if warning := shortJwtKeyWarning(setting, key); warning != "" {
+	keys := make([]string, len(jwtSigningKeySettings))
+	for i, setting := range jwtSigningKeySettings {
+		keys[i] = v.GetString(setting)
+		if warning := shortJwtKeyWarning(setting, []byte(keys[i])); warning != "" {
 			glog.Warning(warning)
 		}
 	}
-	return nil
+	return CheckFips140HmacKeys(jwtSigningKeySettings, keys)
 }
 
 // shortJwtKeyWarning returns the warning for a JWT key that works outside

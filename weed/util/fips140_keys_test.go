@@ -75,3 +75,25 @@ func TestShortJwtKeyWarning(t *testing.T) {
 		t.Errorf("short key, enforced: got %q, want no warning (the key is refused)", w)
 	}
 }
+
+func TestCheckFips140HmacKeysNamesEveryShortKey(t *testing.T) {
+	setFIPS140Enforced(t, true)
+	err := CheckFips140HmacKeys(
+		[]string{"jwt.signing.key", "jwt.signing.read.key", "jwt.filer_signing.key"},
+		[]string{"0123456789", "0123456789abcdef", "01234567"},
+	)
+	if err == nil {
+		t.Fatal("two short keys, enforced: got no error")
+	}
+	for _, want := range []string{"jwt.signing.key is 10 bytes", "jwt.filer_signing.key is 8 bytes"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "jwt.signing.read.key") {
+		t.Errorf("error %q names the 16-byte key", err)
+	}
+	if one := CheckFips140HmacKeys([]string{"jwt.signing.key"}, []string{"0123456789"}); one == nil || one.Error() != CheckFips140HmacKey("jwt.signing.key", []byte("0123456789")).Error() {
+		t.Errorf("one short key: got %v, want the CheckFips140HmacKey error", one)
+	}
+}
