@@ -40,6 +40,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fmt.Printf("Please specify a reasonable buffer size.\n")
 		return false
 	}
+	if *option.idmap {
+		fmt.Println("-idmap is only supported on Linux")
+		return false
+	}
 
 	dir := *option.dir
 	if dir == "" {
