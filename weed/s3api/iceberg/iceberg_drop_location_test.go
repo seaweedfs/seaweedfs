@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -53,5 +54,48 @@ func TestDropViewKeepsAnotherRecordsFiles(t *testing.T) {
 	}
 	if _, ok := fc.entries[ordersPath+"/data/f.parquet"]; !ok {
 		t.Errorf("dropping the view deleted the files of finance.orders")
+	}
+}
+
+// A table recorded over files that were already there drops without purging
+// them: they were not written for it.
+func TestDropTableKeepsOlderFilesAtItsLocation(t *testing.T) {
+	fc := newMemFiler()
+	seedNamespace(fc, ownerTestBucket, "finance", "alice")
+	otherPath := s3tables.GetTablePath(ownerTestBucket, "finance", "other")
+	fc.seed(otherPath, &filer_pb.Entry{Name: "other", IsDirectory: true})
+	fc.seed(otherPath+"/data", &filer_pb.Entry{Name: "data", IsDirectory: true})
+	fc.seed(otherPath+"/data/f.parquet", &filer_pb.Entry{Name: "f.parquet", Content: []byte("x"),
+		Attributes: &filer_pb.FuseAttributes{Crtime: time.Now().Add(-time.Hour).Unix()}})
+	tableMeta, err := json.Marshal(map[string]any{
+		"name":             "alias",
+		"namespace":        "finance",
+		"format":           "ICEBERG",
+		"createdAt":        time.Now(),
+		"ownerAccountId":   "mallory",
+		"versionToken":     "v1",
+		"metadataVersion":  1,
+		"metadataLocation": "s3://" + ownerTestBucket + "/finance/other/metadata/v1.metadata.json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fc.seed(s3tables.GetTablePath(ownerTestBucket, "finance", "alias"), &filer_pb.Entry{
+		Name:        "alias",
+		IsDirectory: true,
+		Extended:    map[string][]byte{s3tables.ExtendedKeyMetadata: tableMeta},
+	})
+	s := NewServer(fc, nil)
+
+	r := httptest.NewRequest(http.MethodDelete, "/v1/"+ownerTestBucket+"/namespaces/finance/tables/alias", nil)
+	r = mux.SetURLVars(r, map[string]string{"prefix": ownerTestBucket, "namespace": "finance", "table": "alias"})
+	w := httptest.NewRecorder()
+	s.handleDropTable(w, withActions(r, "mallory", creatorActions...))
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusNoContent, w.Body.String())
+	}
+	if _, ok := fc.entries[otherPath+"/data/f.parquet"]; !ok {
+		t.Errorf("dropping the table deleted files that predate it")
 	}
 }
