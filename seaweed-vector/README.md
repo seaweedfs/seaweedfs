@@ -53,11 +53,13 @@ def indexed_only(request, **kwargs):
     request.headers["x-seaweedfs-vector-search-mode"] = "indexed-only"
 
 client.meta.events.register("before-sign.s3vectors.QueryVectors", indexed_only)
-result = client.query_vectors(
-    vectorBucketName="embeddings", indexName="articles",
-    queryVector={"float32": embedding}, topK=10,
-)
-client.meta.events.unregister("before-sign.s3vectors.QueryVectors", indexed_only)
+try:
+    result = client.query_vectors(
+        vectorBucketName="embeddings", indexName="articles",
+        queryVector={"float32": embedding}, topK=10,
+    )
+finally:
+    client.meta.events.unregister("before-sign.s3vectors.QueryVectors", indexed_only)
 ```
 
 Indexed-only searches use the intersection of vector index coverage and the
