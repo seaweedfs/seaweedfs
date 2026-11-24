@@ -60,6 +60,62 @@ func TestDropViewKeepsAnotherRecordsFiles(t *testing.T) {
 	}
 }
 
+// A view's location keeps metadata files that predate the view, and loses
+// the ones the view wrote.
+func TestDropViewKeepsOlderMetadataAtItsLocation(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		crtime time.Time
+		kept   bool
+	}{
+		{"older", time.Now().Add(-time.Hour), true},
+		{"own", time.Now().Add(time.Second), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fc := newMemFiler()
+			seedNamespace(fc, ownerTestBucket, "finance", "alice")
+			otherPath := s3tables.GetTablePath(ownerTestBucket, "finance", "other")
+			fc.seed(otherPath, &filer_pb.Entry{Name: "other", IsDirectory: true})
+			fc.seed(otherPath+"/metadata", &filer_pb.Entry{Name: "metadata", IsDirectory: true})
+			fc.seed(otherPath+"/metadata/user.metadata.json", &filer_pb.Entry{Name: "user.metadata.json", Content: []byte("x"),
+				Attributes: &filer_pb.FuseAttributes{Crtime: tc.crtime.Unix()}})
+			viewMeta, err := json.Marshal(map[string]any{
+				"name":             "alias",
+				"namespace":        "finance",
+				"createdAt":        time.Now(),
+				"ownerAccountId":   "mallory",
+				"versionToken":     "v1",
+				"metadataVersion":  1,
+				"metadataLocation": "s3://" + ownerTestBucket + "/finance/other/metadata/v1.metadata.json",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fc.seed(s3tables.GetTablePath(ownerTestBucket, "finance", "alias"), &filer_pb.Entry{
+				Name:        "alias",
+				IsDirectory: true,
+				Extended: map[string][]byte{
+					s3tables.ExtendedKeyMetadata:  viewMeta,
+					s3tables.ExtendedKeyEntryType: []byte(s3tables.EntryTypeView),
+				},
+			})
+			s := NewServer(fc, nil)
+
+			r := httptest.NewRequest(http.MethodDelete, "/v1/"+ownerTestBucket+"/namespaces/finance/views/alias", nil)
+			r = mux.SetURLVars(r, map[string]string{"prefix": ownerTestBucket, "namespace": "finance", "view": "alias"})
+			w := httptest.NewRecorder()
+			s.handleDropView(w, withActions(r, "mallory", creatorActions...))
+
+			if w.Code != http.StatusNoContent {
+				t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusNoContent, w.Body.String())
+			}
+			if _, ok := fc.entries[otherPath+"/metadata/user.metadata.json"]; ok != tc.kept {
+				t.Errorf("metadata file kept = %v, want %v", ok, tc.kept)
+			}
+		})
+	}
+}
+
 // A table recorded over files that were already there drops without purging
 // them: they were not written for it.
 func TestDropTableKeepsOlderFilesAtItsLocation(t *testing.T) {
