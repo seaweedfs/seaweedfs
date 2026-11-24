@@ -1,0 +1,157 @@
+package sftpd
+
+import (
+	"context"
+	"errors"
+	"net"
+	"os"
+	"strconv"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/sftpd/user"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+)
+
+type lockTestFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	mu      sync.Mutex
+	entries map[string]*filer_pb.Entry
+	deletes []*filer_pb.DeleteEntryRequest
+}
+
+func (f *lockTestFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if entry, ok := f.entries[req.Directory+"/"+req.Name]; ok {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: entry}, nil
+	}
+	return nil, status.Error(codes.NotFound, "no entry is found")
+}
+
+func (f *lockTestFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deletes = append(f.deletes, req)
+	return &filer_pb.DeleteEntryResponse{}, nil
+}
+
+func (f *lockTestFiler) deleteRequests() []*filer_pb.DeleteEntryRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*filer_pb.DeleteEntryRequest(nil), f.deletes...)
+}
+
+const lockTestFilerConf = `{"locations":[{"locationPrefix":"/buckets/worm/","worm":true},{"locationPrefix":"/buckets/worm-1h/","worm":true,"wormRetentionTimeSeconds":3600}]}`
+
+func newLockTestServer(t *testing.T, entries map[string]*filer_pb.Entry) (*SftpServer, *lockTestFiler) {
+	t.Helper()
+	entries["/etc/seaweedfs/filer.conf"] = &filer_pb.Entry{Name: "filer.conf", Content: []byte(lockTestFilerConf), Attributes: &filer_pb.FuseAttributes{}}
+	for _, entry := range entries {
+		if entry.Attributes == nil {
+			entry.Attributes = &filer_pb.FuseAttributes{FileMode: 0644, Uid: 1000}
+		}
+	}
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	fake := &lockTestFiler{entries: entries}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, fake)
+	go func() { _ = grpcServer.Serve(lis) }()
+	t.Cleanup(grpcServer.Stop)
+
+	_, port, _ := net.SplitHostPort(lis.Addr().String())
+	return &SftpServer{
+		filerAddr:      pb.ServerAddress("127.0.0.1:0." + port),
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		user: &user.User{
+			Username:    "alice",
+			Uid:         1000,
+			Gid:         1000,
+			HomeDir:     "/buckets",
+			Permissions: map[string][]string{"/buckets": {PermAll}},
+		},
+	}, fake
+}
+
+func lockedEntry(name string, extended map[string]string) *filer_pb.Entry {
+	entry := &filer_pb.Entry{Name: name, Extended: map[string][]byte{}}
+	for k, v := range extended {
+		entry.Extended[k] = []byte(v)
+	}
+	return entry
+}
+
+func retainUntil(d time.Duration) string {
+	return strconv.FormatInt(time.Now().Add(d).Unix(), 10)
+}
+
+func TestRemoveRefusesProtectedEntries(t *testing.T) {
+	wormAt := time.Now().Add(-2 * time.Hour).UnixNano()
+	tests := []struct {
+		name    string
+		path    string
+		entry   *filer_pb.Entry
+		refused bool
+	}{
+		{"legal hold", "/buckets/b/f.versions/v_1", lockedEntry("v_1", map[string]string{s3_constants.ExtLegalHoldKey: s3_constants.LegalHoldOn}), true},
+		{"compliance retention", "/buckets/b/f.versions/v_2", lockedEntry("v_2", map[string]string{s3_constants.ExtObjectLockModeKey: s3_constants.RetentionModeCompliance, s3_constants.ExtRetentionUntilDateKey: retainUntil(time.Hour)}), true},
+		{"governance retention", "/buckets/b/f.versions/v_3", lockedEntry("v_3", map[string]string{s3_constants.ExtObjectLockModeKey: s3_constants.RetentionModeGovernance, s3_constants.ExtRetentionUntilDateKey: retainUntil(time.Hour)}), true},
+		{"expired retention", "/buckets/b/f.versions/v_4", lockedEntry("v_4", map[string]string{s3_constants.ExtObjectLockModeKey: s3_constants.RetentionModeCompliance, s3_constants.ExtRetentionUntilDateKey: retainUntil(-time.Hour)}), false},
+		{"legal hold off", "/buckets/b/f.versions/v_5", lockedEntry("v_5", map[string]string{s3_constants.ExtLegalHoldKey: s3_constants.LegalHoldOff}), false},
+		{"delete marker", "/buckets/b/f.versions/v_6", lockedEntry("v_6", map[string]string{s3_constants.ExtDeleteMarkerKey: "true", s3_constants.ExtLegalHoldKey: s3_constants.LegalHoldOn}), false},
+		{"worm", "/buckets/worm/f", &filer_pb.Entry{Name: "f", WormEnforcedAtTsNs: wormAt}, true},
+		{"worm retention elapsed", "/buckets/worm-1h/f", &filer_pb.Entry{Name: "f", WormEnforcedAtTsNs: wormAt}, false},
+		{"worm not enforced yet", "/buckets/worm/g", &filer_pb.Entry{Name: "g"}, false},
+		{"no worm rule", "/buckets/b/f", &filer_pb.Entry{Name: "f", WormEnforcedAtTsNs: wormAt}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs, fake := newLockTestServer(t, map[string]*filer_pb.Entry{tt.path: tt.entry})
+			err := fs.removeEntry(tt.path)
+			deletes := fake.deleteRequests()
+			if tt.refused {
+				if !errors.Is(err, os.ErrPermission) {
+					t.Fatalf("rm: got %v, want os.ErrPermission", err)
+				}
+				if len(deletes) != 0 {
+					t.Fatalf("rm of a protected entry reached the filer")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("rm: %v", err)
+			}
+			if len(deletes) != 1 {
+				t.Fatalf("got %d DeleteEntry calls, want 1", len(deletes))
+			}
+			for _, key := range []string{s3_constants.ExtLegalHoldKey, s3_constants.ExtObjectLockModeKey, s3_constants.ExtRetentionUntilDateKey} {
+				got, ok := deletes[0].ExpectedExtended[key]
+				if !ok || string(got) != string(tt.entry.Extended[key]) {
+					t.Fatalf("ExpectedExtended[%s] = %q (present %v), want %q", key, got, ok, tt.entry.Extended[key])
+				}
+			}
+		})
+	}
+}
+
+func TestRmdirRefusesLockedDirectoryMarker(t *testing.T) {
+	marker := lockedEntry("dir", map[string]string{s3_constants.ExtLegalHoldKey: s3_constants.LegalHoldOn})
+	marker.IsDirectory = true
+	fs, fake := newLockTestServer(t, map[string]*filer_pb.Entry{"/buckets/b/dir": marker})
+	if err := fs.removeDir("/buckets/b/dir"); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("rmdir: got %v, want os.ErrPermission", err)
+	}
+	if len(fake.deleteRequests()) != 0 {
+		t.Fatalf("rmdir of a locked directory marker reached the filer")
+	}
+}

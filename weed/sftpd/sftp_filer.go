@@ -19,6 +19,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	filer_pb "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_objectlock"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	"github.com/seaweedfs/seaweedfs/weed/sftpd/user"
@@ -690,9 +692,16 @@ func (fs *SftpServer) deleteEntry(p string, recursive bool) error {
 	if err := fs.checkFilePermission(p, "delete"); err != nil {
 		return err
 	}
+	entry, err := fs.getEntry(p)
+	if err != nil {
+		return err
+	}
+	if err := fs.checkEntryProtected(p, entry); err != nil {
+		return err
+	}
 	dir, name := util.FullPath(p).DirAndName()
 	return fs.callWithClient(false, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
-		r, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{Directory: dir, Name: name, IsDeleteData: true, IsRecursive: recursive})
+		r, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{Directory: dir, Name: name, IsDeleteData: true, IsRecursive: recursive, ExpectedExtended: objectLockState(entry)})
 		if err != nil {
 			return err
 		}
@@ -701,6 +710,52 @@ func (fs *SftpServer) deleteEntry(p string, recursive bool) error {
 		}
 		return nil
 	})
+}
+
+// checkEntryProtected refuses to change an entry that the S3 API or the filer
+// HTTP API would refuse to change: one under an active Object Lock or WORM.
+func (fs *SftpServer) checkEntryProtected(p string, entry *filer_pb.Entry) error {
+	if string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) != "true" && s3_objectlock.EntryHasActiveLock(entry, time.Now()) {
+		glog.V(0).Infof("permission denied for user %s: %s is under Object Lock", fs.user.Username, p)
+		return os.ErrPermission
+	}
+	enforced, err := fs.wormEnforcedForEntry(p, entry)
+	if err != nil {
+		return err
+	}
+	if enforced {
+		glog.V(0).Infof("permission denied for user %s: %s is write-once", fs.user.Username, p)
+		return os.ErrPermission
+	}
+	return nil
+}
+
+func (fs *SftpServer) wormEnforcedForEntry(p string, entry *filer_pb.Entry) (bool, error) {
+	if entry.WormEnforcedAtTsNs == 0 {
+		return false, nil
+	}
+	fc, err := filer.ReadFilerConf(fs.filerAddr, fs.grpcDialOption, nil)
+	if err != nil {
+		return false, err
+	}
+	rule := fc.MatchStorageRule(p)
+	if !rule.GetWorm() {
+		return false, nil
+	}
+	if rule.WormRetentionTimeSeconds == 0 {
+		return true, nil
+	}
+	return time.Since(time.Unix(0, entry.WormEnforcedAtTsNs)).Seconds() < float64(rule.WormRetentionTimeSeconds), nil
+}
+
+// objectLockState makes the filer refuse the delete if the entry's Object
+// Lock state changed after it was checked.
+func objectLockState(entry *filer_pb.Entry) map[string][]byte {
+	state := make(map[string][]byte, 3)
+	for _, key := range []string{s3_constants.ExtLegalHoldKey, s3_constants.ExtObjectLockModeKey, s3_constants.ExtRetentionUntilDateKey} {
+		state[key] = entry.Extended[key]
+	}
+	return state
 }
 
 // ==================== Custom Types ====================
