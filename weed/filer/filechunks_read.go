@@ -69,8 +69,10 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOff
 				queue.PushBack(point)
 				prevX = point.x
 			} else {
+				// the tail has the highest ts, so this always finds a spot; on a
+				// ts tie the chunk that is already visible keeps winning
 				for e := queue.Front(); e != nil; e = e.Next() {
-					if e.Value.(*Point).ts > point.ts {
+					if e.Value.(*Point).ts >= point.ts {
 						queue.InsertBefore(point, e)
 						break
 					}
@@ -79,7 +81,7 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOff
 		} else {
 			isLast := true
 			for e := queue.Back(); e != nil; e = e.Prev() {
-				if e.Value.(*Point).ts == point.ts {
+				if e.Value.(*Point).chunk == point.chunk {
 					queue.Remove(e)
 					break
 				}
