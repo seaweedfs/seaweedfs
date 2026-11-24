@@ -180,6 +180,9 @@ const (
 	// The request's snapshot changed during a conditional write; clients can retry.
 	ErrConditionalRequestConflict
 	ErrNoSuchPublicAccessBlockConfiguration
+	// An AccessControlPolicy body that does not validate against the S3
+	// schema, such as a grant whose Permission is missing or unknown.
+	ErrMalformedACL
 )
 
 // Error message constants for checksum validation
@@ -777,6 +780,12 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "NoSuchPublicAccessBlockConfiguration",
 		Description:    "The public access block configuration was not found",
 		HTTPStatusCode: http.StatusNotFound,
+	},
+
+	ErrMalformedACL: {
+		Code:           "MalformedACLError",
+		Description:    "The XML you provided was not well-formed or did not validate against our published schema.",
+		HTTPStatusCode: http.StatusBadRequest,
 	},
 }
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -339,6 +340,16 @@ func ValidateAndTransferGrants(accountManager AccountManager, grants []*s3.Grant
 			return nil, s3err.ErrInvalidRequest
 		}
 	}
+	// Permission is an optional member of the Grant type, so a client can omit
+	// it or send any string; a grant without a valid permission grants nothing
+	// and S3 rejects the ACL as malformed. This runs after the grantee checks
+	// so an ACL rejected for its grantees keeps the error it got before.
+	for _, grant := range grants {
+		if grant.Permission == nil || !s3_constants.ValidatePermission(*grant.Permission) {
+			glog.Warningf("invalid grant permission %q", aws.StringValue(grant.Permission))
+			return nil, s3err.ErrMalformedACL
+		}
+	}
 	return result, s3err.ErrNone
 }
 
@@ -361,6 +372,11 @@ func buildAccessControlList(accountManager AccountManager, grants []*s3.Grant, o
 
 	var acl AccessControlList
 	for _, grant := range grants {
+		// Entries written before the permission was validated can hold a
+		// grant without one; it grants nothing, so it is not listed.
+		if grant == nil || grant.Permission == nil {
+			continue
+		}
 		localGrant := Grant{Permission: Permission(*grant.Permission)}
 		if grant.Grantee != nil {
 			localGrant.Grantee = Grantee{
