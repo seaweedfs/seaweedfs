@@ -179,11 +179,8 @@ pub async fn ann_with_scope(
     }
     let (scanner, indexed) = scanner(dataset, table, query, true, restriction).await?;
     let hits = run(scanner, table).await?;
-    if indexed
-        && query.filter.is_some()
-        && !query.postfilter
-        && (hits.len() < query.k || hits.iter().any(|h| !h.distance.is_finite()))
-    {
+    let short_prefilter = query.filter.is_some() && !query.postfilter && hits.len() < query.k;
+    if indexed && (short_prefilter || hits.iter().any(|h| !h.distance.is_finite())) {
         return exact_in_scope(dataset, table, query, restriction).await;
     }
     Ok(hits)
@@ -457,6 +454,52 @@ mod tests {
 
     fn l2(a: &[f32], b: &[f32]) -> f32 {
         a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum()
+    }
+
+    #[tokio::test]
+    async fn indexed_only_scores_all_returned_distances() {
+        let dir = TempDir::new().unwrap();
+        let vectors: Vec<_> = (0..1024)
+            .map(|i| {
+                vec![
+                    (i / 64) as f32 * 100.0 + (i % 64) as f32 * 0.01,
+                    0.0,
+                    0.0,
+                    0.0,
+                ]
+            })
+            .collect();
+        let mut dataset = write_dataset(&dir, &vectors, &vec!["a"; vectors.len()]).await;
+        dataset
+            .create_index(
+                &["vector"],
+                lance_index::IndexType::Vector,
+                Some("vidx".into()),
+                &lance::index::vector::VectorIndexParams::ivf_flat(16, DistanceType::L2),
+                true,
+            )
+            .await
+            .unwrap();
+        crate::testing::append_dataset(&mut dataset, &[vec![0.0; DIM]], &["late"]).await;
+        let table = VectorTable::resolve(&dataset, None, None).unwrap();
+        let query = Query {
+            vector: vec![0.0; DIM],
+            k: vectors.len(),
+            filter: None,
+            postfilter: false,
+            distance: DistanceType::L2,
+            nprobes: None,
+            index_segments: None,
+            fragments: None,
+            exact_match_limit: None,
+        };
+        let (hits, excluded) = indexed_only(&dataset, &table, &query).await.unwrap();
+        assert_eq!(excluded, 1);
+        assert_eq!(hits.len(), vectors.len());
+        for hit in hits {
+            let index: usize = hit.key[1..].parse().unwrap();
+            assert_eq!(hit.distance, l2(&query.vector, &vectors[index]));
+        }
     }
 
     #[tokio::test]
