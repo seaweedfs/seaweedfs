@@ -3,6 +3,7 @@ package mount
 import (
 	"context"
 	"os"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -223,7 +224,7 @@ func retainSetAttr(input *fuse.SetAttrIn, live, acked *filer_pb.Entry) {
 	if gidSet {
 		live.Attributes.Gid = acked.Attributes.Gid
 	}
-	if (uidSet || gidSet) && chownKillsSetId(input, live) {
+	if (uidSet || gidSet) && chownKillsSetId(runtime.GOOS, input.Caller.Uid, live.IsDirectory) {
 		live.Attributes.FileMode &^= 0o6000
 	}
 	if _, ok := input.GetMTime(); ok {
@@ -232,11 +233,13 @@ func retainSetAttr(input *fuse.SetAttrIn, live, acked *filer_pb.Entry) {
 	live.Attributes.Ctime, live.Attributes.CtimeNs = acked.Attributes.Ctime, acked.Attributes.CtimeNs
 }
 
-// chownKillsSetId reports whether a chown clears the SUID and SGID bits: it
-// does for a caller other than root, and never on a directory. input.Uid is
-// the new owner; the caller is input.Caller.Uid.
-func chownKillsSetId(input *fuse.SetAttrIn, entry *filer_pb.Entry) bool {
-	return input.Caller.Uid != 0 && !entry.IsDirectory
+// chownKillsSetId reports whether the mount clears the SUID and SGID bits on a
+// chown. Linux sends the cleared mode with the chown itself, since the mount
+// does not handle killpriv. Elsewhere a caller other than root clears them,
+// except on a directory. input.Uid is the new owner; the caller is
+// input.Caller.Uid.
+func chownKillsSetId(goos string, callerUid uint32, isDirectory bool) bool {
+	return goos != "linux" && callerUid != 0 && !isDirectory
 }
 
 func (wfs *WFS) applySetAttr(path util.FullPath, input *fuse.SetAttrIn, entry *filer_pb.Entry) fuse.Status {
@@ -274,7 +277,7 @@ func (wfs *WFS) applySetAttr(path util.FullPath, input *fuse.SetAttrIn, entry *f
 		}
 	}
 
-	if ownerChanged && chownKillsSetId(input, entry) {
+	if ownerChanged && chownKillsSetId(runtime.GOOS, input.Caller.Uid, entry.IsDirectory) {
 		entry.Attributes.FileMode &^= 0o6000
 	}
 
