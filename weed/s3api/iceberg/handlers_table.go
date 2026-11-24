@@ -814,7 +814,7 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 	// delete, so we can purge data files afterwards. The catalog is the
 	// authoritative owner of this mapping — if the table is not registered,
 	// there is nothing to clean up and DeleteTable will return NoSuchTable.
-	var storedMetadataLocation string
+	var storedMetadataLocation, storedVersionToken string
 	var storedCreatedAt time.Time
 	lookupReq := &s3tables.GetTableRequest{
 		TableBucketARN: bucketARN,
@@ -829,12 +829,14 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 	if lookupErr == nil {
 		storedMetadataLocation = lookupResp.MetadataLocation
 		storedCreatedAt = lookupResp.CreatedAt
+		storedVersionToken = lookupResp.VersionToken
 	}
 
 	deleteReq := &s3tables.DeleteTableRequest{
 		TableBucketARN: bucketARN,
 		Namespace:      namespace,
 		Name:           tableName,
+		VersionToken:   storedVersionToken,
 	}
 
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
