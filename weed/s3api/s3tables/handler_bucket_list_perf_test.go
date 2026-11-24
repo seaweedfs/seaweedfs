@@ -41,8 +41,12 @@ func seedListPerfBuckets(tb testing.TB, fs *s3tablestest.MemFiler, n int) {
 
 func listTableBucketsAs(tb testing.TB, m *Manager, fs *s3tablestest.MemFiler, caller string, maxBuckets int) ListTableBucketsResponse {
 	tb.Helper()
+	// The handler stops reading the filer's listing once the page is full;
+	// cancelling releases that unfinished stream after each call.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	var resp ListTableBucketsResponse
-	require.NoError(tb, m.Execute(context.Background(), NewManagerClient(fs.Client), "ListTableBuckets",
+	require.NoError(tb, m.Execute(ctx, NewManagerClient(fs.Client), "ListTableBuckets",
 		&ListTableBucketsRequest{MaxBuckets: maxBuckets}, &resp, caller))
 	return resp
 }
