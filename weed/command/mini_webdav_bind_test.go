@@ -16,6 +16,8 @@ func TestMiniWebDavBindIP(t *testing.T) {
 		{name: "unauthenticated wildcard binds to loopback", requestedIP: "0.0.0.0", want: "127.0.0.1"},
 		{name: "unauthenticated host address binds to loopback", requestedIP: "10.0.0.5", want: "127.0.0.1"},
 		{name: "existing loopback bind is preserved", requestedIP: "127.0.0.1", want: "127.0.0.1"},
+		{name: "bracketed IPv6 loopback bind is preserved", requestedIP: "[::1]", want: "[::1]"},
+		{name: "bracketed IPv6 wildcard binds to loopback", requestedIP: "[::]", want: "127.0.0.1"},
 		{name: "basic auth permits requested bind", requestedIP: "0.0.0.0", password: "secret", want: "0.0.0.0"},
 		{name: "explicit insecure opt-out permits requested bind", requestedIP: "0.0.0.0", allowInsecure: true, want: "0.0.0.0"},
 	}
