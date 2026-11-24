@@ -375,8 +375,7 @@ func guardedMaxConnsPerHost() int {
 // for an s3-compatible remote, the resolved keys (which a type's environment
 // fallback may supply) and WEED_REMOTE_S3_CREDENTIALS, plus — with a key or
 // secret still missing (the SDK's default chain) — the shared credentials and
-// config files and the AWS_* variables the chain reads. "" for a remote of
-// another kind.
+// config files and every AWS_* variable. "" for a remote of another kind.
 func guardedCredentialsVersion(conf *remote_pb.RemoteConf) string {
 	if conf.GetType() == "gcs" {
 		return remote_storage.CredentialsVersion(conf)
@@ -398,16 +397,18 @@ func guardedCredentialsVersion(conf *remote_pb.RemoteConf) string {
 		h.Write([]byte(remote_storage.FileVersion(shared)))
 		h.Write([]byte{0})
 		h.Write([]byte(remote_storage.FileVersion(config)))
-		for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_DEFAULT_PROFILE",
-			// the source a keyless remote's chain takes: web identity, the container endpoint, IMDS
-			"AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_ROLE_ARN", "AWS_ROLE_SESSION_NAME",
-			"AWS_REGION", "AWS_DEFAULT_REGION", "AWS_STS_REGIONAL_ENDPOINTS",
-			"AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
-			"AWS_CONTAINER_AUTHORIZATION_TOKEN", "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
-			"AWS_EC2_METADATA_SERVICE_ENDPOINT", "AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE",
-			"AWS_EC2_METADATA_DISABLED", "AWS_EC2_METADATA_V1_DISABLED"} {
+		// the SDK takes its keys, profile, web identity, container, IMDS, STS
+		// and endpoint settings from AWS_* variables when it builds the session
+		var vars []string
+		for _, kv := range os.Environ() {
+			if strings.HasPrefix(kv, "AWS_") {
+				vars = append(vars, kv)
+			}
+		}
+		slices.Sort(vars)
+		for _, kv := range vars {
 			h.Write([]byte{0})
-			h.Write([]byte(os.Getenv(k)))
+			h.Write([]byte(kv))
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil)[:16])
