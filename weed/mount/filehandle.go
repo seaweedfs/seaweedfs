@@ -54,6 +54,9 @@ type FileHandle struct {
 	// nothing to delete after all can tell its own mark from a later one.
 	deleteEpoch uint64
 	isRenamed   bool // set by Rename before waiting for async flush; skips old-path metadata flush
+	// nameTaken is set when another mount's rename took the name of this
+	// unpublished create; its publication is refused from then on.
+	nameTaken bool
 	// linkRefresh is the hard link id of a link change whose stored entry
 	// could not be read; the next flush reads it before publishing.
 	linkRefresh []byte

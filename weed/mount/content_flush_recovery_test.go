@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
@@ -238,5 +239,60 @@ func TestContentRecoverySkipsAnotherUsersDirectory(t *testing.T) {
 	}
 	if files, globErr := globFailedContent(t, w); globErr != nil || len(files) != 1 {
 		t.Fatalf("recovery records %v, error %v", files, globErr)
+	}
+}
+
+// Another mount renaming its file onto the name of an unpublished create
+// takes that name. The create must not publish there later, even once the name
+// is free again (an unlink, or a move of its directory): a writeback drain
+// retains a recovery record and default mode fails close().
+func TestUnpublishedCreateAfterPeerRenameOntoIsNotPublished(t *testing.T) {
+	oldSleep := metadataFlushSleep
+	metadataFlushSleep = func(context.Context, time.Duration) {}
+	defer func() { metadataFlushSleep = oldSleep }()
+	for _, writeback := range []bool{true, false} {
+		for _, taken := range []bool{true, false} {
+			w := newInvalidateTestWFS(t)
+			w.option.WritebackCache = writeback
+			w.option.CacheDirForWrite = t.TempDir()
+			s := &committedContentFiler{}
+			startFakeFiler(t, w, s)
+			fh, _ := openUnpublishedCreate(t, w, util.FullPath("/dir/file"), nil)
+			w.inodeToPath.Lookup(util.FullPath("/dir/other"), time.Now().Unix(), false, false, 0, true)
+			applyPeerEvent(t, w, &filer_pb.SubscribeMetadataResponse{
+				Directory: "/dir",
+				TsNs:      1500,
+				EventNotification: &filer_pb.EventNotification{
+					OldEntry:      &filer_pb.Entry{Name: "other"},
+					NewEntry:      &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{FileSize: 10}},
+					NewParentPath: "/dir",
+				},
+			})
+			if taken {
+				s.entry = &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{FileSize: 10}}
+			}
+			peer := proto.Clone(s.entry)
+
+			if writeback {
+				done := make(chan struct{})
+				w.pendingAsyncFlush = map[uint64]chan struct{}{fh.inode: done}
+				w.asyncFlushWg.Add(1)
+				w.processAsyncFlushItem(&asyncFlushItem{fh: fh, done: done})
+			} else if code := w.doFlush(context.Background(), fh, 1000, 20, false, 0); code == fuse.OK {
+				t.Fatalf("taken=%v: close of a create whose name a peer took returned OK", taken)
+			}
+
+			files, err := globFailedContent(t, w)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantRecords := 0
+			if writeback {
+				wantRecords = 1
+			}
+			if s.calls != 0 || len(files) != wantRecords || !proto.Equal(peer, s.entry) {
+				t.Fatalf("writeback=%v taken=%v: calls=%d recovery=%v stored=%v", writeback, taken, s.calls, files, s.entry)
+			}
+		}
 	}
 }

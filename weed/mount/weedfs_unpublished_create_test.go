@@ -25,8 +25,10 @@ func openUnpublishedCreate(t *testing.T, wfs *WFS, path util.FullPath, data []by
 	fh.RememberPath(path)
 	fh.dirtyMetadata = true
 	fh.baseEntry.Store(nil)
-	if _, err := fh.dirtyPages.AddPage(0, data, true, time.Now().UnixNano()); err != nil {
-		t.Fatalf("AddPage: %v", err)
+	if len(data) > 0 {
+		if _, err := fh.dirtyPages.AddPage(0, data, true, time.Now().UnixNano()); err != nil {
+			t.Fatalf("AddPage: %v", err)
+		}
 	}
 	fh.UpdateEntry(func(entry *filer_pb.Entry) {
 		entry.Attributes.FileSize = uint64(len(data))
@@ -131,8 +133,8 @@ func TestPeerRenameAwayLeavesUnpublishedCreateOnItsName(t *testing.T) {
 }
 
 // The peer renamed another file onto the name. That replaces nothing of the
-// file this mount created, so its handle is not marked deleted; its flush
-// reports the taken name instead of skipping the publish.
+// file this mount created, so its handle is not marked deleted; its flush is
+// refused instead of skipped, so the writes are not dropped silently.
 func TestPeerRenameOntoUnpublishedCreateDoesNotMarkItDeleted(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 	fh, _ := openUnpublishedCreate(t, wfs, util.FullPath("/dir/file"), []byte("BBBB"))
