@@ -354,21 +354,29 @@ func (rc *ReaderCache) remove(downloader *SingleChunkCacher) {
 	}
 }
 
-// removeUnpinned drops a cacher only while no stream is positioned in it.
-// Budget eviction picks its victim under the budget lock, so the pin check
-// and the map removal must happen together under the ReaderCache lock.
-func (rc *ReaderCache) removeUnpinned(downloader *SingleChunkCacher) (removed bool) {
+// evictForBudget destroys a finished chunk the budget picked to make room.
+// Unless force is set it keeps a chunk a stream is positioned in: the budget
+// picks its victim under the budget lock, so the pin check and the map removal
+// must happen together under the ReaderCache lock.
+//
+// A chunk no longer in the map was taken out by a removal that has not
+// destroyed it yet, such as ReaderCache.destroy(), which destroys a closed
+// file's chunks one at a time and can be waiting for a download that needs
+// this very budget. Such a chunk is destroyed here rather than skipped:
+// skipping it would leave both waiting forever. destroy() is safe to run twice.
+func (rc *ReaderCache) evictForBudget(downloader *SingleChunkCacher, force bool) (evicted bool) {
 	rc.Lock()
-	removed = rc.downloaders[downloader.chunkFileId] == downloader &&
-		atomic.LoadInt32(&downloader.pins) == 0
-	if removed {
+	inMap := rc.downloaders[downloader.chunkFileId] == downloader
+	if inMap && !force && atomic.LoadInt32(&downloader.pins) != 0 {
+		rc.Unlock()
+		return false
+	}
+	if inMap {
 		delete(rc.downloaders, downloader.chunkFileId)
 	}
 	rc.Unlock()
-	if removed {
-		downloader.destroy()
-	}
-	return
+	downloader.destroy()
+	return true
 }
 
 // consumable reports whether the cacher could be dropped: its buffer was
@@ -456,6 +464,12 @@ func (s *SingleChunkCacher) startCaching() {
 		s.wg.Done()
 		if s.hasCompletedError() {
 			s.parent.remove(s)
+			// remove() does nothing for a download no longer in the map:
+			// whoever took it out destroys it, possibly a ReaderCache.destroy()
+			// that waits for a download needing this very budget. A failed
+			// download holds no buffer, so give its reservation back now;
+			// release is idempotent.
+			s.parent.budget.release(s)
 		} else {
 			s.parent.budget.complete(s)
 		}
