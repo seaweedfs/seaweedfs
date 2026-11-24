@@ -128,7 +128,12 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Check bucket policy
+	// The bucket's policy reaches the engine when the bucket loads; a missing
+	// bucket passes so auto-create below still applies.
+	if _, errCode := s3a.getBucketConfig(bucket); errCode != s3err.ErrNone && errCode != s3err.ErrNoSuchBucket {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 	if errCode, _ := s3a.checkPolicyWithEntry(r, bucket, object, string(s3_constants.ACTION_WRITE), "", nil); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
