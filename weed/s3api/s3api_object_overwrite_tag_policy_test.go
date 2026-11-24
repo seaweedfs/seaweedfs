@@ -133,6 +133,16 @@ func TestOverwriteHonorsExistingObjectTagDeny(t *testing.T) {
 	require.NotNil(t, filer.entries["/buckets/vault/multipart.txt"])
 	filer.mu.Unlock()
 
+	// A key ending in "/" completes onto dir/dir, so that entry's tags decide.
+	filer.mu.Lock()
+	filer.entries["/buckets/vault/dir/dir"] = taggedEntry("dir", "confidential")
+	filer.mu.Unlock()
+	rec = complete("dir/")
+	require.Equal(t, http.StatusForbidden, rec.Code, "CompleteMultipartUpload of dir/ over a confidential dir/dir: %s", rec.Body.String())
+	filer.mu.Lock()
+	require.Equal(t, "original", string(filer.entries["/buckets/vault/dir/dir"].Content))
+	filer.mu.Unlock()
+
 	// A replayed completion of the upload that wrote the tagged object returns
 	// its committed result instead of being refused as an overwrite.
 	filer.mu.Lock()
