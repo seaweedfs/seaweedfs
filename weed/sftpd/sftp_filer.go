@@ -161,6 +161,13 @@ func (fs *SftpServer) newFileWriter(r *sftp.Request) (io.WriterAt, error) {
 	if err := fs.requireParentDir(absPath); err != nil {
 		return nil, err
 	}
+	if entry, err := fs.getEntry(absPath); err == nil {
+		if err := fs.checkEntryProtected(absPath, entry); err != nil {
+			return nil, err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	// Create a temporary file to buffer writes
 	tmpFile, err := os.CreateTemp("", "sftp-upload-*")
 	if err != nil {
@@ -431,6 +438,9 @@ func (fs *SftpServer) setFileStatWithRequest(absPath string, r *sftp.Request) er
 	}
 	entry, err := fs.getEntry(absPath)
 	if err != nil {
+		return err
+	}
+	if err := fs.checkEntryProtected(absPath, entry); err != nil {
 		return err
 	}
 	dir, _ := util.FullPath(absPath).DirAndName()

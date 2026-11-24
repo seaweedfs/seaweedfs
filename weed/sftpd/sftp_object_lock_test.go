@@ -3,6 +3,7 @@ package sftpd
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/sftp"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -26,6 +28,7 @@ type lockTestFiler struct {
 	entries map[string]*filer_pb.Entry
 	deletes []*filer_pb.DeleteEntryRequest
 	renames []*filer_pb.AtomicRenameEntryRequest
+	updates int
 }
 
 func (f *lockTestFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -209,5 +212,41 @@ func TestRenameRefusesProtectedSourceAndTarget(t *testing.T) {
 				t.Fatalf("got %d AtomicRenameEntry calls, want 1", len(renames))
 			}
 		})
+	}
+}
+
+func (f *lockTestFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updates++
+	return &filer_pb.UpdateEntryResponse{}, nil
+}
+
+func TestWriteAndSetstatRefuseProtectedEntries(t *testing.T) {
+	entries := map[string]*filer_pb.Entry{
+		"/buckets/b":          {Name: "b", IsDirectory: true},
+		"/buckets/b/held":     lockedEntry("held", map[string]string{s3_constants.ExtLegalHoldKey: s3_constants.LegalHoldOn}),
+		"/buckets/worm":       {Name: "worm", IsDirectory: true},
+		"/buckets/worm/f":     {Name: "f", WormEnforcedAtTsNs: time.Now().UnixNano()},
+		"/buckets/b/unlocked": {Name: "unlocked"},
+	}
+	fs, fake := newLockTestServer(t, entries)
+	for _, p := range []string{"/b/held", "/worm/f"} {
+		req := sftp.NewRequest("Put", p)
+		if w, err := fs.newFileWriter(req); !errors.Is(err, os.ErrPermission) {
+			if closer, ok := w.(io.Closer); ok {
+				closer.Close()
+			}
+			t.Fatalf("overwrite of %s: got %v, want os.ErrPermission", p, err)
+		}
+		if err := fs.setFileStatWithRequest("/buckets"+p, sftp.NewRequest("Setstat", p)); !errors.Is(err, os.ErrPermission) {
+			t.Fatalf("setstat of %s: got %v, want os.ErrPermission", p, err)
+		}
+	}
+	if fake.updates != 0 {
+		t.Fatalf("setstat of a protected entry reached the filer")
+	}
+	if err := fs.setFileStatWithRequest("/buckets/b/unlocked", sftp.NewRequest("Setstat", "/b/unlocked")); err != nil {
+		t.Fatalf("setstat of an unprotected entry: %v", err)
 	}
 }
