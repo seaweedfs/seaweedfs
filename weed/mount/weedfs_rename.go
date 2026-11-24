@@ -192,9 +192,9 @@ renameat2()
 */
 const (
 	RenameEmptyFlag = 0
-	RenameNoReplace = 1
-	RenameExchange  = 2
-	RenameWhiteout  = 3
+	RenameNoReplace = 1 << 0
+	RenameExchange  = 1 << 1
+	RenameWhiteout  = 1 << 2
 )
 
 func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string, newName string) (code fuse.Status) {
@@ -210,12 +210,10 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		return s
 	}
 
+	// The filer moves one entry: it can neither swap two nor leave a whiteout.
 	switch in.Flags {
 	case RenameEmptyFlag:
 	case RenameNoReplace:
-	case RenameExchange:
-	case RenameWhiteout:
-		return fuse.ENOTSUP
 	default:
 		return fuse.EINVAL
 	}
