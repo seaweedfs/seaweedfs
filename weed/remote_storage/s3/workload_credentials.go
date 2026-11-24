@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/defaults"
+	"github.com/aws/aws-sdk-go/aws/endpoints"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -57,16 +58,21 @@ func workloadCredentialsMode() (bool, error) {
 
 // workloadCredentials is the workload's identity alone: web identity when the
 // environment names a token file and a role (EKS IRSA), else the container
-// credentials endpoint or the EC2 instance metadata service. STS is asked in
+// credentials endpoint or the EC2 instance metadata service. STS is asked at
+// the regional endpoint (unless AWS_STS_REGIONAL_ENDPOINTS says otherwise) of
 // the workload's own region, the bucket's only when the environment names
 // none. The session it builds on carries anonymous credentials so that it
 // resolves none of its own (a token file without a role would otherwise fail
 // every build), and it fetches on an unguarded HTTP client: the guarded one is
 // for the storage endpoint and refuses the link-local credential endpoints.
 func workloadCredentials(region string) (*credentials.Credentials, error) {
+	cfg := aws.Config{Region: aws.String(util.Nvl(os.Getenv("AWS_REGION"), os.Getenv("AWS_DEFAULT_REGION"), region)), HTTPClient: &http.Client{},
+		Credentials: credentials.AnonymousCredentials}
+	if os.Getenv("AWS_STS_REGIONAL_ENDPOINTS") == "" {
+		cfg.STSRegionalEndpoint = endpoints.RegionalSTSEndpoint
+	}
 	sess, err := session.NewSessionWithOptions(session.Options{
-		Config: aws.Config{Region: aws.String(util.Nvl(os.Getenv("AWS_REGION"), os.Getenv("AWS_DEFAULT_REGION"), region)), HTTPClient: &http.Client{},
-			Credentials: credentials.AnonymousCredentials},
+		Config:            cfg,
 		SharedConfigState: session.SharedConfigDisable,
 		SharedConfigFiles: []string{},
 	})

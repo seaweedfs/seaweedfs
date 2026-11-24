@@ -76,7 +76,7 @@ func TestWorkloadWebIdentityAsksTheWorkloadRegion(t *testing.T) {
 	t.Setenv(workloadCredentialsEnv, "workload")
 	t.Setenv("AWS_WEB_IDENTITY_TOKEN_FILE", token)
 	t.Setenv("AWS_ROLE_ARN", "arn:aws:iam::123456789012:role/pod")
-	t.Setenv("AWS_STS_REGIONAL_ENDPOINTS", "regional")
+	t.Setenv("AWS_STS_REGIONAL_ENDPOINTS", "") // the SDK's own default is the global endpoint
 	t.Setenv("AWS_REGION", "us-east-1")
 	t.Setenv("AWS_DEFAULT_REGION", "")
 	rec := &stsHostRecorder{next: http.DefaultTransport}
