@@ -182,13 +182,8 @@ func estimateEntriesBytes(entries []*filer_pb.LogEntry) int64 {
 }
 
 // loadLogFileEntries reads one log file chunk from volume servers and decodes
-// its records. fetchWholeChunk handles lookup, retries, cipher and gzip.
-//
-// The lookup asks the master when the cached volume map has no locations, as
-// the streaming reader does since #11964. Asked only of the map, a live volume
-// is not found until a starting filer has registered with the master, or once
-// a failed read has set its cached locations aside, and the replay would skip
-// the rest of the log file as if the volume were deleted.
+// its records. fetchWholeChunk handles lookup, retries, cipher and gzip. The
+// lookup falls back to the master: the cached map can lack a live volume.
 func loadLogFileEntries(masterClient *wdclient.MasterClient, chunk *filer_pb.FileChunk) (entries []*filer_pb.LogEntry, cacheable bool, err error) {
 	bytesBuffer := bytesBufferPool.Get().(*bytes.Buffer)
 	bytesBuffer.Reset()

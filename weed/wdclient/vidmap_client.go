@@ -66,11 +66,8 @@ const (
 	recentDeleteCap = 1 << 16
 )
 
-// ErrLookupUnanswered marks a lookup the provider gave no answer to: the
-// master or filer could not be reached in time, or the client has not
-// connected yet. Such a failure still reads "volume N not found", since no
-// locations are known, but unlike an answer that does not list the volume it
-// says nothing about whether the volume exists. Test with errors.Is.
+// ErrLookupUnanswered marks a lookup the provider gave no answer to, so a
+// "volume N not found" from it says nothing about whether the volume exists.
 var ErrLookupUnanswered = errors.New("no answer to the volume lookup")
 
 const (

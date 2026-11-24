@@ -440,9 +440,7 @@ func isChunkNotFoundError(err error) bool {
 	if err == nil {
 		return false
 	}
-	// A lookup the master did not answer still reads "volume N not found",
-	// but says nothing about the volume: skipping would drop the file's
-	// events for good, while the subscriber can resume here once it answers.
+	// "volume N not found" without an answer says nothing about the volume.
 	if errors.Is(err, wdclient.ErrLookupUnanswered) {
 		return false
 	}
