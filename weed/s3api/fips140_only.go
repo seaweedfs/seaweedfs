@@ -31,7 +31,7 @@ func fips140SecretTooShort(secretKey string) bool {
 
 // warnFips140ShortSecrets logs each access key in config whose secret SigV4
 // cannot use under fips140=only. The credentials stay loaded and stored;
-// requests signed with them get InvalidAccessKeyId.
+// requests signed with them get AccessDenied (ErrFips140SecretTooShort).
 func warnFips140ShortSecrets(config *iam_pb.S3ApiConfiguration) {
 	if !fips140Enforced() {
 		return
@@ -52,14 +52,16 @@ func warnFips140ShortSecrets(config *iam_pb.S3ApiConfiguration) {
 	}
 }
 
-// refuseFips140ShortSecret answers ErrInvalidAccessKeyID, as for an inactive
-// key, when cred's secret is too short for SigV4 under fips140=only, where
-// deriving the signing key from it would panic.
+// refuseFips140ShortSecret answers ErrFips140SecretTooShort, an AccessDenied
+// that says the key cannot be used in this mode, when cred's secret is too
+// short for SigV4 under fips140=only, where deriving the signing key from it
+// would panic. The key exists, so InvalidAccessKeyId would send the client
+// looking for a missing key.
 func refuseFips140ShortSecret(cred *Credential) s3err.ErrorCode {
 	if !fips140SecretTooShort(cred.SecretKey) {
 		return s3err.ErrNone
 	}
-	glog.Warningf("InvalidAccessKeyId: access key %s has a secret shorter than %d characters, which SigV4 cannot use under GODEBUG=fips140=only",
+	glog.Warningf("AccessDenied: access key %s has a secret shorter than %d characters, which SigV4 cannot use under GODEBUG=fips140=only",
 		cred.AccessKey, iamlib.Fips140MinSecretAccessKeyLength)
-	return s3err.ErrInvalidAccessKeyID
+	return s3err.ErrFips140SecretTooShort
 }

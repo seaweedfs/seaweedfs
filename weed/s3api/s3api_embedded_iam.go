@@ -334,7 +334,7 @@ func iamAuthErrorCode(errCode s3err.ErrorCode) string {
 		return "InvalidClientTokenId"
 	case s3err.ErrSignatureDoesNotMatch:
 		return "SignatureDoesNotMatch"
-	case s3err.ErrAccessDenied:
+	case s3err.ErrAccessDenied, s3err.ErrFips140SecretTooShort:
 		return "AccessDenied"
 	case s3err.ErrExpiredToken:
 		return "ExpiredToken"

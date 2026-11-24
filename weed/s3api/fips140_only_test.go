@@ -243,7 +243,7 @@ func TestFIPS140OnlyShortSecret(t *testing.T) {
 			for _, cred := range []*Credential{short, ten} {
 				want := s3err.ErrNone
 				if enforced && cred == short {
-					want = s3err.ErrInvalidAccessKeyID
+					want = s3err.ErrFips140SecretTooShort
 				}
 				if _, _, code := iam.doesSignatureMatch(signed(cred)); code != want {
 					t.Errorf("header SigV4 with a %d-character secret: got %v, want %v", len(cred.SecretKey), code, want)
@@ -256,5 +256,21 @@ func TestFIPS140OnlyShortSecret(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestFips140SecretTooShortError pins what a client gets for a secret too short
+// for fips140=only: AccessDenied with a message that names the cause but not
+// the secret's length, which callers learn before their signature is checked.
+func TestFips140SecretTooShortError(t *testing.T) {
+	e := s3err.GetAPIError(s3err.ErrFips140SecretTooShort)
+	if e.Code != "AccessDenied" || e.HTTPStatusCode != http.StatusForbidden {
+		t.Errorf("got %s %d, want AccessDenied 403", e.Code, e.HTTPStatusCode)
+	}
+	if bytes.Contains([]byte(e.Description), []byte("10")) || bytes.Contains([]byte(e.Description), []byte("character")) {
+		t.Errorf("message %q gives away the secret length rule", e.Description)
+	}
+	if got := iamAuthErrorCode(s3err.ErrFips140SecretTooShort); got != "AccessDenied" {
+		t.Errorf("IAM code: got %q, want AccessDenied", got)
 	}
 }
