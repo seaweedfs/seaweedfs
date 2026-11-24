@@ -8,7 +8,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -322,5 +325,61 @@ func TestUploadRechecksTargetAtClose(t *testing.T) {
 	fake.mu.Unlock()
 	if err := w.(io.Closer).Close(); !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("close after a hold was set: got %v, want os.ErrPermission", err)
+	}
+}
+
+func (f *lockTestFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream grpc.ServerStreamingServer[filer_pb.ListEntriesResponse]) error {
+	f.mu.Lock()
+	var children []*filer_pb.Entry
+	for p, entry := range f.entries {
+		if dir, name := path.Split(p); strings.TrimSuffix(dir, "/") == req.Directory && name > req.StartFromFileName {
+			children = append(children, entry)
+		}
+	}
+	f.mu.Unlock()
+	sort.Slice(children, func(i, j int) bool { return children[i].Name < children[j].Name })
+	for _, entry := range children {
+		if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: entry}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestRenameRefusesDirectoryHoldingProtectedEntries(t *testing.T) {
+	tests := []struct {
+		name    string
+		dir     string
+		child   *filer_pb.Entry
+		refused bool
+	}{
+		{"locked version below", "/buckets/b/d", lockedEntry("v_1", map[string]string{s3_constants.ExtLegalHoldKey: s3_constants.LegalHoldOn}), true},
+		{"under a WORM rule", "/buckets/worm/d", &filer_pb.Entry{Name: "v_1"}, true},
+		{"unprotected", "/buckets/b/d", lockedEntry("v_1", map[string]string{s3_constants.ExtLegalHoldKey: s3_constants.LegalHoldOff}), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parent := path.Dir(tt.dir)
+			fs, fake := newLockTestServer(t, map[string]*filer_pb.Entry{
+				parent:                     {Name: path.Base(parent), IsDirectory: true},
+				tt.dir:                     {Name: "d", IsDirectory: true},
+				tt.dir + "/f.versions":     {Name: "f.versions", IsDirectory: true},
+				tt.dir + "/f.versions/v_1": tt.child,
+				"/buckets/b":               {Name: "b", IsDirectory: true},
+			})
+			err := fs.renameEntry(tt.dir, "/buckets/b/moved")
+			if tt.refused {
+				if !errors.Is(err, os.ErrPermission) {
+					t.Fatalf("rename: got %v, want os.ErrPermission", err)
+				}
+				if len(fake.renameRequests()) != 0 {
+					t.Fatalf("rename of a protected subtree reached the filer")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("rename: %v", err)
+			}
+		})
 	}
 }

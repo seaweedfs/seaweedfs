@@ -292,9 +292,10 @@ func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
 		return err
 	}
 	requireAbsentTarget := false
+	var srcEntry *filer_pb.Entry
 	if path.Clean(absPath) != path.Clean(absTarget) {
-		srcEntry, err := fs.getEntry(absPath)
-		if err != nil {
+		var err error
+		if srcEntry, err = fs.getEntry(absPath); err != nil {
 			return err
 		}
 		if err := fs.checkEntryProtected(absPath, srcEntry); err != nil {
@@ -310,6 +311,11 @@ func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
 	}
 	if err := fs.requireParentDir(absTarget); err != nil {
 		return err
+	}
+	if srcEntry != nil && srcEntry.IsDirectory {
+		if err := fs.checkSubtreeProtected(absPath); err != nil {
+			return err
+		}
 	}
 	oldDir, oldName := util.FullPath(absPath).DirAndName()
 	newDir, newName := util.FullPath(absTarget).DirAndName()
@@ -757,6 +763,36 @@ func (fs *SftpServer) checkEntryProtected(p string, entry *filer_pb.Entry) error
 	}
 	if enforced {
 		glog.V(0).Infof("permission denied for user %s: %s is write-once", fs.user.Username, p)
+		return os.ErrPermission
+	}
+	return nil
+}
+
+// checkSubtreeProtected refuses to move a directory that a WORM rule covers
+// or that holds an object under Object Lock, since every descendant moves.
+func (fs *SftpServer) checkSubtreeProtected(dir string) error {
+	fc, err := fs.readFilerConf()
+	if err != nil {
+		return err
+	}
+	prefix := strings.TrimRight(dir, "/") + "/"
+	worm := fc.MatchStorageRule(prefix).GetWorm()
+	for _, rule := range fc.ToProto().Locations {
+		worm = worm || rule.GetWorm() && strings.HasPrefix(rule.LocationPrefix, prefix)
+	}
+	if worm {
+		glog.V(0).Infof("permission denied for user %s: %s intersects a WORM rule", fs.user.Username, dir)
+		return os.ErrPermission
+	}
+	var locked bool
+	if err := fs.callWithClient(true, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		locked, err = s3_objectlock.HasObjectsWithActiveLocks(ctx, client, dir)
+		return err
+	}); err != nil {
+		return err
+	}
+	if locked {
+		glog.V(0).Infof("permission denied for user %s: %s holds objects under Object Lock", fs.user.Username, dir)
 		return os.ErrPermission
 	}
 	return nil
