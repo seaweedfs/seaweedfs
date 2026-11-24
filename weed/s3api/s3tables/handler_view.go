@@ -714,10 +714,19 @@ func (h *S3TablesHandler) handleDeleteView(w http.ResponseWriter, r *http.Reques
 		if current.VersionToken != metadata.VersionToken {
 			return ErrConcurrentUpdate
 		}
+		// A view keeps nothing but its metadata files, so any other file
+		// under it was written by someone else and stays with the directory.
+		keepData, err := DirHoldsFiles(r.Context(), client, viewPath, time.Now().Add(time.Second))
+		if err != nil {
+			return err
+		}
 		claimed := snapshotExtended(entry.Extended)
 		claimed[ExtendedKeyDeleting] = []byte("delete")
 		if err := h.claimCatalogRecord(r.Context(), client, viewPath, snapshotExtended(entry.Extended), "delete"); err != nil {
 			return err
+		}
+		if keepData {
+			return h.removeExtendedAttributesIf(context.WithoutCancel(r.Context()), client, viewPath, claimed, catalogRecordKeys...)
 		}
 		if err := h.deleteDirectoryIfMatches(r.Context(), client, viewPath, &filer_pb.Entry{Extended: claimed}); err != nil {
 			if relErr := h.releaseCatalogRecord(context.WithoutCancel(r.Context()), client, viewPath, claimed); relErr != nil {
