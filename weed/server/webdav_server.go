@@ -815,14 +815,16 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 				f.entry.Chunks = manifestedChunks
 			}
 
+			if err := f.fs.checkWritable(ctx, f.name); err != nil {
+				return err
+			}
 			flushErr := f.fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 				f.entry.Attributes.Mtime = time.Now().Unix()
 
 				request := &filer_pb.UpdateEntryRequest{
-					Directory:        dir,
-					Entry:            f.entry,
-					Signatures:       []int32{f.fs.signature},
-					ExpectedExtended: objectLockState(f.entry),
+					Directory:  dir,
+					Entry:      f.entry,
+					Signatures: []int32{f.fs.signature},
 				}
 
 				if _, err := client.UpdateEntry(ctx, request); err != nil {

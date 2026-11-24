@@ -287,6 +287,39 @@ func TestWebDavOpenFileRefusesToReplaceProtectedEntries(t *testing.T) {
 	}
 }
 
+func TestWebDavUploadRechecksTargetAtClose(t *testing.T) {
+	for _, locked := range []bool{false, true} {
+		fs, fake := newWebDavLockFS(t, map[string]*filer_pb.Entry{"/buckets/b/f": {Name: "f"}})
+		fs.option.MaxMB = 1
+		f, err := fs.OpenFile(context.Background(), "/buckets/b/f", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		if _, err := f.Write(nil); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		if locked {
+			fake.mu.Lock()
+			fake.entries["/buckets/b/f"] = webDavLockedEntry("f", map[string]string{s3_constants.ExtLegalHoldKey: s3_constants.LegalHoldOn})
+			fake.entries["/buckets/b/f"].Attributes = &filer_pb.FuseAttributes{FileMode: 0644}
+			fake.mu.Unlock()
+		}
+		err = f.Close()
+		fake.mu.Lock()
+		updates := fake.updates
+		fake.mu.Unlock()
+		if locked {
+			if !errors.Is(err, os.ErrPermission) || len(updates) != 0 {
+				t.Fatalf("close after a hold was set: got %v with %d filer updates, want os.ErrPermission and none", err, len(updates))
+			}
+			continue
+		}
+		if err != nil || len(updates) != 1 || updates[0].ExpectedExtended != nil {
+			t.Fatalf("close: got %v with %d filer updates, want one without a precondition", err, len(updates))
+		}
+	}
+}
+
 func bytesEqualMap(a, b map[string][]byte) bool {
 	if len(a) != len(b) {
 		return false
