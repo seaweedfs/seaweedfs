@@ -299,6 +299,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
+	if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, dstBucket, dstObject, "", string(s3_constants.ACTION_WRITE), "CopyObjectHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Validate encryption parameters
 	if err := ValidateCopyEncryption(entry.Extended, r.Header); err != nil {
