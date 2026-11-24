@@ -615,11 +615,13 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 	if err != nil {
 		return lastTsNs, fmt.Errorf("%w %s: %v", errPeerUnreachable, peer, err)
 	}
-	ma.notePeerReachable(peer, stopChan)
 	if err := checkPeerDigest(peer, peerDigest, peerSignature == f.Signature); err != nil {
 		glog.Errorf("%v", err)
-		return lastTsNs, err
+		// A refused peer counts as unreachable, so the loop retires it from the
+		// low watermarks instead of letting its zero hold every subscriber.
+		return lastTsNs, fmt.Errorf("%w %s: %v", errPeerUnreachable, peer, err)
 	}
+	ma.notePeerReachable(peer, stopChan)
 
 	// when filer store is not shared by multiple filers
 	if peerSignature != f.Signature {

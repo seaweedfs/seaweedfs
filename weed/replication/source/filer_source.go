@@ -124,13 +124,14 @@ func (fs *FilerSource) Digest() (string, error) {
 }
 
 // DigestIsMd5 reports whether the source filer's entry digests are MD5s. A
-// filer that does not report its digest, or cannot be reached, is taken to
-// use this process's digest mode.
+// filer that does not report its digest predates the setting and is taken to
+// use this process's digest mode. A filer that cannot be reached is taken not
+// to, so its digests are not sent where an MD5 is expected.
 func (fs *FilerSource) DigestIsMd5() bool {
 	digest, err := fs.Digest()
 	if err != nil {
 		glog.Warningf("read digest of source filer %s: %v", fs.grpcAddress, err)
-		return !util.DigestIsSha256()
+		return false
 	}
 	if digest == "" {
 		return !util.DigestIsSha256()
