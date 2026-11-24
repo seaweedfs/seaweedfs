@@ -162,6 +162,45 @@ jobs:
           done
           echo "shareProcessNamespace renders correctly"
 
+          echo "=== Testing the S3 config reloader ==="
+          for workload in filer.s3:templates/filer/filer-statefulset.yaml s3:templates/s3/s3-deployment.yaml; do
+            prefix=${workload%%:*}
+            template=${workload#*:}
+            component=${prefix%%.*}
+            reloader_args=(--set "$prefix.enabled=true" --set "$prefix.enableAuth=true"
+              --set "$prefix.existingConfigSecret=s3-identities"
+              --set "$component.containerSecurityContext.enabled=true"
+              --set "$component.containerSecurityContext.runAsUser=1000")
+            helm template test $CHART_DIR --show-only "$template" "${reloader_args[@]}" > /tmp/reloader-off.yaml
+            test "$(grep -c 's3-config-reloader\|shareProcessNamespace' /tmp/reloader-off.yaml)" -eq 0
+            helm template test $CHART_DIR --show-only "$template" "${reloader_args[@]}" \
+              --set "$prefix.configReloader.enabled=true" \
+              --set "$prefix.configReloader.resources.limits.memory=32Mi" > /tmp/reloader-on.yaml
+            python3 - /tmp/reloader-off.yaml /tmp/reloader-on.yaml <<'PYEOF'
+          import sys, yaml
+          off, on = (yaml.safe_load(open(path)) for path in sys.argv[1:])
+          pod = on["spec"]["template"]["spec"]
+          main = pod["containers"][0]
+          reloader = next(c for c in pod["containers"] if c["name"] == "s3-config-reloader")
+          assert pod["shareProcessNamespace"] is True
+          assert reloader["image"] == main["image"]
+          # It must run as the same user as SeaweedFS to signal it.
+          assert reloader["securityContext"] == main["securityContext"], reloader.get("securityContext")
+          assert {"name": "config-users", "mountPath": "/etc/sw", "readOnly": True} in reloader["volumeMounts"]
+          assert reloader["resources"] == {"limits": {"memory": "32Mi"}}
+          # Without the reloader, the checksum hashes the existing Secret, so a change to it restarts the pod.
+          # With it, the checksum must not depend on the Secret's content.
+          annotation = lambda d: d["spec"]["template"]["metadata"]["annotations"]["checksum/s3config"]
+          assert annotation(on) != annotation(off)
+          PYEOF
+            if helm template test $CHART_DIR --show-only "$template" \
+              --set "$prefix.enabled=true" --set "$prefix.configReloader.enabled=true" > /tmp/reloader-noauth.yaml 2>&1; then
+              echo "FAIL: $prefix.configReloader rendered without $prefix.enableAuth"; exit 1
+            fi
+            grep -q "configReloader.enabled needs" /tmp/reloader-noauth.yaml
+          done
+          echo "S3 config reloader renders correctly"
+
           echo "=== Testing the S3 config checksum is stable across renders ==="
           # s3-secret.yaml keeps its generated keys with lookup. Hashing the rendered
           # Secret drew new keys for the checksum whenever lookup found nothing (on
