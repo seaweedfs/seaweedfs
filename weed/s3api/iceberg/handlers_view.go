@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/view"
@@ -297,8 +298,10 @@ func (s *Server) handleDropView(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var storedMetadataLocation string
+	var storedCreatedAt time.Time
 	if getResp, err := s.getView(r, namespace, viewName); err == nil {
 		storedMetadataLocation = getResp.MetadataLocation
+		storedCreatedAt = getResp.CreatedAt
 	}
 
 	err := s.dropView(r, namespace, viewName)
@@ -315,7 +318,10 @@ func (s *Server) handleDropView(w http.ResponseWriter, r *http.Request) {
 	if storedMetadataLocation != "" {
 		if viewLoc := tableLocationFromMetadataLocation(storedMetadataLocation); viewLoc != "" {
 			if dataBucket, dataPath, parseErr := parseS3Location(viewLoc); parseErr == nil {
-				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), dataBucket, dataPath, s3tables.AnyFileTime); cleanupErr != nil {
+				holdsFiles := func(client filer_pb.SeaweedFilerClient, dir string) (bool, error) {
+					return s3tables.ViewHoldsFiles(r.Context(), client, dir, storedCreatedAt)
+				}
+				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), dataBucket, dataPath, holdsFiles); cleanupErr != nil {
 					glog.V(1).Infof("Iceberg: failed to purge dropped view location s3://%s/%s: %v", dataBucket, dataPath, cleanupErr)
 				}
 			}

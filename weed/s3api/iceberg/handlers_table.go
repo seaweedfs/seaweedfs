@@ -351,7 +351,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 			if strings.HasSuffix(metadataPath, tablePath) {
 				// The name went to another table before this request wrote a
 				// record, so nothing names the directory the server picked.
-				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), metadataBucket, metadataPath, time.Time{}); cleanupErr != nil {
+				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), metadataBucket, metadataPath, nil); cleanupErr != nil {
 					glog.V(1).Infof("Iceberg: CreateTable cleanup %s: %v", metadataPath, cleanupErr)
 				}
 			}
@@ -860,7 +860,13 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 	if storedMetadataLocation != "" {
 		if tableLoc := tableLocationFromMetadataLocation(storedMetadataLocation); tableLoc != "" {
 			if dataBucket, dataPath, parseErr := parseS3Location(tableLoc); parseErr == nil {
-				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), dataBucket, dataPath, storedCreatedAt); cleanupErr != nil {
+				var holdsFiles func(filer_pb.SeaweedFilerClient, string) (bool, error)
+				if !storedCreatedAt.IsZero() {
+					holdsFiles = func(client filer_pb.SeaweedFilerClient, dir string) (bool, error) {
+						return s3tables.DirHoldsFiles(r.Context(), client, dir, storedCreatedAt)
+					}
+				}
+				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), dataBucket, dataPath, holdsFiles); cleanupErr != nil {
 					glog.V(1).Infof("Iceberg: failed to purge dropped table location s3://%s/%s: %v", dataBucket, dataPath, cleanupErr)
 				}
 			}
@@ -953,14 +959,14 @@ func isNoSuchTableError(err error) bool {
 // empty location (e.g. Trino CTAS) can proceed after a DROP. Callers must
 // have confirmed via the catalog that no table is registered at this name —
 // live tables must never be touched by this helper. Missing paths are not
-// an error. A non-zero before is when the dropped entry was created: a
-// location holding files older than that is left alone.
+// an error. A location for which a non-nil holdsFiles reports files the
+// dropped entry did not write is left alone.
 //
 // The tablePath is validated to contain only safe, relative segments before
 // being joined with the bucket prefix, so a maliciously crafted location
 // (e.g. containing "..") cannot escape the bucket subtree and delete data
 // outside of it.
-func (s *Server) cleanupStaleTableLocation(ctx context.Context, bucketName, tablePath string, before time.Time) error {
+func (s *Server) cleanupStaleTableLocation(ctx context.Context, bucketName, tablePath string, holdsFiles func(filer_pb.SeaweedFilerClient, string) (bool, error)) error {
 	tablePath = strings.Trim(tablePath, "/")
 	if bucketName == "" || tablePath == "" {
 		return nil
@@ -986,13 +992,13 @@ func (s *Server) cleanupStaleTableLocation(ctx context.Context, bucketName, tabl
 		if s3tables.RootClaimed(roots, "", path.Join(parentDir, name)) {
 			return s3tables.ErrLocationInUse
 		}
-		if !before.IsZero() {
-			holdsOlder, err := s3tables.DirHoldsFiles(ctx, client, path.Join(parentDir, name), before)
+		if holdsFiles != nil {
+			holds, err := holdsFiles(client, path.Join(parentDir, name))
 			if err != nil {
 				return err
 			}
-			if holdsOlder {
-				return fmt.Errorf("keeping %s: it holds files older than the dropped entry", path.Join(parentDir, name))
+			if holds {
+				return fmt.Errorf("keeping %s: it holds files the dropped entry did not write", path.Join(parentDir, name))
 			}
 		}
 		err = filer_pb.DoRemove(ctx, client, parentDir, name, true, true, true, false, nil)

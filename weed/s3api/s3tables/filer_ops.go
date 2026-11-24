@@ -908,9 +908,18 @@ func (w *markRemovalWrites) UpdateEntry(ctx context.Context, in *filer_pb.Update
 // dirListPageSize is how many entries DirHoldsFiles reads per ListEntries call.
 const dirListPageSize = 1024
 
-// AnyFileTime is a DirHoldsFiles cutoff past every file time, for a view: it
-// writes nothing but its metadata files.
-var AnyFileTime = time.Unix(1<<62, 0)
+// anyFileTime is a DirHoldsFiles cutoff past every file time.
+var anyFileTime = time.Unix(1<<62, 0)
+
+// ViewHoldsFiles reports whether dirPath holds a file a view created at
+// createdAt did not write: any file but its metadata, which it writes only
+// after its record, and any metadata file from an earlier second.
+func ViewHoldsFiles(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath string, createdAt time.Time) (bool, error) {
+	if holds, err := DirHoldsFiles(ctx, client, dirPath, anyFileTime); holds || err != nil {
+		return holds, err
+	}
+	return DirHoldsFiles(ctx, client, path.Join(dirPath, "metadata"), createdAt)
+}
 
 // DirHoldsFiles reports whether any file sits under dirPath, at any depth, or
 // an S3 object is stored on dirPath or a directory under it. A non-zero before
