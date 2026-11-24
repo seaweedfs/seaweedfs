@@ -124,6 +124,30 @@ func NewMd5For(name string) hash.Hash {
 	return md5.New()
 }
 
+// Md5For is Md5 for the named digest, "" meaning this process's mode. Check
+// the name with CheckDigest first: md5 panics under fips140=only.
+func Md5For(name string, data []byte) []byte {
+	if DigestIsSha256For(name) {
+		sum := sha256.Sum256(data)
+		return sum[:md5.Size]
+	}
+	sum := md5.Sum(data)
+	return sum[:]
+}
+
+// BodyMd5Of is BodyMd5 for a body held in memory: the content digest when it
+// is the MD5, else the body's MD5 when MD5 is available, else nil.
+func BodyMd5Of(contentDigest, data []byte) []byte {
+	if !DigestIsSha256() {
+		return contentDigest
+	}
+	if fips140Enforced() {
+		return nil
+	}
+	sum := md5.Sum(data)
+	return sum[:]
+}
+
 // NewContentMd5 returns an MD5 hash for checking a client's Content-MD5 next
 // to the content digest, when that digest is not itself an MD5. It returns
 // nil when the content digest is the MD5 (digest md5) or MD5 is refused

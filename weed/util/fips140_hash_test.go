@@ -150,6 +150,9 @@ func TestNewContentMd5(t *testing.T) {
 	if got := BodyMd5([]byte("digest"), nil); string(got) != "digest" {
 		t.Errorf("digest md5: BodyMd5 = %q, want the content digest", got)
 	}
+	if got := BodyMd5Of([]byte("digest"), []byte("hello")); string(got) != "digest" {
+		t.Errorf("digest md5: BodyMd5Of = %q, want the content digest", got)
+	}
 
 	SetDigest(DigestSha256)
 	h := NewContentMd5()
@@ -161,9 +164,16 @@ func TestNewContentMd5(t *testing.T) {
 		t.Errorf("digest sha256: BodyMd5 = %x, want the MD5 of hello", got)
 	}
 
+	if got := BodyMd5Of([]byte("sha256 digest"), []byte("hello")); fmt.Sprintf("%x", got) != "5d41402abc4b2a76b9719d911017c592" {
+		t.Errorf("digest sha256: BodyMd5Of = %x, want the MD5 of hello", got)
+	}
+
 	fips140Enforced = func() bool { return true }
 	if NewContentMd5() != nil {
 		t.Error("fips140=only: no MD5 can be computed")
+	}
+	if BodyMd5Of([]byte("sha256 digest"), []byte("hello")) != nil {
+		t.Error("fips140=only: BodyMd5Of must be nil so Content-MD5 goes unchecked")
 	}
 	if BodyMd5([]byte("sha256 digest"), nil) != nil {
 		t.Error("fips140=only: BodyMd5 must be nil so Content-MD5 goes unchecked")

@@ -137,13 +137,6 @@ func Md5(data []byte) []byte {
 	return Md5For("", data)
 }
 
-// Md5For is Md5 for the named digest, "" meaning this process's mode.
-func Md5For(digest string, data []byte) []byte {
-	hash := NewMd5For(digest)
-	hash.Write(data)
-	return hash.Sum(nil)
-}
-
 func Md5String(data []byte) string {
 	return fmt.Sprintf("%x", Md5(data))
 }

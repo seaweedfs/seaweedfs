@@ -236,11 +236,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		// ETag of the marker content, empty or not
 		dirMd5 := util.Md5(dirContent)
-		dirContentMd5 := util.NewContentMd5()
-		if dirContentMd5 != nil {
-			dirContentMd5.Write(dirContent)
-		}
-		if expectedMd5, _ := validateContentMd5(r.Header); len(expectedMd5) > 0 && !contentMd5Matches(util.BodyMd5(dirMd5, dirContentMd5), expectedMd5) {
+		if expectedMd5, _ := validateContentMd5(r.Header); len(expectedMd5) > 0 && !contentMd5Matches(util.BodyMd5Of(dirMd5, dirContent), expectedMd5) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrBadDigest)
 			return
 		}

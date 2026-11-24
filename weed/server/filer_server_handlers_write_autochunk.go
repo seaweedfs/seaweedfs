@@ -105,11 +105,7 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 			return nil, nil, fmt.Errorf("read input: %w", err)
 		}
 		md5bytes = util.Md5(buf.Bytes())
-		contentMd5Hash := util.NewContentMd5()
-		if contentMd5Hash != nil {
-			contentMd5Hash.Write(buf.Bytes())
-		}
-		if contentMd5Mismatch(util.BodyMd5(md5bytes, contentMd5Hash), r.Header.Get("Content-Md5")) {
+		if contentMd5Mismatch(util.BodyMd5Of(md5bytes, buf.Bytes()), r.Header.Get("Content-Md5")) {
 			bufPool.Put(buf)
 			return nil, nil, errors.New(constants.ErrMsgBadDigest)
 		}
