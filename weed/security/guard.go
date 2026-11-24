@@ -174,10 +174,12 @@ func (g *Guard) IsWhiteListed(host string) bool {
 // Keys too short for GODEBUG=fips140=only keep the keys in effect, as signing
 // with them would panic.
 func (g *Guard) UpdateSigningKeys(signingKey string, expiresAfterSec int, readSigningKey string, readExpiresAfterSec int, previousSigningKey string, previousReadSigningKey string) {
-	if err := checkFips140SigningKeys(signingKey, readSigningKey, previousSigningKey, previousReadSigningKey); err != nil {
-		glog.Errorf("keeping the JWT signing keys in effect: %v", err)
+	if err := util.CheckFips140HmacKeys([]string{"signing key", "read signing key"}, []string{signingKey, readSigningKey}); err != nil {
+		glog.Errorf("JWT reload: keeping the keys in effect, because %v", err)
 		return
 	}
+	previousSigningKey = usablePreviousKey("previous signing key", previousSigningKey)
+	previousReadSigningKey = usablePreviousKey("previous read signing key", previousReadSigningKey)
 	g.updateMu.Lock()
 	defer g.updateMu.Unlock()
 	next := *g.state.Load()
@@ -213,13 +215,17 @@ func (g *Guard) ReloadSigningKeys(section string) {
 	)
 }
 
-// checkFips140SigningKeys is util.CheckFips140HmacKeys for the four keys a
-// Guard holds.
-func checkFips140SigningKeys(signingKey, readSigningKey, previousSigningKey, previousReadSigningKey string) error {
-	return util.CheckFips140HmacKeys(
-		[]string{"signing key", "read signing key", "previous signing key", "previous read signing key"},
-		[]string{signingKey, readSigningKey, previousSigningKey, previousReadSigningKey},
-	)
+// usablePreviousKey returns key, or "" with an error log when it is too short
+// for HMAC under GODEBUG=fips140=only. Nothing in that mode can sign with such a
+// key, so dropping it rejects no token; keeping the new current keys keeps a
+// reload's outcome the same on servers that pass previous keys and on those
+// that do not, such as the filer's volume signer.
+func usablePreviousKey(name, key string) string {
+	if err := util.CheckFips140HmacKey(name, []byte(key)); err != nil {
+		glog.Errorf("JWT reload: ignoring the %s, which is shorter than the %d characters FIPS 140 needs for HMAC keys; the new keys are in effect", name, util.Fips140MinHmacKeyBytes)
+		return ""
+	}
+	return key
 }
 
 // freshKey returns name as the fresh read sets it, else its merged value, so
