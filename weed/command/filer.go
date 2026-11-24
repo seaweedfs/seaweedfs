@@ -52,7 +52,7 @@ var (
 const allowUntrustedRemoteEndpointsUsage = "if true, a read of a remote-only entry accepts arbitrary remote S3 endpoints including loopback / link-local hosts. Default rejects internal / metadata endpoints."
 
 // filerDigestUsage documents -digest, shared by weed filer, server and mini.
-const filerDigestUsage = "[md5|sha256] hash behind ETags, chunk digests and leveldb directory keys; S3, mount, WebDAV, SFTP and the other clients of this filer use it too. Empty follows GODEBUG: sha256 under fips140=only, md5 otherwise. GODEBUG=fips140=only refuses md5. Existing data keeps the digest it was written with."
+const filerDigestUsage = "[md5|sha256] hash behind ETags, chunk digests and hashed store keys; S3, mount, WebDAV, SFTP and the other clients of this filer use it too. Empty follows GODEBUG: sha256 under fips140=only, md5 otherwise; fips140=only refuses md5. Set it when the store is created and keep it: a store holds one kind of digest, and switching means copying the metadata into a new store with fs.meta.save and fs.meta.load."
 
 // iamSelfServiceRequiresGrantUsage documents the flag shared by every command
 // that runs the embedded IAM API.
