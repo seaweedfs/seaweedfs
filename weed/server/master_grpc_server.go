@@ -573,6 +573,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	}
 	if req.ClientType == cluster.S3Type {
 		ms.Cluster.SetLancePort(req.FilerGroup, peerAddress, req.LancePort)
+		ms.Cluster.SetS3Endpoint(req.FilerGroup, peerAddress, req.S3Endpoint)
 	}
 	ms.updateLockRing(req, peerAddress)
 	ms.clusterNodeLock.Unlock()

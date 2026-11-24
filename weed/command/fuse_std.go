@@ -214,6 +214,12 @@ func runFuse(cmd *Command, args []string) bool {
 			}
 		case "volumeServerAccess":
 			mountOptions.volumeServerAccess = &parameter.value
+		case "sseS3Read":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.sseS3Read = &parsed
+			} else {
+				panic(fmt.Errorf("sseS3Read: %s", err))
+			}
 		case "map.uid":
 			mountOptions.uidMap = &parameter.value
 		case "map.gid":

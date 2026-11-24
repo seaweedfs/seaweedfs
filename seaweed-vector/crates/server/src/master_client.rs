@@ -25,6 +25,7 @@ fn registration(client_addr: &str, filer_group: &str, metrics_port: u16) -> Keep
         leave_lock_ring: false,
         metrics_port: metrics_port.into(),
         lance_port: 0,
+        s3_endpoint: String::new(),
     }
 }
 

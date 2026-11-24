@@ -27,6 +27,7 @@ type ClusterNode struct {
 	Address    pb.ServerAddress
 	Version    string
 	LancePort  atomic.Uint32 // set after the node is listed, so read atomically
+	S3Endpoint atomic.Pointer[string]
 	counter    int
 	CreatedTs  time.Time
 	DataCenter DataCenter
@@ -216,4 +217,23 @@ func (cluster *Cluster) SetLancePort(ns string, address pb.ServerAddress, port u
 			node.LancePort.Store(port)
 		}
 	}
+}
+
+// SetS3Endpoint records the URL a registered S3 gateway serves the S3 API on.
+func (cluster *Cluster) SetS3Endpoint(ns string, address pb.ServerAddress, endpoint string) {
+	g := cluster.s3Groups
+	g.RLock()
+	defer g.RUnlock()
+	if m := g.getGroupMembers(FilerGroupName(ns), false); m != nil {
+		if node, found := m.members[address]; found {
+			node.S3Endpoint.Store(&endpoint)
+		}
+	}
+}
+
+func (node *ClusterNode) GetS3Endpoint() string {
+	if endpoint := node.S3Endpoint.Load(); endpoint != nil {
+		return *endpoint
+	}
+	return ""
 }

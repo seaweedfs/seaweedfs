@@ -35,6 +35,7 @@ type MountOptions struct {
 	umaskString          *string
 	nonempty             *bool
 	volumeServerAccess   *string
+	sseS3Read            *bool
 	uidMap               *string
 	gidMap               *string
 	readOnly             *bool
@@ -126,6 +127,7 @@ func init() {
 	mountOptions.umaskString = cmdMount.Flag.String("umask", "022", "octal umask, e.g., 022, 0111")
 	mountOptions.nonempty = cmdMount.Flag.Bool("nonempty", false, "allows the mounting over a non-empty directory")
 	mountOptions.volumeServerAccess = cmdMount.Flag.String("volumeServerAccess", "direct", "access volume servers by [direct|publicUrl|filerProxy]")
+	mountOptions.sseS3Read = cmdMount.Flag.Bool("sseS3Read", false, "read SSE-S3 objects through a registered S3 gateway using the mount user's AWS credentials (single-user, read-only bucket mount); uses plain HTTP when no HTTPS gateway is registered")
 	mountOptions.uidMap = cmdMount.Flag.String("map.uid", "", "map local uid to uid on filer, comma-separated <local_uid>:<filer_uid>")
 	mountOptions.gidMap = cmdMount.Flag.String("map.gid", "", "map local gid to gid on filer, comma-separated <local_gid>:<filer_gid>")
 	mountOptions.readOnly = cmdMount.Flag.Bool("readOnly", false, "read only")

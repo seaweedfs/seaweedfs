@@ -2,6 +2,8 @@ package command
 
 import (
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func strp(s string) *string { return &s }
@@ -100,5 +102,27 @@ func TestDeriveS3AdvertisedEndpoint(t *testing.T) {
 				t.Fatalf("deriveS3AdvertisedEndpoint() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestS3Endpoint(t *testing.T) {
+	tls := S3Options{
+		ip:            strp(""),
+		bindIp:        strp("0.0.0.0"),
+		port:          intp(8333),
+		portHttps:     intp(8443),
+		tlsPrivateKey: strp("/etc/seaweed/tls.key"),
+		externalUrl:   strp(""),
+	}
+	if got, want := tls.s3Endpoint(), "https://"+util.JoinHostPort(util.DetectedHostAddress(), 8443); got != want {
+		t.Fatalf("wildcard bind: got %q, want %q", got, want)
+	}
+	tls.ip = strp("10.0.0.7")
+	if got := tls.s3Endpoint(); got != "https://10.0.0.7:8443" {
+		t.Fatalf("explicit -ip: got %q", got)
+	}
+	tls.externalUrl = strp("https://s3.example.com/")
+	if got := tls.s3Endpoint(); got != "https://s3.example.com" {
+		t.Fatalf("externalUrl: got %q", got)
 	}
 }
