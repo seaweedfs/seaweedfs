@@ -452,6 +452,8 @@ message TopologyInfo {
   string id = 1;
   repeated DataCenterInfo data_center_infos = 2;
   map<string, DiskInfo> diskInfos = 3;
+  // The cluster's persisted UUID, the same value as topology_id in heartbeats.
+  string topology_id = 4;
 }
 message VolumeListRequest {
   // Empty and zero take everything. Only the volumes and ec shards listed

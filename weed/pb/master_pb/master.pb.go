@@ -2966,8 +2966,10 @@ type TopologyInfo struct {
 	Id              string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	DataCenterInfos []*DataCenterInfo      `protobuf:"bytes,2,rep,name=data_center_infos,json=dataCenterInfos,proto3" json:"data_center_infos,omitempty"`
 	DiskInfos       map[string]*DiskInfo   `protobuf:"bytes,3,rep,name=diskInfos,proto3" json:"diskInfos,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// The cluster's persisted UUID, the same value as topology_id in heartbeats.
+	TopologyId    string `protobuf:"bytes,4,opt,name=topology_id,json=topologyId,proto3" json:"topology_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TopologyInfo) Reset() {
@@ -3019,6 +3021,13 @@ func (x *TopologyInfo) GetDiskInfos() map[string]*DiskInfo {
 		return x.DiskInfos
 	}
 	return nil
+}
+
+func (x *TopologyInfo) GetTopologyId() string {
+	if x != nil {
+		return x.TopologyId
+	}
+	return ""
 }
 
 type VolumeListRequest struct {
@@ -5543,11 +5552,13 @@ const file_master_proto_rawDesc = "" +
 	"\tdiskInfos\x18\x03 \x03(\v2(.master_pb.DataCenterInfo.DiskInfosEntryR\tdiskInfos\x1aQ\n" +
 	"\x0eDiskInfosEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
-	"\x05value\x18\x02 \x01(\v2\x13.master_pb.DiskInfoR\x05value:\x028\x01\"\xfe\x01\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.master_pb.DiskInfoR\x05value:\x028\x01\"\x9f\x02\n" +
 	"\fTopologyInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12E\n" +
 	"\x11data_center_infos\x18\x02 \x03(\v2\x19.master_pb.DataCenterInfoR\x0fdataCenterInfos\x12D\n" +
-	"\tdiskInfos\x18\x03 \x03(\v2&.master_pb.TopologyInfo.DiskInfosEntryR\tdiskInfos\x1aQ\n" +
+	"\tdiskInfos\x18\x03 \x03(\v2&.master_pb.TopologyInfo.DiskInfosEntryR\tdiskInfos\x12\x1f\n" +
+	"\vtopology_id\x18\x04 \x01(\tR\n" +
+	"topologyId\x1aQ\n" +
 	"\x0eDiskInfosEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
 	"\x05value\x18\x02 \x01(\v2\x13.master_pb.DiskInfoR\x05value:\x028\x01\"\x8b\x02\n" +
