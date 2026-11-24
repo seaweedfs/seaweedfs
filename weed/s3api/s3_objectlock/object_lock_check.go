@@ -150,16 +150,13 @@ func recursivelyCheckLocksWithClient(ctx context.Context, client filer_pb.Seawee
 			return true, nil // Stop iteration
 		}
 
-		// A multipart upload's directory holds the lock settings for an object
-		// that does not exist yet.
-		if entry.IsDirectory && len(entry.Extended[s3_constants.ExtMultipartObjectKey]) > 0 {
-			return false, nil // Continue
-		}
-
 		if entry.IsDirectory {
 			// A directory-marker object (key ending in "/") is stored as a
 			// directory entry and can carry a lock, so check it before recursing.
-			if EntryHasActiveLock(entry, currentTime) {
+			// A multipart upload's directory holds the lock settings for an object
+			// that does not exist yet.
+			uploadDir := len(entry.Extended[s3_constants.ExtMultipartObjectKey]) > 0
+			if !uploadDir && EntryHasActiveLock(entry, currentTime) {
 				*hasLocks = true
 				glog.V(2).Infof("Found directory marker with active lock: %s/%s", dir, entry.Name)
 				return true, nil
