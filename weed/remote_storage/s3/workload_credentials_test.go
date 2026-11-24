@@ -170,6 +170,13 @@ func TestWorkloadCredentials(t *testing.T) {
 	if got := accessKeyOf(t, noKeys); got != "ROLEKEY" {
 		t.Errorf("workload, a profile selected: %q, want the instance role's key", got)
 	}
+	// nor a broken one, which the SDK would refuse even with credentials given
+	if err := os.WriteFile(shared, []byte("[irsa]\nweb_identity_token_file = /var/run/secrets/token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := accessKeyOf(t, noKeys); got != "ROLEKEY" {
+		t.Errorf("workload, a broken profile selected: %q, want the instance role's key", got)
+	}
 	t.Setenv("AWS_PROFILE", "")
 	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", "/nonexistent")
 	t.Setenv(workloadCredentialsEnv, "Workload")

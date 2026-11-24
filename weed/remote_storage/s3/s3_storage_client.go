@@ -274,10 +274,14 @@ func MakeWithHTTPClient(conf *remote_pb.RemoteConf, httpClient *http.Client) (re
 		config.Credentials = credSess.Config.Credentials
 	}
 
-	sess, err := session.NewSessionWithOptions(session.Options{
+	sessOpts := session.Options{
 		Config:            *config,
 		SharedConfigState: session.SharedConfigEnable,
-	})
+	}
+	if workload {
+		sessOpts.SharedConfigFiles = []string{}
+	}
+	sess, err := session.NewSessionWithOptions(sessOpts)
 	if err != nil {
 		return nil, fmt.Errorf("create %s session: %w", opt.name, err)
 	}
