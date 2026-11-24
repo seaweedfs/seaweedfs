@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"math"
 	"net/http"
@@ -104,7 +105,11 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 			return nil, nil, fmt.Errorf("read input: %w", err)
 		}
 		md5bytes = util.Md5(buf.Bytes())
-		if contentMd5Mismatch(md5bytes, r.Header.Get("Content-Md5")) {
+		contentMd5Hash := util.NewContentMd5()
+		if contentMd5Hash != nil {
+			contentMd5Hash.Write(buf.Bytes())
+		}
+		if contentMd5Mismatch(util.BodyMd5(md5bytes, contentMd5Hash), r.Header.Get("Content-Md5")) {
 			bufPool.Put(buf)
 			return nil, nil, errors.New(constants.ErrMsgBadDigest)
 		}
@@ -113,13 +118,14 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 		return
 	}
 
-	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, part1, chunkSize, fileName, contentType, contentLength, so)
+	body, contentMd5Hash := teeContentMd5(r, part1)
+	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, body, chunkSize, fileName, contentType, contentLength, so)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	md5bytes = md5Hash.Sum(nil)
-	if contentMd5Mismatch(md5bytes, r.Header.Get("Content-Md5")) {
+	if contentMd5Mismatch(util.BodyMd5(md5bytes, contentMd5Hash), r.Header.Get("Content-Md5")) {
 		fs.filer.DeleteUncommittedChunks(ctx, fileChunks)
 		return nil, nil, errors.New(constants.ErrMsgBadDigest)
 	}
@@ -144,14 +150,15 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 		return nil, nil, err
 	}
 
-	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, r.Body, chunkSize, fileName, contentType, contentLength, so)
+	body, contentMd5Hash := teeContentMd5(r, r.Body)
+	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, body, chunkSize, fileName, contentType, contentLength, so)
 
 	if err != nil {
 		return nil, nil, err
 	}
 
 	md5bytes = md5Hash.Sum(nil)
-	if contentMd5Mismatch(md5bytes, r.Header.Get("Content-Md5")) {
+	if contentMd5Mismatch(util.BodyMd5(md5bytes, contentMd5Hash), r.Header.Get("Content-Md5")) {
 		fs.filer.DeleteUncommittedChunks(ctx, fileChunks)
 		return nil, nil, errors.New(constants.ErrMsgBadDigest)
 	}
@@ -713,12 +720,28 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 	return filerResult, replyerr
 }
 
-// contentMd5Mismatch compares the body digest with the client's Content-MD5,
-// base64 or hex. Under digest sha256 the digest is not an MD5, so Content-MD5
-// goes unchecked.
-func contentMd5Mismatch(md5bytes []byte, headerMd5 string) bool {
-	if headerMd5 == "" || util.DigestIsSha256() {
+// contentMd5Mismatch compares the body's MD5, from util.BodyMd5, with the
+// client's Content-MD5, base64 or hex. bodyMd5 is nil only under fips140=only
+// with digest sha256, where no MD5 can be computed, and Content-MD5 then goes
+// unchecked.
+func contentMd5Mismatch(bodyMd5 []byte, headerMd5 string) bool {
+	if headerMd5 == "" || bodyMd5 == nil {
 		return false
 	}
-	return util.Base64Encode(md5bytes) != headerMd5 && fmt.Sprintf("%x", md5bytes) != headerMd5
+	return util.Base64Encode(bodyMd5) != headerMd5 && fmt.Sprintf("%x", bodyMd5) != headerMd5
+}
+
+// teeContentMd5 returns body, teed into an MD5 hash when the request carries
+// Content-MD5 and the content digest is not itself an MD5; see
+// util.NewContentMd5. The hash is nil when no separate MD5 is needed or
+// possible.
+func teeContentMd5(r *http.Request, body io.Reader) (io.Reader, hash.Hash) {
+	if r.Header.Get("Content-Md5") == "" {
+		return body, nil
+	}
+	contentMd5Hash := util.NewContentMd5()
+	if contentMd5Hash == nil {
+		return body, nil
+	}
+	return io.TeeReader(body, contentMd5Hash), contentMd5Hash
 }

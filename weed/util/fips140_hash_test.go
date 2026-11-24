@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
+	"fmt"
 	"testing"
 )
 
@@ -128,5 +129,39 @@ func TestAdoptFilerDigest(t *testing.T) {
 	}
 	if err := AdoptFilerDigest("f:8888", DigestSha256); err != nil || Digest() != DigestSha256 {
 		t.Fatalf("sha256 report under fips140=only: err %v, digest %s", err, Digest())
+	}
+}
+
+// TestNewContentMd5 checks when a separate MD5 for Content-MD5 is computed:
+// only under digest sha256 with MD5 available, and BodyMd5 then returns it.
+func TestNewContentMd5(t *testing.T) {
+	enforced := fips140Enforced
+	t.Cleanup(func() { fips140Enforced = enforced; SetDigest("") })
+	fips140Enforced = func() bool { return false }
+
+	SetDigest(DigestMd5)
+	if NewContentMd5() != nil {
+		t.Error("digest md5: the content digest is the MD5, no separate hash wanted")
+	}
+	if got := BodyMd5([]byte("digest"), nil); string(got) != "digest" {
+		t.Errorf("digest md5: BodyMd5 = %q, want the content digest", got)
+	}
+
+	SetDigest(DigestSha256)
+	h := NewContentMd5()
+	if h == nil {
+		t.Fatal("digest sha256 without fips140=only: want a separate MD5")
+	}
+	h.Write([]byte("hello"))
+	if got := BodyMd5([]byte("sha256 digest"), h); fmt.Sprintf("%x", got) != "5d41402abc4b2a76b9719d911017c592" {
+		t.Errorf("digest sha256: BodyMd5 = %x, want the MD5 of hello", got)
+	}
+
+	fips140Enforced = func() bool { return true }
+	if NewContentMd5() != nil {
+		t.Error("fips140=only: no MD5 can be computed")
+	}
+	if BodyMd5([]byte("sha256 digest"), nil) != nil {
+		t.Error("fips140=only: BodyMd5 must be nil so Content-MD5 goes unchecked")
 	}
 }

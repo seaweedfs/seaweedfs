@@ -245,6 +245,39 @@ func (f *Filer) buildRemoteStorageClient(ctx context.Context, remoteConf *remote
 	return remote_storage.GetRemoteStorage(remoteConf)
 }
 
+// CheckPeerDigests compares the digests of the cluster's other filers with
+// this filer's, on every start and before the fresh-store bootstrap. Checking
+// only at bootstrap is not enough: the store signature is written when the
+// store opens, so a fresh filer refused at bootstrap would restart as an
+// initialized store, skip the bootstrap and serve without its peers' files.
+// A peer that cannot be reached is skipped; checkPeerDigest decides the rest.
+func (f *Filer) CheckPeerDigests(ctx context.Context, self pb.ServerAddress, nodes []*master_pb.ClusterNodeUpdate) error {
+	for _, node := range nodes {
+		peer := pb.ServerAddress(node.Address)
+		if peer.Equals(self) {
+			continue
+		}
+		var signature int32
+		var digest string
+		err := pb.WithFilerClient(false, f.UniqueFilerId, peer, f.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
+			if err != nil {
+				return err
+			}
+			signature, digest = resp.Signature, resp.Digest
+			return nil
+		})
+		if err != nil {
+			glog.Warningf("check digest of peer filer %s: %v", peer, err)
+			continue
+		}
+		if err := checkPeerDigest(peer, digest, signature == f.Signature); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (f *Filer) MaybeBootstrapFromOnePeer(ctx context.Context, self pb.ServerAddress, existingNodes []*master_pb.ClusterNodeUpdate, snapshotTime time.Time) (err error) {
 	if len(existingNodes) == 0 {
 		return

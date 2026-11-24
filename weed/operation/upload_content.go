@@ -57,7 +57,8 @@ type UploadOption struct {
 	Jwt               security.EncodedJwt
 	RetryForever      bool
 	Md5               string
-	WantMd5           bool // compute Content-MD5 from the data when Md5 is unset and the upload is not ciphered
+	WantMd5           bool   // compute Content-MD5 from the data when Md5 is unset and the upload is not ciphered
+	Digest            string // the target filer's digest, which Md5 is in; empty means this process's mode
 	BytesBuffer       *bytes.Buffer
 	SourceUrl         string                           // optional: for logging when reading from a remote source
 	MaxAttempts       int                              // <=0 uses the default
@@ -315,7 +316,7 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 	// verifies). Under cipher the server never sees the header, but the digest
 	// still becomes the chunk ETag.
 	if uploadOption.WantMd5 && uploadOption.Md5 == "" {
-		uploadOption.Md5 = base64.StdEncoding.EncodeToString(util.Md5(data))
+		uploadOption.Md5 = base64.StdEncoding.EncodeToString(util.Md5For(uploadOption.Digest, data))
 	}
 
 	fileId, uploadResult, err = uploader.uploadWithRetryData(func() (fileId string, host string, auth security.EncodedJwt, fsync bool, err error) {
@@ -542,6 +543,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, prepared *preparedUp
 			MimeType:              "",
 			PairMap:               nil,
 			Jwt:                   option.Jwt,
+			Digest:                option.Digest,
 			BytesBuffer:           option.BytesBuffer,
 			stallWatchdogDisarmed: option.stallWatchdogDisarmed,
 		})
@@ -573,6 +575,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, prepared *preparedUp
 			PairMap:               option.PairMap,
 			Jwt:                   option.Jwt,
 			Md5:                   option.Md5,
+			Digest:                option.Digest,
 			BytesBuffer:           option.BytesBuffer,
 			stallWatchdogDisarmed: option.stallWatchdogDisarmed,
 		})
@@ -614,7 +617,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	if option.IsInputCompressed {
 		h.Set("Content-Encoding", "gzip")
 	}
-	if option.Md5 != "" && !util.DigestIsSha256() {
+	if option.Md5 != "" && !util.DigestIsSha256For(option.Digest) {
 		h.Set("Content-MD5", option.Md5)
 	}
 
@@ -872,7 +875,7 @@ func (b *watchdogBody) Close() error {
 // Under digest sha256 the digest is not an MD5 and is never sent, so the
 // caller's own digest stands.
 func uploadedContentMd5(resp *http.Response, option *UploadOption) string {
-	if util.DigestIsSha256() {
+	if util.DigestIsSha256For(option.Digest) {
 		return option.Md5
 	}
 	return resp.Header.Get("Content-MD5")

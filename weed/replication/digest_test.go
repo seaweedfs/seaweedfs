@@ -21,8 +21,8 @@ func TestCheckDigestsMatch(t *testing.T) {
 	}
 	for _, c := range cases {
 		err := CheckDigestsMatch("a:8888", c.a, "b:8888", c.b)
-		if (err != nil) != c.refuse {
-			t.Errorf("CheckDigestsMatch(%q, %q) = %v, want refused %v", c.a, c.b, err, c.refuse)
+		if (err != nil) != c.refuse || IsDigestMismatch(err) != c.refuse {
+			t.Errorf("CheckDigestsMatch(%q, %q) = %v, want refused as a mismatch %v", c.a, c.b, err, c.refuse)
 		}
 	}
 }
@@ -46,22 +46,23 @@ func TestCheckSinkDigest(t *testing.T) {
 		return func() (string, error) { return digest, err }
 	}
 	cases := []struct {
-		name   string
-		source func() (string, error)
-		sink   sink.ReplicationSink
-		refuse bool
+		name     string
+		source   func() (string, error)
+		sink     sink.ReplicationSink
+		refuse   bool
+		mismatch bool
 	}{
-		{"non-filer sink is not checked", source("", errors.New("unreachable")), fakeSink{}, false},
-		{"same digest", source("sha256", nil), fakeFilerSink{digest: "sha256"}, false},
-		{"different digests", source("sha256", nil), fakeFilerSink{digest: "md5"}, true},
-		{"target predates the setting", source("md5", nil), fakeFilerSink{digest: ""}, false},
-		{"source unreachable", source("", errors.New("unreachable")), fakeFilerSink{digest: "md5"}, true},
-		{"target unreachable", source("md5", nil), fakeFilerSink{err: errors.New("unreachable")}, true},
+		{"non-filer sink is not checked", source("", errors.New("unreachable")), fakeSink{}, false, false},
+		{"same digest", source("sha256", nil), fakeFilerSink{digest: "sha256"}, false, false},
+		{"different digests", source("sha256", nil), fakeFilerSink{digest: "md5"}, true, true},
+		{"target predates the setting", source("md5", nil), fakeFilerSink{digest: ""}, false, false},
+		{"source unreachable", source("", errors.New("unreachable")), fakeFilerSink{digest: "md5"}, true, false},
+		{"target unreachable", source("md5", nil), fakeFilerSink{err: errors.New("unreachable")}, true, false},
 	}
 	for _, c := range cases {
 		err := CheckSinkDigest("source:8888", c.source, c.sink)
-		if (err != nil) != c.refuse {
-			t.Errorf("%s: CheckSinkDigest = %v, want refused %v", c.name, err, c.refuse)
+		if (err != nil) != c.refuse || IsDigestMismatch(err) != c.mismatch {
+			t.Errorf("%s: CheckSinkDigest = %v, want refused %v, as a mismatch %v", c.name, err, c.refuse, c.mismatch)
 		}
 	}
 }

@@ -47,6 +47,10 @@ type ChunkedUploadOption struct {
 	AssignFunc      func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error)
 	UploadFunc      func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) // Optional: for testing
 	LookupJwtFunc   func(ctx context.Context, fileId string) security.EncodedJwt                        // Optional: renews the volume JWT for a cleanup delete
+
+	// Digest names the target filer's digest, so the content and chunk
+	// digests match what that filer holds; empty uses this process's mode.
+	Digest string
 }
 
 var chunkBufferPool = sync.Pool{
@@ -64,7 +68,7 @@ func UploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUpl
 
 func uploadReaderInChunks(ctx context.Context, reader io.Reader, opt *ChunkedUploadOption, prepare func([]byte, *UploadOption) (*preparedUpload, error)) (*ChunkedUploadResult, error) {
 
-	md5Hash := util.NewMd5()
+	md5Hash := util.NewMd5For(opt.Digest)
 	var partReader = io.TeeReader(reader, md5Hash)
 
 	var fileChunks []*filer_pb.FileChunk
@@ -183,7 +187,7 @@ uploadLoop:
 			}()
 
 			// Hash and prepare only this bounded chunk before minting its volume JWT.
-			chunkMd5 := util.Md5(buf.Bytes())
+			chunkMd5 := util.Md5For(opt.Digest, buf.Bytes())
 			chunkMd5B64 := base64.StdEncoding.EncodeToString(chunkMd5[:])
 			var prepared *preparedUpload
 			if opt.UploadFunc == nil {
@@ -356,7 +360,7 @@ func uploadChunk(ctx context.Context, assignResult *AssignResult, data []byte, p
 // chunkUploadOption holds the settings that shape a chunk's bytes, shared by
 // its preparation and every upload of it.
 func chunkUploadOption(opt *ChunkedUploadOption) *UploadOption {
-	return &UploadOption{Cipher: opt.Cipher, MimeType: opt.MimeType}
+	return &UploadOption{Cipher: opt.Cipher, MimeType: opt.MimeType, Digest: opt.Digest}
 }
 
 // chunkHolders returns the assigned volume plus its replica holders.

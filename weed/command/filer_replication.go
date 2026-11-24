@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/replication"
@@ -79,8 +80,16 @@ func runFilerReplicate(cmd *Command, args []string) bool {
 	}
 
 	replicator := replication.NewReplicator(config, "source.filer.", dataSink)
-	if err := replicator.CheckSinkDigest(); err != nil {
-		glog.Exitf("%v", err)
+	for {
+		err := replicator.CheckSinkDigest()
+		if err == nil {
+			break
+		}
+		if replication.IsDigestMismatch(err) {
+			glog.Exitf("%v", err)
+		}
+		glog.Warningf("%v; retrying", err)
+		time.Sleep(2 * time.Second)
 	}
 
 	for {

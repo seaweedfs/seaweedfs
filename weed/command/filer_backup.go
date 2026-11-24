@@ -187,7 +187,10 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	}
 	dataSink.SetSourceFiler(filerSource)
 	if err := replication.CheckSinkDigest(filerSource.GrpcAddress(), filerSource.Digest, dataSink); err != nil {
-		glog.Exitf("%v", err)
+		if replication.IsDigestMismatch(err) {
+			glog.Exitf("%v", err)
+		}
+		return resumeTsNs, err
 	}
 
 	var flattener *s3VersionFlattener
