@@ -586,9 +586,34 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string, 
 	if fullpath == "/" {
 		return os.ErrInvalid
 	}
+	entry, err := fs.getEntry(ctx, string(fullpath))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := fs.checkEntryProtected(ctx, string(fullpath), entry); err != nil {
+		return err
+	}
+	if entry.IsDirectory && recursive {
+		if err := fs.checkSubtreeProtected(ctx, string(fullpath)); err != nil {
+			return err
+		}
+	}
 	dir, name := fullpath.DirAndName()
 
-	return filer_pb.Remove(ctx, fs, dir, name, true, recursive, false, false, []int32{fs.signature})
+	return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		_, err := filer_pb.DoRemoveRequest(ctx, client, &filer_pb.DeleteEntryRequest{
+			Directory:        dir,
+			Name:             name,
+			IsDeleteData:     true,
+			IsRecursive:      recursive,
+			Signatures:       []int32{fs.signature},
+			ExpectedExtended: objectLockState(entry),
+		})
+		return err
+	})
 
 }
 

@@ -270,33 +270,28 @@ func TestWebDavFileSystem_OverwriteKeepsTargetOnParentFailure(t *testing.T) {
 
 // DELETE, and MOVE or COPY with Overwrite: T, remove a collection through RemoveAll, which must take its contents too.
 func TestWebDavFileSystem_RemoveAll_Recursive(t *testing.T) {
-	filer := &deleteRecordingFiler{}
-	filerAddr := startFakeWebDavFiler(t, filer)
-	fs := &WebDavFileSystem{option: &WebDavOption{
-		Filer:          filerAddr,
-		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
-	}}
+	fs, filer := newWebDavLockFS(t, map[string]*filer_pb.Entry{"/dir/sub": {Name: "sub", IsDirectory: true}})
 
 	assert.NoError(t, fs.RemoveAll(context.Background(), "/dir/sub"))
-	if assert.NotNil(t, filer.req) {
-		assert.Equal(t, "/dir", filer.req.Directory)
-		assert.Equal(t, "sub", filer.req.Name)
-		assert.True(t, filer.req.IsRecursive)
+	if assert.Len(t, filer.deletes, 1) {
+		assert.Equal(t, "/dir", filer.deletes[0].Directory)
+		assert.Equal(t, "sub", filer.deletes[0].Name)
+		assert.True(t, filer.deletes[0].IsRecursive)
 	}
 
-	filer.req = nil
+	filer.deletes = nil
 	assert.NoError(t, fs.RemoveAll(context.Background(), "/dir/sub/"))
-	if assert.NotNil(t, filer.req) {
-		assert.Equal(t, "/dir", filer.req.Directory)
-		assert.Equal(t, "sub", filer.req.Name)
+	if assert.Len(t, filer.deletes, 1) {
+		assert.Equal(t, "/dir", filer.deletes[0].Directory)
+		assert.Equal(t, "sub", filer.deletes[0].Name)
 	}
 
-	filer.req = nil
+	filer.deletes = nil
 	wrapped := NewWrappedFs(fs, "/served")
 	assert.Equal(t, os.ErrInvalid, fs.RemoveAll(context.Background(), "/"))
 	assert.Equal(t, os.ErrInvalid, wrapped.RemoveAll(context.Background(), "/../"))
 	assert.Equal(t, os.ErrInvalid, wrapped.Rename(context.Background(), "/", "/x"))
-	assert.Nil(t, filer.req)
+	assert.Empty(t, filer.deletes)
 }
 
 // MOVE or COPY into an ancestor destination is refused before the
