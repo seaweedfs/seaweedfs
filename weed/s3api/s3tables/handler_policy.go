@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -379,6 +380,17 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 			}
 			if !bytes.Equal(extended[ExtendedKeyPolicy], []byte(bucketPolicy)) {
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
+			}
+			if bucketPolicy != "" {
+				var currentTags map[string]string
+				if data, ok := extended[ExtendedKeyTags]; ok {
+					if err := json.Unmarshal(data, &currentTags); err != nil {
+						return fmt.Errorf("failed to unmarshal tags: %w", err)
+					}
+				}
+				if !maps.Equal(currentTags, bucketTags) {
+					return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyTags)
+				}
 			}
 			delete(extended, ExtendedKeyPolicy)
 			return nil
