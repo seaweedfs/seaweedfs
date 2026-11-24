@@ -82,6 +82,9 @@ spec:
       schedulerName: {{ .Values.filer.schedulerName | quote }}
       {{- end }}
       enableServiceLinks: false
+      {{- if .Values.filer.shareProcessNamespace }}
+      shareProcessNamespace: true
+      {{- end }}
       {{- if .Values.filer.initContainers }}
       initContainers:
         {{ tpl .Values.filer.initContainers . | nindent 8 | trim }}

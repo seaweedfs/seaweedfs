@@ -78,6 +78,9 @@ spec:
       schedulerName: {{ .Values.s3.schedulerName | quote }}
       {{- end }}
       enableServiceLinks: false
+      {{- if .Values.s3.shareProcessNamespace }}
+      shareProcessNamespace: true
+      {{- end }}
       {{- if .Values.s3.serviceAccountName }}
       serviceAccountName: {{ .Values.s3.serviceAccountName | quote }}
       {{- end }}

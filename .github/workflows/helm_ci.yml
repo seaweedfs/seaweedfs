@@ -149,6 +149,19 @@ jobs:
           grep -q "terminationGracePeriodSeconds: 85$" /tmp/aio-s3-prestop-own.yaml
           echo "S3 preStopSeconds renders correctly"
 
+          echo "=== Testing shareProcessNamespace ==="
+          for workload in filer:templates/filer/filer-statefulset.yaml s3:templates/s3/s3-deployment.yaml; do
+            component=${workload%%:*}
+            template=${workload#*:}
+            helm template test $CHART_DIR --show-only "$template" \
+              --set "$component.enabled=true" > /tmp/spn-default.yaml
+            test "$(grep -c 'shareProcessNamespace' /tmp/spn-default.yaml)" -eq 0
+            helm template test $CHART_DIR --show-only "$template" \
+              --set "$component.enabled=true" --set "$component.shareProcessNamespace=true" > /tmp/spn.yaml
+            grep -q '^      shareProcessNamespace: true$' /tmp/spn.yaml
+          done
+          echo "shareProcessNamespace renders correctly"
+
           echo "=== Testing the S3 config checksum is stable across renders ==="
           # s3-secret.yaml keeps its generated keys with lookup. Hashing the rendered
           # Secret drew new keys for the checksum whenever lookup found nothing (on

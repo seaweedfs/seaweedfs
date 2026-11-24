@@ -856,6 +856,11 @@ filer:
   extraVolumes: ""
   extraVolumeMounts: ""
 
+  # Share one process namespace between the containers of the filer pod, so a
+  # sidecar can see and signal the filer process, for example to reload its
+  # configuration with SIGHUP. The filer is then no longer PID 1.
+  shareProcessNamespace: false
+
   # Labels to be added to the filer pods
   podLabels: {}
 
@@ -1227,6 +1232,11 @@ s3:
 
   extraVolumes: ""
   extraVolumeMounts: ""
+
+  # Share one process namespace between the containers of the s3 pod, so a
+  # sidecar can see and signal the gateway process, for example to reload its
+  # configuration with SIGHUP. The gateway is then no longer PID 1.
+  shareProcessNamespace: false
 
   # Labels to be added to the s3 pods
   podLabels: {}
