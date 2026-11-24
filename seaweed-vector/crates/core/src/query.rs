@@ -131,7 +131,12 @@ pub async fn indexed_only(
         && query.index_segments.is_none()
         && query.fragments.is_none()
     {
-        return Ok((ann(dataset, table, query).await?, 0));
+        let hits = ann(dataset, table, query).await?;
+        return if hits.len() < query.k {
+            Ok((exact_in_scope(dataset, table, query, None).await?, 0))
+        } else {
+            Ok((hits, 0))
+        };
     }
     let eligible: Vec<u64> = eligible.iter().map(u64::from).collect();
     let hits = ann_with_scope(dataset, table, query, Some(&eligible)).await?;
@@ -512,6 +517,16 @@ mod tests {
                 assert_eq!(hit.distance, l2(&query.vector, &vectors[index]));
             }
         }
+
+        dataset
+            .optimize_indices(&lance_index::optimize::OptimizeOptions::append())
+            .await
+            .unwrap();
+        query.k += 1;
+        let (hits, excluded) = indexed_only(&dataset, &table, &query).await.unwrap();
+        assert_eq!(excluded, 0);
+        assert_eq!(hits.len(), query.k);
+        assert!(hits.iter().all(|hit| hit.distance.is_finite()));
     }
 
     #[tokio::test]
