@@ -223,13 +223,20 @@ func retainSetAttr(input *fuse.SetAttrIn, live, acked *filer_pb.Entry) {
 	if gidSet {
 		live.Attributes.Gid = acked.Attributes.Gid
 	}
-	if (uidSet || gidSet) && input.Uid != 0 {
+	if (uidSet || gidSet) && chownKillsSetId(input, live) {
 		live.Attributes.FileMode &^= 0o6000
 	}
 	if _, ok := input.GetMTime(); ok {
 		live.Attributes.Mtime, live.Attributes.MtimeNs = acked.Attributes.Mtime, acked.Attributes.MtimeNs
 	}
 	live.Attributes.Ctime, live.Attributes.CtimeNs = acked.Attributes.Ctime, acked.Attributes.CtimeNs
+}
+
+// chownKillsSetId reports whether a chown clears the SUID and SGID bits: it
+// does for a caller other than root, and never on a directory. input.Uid is
+// the new owner; the caller is input.Caller.Uid.
+func chownKillsSetId(input *fuse.SetAttrIn, entry *filer_pb.Entry) bool {
+	return input.Caller.Uid != 0 && !entry.IsDirectory
 }
 
 func (wfs *WFS) applySetAttr(path util.FullPath, input *fuse.SetAttrIn, entry *filer_pb.Entry) fuse.Status {
@@ -267,8 +274,7 @@ func (wfs *WFS) applySetAttr(path util.FullPath, input *fuse.SetAttrIn, entry *f
 		}
 	}
 
-	// POSIX: clear SUID/SGID bits when ownership changes (unless caller is root).
-	if ownerChanged && input.Uid != 0 {
+	if ownerChanged && chownKillsSetId(input, entry) {
 		entry.Attributes.FileMode &^= 0o6000
 	}
 
