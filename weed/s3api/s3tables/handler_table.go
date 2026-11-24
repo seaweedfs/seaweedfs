@@ -658,6 +658,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 					TableBucketName:  bucketName,
 					Namespace:        namespaceName,
 					TableBucketTags:  bucketTags,
+					ResourceTags:     bucketTags,
 					IdentityActions:  identityActions,
 					DefaultAllow:     h.defaultAllowFor(r),
 				}) {
@@ -711,6 +712,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 				IsLocalAccountID: h.localAccountIDs,
 				TableBucketName:  bucketName,
 				TableBucketTags:  bucketTags,
+				ResourceTags:     bucketTags,
 				IdentityActions:  identityActions,
 				DefaultAllow:     h.defaultAllowFor(r),
 			}) {
@@ -1698,6 +1700,7 @@ func (h *S3TablesHandler) renameCatalogEntry(w http.ResponseWriter, r *http.Requ
 			Namespace:        destNamespace,
 			TableName:        destName,
 			TableBucketTags:  bucketTags,
+			ResourceTags:     bucketTags,
 			IdentityActions:  identityActions,
 			DefaultAllow:     h.defaultAllowFor(r),
 		}) {
@@ -2383,6 +2386,7 @@ func (h *S3TablesHandler) authorizeCreateTable(w http.ResponseWriter, r *http.Re
 		RequestTags:      requestTags,
 		TagKeys:          mapKeys(requestTags),
 		TableBucketTags:  bucketTags,
+		ResourceTags:     bucketTags,
 		IdentityActions:  identityActions,
 		DefaultAllow:     h.defaultAllowFor(r),
 	}

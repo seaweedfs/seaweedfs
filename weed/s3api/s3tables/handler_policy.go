@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"strings"
 	"time"
@@ -234,6 +235,7 @@ func (h *S3TablesHandler) handleGetTableBucketPolicy(w http.ResponseWriter, r *h
 	bucketPath := GetTableBucketPath(bucketName)
 	var policy []byte
 	var bucketMetadata tableBucketMetadata
+	var bucketTags map[string]string
 
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Get metadata for ownership check
@@ -247,6 +249,10 @@ func (h *S3TablesHandler) handleGetTableBucketPolicy(w http.ResponseWriter, r *h
 
 		// Get policy
 		policy, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
+		if err != nil {
+			return err
+		}
+		bucketTags, err = h.readTags(r.Context(), client, bucketPath)
 		return err
 	})
 
@@ -271,6 +277,8 @@ func (h *S3TablesHandler) handleGetTableBucketPolicy(w http.ResponseWriter, r *h
 		Subject:          callerSubject(r),
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
+		TableBucketTags:  bucketTags,
+		ResourceTags:     bucketTags,
 		IdentityActions:  identityActions,
 		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
@@ -311,6 +319,7 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 	// Check if bucket exists and get metadata for ownership check
 	var bucketMetadata tableBucketMetadata
 	var bucketPolicy string
+	var bucketTags map[string]string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 		if err != nil {
@@ -329,6 +338,11 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 			// Policy not found is not an error; bucketPolicy remains empty
 		} else {
 			bucketPolicy = string(policyData)
+		}
+		if bucketPolicy != "" {
+			if bucketTags, err = h.readTags(r.Context(), client, bucketPath); err != nil {
+				return err
+			}
 		}
 
 		return nil
@@ -350,6 +364,8 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 		Subject:          callerSubject(r),
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
+		TableBucketTags:  bucketTags,
+		ResourceTags:     bucketTags,
 		IdentityActions:  identityActions,
 		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
@@ -364,6 +380,17 @@ func (h *S3TablesHandler) handleDeleteTableBucketPolicy(w http.ResponseWriter, r
 			}
 			if !bytes.Equal(extended[ExtendedKeyPolicy], []byte(bucketPolicy)) {
 				return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyPolicy)
+			}
+			if bucketPolicy != "" {
+				var currentTags map[string]string
+				if data, ok := extended[ExtendedKeyTags]; ok {
+					if err := json.Unmarshal(data, &currentTags); err != nil {
+						return fmt.Errorf("failed to unmarshal tags: %w", err)
+					}
+				}
+				if !maps.Equal(currentTags, bucketTags) {
+					return fmt.Errorf("%w: %s", ErrConcurrentUpdate, ExtendedKeyTags)
+				}
 			}
 			delete(extended, ExtendedKeyPolicy)
 			return nil

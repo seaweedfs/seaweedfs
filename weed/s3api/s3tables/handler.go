@@ -614,6 +614,9 @@ func (h *S3TablesHandler) authorizeAbsentTarget(r *http.Request, filerClient Fil
 		IdentityActions:  getIdentityActions(r),
 		DefaultAllow:     h.defaultAllowFor(r),
 	}
+	if canonicalARN == bucketARN {
+		ctx.ResourceTags = bucketTags
+	}
 	if resourceARN != "" &&
 		matchesDenyStatement(operation, principal, bucketPolicy, canonicalARN, ctx) {
 		return false
