@@ -129,13 +129,17 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 
 	// Create the table
 	now := time.Now()
+	createdAt := now
+	if stagedAt, ok := r.Context().Value(tableStagedAtKey{}).(time.Time); ok && stagedAt.Before(now) {
+		createdAt = stagedAt
+	}
 	versionToken := generateVersionToken()
 
 	metadata := &tableMetadataInternal{
 		Name:              tableName,
 		Namespace:         namespaceName,
 		Format:            req.Format,
-		CreatedAt:         now,
+		CreatedAt:         createdAt,
 		ModifiedAt:        now,
 		OwnerAccountID:    target.ownerAccountID, // Inherit namespace owner for consistency
 		VersionToken:      versionToken,

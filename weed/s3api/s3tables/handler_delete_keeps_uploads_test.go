@@ -62,6 +62,19 @@ func TestDeleteKeepsFilesOlderThanTheRecord(t *testing.T) {
 		assert.Nil(t, fs.Get(nsPath, "t2"))
 	})
 
+	t.Run("staged table purges files written before its commit", func(t *testing.T) {
+		fs, m := startRenameManager(t)
+		stagedAt := time.Now().Add(-time.Minute)
+		upload(fs, "t2", stagedAt.Add(30*time.Second))
+		require.NoError(t, m.Execute(WithTableStagedAt(context.Background(), stagedAt), NewManagerClient(fs.Client), "CreateTable",
+			&CreateTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "t2", Format: FormatIceberg,
+				MetadataLocation: renameLocation("ns/t2/metadata/v1.metadata.json")}, nil, "admin"))
+
+		requireOK(t, m, fs, "DeleteTable", &DeleteTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "t2"})
+
+		assert.Nil(t, fs.Get(nsPath, "t2"))
+	})
+
 	t.Run("table located over other files", func(t *testing.T) {
 		fs, m := startRenameManager(t)
 		upload(fs, "other", older)

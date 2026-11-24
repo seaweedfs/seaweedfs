@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 )
 
@@ -97,5 +100,54 @@ func TestDropTableKeepsOlderFilesAtItsLocation(t *testing.T) {
 	}
 	if _, ok := fc.entries[otherPath+"/data/f.parquet"]; !ok {
 		t.Errorf("dropping the table deleted files that predate it")
+	}
+}
+
+// The engine of a staged create writes its first files before the commit
+// registers the table. They are the table's, so a drop purges them.
+func TestDropStagedTablePurgesFilesWrittenBeforeItsCommit(t *testing.T) {
+	const bucket = "warehouse"
+	fc := newMemFiler()
+	seedNamespace(fc, bucket, "finance", "alice")
+	s := NewServer(fc, nil)
+
+	w := httptest.NewRecorder()
+	s.handleCreateTable(w, newCreateTableRequest(t, bucket, "finance", `{"name":"orders","stage-create":true}`, "alice"))
+	staged := decodeCreated(t, w)
+	stagedAt := time.Now().Add(-time.Minute)
+	for p, entry := range fc.entries {
+		if path.Dir(p) != stageCreateMarkerDir(bucket, []string{"finance"}, "orders") || entry.IsDirectory {
+			continue
+		}
+		var marker stageCreateMarker
+		if err := json.Unmarshal(entry.Content, &marker); err != nil {
+			t.Fatal(err)
+		}
+		marker.CreatedAt = stagedAt.UTC().Format(time.RFC3339Nano)
+		entry.Content, _ = json.Marshal(marker)
+	}
+	locationPath := path.Join(s3tables.TablesPath, strings.TrimPrefix(staged.Metadata.Location, "s3://"))
+	fc.seed(locationPath, &filer_pb.Entry{Name: path.Base(locationPath), IsDirectory: true})
+	fc.seed(locationPath+"/data", &filer_pb.Entry{Name: "data", IsDirectory: true})
+	fc.seed(locationPath+"/data/f.parquet", &filer_pb.Entry{Name: "f.parquet", Content: []byte("x"),
+		Attributes: &filer_pb.FuseAttributes{Crtime: stagedAt.Add(30 * time.Second).Unix()}})
+
+	body := `{"requirements":[{"type":"assert-create"}],"updates":[{"action":"assign-uuid","uuid":"` + staged.Metadata.TableUUID + `"}]}`
+	r := httptest.NewRequest(http.MethodPost, "/v1/"+bucket+"/namespaces/finance/tables/orders", strings.NewReader(body))
+	r = mux.SetURLVars(r, map[string]string{"prefix": bucket, "namespace": "finance", "table": "orders"})
+	w = httptest.NewRecorder()
+	s.handleUpdateTable(w, r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), "alice")))
+	decodeCreated(t, w)
+
+	r = httptest.NewRequest(http.MethodDelete, "/v1/"+bucket+"/namespaces/finance/tables/orders", nil)
+	r = mux.SetURLVars(r, map[string]string{"prefix": bucket, "namespace": "finance", "table": "orders"})
+	w = httptest.NewRecorder()
+	s.handleDropTable(w, r.WithContext(s3_constants.SetIdentityNameInContext(r.Context(), "alice")))
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusNoContent, w.Body.String())
+	}
+	if _, ok := fc.entries[locationPath+"/data/f.parquet"]; ok {
+		t.Errorf("drop kept a file the staged create wrote before its commit")
 	}
 }

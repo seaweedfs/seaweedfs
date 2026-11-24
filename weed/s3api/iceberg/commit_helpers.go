@@ -116,6 +116,7 @@ type createOnCommitInput struct {
 	baseMetadataVer   int
 	updates           table.Updates
 	statisticsUpdates []statisticsUpdate
+	stagedAt          time.Time
 }
 
 func isS3TablesConflict(err error) bool {
@@ -272,9 +273,13 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 		MetadataLocation: newMetadataLocation,
 	}
 	var createResp s3tables.CreateTableResponse
+	createCtx := ctx
+	if !input.stagedAt.IsZero() {
+		createCtx = s3tables.WithTableStagedAt(ctx, input.stagedAt)
+	}
 	createErr := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		mgrClient := s3tables.NewManagerClient(client)
-		return s.tablesManager.Execute(ctx, mgrClient, "CreateTable", createReq, &createResp, input.identityName)
+		return s.tablesManager.Execute(createCtx, mgrClient, "CreateTable", createReq, &createResp, input.identityName)
 	})
 	tableCreatedConcurrently := &icebergRequestError{
 		status:  http.StatusConflict,
