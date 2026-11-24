@@ -213,6 +213,12 @@ func runFuse(cmd *Command, args []string) bool {
 			} else {
 				panic(fmt.Errorf("nonempty: %s", err))
 			}
+		case "defaultPermissions":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.defaultPermissions = &parsed
+			} else {
+				panic(fmt.Errorf("defaultPermissions: %s", err))
+			}
 		case "idmap":
 			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
 				mountOptions.idmap = &parsed
