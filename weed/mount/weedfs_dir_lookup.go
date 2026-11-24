@@ -1,6 +1,8 @@
 package mount
 
 import (
+	"unicode/utf8"
+
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -14,6 +16,9 @@ import (
 
 func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name string, out *fuse.EntryOut) (code fuse.Status) {
 
+	if !utf8.ValidString(name) {
+		return fuse.ENOENT
+	}
 	var s fuse.Status
 	if name, s = checkName(name); s != fuse.OK {
 		return s

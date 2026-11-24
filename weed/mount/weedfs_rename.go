@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -201,10 +202,9 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		return fuse.Status(syscall.ENOSPC)
 	}
 
-	// Both names end up in StreamRenameEntryRequest (proto string fields), so
-	// sanitize both. checkName handles newName's length check; oldName may
-	// legitimately be a pre-existing entry whose bytes were not validated.
-	oldName = sanitizeFuseName(oldName)
+	if !utf8.ValidString(oldName) {
+		return fuse.ENOENT
+	}
 	var s fuse.Status
 	if newName, s = checkName(newName); s != fuse.OK {
 		return s

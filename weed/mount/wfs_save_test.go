@@ -4,70 +4,71 @@ import (
 	"strings"
 	"syscall"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 )
 
-// TestSanitizeFuseName_InvalidBytesReplaced reproduces the filename from
-// seaweedfs#9139: GNOME Trash "partial" files carry raw binary bytes
-// (\x10\x98=\\\x8a\x7f) that are not valid UTF-8. The sanitizer must return a
-// UTF-8-valid string so the subsequent proto marshal cannot fail.
-func TestSanitizeFuseName_InvalidBytesReplaced(t *testing.T) {
-	raw := "\x10\x98=\\\x8a\x7f.trashinfo.9a51454f.partial"
-	out := sanitizeFuseName(raw)
-	if !utf8.ValidString(out) {
-		t.Fatalf("sanitizeFuseName returned non-UTF-8: %q", out)
-	}
-	// The replacement must be URL-safe: these sanitized names flow into HTTP
-	// URLs (volume-server uploads, filer HTTP API, S3/WebDAV gateways), so a
-	// '?' would be interpreted as the query-string delimiter and split the
-	// path. Explicitly assert the replacement char is neither '?' nor U+FFFD.
-	if strings.ContainsRune(out, '?') {
-		t.Fatalf("sanitizer produced non-URL-safe '?' in %q", out)
-	}
-	if strings.ContainsRune(out, 0xFFFD) {
-		t.Fatalf("expected single-byte replacement, got U+FFFD in %q", out)
-	}
-	// Valid bytes (\x10, \x3D '=', \x5C '\\', \x7F) must be preserved; only
-	// \x98 and \x8A — the standalone continuation bytes — get replaced.
-	if !strings.HasSuffix(out, ".trashinfo.9a51454f.partial") {
-		t.Fatalf("trailing valid bytes were dropped: %q", out)
-	}
-}
-
-func TestSanitizeFuseName_PassThroughValidUTF8(t *testing.T) {
-	// An already-valid UTF-8 string must be returned unchanged — no heap
-	// allocation, no alteration of byte content. Preserving identity matters
-	// because the overwhelming hot path is valid input.
-	for _, s := range []string{
-		"plain.txt",
-		"日本語.txt",
-		"🦑 squid",
-		"",
-		strings.Repeat("a", 255),
+func TestCheckNameRefusesInvalidUTF8(t *testing.T) {
+	for _, bad := range []string{
+		"report-\xd6\xd0.txt",
+		"a\xff.txt",
+		"\x10\x98=\\\x8a\x7f.trashinfo.9a51454f.partial",
 	} {
-		if got := sanitizeFuseName(s); got != s {
-			t.Fatalf("sanitizeFuseName(%q) = %q, want unchanged", s, got)
+		got, s := checkName(bad)
+		if s != fuse.Status(syscall.EILSEQ) {
+			t.Fatalf("checkName(%q) status = %v, want EILSEQ", bad, s)
+		}
+		if got != bad {
+			t.Fatalf("checkName(%q) rewrote the name to %q", bad, got)
 		}
 	}
 }
 
-// TestCheckName_SanitizesBeforeLengthCheck verifies the caller contract: the
-// returned name is always safe to put into a proto string field, and the
-// length guard still fires on over-long inputs.
-func TestCheckName_SanitizesBeforeLengthCheck(t *testing.T) {
-	bad := "foo\x80bar"
-	got, s := checkName(bad)
-	if s != fuse.OK {
-		t.Fatalf("checkName(%q) status = %v, want OK", bad, s)
+func TestCheckNamePassesValidNames(t *testing.T) {
+	for _, name := range []string{
+		"plain.txt",
+		"a_.txt",
+		"日本語.txt",
+		"🦑 squid",
+		strings.Repeat("a", 255),
+	} {
+		if got, s := checkName(name); s != fuse.OK || got != name {
+			t.Fatalf("checkName(%q) = %q, %v, want unchanged and OK", name, got, s)
+		}
 	}
-	if !utf8.ValidString(got) {
-		t.Fatalf("checkName did not sanitize: %q", got)
-	}
-
-	tooLong := strings.Repeat("x", 300)
-	if _, s := checkName(tooLong); s != fuse.Status(syscall.ENAMETOOLONG) {
+	if _, s := checkName(strings.Repeat("x", 300)); s != fuse.Status(syscall.ENAMETOOLONG) {
 		t.Fatalf("checkName length guard lost: status=%v", s)
+	}
+}
+
+// A name that is not valid UTF-8 never names an entry: making one fails with
+// EILSEQ, and looking one up or removing it answers ENOENT, all before any
+// path resolution or filer request.
+func TestInvalidUTF8NamesNeverReachTheFiler(t *testing.T) {
+	wfs := &WFS{option: &Option{}}
+	bad := "a\xff.txt"
+	header := fuse.InHeader{NodeId: 1}
+	eilseq := fuse.Status(syscall.EILSEQ)
+
+	cases := []struct {
+		op   string
+		got  fuse.Status
+		want fuse.Status
+	}{
+		{"lookup", wfs.Lookup(nil, &header, bad, &fuse.EntryOut{}), fuse.ENOENT},
+		{"unlink", wfs.Unlink(nil, &header, bad), fuse.ENOENT},
+		{"rmdir", wfs.Rmdir(nil, &header, bad), fuse.ENOENT},
+		{"rename source", wfs.Rename(nil, &fuse.RenameIn{InHeader: header, Newdir: 1}, bad, "b.txt"), fuse.ENOENT},
+		{"rename target", wfs.Rename(nil, &fuse.RenameIn{InHeader: header, Newdir: 1}, "b.txt", bad), eilseq},
+		{"create", wfs.Create(nil, &fuse.CreateIn{InHeader: header}, bad, &fuse.CreateOut{}), eilseq},
+		{"mknod", wfs.Mknod(nil, &fuse.MknodIn{InHeader: header}, bad, &fuse.EntryOut{}), eilseq},
+		{"mkdir", wfs.Mkdir(nil, &fuse.MkdirIn{InHeader: header}, bad, &fuse.EntryOut{}), eilseq},
+		{"symlink", wfs.Symlink(nil, &header, "target", bad, &fuse.EntryOut{}), eilseq},
+		{"link", wfs.Link(nil, &fuse.LinkIn{InHeader: header, Oldnodeid: 2}, bad, &fuse.EntryOut{}), eilseq},
+	}
+	for _, c := range cases {
+		if c.got != c.want {
+			t.Errorf("%s %q: status %v, want %v", c.op, bad, c.got, c.want)
+		}
 	}
 }
