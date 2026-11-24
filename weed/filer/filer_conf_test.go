@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/stretchr/testify/assert"
@@ -80,6 +81,31 @@ func TestWormInheritance(t *testing.T) {
 
 	// paths with no rule at all are unaffected
 	assert.False(t, fc.MatchStorageRule("/buckets/other/x").GetWorm())
+}
+
+func TestWormEnforcedAndIntersectsWorm(t *testing.T) {
+	fc := NewFilerConf()
+	fc.doLoadConf(&filer_pb.FilerConf{
+		Version: FilerConfVersion,
+		Locations: []*filer_pb.FilerConf_PathConf{
+			{LocationPrefix: "/buckets/forever/", Worm: proto.Bool(true)},
+			{LocationPrefix: "/buckets/hour/", Worm: proto.Bool(true), WormRetentionTimeSeconds: 3600},
+			{LocationPrefix: "/buckets/open/deep/", Worm: proto.Bool(true)},
+		},
+	})
+	now := time.Now()
+
+	assert.False(t, fc.WormEnforced("/buckets/forever/x", 0), "never made write-once")
+	assert.True(t, fc.WormEnforced("/buckets/forever/x", now.Add(-24*time.Hour).UnixNano()))
+	assert.True(t, fc.WormEnforced("/buckets/hour/x", now.Add(-time.Minute).UnixNano()))
+	assert.False(t, fc.WormEnforced("/buckets/hour/x", now.Add(-2*time.Hour).UnixNano()), "retention expired")
+	assert.False(t, fc.WormEnforced("/buckets/open/x", now.UnixNano()), "no WORM rule")
+
+	assert.True(t, fc.IntersectsWorm("/buckets/forever/sub"), "covered by a rule above")
+	assert.True(t, fc.IntersectsWorm("/buckets/open"), "a rule below")
+	assert.True(t, fc.IntersectsWorm("/buckets/open/"), "trailing slash")
+	assert.False(t, fc.IntersectsWorm("/buckets/open/other"))
+	assert.False(t, fc.IntersectsWorm("/buckets/op"), "a name prefix is not a directory prefix")
 }
 
 // TestWormLegacyFalseIsNotAnOverride pins that the explicit "worm": false every
