@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -529,7 +530,9 @@ func (fo *FilerOptions) startFiler() {
 	if err != nil {
 		glog.Fatalf("failed to listen on grpc port %d: %v", grpcPort, err)
 	}
-	grpcS := pb.NewGrpcServer(security.LoadServerTLS(util.GetViper(), "grpc.filer"))
+	grpcTLSOption, grpcTLSReloadOption := security.LoadServerTLS(util.GetViper(), "grpc.filer")
+	grpcOptions := append([]grpc.ServerOption{grpcTLSOption, grpcTLSReloadOption}, fs.GrpcScopeServerOptions()...)
+	grpcS := pb.NewGrpcServer(grpcOptions...)
 	filer_pb.RegisterSeaweedFilerServer(grpcS, fs)
 
 	// IAM RPCs require a Bearer token signed with jwt.filer_signing.key when it

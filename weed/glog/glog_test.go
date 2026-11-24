@@ -18,12 +18,17 @@ package glog
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"fmt"
 	stdLog "log"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -464,5 +469,111 @@ func BenchmarkHeader(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		buf, _, _ := logging.header(infoLog, 0)
 		logging.putBuffer(buf)
+	}
+}
+
+func TestWritesToStderr(t *testing.T) {
+	saved := struct {
+		toStderr     bool
+		alsoToStderr presetBool
+		threshold    severity
+		set          int32
+	}{logging.toStderr, logging.alsoToStderr, logging.stderrThreshold.get(), atomic.LoadInt32(&logging.stderrThresholdSet)}
+	defer func() {
+		logging.toStderr = saved.toStderr
+		logging.alsoToStderr = saved.alsoToStderr
+		logging.stderrThreshold.set(saved.threshold)
+		atomic.StoreInt32(&logging.stderrThresholdSet, saved.set)
+	}()
+
+	// threshold "" means the flag was not given; want is indexed by severity.
+	tests := []struct {
+		name         string
+		toStderr     bool
+		alsoToStderr presetBool
+		threshold    string
+		bridged      bool
+		want         [numSeverity]bool
+	}{
+		{"defaults", false, presetBool{value: true}, "", false, [4]bool{true, true, true, true}},
+		{"threshold over default alsologtostderr", false, presetBool{value: true}, "WARNING", false, [4]bool{false, true, true, true}},
+		{"explicit alsologtostderr=true wins", false, presetBool{value: true, explicit: true}, "FATAL", false, [4]bool{true, true, true, true}},
+		{"alsologtostderr=false keeps default ERROR", false, presetBool{value: false, explicit: true}, "", false, [4]bool{false, false, true, true}},
+		{"alsologtostderr=false with threshold", false, presetBool{value: false, explicit: true}, "INFO", false, [4]bool{true, true, true, true}},
+		{"logtostderr writes all", true, presetBool{value: true}, "", false, [4]bool{true, true, true, true}},
+		{"logtostderr with threshold", true, presetBool{value: true}, "ERROR", false, [4]bool{false, false, true, true}},
+		{"logtostderr with explicit alsologtostderr=true wins", true, presetBool{value: true, explicit: true}, "ERROR", false, [4]bool{true, true, true, true}},
+		{"logtostderr with alsologtostderr=false and threshold", true, presetBool{value: false, explicit: true}, "ERROR", false, [4]bool{false, false, true, true}},
+		{"bridged always written", true, presetBool{value: true}, "FATAL", true, [4]bool{true, true, true, true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logging.toStderr = tt.toStderr
+			logging.alsoToStderr = tt.alsoToStderr
+			logging.stderrThreshold.set(errorLog)
+			atomic.StoreInt32(&logging.stderrThresholdSet, 0)
+			if tt.threshold != "" {
+				if err := logging.stderrThreshold.Set(tt.threshold); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for s := infoLog; s <= fatalLog; s++ {
+				if got := logging.writesToStderr(s, tt.bridged); got != tt.want[s] {
+					t.Errorf("severity %s: got %v, want %v", severityName[s], got, tt.want[s])
+				}
+			}
+		})
+	}
+}
+
+func TestAlsoLogToStderrFlag(t *testing.T) {
+	var b presetBool
+	if b.explicit || !b.IsBoolFlag() {
+		t.Fatal("unexpected zero value")
+	}
+	if err := b.Set("false"); err != nil || b.value || !b.explicit {
+		t.Fatalf("Set(false): value=%v explicit=%v err=%v", b.value, b.explicit, err)
+	}
+	if err := b.Set("bogus"); err == nil {
+		t.Fatal("Set(bogus) succeeded")
+	}
+}
+
+// A FATAL under -log_json -logtostderr must leave only JSON lines on stderr,
+// the goroutine dump included. Fatal exits, so it runs in a child process.
+func TestFatalJSONStderrIsJSONLines(t *testing.T) {
+	if os.Getenv("GLOG_TEST_FATAL_JSON") == "1" {
+		logging.toStderr = true
+		SetJSONMode(true)
+		Fatal("fatal for test")
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestFatalJSONStderrIsJSONLines$")
+	cmd.Env = append(os.Environ(), "GLOG_TEST_FATAL_JSON=1")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 255 {
+		t.Fatalf("child exit = %v, want status 255; stderr:\n%s", err, stderr.String())
+	}
+	lines := strings.Split(strings.TrimRight(stderr.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d stderr lines, want the fatal record and the dump record:\n%s", len(lines), stderr.String())
+	}
+	for i, ln := range lines {
+		var rec struct {
+			Level string `json:"level"`
+			Msg   string `json:"msg"`
+		}
+		if err := json.Unmarshal([]byte(ln), &rec); err != nil {
+			t.Fatalf("stderr line %d is not JSON: %v\n%s", i, err, ln)
+		}
+		if rec.Level != "FATAL" {
+			t.Errorf("stderr line %d level = %q, want FATAL", i, rec.Level)
+		}
+	}
+	if !strings.Contains(lines[1], "goroutine ") {
+		t.Errorf("second record does not hold the goroutine dump: %s", lines[1])
 	}
 }

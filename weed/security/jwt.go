@@ -33,10 +33,43 @@ type SeaweedFileIdClaims struct {
 type SeaweedFilerClaims struct {
 	AllowedPrefixes []string `json:"allowed_prefixes,omitempty"`
 	AllowedMethods  []string `json:"allowed_methods,omitempty"`
+	ReadPrefixes    []string `json:"read_prefixes,omitempty"`
 	// SessionId is present only on STS session tokens; a token carrying it is
 	// an S3 session credential, not a filer API credential.
 	SessionId string `json:"sid,omitempty"`
 	jwt.RegisteredClaims
+}
+
+// IsScoped reports whether the token restricts the paths it may touch.
+func (c *SeaweedFilerClaims) IsScoped() bool {
+	return c != nil && (len(c.AllowedPrefixes) > 0 || len(c.ReadPrefixes) > 0)
+}
+
+// GenJwtForFilerScope mints a filer credential restricted to allowedPrefixes
+// (read and write) and readPrefixes (read only). id becomes the "jti" claim:
+// the identity used in authorization diagnostics. Returns an empty string
+// if the signing key is not configured, the token would not expire, or no
+// path grant was supplied.
+func GenJwtForFilerScope(signingKey SigningKey, expiresAfter time.Duration, id string, allowedPrefixes, readPrefixes []string) EncodedJwt {
+	if len(signingKey) == 0 || expiresAfter <= 0 || len(allowedPrefixes) == 0 && len(readPrefixes) == 0 {
+		return ""
+	}
+	claims := SeaweedFilerClaims{
+		AllowedPrefixes: allowedPrefixes,
+		ReadPrefixes:    readPrefixes,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        id,
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiresAfter)),
+		},
+	}
+	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	encoded, e := t.SignedString([]byte(signingKey))
+	if e != nil {
+		glog.V(0).Infof("Failed to sign claims %+v: %v", t.Claims, e)
+		return ""
+	}
+	return EncodedJwt(encoded)
 }
 
 // SeaweedFilerAdminClaims is presented by callers of the filer's IAM gRPC
@@ -55,6 +88,7 @@ type SeaweedFilerAdminClaims struct {
 	// A filer token scoped to paths or methods is not an admin credential.
 	AllowedPrefixes []string `json:"allowed_prefixes,omitempty"`
 	AllowedMethods  []string `json:"allowed_methods,omitempty"`
+	ReadPrefixes    []string `json:"read_prefixes,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -176,6 +210,12 @@ func verificationKeySet(signingKey SigningKey, previousKeys []SigningKey) jwt.Ve
 		}
 	}
 	return keySet
+}
+
+// DecodeJwtWith verifies a filer token with optional previous-key and clock
+// leeway support, using the same verification path as DecodeJwt.
+func DecodeJwtWith(signingKey, previousKey SigningKey, tokenString EncodedJwt, claims jwt.Claims, leeway time.Duration) (*jwt.Token, error) {
+	return decodeJwt(signingKey, []SigningKey{previousKey}, tokenString, claims, jwt.WithLeeway(leeway))
 }
 
 // FilerJwtProvider signs the credential a filer's HTTP API expects. A nil

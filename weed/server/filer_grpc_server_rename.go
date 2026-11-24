@@ -55,6 +55,20 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 		if err != nil {
 			return false, fmt.Errorf("%s/%s not found: %v", req.OldDirectory, req.OldName, err)
 		}
+		if err := fs.checkScopeWorm(ctx, string(oldParent.Child(req.OldName))); err != nil {
+			return false, err
+		}
+		if err := fs.checkScopeWorm(ctx, string(newParent.Child(req.NewName))); err != nil {
+			return false, err
+		}
+		if oldEntry.IsDirectory() {
+			if err := fs.checkScopeWormDirectory(ctx, string(oldParent.Child(req.OldName))); err != nil {
+				return false, err
+			}
+			if err := fs.checkScopeWormDirectory(ctx, string(newParent.Child(req.NewName))); err != nil {
+				return false, err
+			}
+		}
 
 		// The check runs under the rename path locks, which CreateEntry on the same
 		// filer also takes, so a target created concurrently cannot slip through.
@@ -93,12 +107,29 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 	defer fs.acquireRenamePathLocks("StreamRenameEntry", oldParent.Child(req.OldName), newParent.Child(req.NewName))()
 
 	afterCommitCtx := context.Background()
+	if scopeKeepOnly(stream.Context()) {
+		afterCommitCtx = withScopeKeepOnly(afterCommitCtx)
+	}
 	var held *renameResponseBuffer
 	effects, err := fs.runRenameTransaction(afterCommitCtx, fmt.Sprintf("%s/%s", req.OldDirectory, req.OldName), func(ctx context.Context, effects *renameEffects) (bool, error) {
 		held = nil
 		oldEntry, err := fs.filer.FindEntry(ctx, oldParent.Child(req.OldName))
 		if err != nil {
 			return false, fmt.Errorf("%s/%s not found: %v", req.OldDirectory, req.OldName, err)
+		}
+		if err := fs.checkScopeWorm(ctx, string(oldParent.Child(req.OldName))); err != nil {
+			return false, err
+		}
+		if err := fs.checkScopeWorm(ctx, string(newParent.Child(req.NewName))); err != nil {
+			return false, err
+		}
+		if oldEntry.IsDirectory() {
+			if err := fs.checkScopeWormDirectory(ctx, string(oldParent.Child(req.OldName))); err != nil {
+				return false, err
+			}
+			if err := fs.checkScopeWormDirectory(ctx, string(newParent.Child(req.NewName))); err != nil {
+				return false, err
+			}
 		}
 
 		if oldEntry.IsDirectory() {
@@ -263,8 +294,8 @@ type metadataEvent struct {
 	oldEntry     *filer.Entry
 	newEntry     *filer.Entry
 	deleteChunks bool
-	// the old entry's remote object is deleted once the rename has committed:
-	// it was copied to the new key, and a rename that fails must not lose it
+	// The old entry's remote object is deleted once the rename has committed:
+	// it was copied to the new key, or belonged to an overwritten target.
 	deleteOldRemote bool
 }
 
@@ -437,7 +468,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 
 	var existingTarget *filer.Entry
 	if !skipTargetLookup {
-		if targetEntry, findErr := fs.filer.FindEntry(ctx, newPath); findErr == nil {
+		if targetEntry, findErr := fs.filer.FindEntryForOverwrite(ctx, newPath); findErr == nil {
 			existingTarget = targetEntry.ShallowClone()
 		} else if findErr != filer_pb.ErrNotFound {
 			return findErr
@@ -493,6 +524,12 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 
 	if existingTarget != nil && !inPlace {
 		targetCtx := filer.WithSuppressedMetadataEvents(ctx)
+		// A remote delete cannot be rolled back with the target's metadata.
+		// The queued target event performs it after commit unless a remote
+		// copy replaces that object (in which case it must be kept).
+		if existingTarget.Remote != nil {
+			targetCtx = filer.WithKeepRemoteObject(targetCtx)
+		}
 		if copiedRemote != nil || deferredCopy {
 			// the copy has replaced or still needs the target's object; keep it
 			targetCtx = filer.WithKeepRemoteObject(targetCtx)
@@ -621,8 +658,9 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 
 	if existingTarget != nil {
 		*metadataEvents = append(*metadataEvents, metadataEvent{
-			oldEntry:     existingTarget,
-			deleteChunks: true,
+			oldEntry:        existingTarget,
+			deleteChunks:    true,
+			deleteOldRemote: existingTarget.Remote != nil && copiedRemote == nil && !deferredCopy,
 		})
 	}
 	*metadataEvents = append(*metadataEvents, metadataEvent{

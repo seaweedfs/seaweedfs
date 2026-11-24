@@ -1045,7 +1045,9 @@ type KeepConnectedRequest struct {
 	// exposing metrics on the client-facing service port.
 	MetricsPort uint32 `protobuf:"varint,9,opt,name=metrics_port,json=metricsPort,proto3" json:"metrics_port,omitempty"`
 	// Port an S3 gateway serves its Lance Namespace on, or 0 when it serves none.
-	LancePort     uint32 `protobuf:"varint,10,opt,name=lance_port,json=lancePort,proto3" json:"lance_port,omitempty"`
+	LancePort uint32 `protobuf:"varint,10,opt,name=lance_port,json=lancePort,proto3" json:"lance_port,omitempty"`
+	// URL an S3 gateway serves the S3 API on, or empty when it advertises none.
+	S3Endpoint    string `protobuf:"bytes,11,opt,name=s3_endpoint,json=s3Endpoint,proto3" json:"s3_endpoint,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1141,6 +1143,13 @@ func (x *KeepConnectedRequest) GetLancePort() uint32 {
 		return x.LancePort
 	}
 	return 0
+}
+
+func (x *KeepConnectedRequest) GetS3Endpoint() string {
+	if x != nil {
+		return x.S3Endpoint
+	}
+	return ""
 }
 
 type VolumeLocation struct {
@@ -5050,6 +5059,7 @@ type ListClusterNodesResponse_ClusterNode struct {
 	Version       string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
 	CreatedAtNs   int64                  `protobuf:"varint,4,opt,name=created_at_ns,json=createdAtNs,proto3" json:"created_at_ns,omitempty"`
 	LancePort     uint32                 `protobuf:"varint,7,opt,name=lance_port,json=lancePort,proto3" json:"lance_port,omitempty"`
+	S3Endpoint    string                 `protobuf:"bytes,8,opt,name=s3_endpoint,json=s3Endpoint,proto3" json:"s3_endpoint,omitempty"`
 	DataCenter    string                 `protobuf:"bytes,5,opt,name=data_center,json=dataCenter,proto3" json:"data_center,omitempty"`
 	Rack          string                 `protobuf:"bytes,6,opt,name=rack,proto3" json:"rack,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -5112,6 +5122,13 @@ func (x *ListClusterNodesResponse_ClusterNode) GetLancePort() uint32 {
 		return x.LancePort
 	}
 	return 0
+}
+
+func (x *ListClusterNodesResponse_ClusterNode) GetS3Endpoint() string {
+	if x != nil {
+		return x.S3Endpoint
+	}
+	return ""
 }
 
 func (x *ListClusterNodesResponse_ClusterNode) GetDataCenter() string {
@@ -5331,7 +5348,7 @@ const file_master_proto_rawDesc = "" +
 	"\x04data\x18\x01 \x01(\rR\x04data\x12\x16\n" +
 	"\x06parity\x18\x02 \x01(\rR\x06parity\x12\x1d\n" +
 	"\n" +
-	"volume_ids\x18\x03 \x03(\rR\tvolumeIds\"\xb8\x02\n" +
+	"volume_ids\x18\x03 \x03(\rR\tvolumeIds\"\xd9\x02\n" +
 	"\x14KeepConnectedRequest\x12\x1f\n" +
 	"\vclient_type\x18\x01 \x01(\tR\n" +
 	"clientType\x12%\n" +
@@ -5346,7 +5363,9 @@ const file_master_proto_rawDesc = "" +
 	"\fmetrics_port\x18\t \x01(\rR\vmetricsPort\x12\x1d\n" +
 	"\n" +
 	"lance_port\x18\n" +
-	" \x01(\rR\tlancePort\"\x9e\x03\n" +
+	" \x01(\rR\tlancePort\x12\x1f\n" +
+	"\vs3_endpoint\x18\v \x01(\tR\n" +
+	"s3Endpoint\"\x9e\x03\n" +
 	"\x0eVolumeLocation\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12\x1d\n" +
 	"\n" +
@@ -5606,15 +5625,17 @@ const file_master_proto_rawDesc = "" +
 	"clientType\x12\x1f\n" +
 	"\vfiler_group\x18\x02 \x01(\tR\n" +
 	"filerGroup\x12\x14\n" +
-	"\x05limit\x18\x04 \x01(\x05R\x05limit\"\xac\x02\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\"\xcd\x02\n" +
 	"\x18ListClusterNodesResponse\x12T\n" +
-	"\rcluster_nodes\x18\x01 \x03(\v2/.master_pb.ListClusterNodesResponse.ClusterNodeR\fclusterNodes\x1a\xb9\x01\n" +
+	"\rcluster_nodes\x18\x01 \x03(\v2/.master_pb.ListClusterNodesResponse.ClusterNodeR\fclusterNodes\x1a\xda\x01\n" +
 	"\vClusterNode\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\"\n" +
 	"\rcreated_at_ns\x18\x04 \x01(\x03R\vcreatedAtNs\x12\x1d\n" +
 	"\n" +
 	"lance_port\x18\a \x01(\rR\tlancePort\x12\x1f\n" +
+	"\vs3_endpoint\x18\b \x01(\tR\n" +
+	"s3Endpoint\x12\x1f\n" +
 	"\vdata_center\x18\x05 \x01(\tR\n" +
 	"dataCenter\x12\x12\n" +
 	"\x04rack\x18\x06 \x01(\tR\x04rack\"\xc5\x01\n" +

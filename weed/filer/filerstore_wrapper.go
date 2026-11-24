@@ -465,6 +465,15 @@ func (fsw *FilerStoreWrapper) transactionCovers(paths ...util.FullPath) bool {
 	return true
 }
 
+// refusesConflictingCommits reports whether a transaction of the default store
+// that read and wrote the entry at path is refused when another writer
+// committed that entry meanwhile: the store's commits are (ConflictRefusingStore)
+// and it holds the entry.
+func (fsw *FilerStoreWrapper) refusesConflictingCommits(path util.FullPath) bool {
+	refusing, ok := fsw.defaultStore.(ConflictRefusingStore)
+	return ok && refusing.RefusesConflictingCommits() && fsw.getActualStore(path) == fsw.defaultStore
+}
+
 // overwritesAtOnce reports whether an entry inserted at path replaces what is
 // stored there at once and whole: the default store says that its inserts do
 // (OverwritingStore), and it holds the entry.

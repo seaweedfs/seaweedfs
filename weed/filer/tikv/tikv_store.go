@@ -385,6 +385,15 @@ func (store *TikvStore) IsolatesTransactions() bool {
 
 var _ filer.IsolatingTransactionStore = (*TikvStore)(nil)
 
+// RefusesConflictingCommits: the transactions are optimistic, and a commit
+// meets a write conflict (commitError) on a key another writer committed
+// after the transaction began.
+func (store *TikvStore) RefusesConflictingCommits() bool {
+	return true
+}
+
+var _ filer.ConflictRefusingStore = (*TikvStore)(nil)
+
 // commitError marks a write conflict as a transaction conflict: another writer
 // committed a key this optimistic transaction wrote after it began, so the
 // transaction can succeed when run again.

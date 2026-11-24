@@ -86,6 +86,9 @@ type S3ApiServerOption struct {
 	// LancePort is advertised to the master so admin can point workers at the
 	// Lance Namespace; 0 when this gateway serves none.
 	LancePort uint32
+	// S3Endpoint is advertised to the master so mounts can read SSE-S3 objects
+	// through this gateway.
+	S3Endpoint string
 	// IamSelfServiceRequiresGrant makes managing one's own access keys
 	// (CreateAccessKey, DeleteAccessKey, UpdateAccessKey, ListAccessKeys,
 	// GetUser) need an explicit iam: grant instead of being allowed to every
@@ -269,6 +272,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		masterClient.SetOnVolumeLocationChangeFn(filerClient.OnVolumeLocationChange)
 		masterClient.SetOnVidMapResetFn(filerClient.OnVidMapReset)
 		masterClient.SetLancePort(option.LancePort)
+		masterClient.SetS3Endpoint(option.S3Endpoint)
 
 		// Start the master client connection loop - required for GetMaster() to work
 		go masterClient.KeepConnectedToMaster(context.Background())

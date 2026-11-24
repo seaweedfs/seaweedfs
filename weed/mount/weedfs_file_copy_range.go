@@ -109,6 +109,9 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	if fhIn.entry.IsDirectory || fhOut.entry.IsDirectory {
 		return 0, fuse.EISDIR
 	}
+	if fhIn.entry.hasSSES3Data() {
+		return 0, fuse.ENOTSUP
+	}
 
 	glog.V(4).Infof(
 		"CopyFileRange %s fhIn %d -> %s fhOut %d, [%d,%d) -> [%d,%d)",
@@ -159,6 +162,9 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 		numBytesRead, err := readDataByFileHandle(
 			buff[:readLen], fhIn, offsetIn)
 		if err != nil {
+			if err == errNativeSSES3Read {
+				return 0, fuse.ENOTSUP
+			}
 			glog.Warningf("file handle read %s %d (total %d): %v",
 				fhIn.FullPath(), numBytesRead, totalCopied, err)
 			return 0, fuse.EIO

@@ -607,6 +607,22 @@ func (i *InodeToPath) AddPath(inode uint64, path util.FullPath) {
 	}
 }
 
+// RemovePathOf takes path away from inode when the path is still the inode's,
+// and reports whether it was. Checked and removed under one lock: a rename on
+// this mount may have given the path to another inode since the caller looked,
+// and that mapping is not the caller's to drop.
+func (i *InodeToPath) RemovePathOf(inode uint64, path util.FullPath) bool {
+	i.Lock()
+	defer i.Unlock()
+	if current, found := i.path2inode[path]; !found || current != inode {
+		return false
+	}
+	delete(i.path2inode, path)
+	i.dropDirPath(inode)
+	i.removePathFromInode2Path(inode, path)
+	return true
+}
+
 // RemovePath drops the name. onStillReferenced, if given, runs under the
 // table's lock when the kernel still holds lookup references to the inode:
 // such an inode keeps receiving requests until the final forget, and holding
@@ -639,6 +655,22 @@ func (i *InodeToPath) RemoveAlias(path util.FullPath) (util.FullPath, bool) {
 	if !found {
 		return "", false
 	}
+	return i.removeAlias(inode, path)
+}
+
+// RemoveAliasOf drops path only while it still names inode and the inode
+// keeps another name. Ownership is checked under the same lock as removal.
+func (i *InodeToPath) RemoveAliasOf(inode uint64, path util.FullPath) (util.FullPath, bool) {
+	i.Lock()
+	defer i.Unlock()
+	if current, found := i.path2inode[path]; !found || current != inode {
+		return "", false
+	}
+	return i.removeAlias(inode, path)
+}
+
+// removeAlias requires the table lock and a path that belongs to inode.
+func (i *InodeToPath) removeAlias(inode uint64, path util.FullPath) (util.FullPath, bool) {
 	ie := i.inode2path[inode]
 	if ie == nil {
 		return "", false

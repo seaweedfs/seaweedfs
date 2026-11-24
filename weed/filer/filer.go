@@ -485,6 +485,15 @@ func (f *Filer) TransactionCovers(ctx context.Context, paths ...util.FullPath) b
 	return ok && fsw.transactionCovers(paths...)
 }
 
+// RefusesConflictingCommits reports whether a store transaction that reads the
+// entry at path and writes it is refused when another writer commits that
+// entry meanwhile: the default store says that its commits are, and it holds
+// the entry.
+func (f *Filer) RefusesConflictingCommits(path util.FullPath) bool {
+	fsw, ok := f.Store.(*FilerStoreWrapper)
+	return ok && fsw.refusesConflictingCommits(path)
+}
+
 // OverwritesAtOnce reports whether an entry inserted at path replaces what is
 // stored there at once and whole: the default store says that its inserts do,
 // and it holds the entry.
@@ -1004,8 +1013,12 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 	if entry != nil && entry.TtlSec > 0 && !entry.IsDirectory() {
 		if entry.IsExpireS3Enabled() {
 			if entry.GetS3ExpireTime().Before(time.Now()) && !entry.IsS3Versioning() {
-				if delErr := f.doDeleteEntryMetaAndData(ctx, entry, true, false, nil); delErr != nil {
-					glog.ErrorfCtx(ctx, "FindEntry doDeleteEntryMetaAndData %s failed: %v", entry.FullPath, delErr)
+				// Its remote delete and event would outlive a refused commit, so a
+				// lookup outside a transaction removes it.
+				if ctx.Value(storeTransactionKey{}) == nil {
+					if delErr := f.doDeleteEntryMetaAndData(ctx, entry, true, false, nil); delErr != nil {
+						glog.ErrorfCtx(ctx, "FindEntry doDeleteEntryMetaAndData %s failed: %v", entry.FullPath, delErr)
+					}
 				}
 				return nil, filer_pb.ErrNotFound
 			}
@@ -1023,6 +1036,24 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 		}
 	}
 
+	return entry, err
+}
+
+// FindEntryWithoutRemoteFetch applies the usual expiry checks but leaves a
+// missing filer entry absent, even when its remote object still exists.
+func (f *Filer) FindEntryWithoutRemoteFetch(ctx context.Context, p util.FullPath) (*Entry, error) {
+	return f.FindEntry(context.WithValue(ctx, lazyFetchContextKey{}, true), p)
+}
+
+// FindEntryForOverwrite also returns an expired S3 entry retained inside a
+// transaction. A replacement must account for its chunks and hard links and
+// publish its deletion after commit: once overwritten, no later lookup can
+// discover it for expiry cleanup. Ordinary lookups still see it as absent.
+func (f *Filer) FindEntryForOverwrite(ctx context.Context, p util.FullPath) (*Entry, error) {
+	entry, err := f.FindEntry(ctx, p)
+	if errors.Is(err, filer_pb.ErrNotFound) && ctx.Value(storeTransactionKey{}) != nil {
+		return f.Store.FindEntry(ctx, p)
+	}
 	return entry, err
 }
 
