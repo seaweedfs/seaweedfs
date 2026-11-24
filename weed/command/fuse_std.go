@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -309,6 +310,10 @@ func runFuse(cmd *Command, args []string) bool {
 			}
 			mountOptions.extraOptions = append(mountOptions.extraOptions, t)
 		}
+	}
+
+	if err := checkIdmap(runtime.GOOS, *mountOptions.idmap, *mountOptions.defaultPermissions); err != nil {
+		panic(err)
 	}
 
 	util_http.InitGlobalHttpClient()
