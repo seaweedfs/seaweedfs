@@ -135,6 +135,9 @@ func TestAdoptFilerDigest(t *testing.T) {
 // TestNewContentMd5 checks when a separate MD5 for Content-MD5 is computed:
 // only under digest sha256 with MD5 available, and BodyMd5 then returns it.
 func TestNewContentMd5(t *testing.T) {
+	if fips140.Enforced() {
+		t.Skip("computes a real MD5, which GODEBUG=fips140=only refuses")
+	}
 	enforced := fips140Enforced
 	t.Cleanup(func() { fips140Enforced = enforced; SetDigest("") })
 	fips140Enforced = func() bool { return false }
