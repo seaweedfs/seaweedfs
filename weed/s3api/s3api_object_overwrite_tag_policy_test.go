@@ -9,12 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/stretchr/testify/require"
 )
@@ -92,13 +95,23 @@ func TestOverwriteHonorsExistingObjectTagDeny(t *testing.T) {
 		s3a.CopyObjectHandler(rec, withIdentity(req, object))
 		return rec
 	}
-	complete := func(object string) *httptest.ResponseRecorder {
-		uploadID := s3a.generateUploadID(object)
-		body := `<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>"etag"</ETag></Part></CompleteMultipartUpload>`
+	completeUpload := func(object, uploadID, etag string) *httptest.ResponseRecorder {
+		body := `<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>` + etag + `</ETag></Part></CompleteMultipartUpload>`
 		req := httptest.NewRequest(http.MethodPost, "/vault/"+object+"?uploadId="+uploadID, strings.NewReader(body))
 		rec := httptest.NewRecorder()
 		s3a.CompleteMultipartUploadHandler(rec, withIdentity(req, object))
 		return rec
+	}
+	complete := func(object string) *httptest.ResponseRecorder {
+		out, code := s3a.createMultipartUpload(withIdentity(httptest.NewRequest(http.MethodPost, "/vault/"+object+"?uploads", nil), object),
+			&s3.CreateMultipartUploadInput{Bucket: aws.String("vault"), Key: aws.String(object)})
+		require.Equal(t, s3err.ErrNone, code)
+		req := httptest.NewRequest(http.MethodPut, "/vault/"+object+"?partNumber=1&uploadId="+*out.UploadId, strings.NewReader("replaced"))
+		rec := httptest.NewRecorder()
+		s3a.PutObjectPartHandler(rec, withIdentity(req, object))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Len(t, rec.Header()["ETag"], 1)
+		return completeUpload(object, *out.UploadId, rec.Header()["ETag"][0])
 	}
 
 	for name, write := range map[string]func(string) *httptest.ResponseRecorder{"PutObject": put, "CopyObject": copyTo, "CompleteMultipartUpload": complete} {
@@ -114,14 +127,18 @@ func TestOverwriteHonorsExistingObjectTagDeny(t *testing.T) {
 		require.Equal(t, http.StatusOK, put(object).Code, "PutObject %s", object)
 		require.Equal(t, http.StatusOK, copyTo(object).Code, "CopyObject %s", object)
 	}
-	require.NotEqual(t, http.StatusForbidden, complete("fresh.txt").Code, "CompleteMultipartUpload of a new key")
+	rec := complete("multipart.txt")
+	require.Equal(t, http.StatusOK, rec.Code, "CompleteMultipartUpload of a new key: %s", rec.Body.String())
+	filer.mu.Lock()
+	require.NotNil(t, filer.entries["/buckets/vault/multipart.txt"])
+	filer.mu.Unlock()
 
 	// A replayed completion of the upload that wrote the tagged object returns
 	// its committed result instead of being refused as an overwrite.
 	filer.mu.Lock()
 	filer.entries["/buckets/vault/secret.txt"].Extended[s3_constants.SeaweedFSUploadId] = []byte(s3a.generateUploadID("secret.txt"))
 	filer.mu.Unlock()
-	rec := complete("secret.txt")
+	rec = completeUpload("secret.txt", s3a.generateUploadID("secret.txt"), `"etag"`)
 	require.Equal(t, http.StatusOK, rec.Code, "replayed CompleteMultipartUpload: %s", rec.Body.String())
 
 	// A bucket default encryption is not caller input: a policy refusing an
