@@ -96,7 +96,7 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 
 	// Reject if a table or view already exists at this name.
 	var existingMetadata tableMetadataInternal
-	var existingIsTable bool
+	var conflict string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		entry, err := h.lookupEntry(r.Context(), client, viewPath)
 		if err != nil {
@@ -107,8 +107,12 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 			// it is not an existing view; the claim below refuses the name.
 			return filer_pb.ErrNotFound
 		}
+		if _, ok := entry.Extended[ExtendedKeyMetadata]; !ok && EntryType(entry.Extended) != EntryTypeView {
+			conflict = fmt.Sprintf("%s already exists and is not a table or view", viewName)
+			return nil
+		}
 		if EntryType(entry.Extended) != EntryTypeView {
-			existingIsTable = true
+			conflict = fmt.Sprintf("a table named %s already exists", viewName)
 			return nil
 		}
 		data, ok := entry.Extended[ExtendedKeyMetadata]
@@ -118,9 +122,9 @@ func (h *S3TablesHandler) handleCreateView(w http.ResponseWriter, r *http.Reques
 		return json.Unmarshal(data, &existingMetadata)
 	})
 	if err == nil {
-		if existingIsTable {
-			h.writeError(w, http.StatusConflict, ErrCodeViewAlreadyExists, fmt.Sprintf("a table named %s already exists", viewName))
-			return fmt.Errorf("table name conflict: %s", viewName)
+		if conflict != "" {
+			h.writeError(w, http.StatusConflict, ErrCodeViewAlreadyExists, conflict)
+			return fmt.Errorf("view name conflict: %s", conflict)
 		}
 		viewARN := h.generateViewARN(existingMetadata.OwnerAccountID, bucketName, namespaceName+"/"+viewName)
 		h.writeJSON(w, http.StatusOK, &CreateViewResponse{

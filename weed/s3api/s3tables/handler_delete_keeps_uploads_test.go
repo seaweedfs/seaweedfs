@@ -2,6 +2,7 @@ package s3tables
 
 import (
 	"context"
+	"net/http"
 	"path"
 	"testing"
 	"time"
@@ -37,6 +38,10 @@ func TestDeleteKeepsFilesOlderThanTheRecord(t *testing.T) {
 		assert.NotNil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "v1")+"/data", "file.parquet"))
 		require.NotNil(t, fs.Get(nsPath, "v1"))
 		assert.Empty(t, fs.Get(nsPath, "v1").Extended[ExtendedKeyMetadata])
+
+		status, resp := runHandler(t, m, fs.Client, "CreateView", &CreateViewRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "v1"})
+		assert.Equal(t, http.StatusConflict, status)
+		assert.Equal(t, "v1 already exists and is not a table or view", resp.Message)
 	})
 
 	t.Run("colocated table", func(t *testing.T) {
