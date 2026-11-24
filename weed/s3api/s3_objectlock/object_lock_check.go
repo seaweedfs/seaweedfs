@@ -80,32 +80,19 @@ func paginateEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 	processEntry func(entry *filer_pb.Entry) (stop bool, err error)) error {
 	lastFileName := ""
 	for {
-		resp, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
-			Directory:          dir,
-			StartFromFileName:  lastFileName,
-			InclusiveStartFrom: false,
-			Limit:              10000,
-		})
+		// Read the page to its end before processing it: processing may list a
+		// subdirectory, and the filer can hold a store connection while a
+		// listing stays open.
+		page, err := listEntriesPage(ctx, client, dir, lastFileName)
 		if err != nil {
-			return fmt.Errorf("failed to list directory %s: %w", dir, err)
+			return err
 		}
+		if len(page) == 0 {
+			return nil
+		}
+		lastFileName = page[len(page)-1].Name
 
-		entriesReceived := false
-		for {
-			entryResp, recvErr := resp.Recv()
-			if recvErr != nil {
-				if errors.Is(recvErr, io.EOF) {
-					break // Normal end of stream
-				}
-				return fmt.Errorf("failed to receive entry from %s: %w", dir, recvErr)
-			}
-			entry := entryResp.Entry
-			if entry == nil {
-				continue
-			}
-			entriesReceived = true
-			lastFileName = entry.Name
-
+		for _, entry := range page {
 			// Skip invalid entry names to prevent path traversal
 			if entry.Name == "" || entry.Name == "." || entry.Name == ".." ||
 				strings.ContainsAny(entry.Name, "/\\") {
@@ -121,12 +108,35 @@ func paginateEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 				return nil
 			}
 		}
+	}
+}
 
-		if !entriesReceived {
-			break
+func listEntriesPage(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, startFrom string) ([]*filer_pb.Entry, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	resp, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+		Directory:          dir,
+		StartFromFileName:  startFrom,
+		InclusiveStartFrom: false,
+		Limit:              10000,
+		OmitChunks:         true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list directory %s: %w", dir, err)
+	}
+	var page []*filer_pb.Entry
+	for {
+		entryResp, recvErr := resp.Recv()
+		if recvErr != nil {
+			if errors.Is(recvErr, io.EOF) {
+				return page, nil
+			}
+			return nil, fmt.Errorf("failed to receive entry from %s: %w", dir, recvErr)
+		}
+		if entryResp.Entry != nil {
+			page = append(page, entryResp.Entry)
 		}
 	}
-	return nil
 }
 
 // recursivelyCheckLocksWithClient recursively checks all objects and versions for active locks
