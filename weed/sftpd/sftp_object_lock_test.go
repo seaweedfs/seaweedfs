@@ -300,3 +300,27 @@ func TestRemoveReadsChunkedFilerConf(t *testing.T) {
 		t.Fatalf("rm under a WORM rule from a chunked filer.conf: got %v, want os.ErrPermission", err)
 	}
 }
+
+func TestUploadRechecksTargetAtClose(t *testing.T) {
+	fs, fake := newLockTestServer(t, map[string]*filer_pb.Entry{
+		"/buckets/b":     {Name: "b", IsDirectory: true},
+		"/buckets/b/dir": {Name: "dir", IsDirectory: true},
+		"/buckets/b/f":   {Name: "f"},
+	})
+	if w, err := fs.newFileWriter(sftp.NewRequest("Put", "/b/dir")); err == nil {
+		w.(io.Closer).Close()
+		t.Fatalf("upload onto a directory was accepted")
+	}
+
+	w, err := fs.newFileWriter(sftp.NewRequest("Put", "/b/f"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	fake.mu.Lock()
+	fake.entries["/buckets/b/f"] = lockedEntry("f", map[string]string{s3_constants.ExtLegalHoldKey: s3_constants.LegalHoldOn})
+	fake.entries["/buckets/b/f"].Attributes = &filer_pb.FuseAttributes{FileMode: 0644, Uid: 1000}
+	fake.mu.Unlock()
+	if err := w.(io.Closer).Close(); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("close after a hold was set: got %v, want os.ErrPermission", err)
+	}
+}

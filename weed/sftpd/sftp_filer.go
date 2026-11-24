@@ -162,11 +162,7 @@ func (fs *SftpServer) newFileWriter(r *sftp.Request) (io.WriterAt, error) {
 	if err := fs.requireParentDir(absPath); err != nil {
 		return nil, err
 	}
-	if entry, err := fs.getEntry(absPath); err == nil {
-		if err := fs.checkEntryProtected(absPath, entry); err != nil {
-			return nil, err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err := fs.checkWritable(absPath); err != nil {
 		return nil, err
 	}
 	// Create a temporary file to buffer writes
@@ -193,6 +189,22 @@ func (fs *SftpServer) newFileWriter(r *sftp.Request) (io.WriterAt, error) {
 		gid:         fs.user.Gid,
 		offset:      0,
 	}, nil
+}
+
+// checkWritable refuses an upload onto a directory, which the filer would
+// redirect to a child, or onto a protected entry.
+func (fs *SftpServer) checkWritable(absPath string) error {
+	entry, err := fs.getEntry(absPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if entry.IsDirectory {
+		return fmt.Errorf("%s is a directory", absPath)
+	}
+	return fs.checkEntryProtected(absPath, entry)
 }
 
 func (fs *SftpServer) copyExistingContent(absPath string, dst io.Writer) error {

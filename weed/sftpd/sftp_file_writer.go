@@ -88,6 +88,9 @@ func (w *SeaweedSftpFileWriter) Close() error {
 	if err := w.fs.requireParentDir(w.absPath); err != nil {
 		return err
 	}
+	if err := w.fs.checkWritable(w.absPath); err != nil {
+		return err
+	}
 
 	// Stream the file to the absolute path (after HomeDir translation)
 	return w.fs.putFile(w.absPath, w.tmpFile, w.fs.user)
