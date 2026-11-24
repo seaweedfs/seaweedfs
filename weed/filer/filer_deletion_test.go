@@ -2,8 +2,11 @@ package filer
 
 import (
 	"container/heap"
+	"net/http"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
 
 func TestDeletionRetryQueue_AddAndRetrieve(t *testing.T) {
@@ -192,6 +195,7 @@ func TestIsRetryableError(t *testing.T) {
 		{"service unavailable", true, "service unavailable"},
 		{"i/o timeout", true, "I/O timeout"},
 		{"broken pipe", true, "broken pipe"},
+		{"rpc error: code = Unknown desc = volume server 10.0.0.2:8080 is in maintenance mode", true, "maintenance mode"},
 		{"not found", false, "not found (not retryable)"},
 		{"invalid file id", false, "invalid input (not retryable)"},
 		{"", false, "empty error"},
@@ -203,6 +207,22 @@ func TestIsRetryableError(t *testing.T) {
 			t.Errorf("%s: expected retryable=%v, got %v for error: %q",
 				tc.description, tc.retryable, result, tc.error)
 		}
+	}
+}
+
+// One replica took the delete and the other is in maintenance mode: the delete
+// must be retried, or the second replica keeps the needle live for good.
+func TestClassifyDeletionOutcome_ReplicaInMaintenanceMode(t *testing.T) {
+	fid := "3,01637037d6"
+	results := map[string][]*volume_server_pb.DeleteResult{
+		fid: {
+			{FileId: fid, Status: http.StatusAccepted, Size: 1024},
+			{FileId: fid, Status: http.StatusInternalServerError,
+				Error: "rpc error: code = Unknown desc = volume server 10.0.0.2:8080 is in maintenance mode"},
+		},
+	}
+	if got := classifyDeletionOutcome(fid, results, false); got.status != deletionOutcomeRetryable {
+		t.Errorf("expected %s, got %s (%s)", deletionOutcomeRetryable, got.status, got.errorMsg)
 	}
 }
 
