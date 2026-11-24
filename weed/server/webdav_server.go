@@ -44,6 +44,7 @@ type WebDavOption struct {
 	CacheDir       string
 	CacheSizeMB    int64
 	MaxMB          int
+	BasicAuth      *security.BasicAuth
 }
 
 type WebDavServer struct {
@@ -72,21 +73,40 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 		fs = NewWrappedFs(fs, path.Clean(option.FilerRootPath))
 	}
 
-	ws = &WebDavServer{
-		option:         option,
-		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.filer"),
-		Handler: listedEntriesHandler{
-			next: copyMoveGuardHandler{
-				fs: fs,
-				next: &webdav.Handler{
-					FileSystem: fs,
-					LockSystem: webdav.NewMemLS(),
-				},
+	var handler http.Handler = listedEntriesHandler{
+		next: copyMoveGuardHandler{
+			fs: fs,
+			next: &webdav.Handler{
+				FileSystem: fs,
+				LockSystem: webdav.NewMemLS(),
 			},
 		},
 	}
+	if option.BasicAuth != nil {
+		handler = basicAuthHandler{auth: option.BasicAuth, next: handler}
+	}
+
+	ws = &WebDavServer{
+		option:         option,
+		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.filer"),
+		Handler:        handler,
+	}
 
 	return ws, nil
+}
+
+type basicAuthHandler struct {
+	auth *security.BasicAuth
+	next http.Handler
+}
+
+func (h basicAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !h.auth.Allows(r) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="SeaweedFS WebDAV", charset="UTF-8"`)
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
+	}
+	h.next.ServeHTTP(w, r)
 }
 
 // putOutcomeKey carries the flag WebDavFileSystem.OpenFile sets when a PUT
