@@ -6,8 +6,11 @@ use arrow_array::{Array, Float32Array, RecordBatch, StringArray, UInt64Array};
 use futures::TryStreamExt;
 use lance::Dataset;
 use lance::dataset::scanner::Scanner;
+use lance::index::DatasetIndexExt;
 use lance_linalg::distance::DistanceType;
 use lance_table::format::Fragment;
+use roaring::RoaringBitmap;
+use std::collections::HashSet;
 
 use crate::table::VectorTable;
 
@@ -60,7 +63,7 @@ pub struct Hit {
 
 /// Exact top-K over every fragment, ignoring any index.
 pub async fn flat(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<Vec<Hit>> {
-    run(scanner(dataset, table, query, false).await?.0, table).await
+    run(scanner(dataset, table, query, false, None).await?.0, table).await
 }
 
 /// Top-K with the ANN index where it covers the fragment and a flat pass over
@@ -75,35 +78,152 @@ pub async fn flat(dataset: &Dataset, table: &VectorTable, query: &Query) -> Resu
 /// they are scored exactly to begin with. The decision is per scope, so
 /// exact answers of several scopes merge into the exact answer.
 pub async fn ann(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<Vec<Hit>> {
-    if few_indexed_matches(dataset, table, query).await? {
-        return exact_in_scope(dataset, table, query).await;
+    ann_with_scope(dataset, table, query, None).await
+}
+
+#[derive(Debug)]
+pub struct IndexedOnlyError(pub String);
+
+impl std::fmt::Display for IndexedOnlyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
     }
-    let (scanner, indexed) = scanner(dataset, table, query, true).await?;
-    let hits = run(scanner, table).await?;
-    if indexed
-        && query.filter.is_some()
-        && !query.postfilter
-        && (hits.len() < query.k || hits.iter().any(|h| !h.distance.is_finite()))
+}
+
+impl std::error::Error for IndexedOnlyError {}
+
+pub async fn indexed_only(
+    dataset: &Dataset,
+    table: &VectorTable,
+    query: &Query,
+) -> Result<(Vec<Hit>, usize)> {
+    if query.postfilter {
+        return Err(IndexedOnlyError("indexed-only requires prefiltering".into()).into());
+    }
+    let mut eligible = indexed_fragments(
+        dataset,
+        &table.vector_column,
+        query.index_segments.as_deref(),
+    )
+    .await?;
+    if let Some(filter) = &query.filter {
+        for column in crate::indexed_filter::columns(dataset, filter)? {
+            eligible &= indexed_fragments(dataset, &column, None).await?;
+        }
+    }
+    let original = scope(dataset, table, query, None).await?;
+    let live: RoaringBitmap = dataset.fragments().iter().map(|f| f.id as u32).collect();
+    let original = original
+        .map(|ids| {
+            ids.into_iter()
+                .map(|id| id as u32)
+                .collect::<RoaringBitmap>()
+        })
+        .unwrap_or(live.clone())
+        & live;
+    eligible &= &original;
+    let excluded = (&original - &eligible).len() as usize;
+    if eligible.is_empty() {
+        return Ok((Vec::new(), excluded));
+    }
+    if excluded == 0
+        && query.filter.is_none()
+        && query.index_segments.is_none()
+        && query.fragments.is_none()
     {
-        return exact_in_scope(dataset, table, query).await;
+        let hits = ann(dataset, table, query).await?;
+        return if hits.len() < query.k {
+            Ok((exact_in_scope(dataset, table, query, None).await?, 0))
+        } else {
+            Ok((hits, 0))
+        };
+    }
+    let eligible: Vec<u64> = eligible.iter().map(u64::from).collect();
+    let hits = ann_with_scope(dataset, table, query, Some(&eligible)).await?;
+    Ok((hits, excluded))
+}
+
+async fn indexed_fragments(
+    dataset: &Dataset,
+    column: &str,
+    selected: Option<&[uuid::Uuid]>,
+) -> Result<RoaringBitmap> {
+    if selected.is_some_and(|ids| ids.is_empty()) {
+        return Ok(RoaringBitmap::new());
+    }
+    let field = dataset
+        .schema()
+        .field(column)
+        .with_context(|| format!("no such field {column}"))?;
+    let mut covered = RoaringBitmap::new();
+    let mut found = Vec::new();
+    for index in dataset
+        .load_indices()
+        .await?
+        .iter()
+        .filter(|i| i.fields == [field.id])
+    {
+        if selected.is_some_and(|ids| !ids.contains(&index.uuid)) {
+            continue;
+        }
+        let bitmap = index
+            .fragment_bitmap
+            .as_ref()
+            .ok_or_else(|| IndexedOnlyError(format!("index coverage is unknown for {column}")))?;
+        covered |= bitmap;
+        found.push(index.uuid);
+    }
+    if found.is_empty() || selected.is_some_and(|ids| ids.iter().any(|id| !found.contains(id))) {
+        return Err(IndexedOnlyError(format!("no usable index for {column}")).into());
+    }
+    Ok(covered)
+}
+
+/// ANN and exact fallbacks restricted to the supplied fragments.
+pub async fn ann_with_scope(
+    dataset: &Dataset,
+    table: &VectorTable,
+    query: &Query,
+    restriction: Option<&[u64]>,
+) -> Result<Vec<Hit>> {
+    if few_indexed_matches(dataset, table, query, restriction).await? {
+        return exact_in_scope(dataset, table, query, restriction).await;
+    }
+    let (scanner, indexed) = scanner(dataset, table, query, true, restriction).await?;
+    let hits = run(scanner, table).await?;
+    let short_prefilter = (query.filter.is_some() || restriction.is_some())
+        && !query.postfilter
+        && hits.len() < query.k;
+    if indexed && (short_prefilter || hits.iter().any(|h| !h.distance.is_finite())) {
+        return exact_in_scope(dataset, table, query, restriction).await;
     }
     Ok(hits)
 }
 
 /// [`flat`] over what [`ann`] searches for `query`: the listed fragments plus
 /// the live coverage of the listed index segments, or the whole table.
-async fn exact_in_scope(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<Vec<Hit>> {
+async fn exact_in_scope(
+    dataset: &Dataset,
+    table: &VectorTable,
+    query: &Query,
+    restriction: Option<&[u64]>,
+) -> Result<Vec<Hit>> {
     let exact = Query {
         index_segments: None,
-        fragments: scope(dataset, table, query).await?,
+        fragments: scope(dataset, table, query, restriction).await?,
         ..query.clone()
     };
-    run(scanner(dataset, table, &exact, false).await?.0, table).await
+    run(scanner(dataset, table, &exact, false, None).await?.0, table).await
 }
 
 /// The fragments [`ann`] searches for `query`, or None for the whole table.
-async fn scope(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<Option<Vec<u64>>> {
-    Ok(match &query.index_segments {
+async fn scope(
+    dataset: &Dataset,
+    table: &VectorTable,
+    query: &Query,
+    restriction: Option<&[u64]>,
+) -> Result<Option<Vec<u64>>> {
+    let scope = match &query.index_segments {
         Some(segments) if !segments.is_empty() => {
             let mut ids = query.fragments.clone().unwrap_or_default();
             ids.extend(
@@ -111,8 +231,25 @@ async fn scope(dataset: &Dataset, table: &VectorTable, query: &Query) -> Result<
             );
             Some(ids)
         }
-        _ => query.fragments.clone(),
-    })
+        Some(_) => Some(query.fragments.clone().unwrap_or_default()),
+        None => query.fragments.clone(),
+    };
+    Ok(restrict(scope, restriction))
+}
+
+fn restrict(scope: Option<Vec<u64>>, restriction: Option<&[u64]>) -> Option<Vec<u64>> {
+    match restriction {
+        Some(ids) => {
+            let scope = scope.map(|ids| ids.into_iter().collect::<HashSet<_>>());
+            Some(
+                ids.iter()
+                    .copied()
+                    .filter(|id| scope.as_ref().is_none_or(|scope| scope.contains(id)))
+                    .collect(),
+            )
+        }
+        None => scope,
+    }
 }
 
 /// Whether the rows of [`ann`]'s scope matching the filter's indexed
@@ -122,6 +259,7 @@ pub(crate) async fn few_indexed_matches(
     dataset: &Dataset,
     table: &VectorTable,
     query: &Query,
+    restriction: Option<&[u64]>,
 ) -> Result<bool> {
     let limit = query.exact_match_limit.unwrap_or(DEFAULT_EXACT_MATCH_LIMIT);
     let Some(filter) = &query.filter else {
@@ -143,7 +281,7 @@ pub(crate) async fn few_indexed_matches(
     if indexed.is_empty() {
         return Ok(false);
     }
-    let scope = scope(dataset, table, query).await?;
+    let scope = scope(dataset, table, query, restriction).await?;
     // An AND matches at most what its most selective indexed conjunct does.
     for conjunct in &indexed {
         let count =
@@ -195,6 +333,7 @@ async fn scanner(
     table: &VectorTable,
     query: &Query,
     use_index: bool,
+    restriction: Option<&[u64]>,
 ) -> Result<(Scanner, bool)> {
     if query.vector.len() != table.dimension {
         bail!(
@@ -247,22 +386,13 @@ async fn scanner(
     if use_index && !segments.is_empty() {
         scanner.with_index_segments(segments.to_vec())?;
     }
-    // Lance intersects the fragment list with the selected segments, so a
-    // scoped scan must name the segment-covered fragments itself: the universe
-    // is the listed ids plus the live coverage of the selected segments. An
-    // empty universe (or an empty-segment, fragment-less assignment) scopes to
-    // nothing — `with_fragments` with an empty list scans nothing.
-    let mut wanted: Option<Vec<u64>> = query.fragments.clone();
-    if let Some(ids) = &mut wanted {
-        if use_index && !segments.is_empty() {
-            ids.extend(
-                crate::segments::covered_fragments(dataset, &table.vector_column, segments).await?,
-            );
-        }
-    } else if use_index && query.index_segments.as_ref().is_some_and(|s| s.is_empty()) {
-        wanted = Some(Vec::new());
-    }
-    if let Some(ids) = wanted {
+    let fragments = if use_index {
+        scope(dataset, table, query, restriction).await?
+    } else {
+        restrict(query.fragments.clone(), restriction)
+    };
+    if let Some(ids) = fragments {
+        let ids: HashSet<_> = ids.into_iter().collect();
         let frags: Vec<Fragment> = dataset
             .fragments()
             .iter()
@@ -338,6 +468,65 @@ mod tests {
 
     fn l2(a: &[f32], b: &[f32]) -> f32 {
         a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum()
+    }
+
+    #[tokio::test]
+    async fn indexed_only_scores_all_returned_distances() {
+        let dir = TempDir::new().unwrap();
+        let vectors: Vec<_> = (0..1024)
+            .map(|i| {
+                vec![
+                    (i / 64) as f32 * 100.0 + (i % 64) as f32 * 0.01,
+                    0.0,
+                    0.0,
+                    0.0,
+                ]
+            })
+            .collect();
+        let mut dataset = write_dataset(&dir, &vectors, &vec!["a"; vectors.len()]).await;
+        dataset
+            .create_index(
+                &["vector"],
+                lance_index::IndexType::Vector,
+                Some("vidx".into()),
+                &lance::index::vector::VectorIndexParams::ivf_flat(16, DistanceType::L2),
+                true,
+            )
+            .await
+            .unwrap();
+        crate::testing::append_dataset(&mut dataset, &[vec![0.0; DIM]], &["late"]).await;
+        let table = VectorTable::resolve(&dataset, None, None).unwrap();
+        let mut query = Query {
+            vector: vec![0.0; DIM],
+            k: vectors.len(),
+            filter: None,
+            postfilter: false,
+            distance: DistanceType::L2,
+            nprobes: None,
+            index_segments: None,
+            fragments: None,
+            exact_match_limit: None,
+        };
+        for nprobes in [None, Some(1)] {
+            query.nprobes = nprobes;
+            let (hits, excluded) = indexed_only(&dataset, &table, &query).await.unwrap();
+            assert_eq!(excluded, 1);
+            assert_eq!(hits.len(), vectors.len());
+            for hit in hits {
+                let index: usize = hit.key[1..].parse().unwrap();
+                assert_eq!(hit.distance, l2(&query.vector, &vectors[index]));
+            }
+        }
+
+        dataset
+            .optimize_indices(&lance_index::optimize::OptimizeOptions::append())
+            .await
+            .unwrap();
+        query.k += 1;
+        let (hits, excluded) = indexed_only(&dataset, &table, &query).await.unwrap();
+        assert_eq!(excluded, 0);
+        assert_eq!(hits.len(), query.k);
+        assert!(hits.iter().all(|hit| hit.distance.is_finite()));
     }
 
     #[tokio::test]
@@ -640,7 +829,12 @@ mod tests {
             fragments: None,
             exact_match_limit: None,
         };
-        assert!(!scanner(&dataset, &table, &query, true).await.unwrap().1);
+        assert!(
+            !scanner(&dataset, &table, &query, true, None)
+                .await
+                .unwrap()
+                .1
+        );
         crate::index::build(
             &mut dataset,
             &table.vector_column,
@@ -650,6 +844,11 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(scanner(&dataset, &table, &query, true).await.unwrap().1);
+        assert!(
+            scanner(&dataset, &table, &query, true, None)
+                .await
+                .unwrap()
+                .1
+        );
     }
 }

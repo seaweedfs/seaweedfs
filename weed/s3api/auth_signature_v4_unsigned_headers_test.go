@@ -8,8 +8,55 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
+
+func TestVectorSearchModeRequiresSignatureCoverage(t *testing.T) {
+	const accessKey = "AKIAIOSFODNN7EXAMPLE"
+	const secretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+	const header = s3_constants.SeaweedFSVectorSearchMode
+	for _, tc := range []struct {
+		name              string
+		presigned, signed bool
+	}{
+		{name: "unsigned header"},
+		{name: "signed header", signed: true},
+		{name: "unsigned presigned header", presigned: true},
+		{name: "signed presigned header", presigned: true, signed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			iam := newTestIAM()
+			req, err := newTestRequest(http.MethodPost, "http://127.0.0.1:9000/QueryVectors", 0, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			signedHeaders := []string{"host"}
+			if tc.signed {
+				req.Header.Set(header, "indexed-only")
+				signedHeaders = append(signedHeaders, header)
+			}
+			if tc.presigned {
+				err = preSignV4WithHeaders(iam, req, accessKey, secretKey, 600, signedHeaders)
+			} else {
+				err = signRequestV4(req, accessKey, secretKey)
+				req.Header.Set("Authorization", strings.Replace(req.Header.Get("Authorization"), signV4Algorithm+" ", signV4Algorithm, 1))
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, got := iam.reqSignatureV4Verify(req); got != s3err.ErrNone {
+				t.Fatalf("expected valid signature, got %v", got)
+			}
+			if !tc.signed {
+				req.Header.Set(header, "indexed-only")
+				if _, got := iam.reqSignatureV4Verify(req); got != s3err.ErrSignatureDoesNotMatch {
+					t.Fatalf("expected unsigned search mode to be rejected, got %v", got)
+				}
+			}
+		})
+	}
+}
 
 // TestVerifySignedHeadersCoverage_Unit exercises the helper directly.
 func TestVerifySignedHeadersCoverage_Unit(t *testing.T) {
