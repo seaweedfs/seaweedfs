@@ -133,9 +133,11 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
-	if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, "", string(s3_constants.ACTION_WRITE), "PutObjectHandler"); errCode != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, errCode)
-		return
+	if !isExtractZip(r) {
+		if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, "", string(s3_constants.ACTION_WRITE), "PutObjectHandler"); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
 	}
 
 	if errCode := ValidateRequestEncryption(r.Header); errCode != s3err.ErrNone {

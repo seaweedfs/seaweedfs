@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -150,4 +151,28 @@ func TestPostObjectOverwriteHonorsExistingObjectTagDeny(t *testing.T) {
 	rec = httptest.NewRecorder()
 	s3a.PostPolicyBucketHandler(rec, newSignedPostRequest(t, "fresh.txt"))
 	require.Less(t, rec.Code, 300, rec.Body.String())
+}
+
+// Extraction writes the archive's members, not the request key: the members'
+// existing tags decide, and a protected archive name does not block them.
+func TestExtractZipHonorsMemberExistingObjectTagDeny(t *testing.T) {
+	s3a, filerImpl := newExtractTestServer(t)
+	s3a.policyEngine = NewBucketPolicyEngine()
+	require.NoError(t, s3a.policyEngine.engine.SetBucketPolicy("b", existingTagDenyPutPolicy("b")))
+	filerImpl.mu.Lock()
+	filerImpl.entries["/buckets/b/dir/archive.zip"] = taggedEntry("archive.zip", "confidential")
+	filerImpl.entries["/buckets/b/dir/secret.txt"] = taggedEntry("secret.txt", "confidential")
+	filerImpl.mu.Unlock()
+
+	r := httptest.NewRequest(http.MethodPut, "/b/dir/archive.zip?extract=zip", bytes.NewReader(makeZipArchive(t, map[string]string{"a.txt": "hello", "secret.txt": "replaced"})))
+	r = mux.SetURLVars(r, map[string]string{"bucket": "b", "object": "dir/archive.zip"})
+	rec := httptest.NewRecorder()
+	s3a.PutObjectHandler(rec, r)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "AccessDenied")
+	filerImpl.mu.Lock()
+	defer filerImpl.mu.Unlock()
+	require.NotNil(t, filerImpl.entries["/buckets/b/dir/a.txt"])
+	require.Equal(t, "original", string(filerImpl.entries["/buckets/b/dir/secret.txt"].Content))
+	require.Equal(t, "original", string(filerImpl.entries["/buckets/b/dir/archive.zip"].Content))
 }
