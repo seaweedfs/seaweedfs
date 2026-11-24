@@ -273,8 +273,8 @@ func TestFlushMergeThroughChunkProxy(t *testing.T) {
 		flush(t, w, fh, &contentPublication{writes: fh.pageWrites.Load()})
 
 		entry, committed := vol.committed(t)
-		if len(entry.Chunks) != 1 || entry.Chunks[0].ModifiedTsNs != c.ModifiedTsNs {
-			t.Fatalf("the quiet flush did not merge into one chunk stamped as the newest it replaced: %v", entry.Chunks)
+		if len(entry.Chunks) != 1 || entry.Chunks[0].ModifiedTsNs != a.ModifiedTsNs {
+			t.Fatalf("the quiet flush did not merge into one chunk stamped as the oldest data it holds: %v", entry.Chunks)
 		}
 		vol.mu.Lock()
 		blobs := len(vol.stored)

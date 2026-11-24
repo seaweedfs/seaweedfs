@@ -797,6 +797,27 @@ func shouldMergeChunks(compactedChunks []*filer_pb.FileChunk, manifestChunks []*
 	return
 }
 
+// oldestVisibleTsNs is the stamp of the oldest data in [start, stop), or 0 if
+// part of it is a hole. A merged chunk stamped so still yields to any write
+// newer than some byte it holds.
+func oldestVisibleTsNs(visibles *filer.IntervalList[*filer.VisibleInterval], start, stop int64) int64 {
+	tsNs := int64(math.MaxInt64)
+	for x := visibles.Front(); x != nil && start < stop; x = x.Next {
+		if x.StopOffset <= start {
+			continue
+		}
+		if x.StartOffset > start {
+			return 0
+		}
+		tsNs = min(tsNs, x.TsNs)
+		start = x.StopOffset
+	}
+	if start < stop {
+		return 0
+	}
+	return tsNs
+}
+
 // maybeMergeChunks re-reads and re-uploads file data as properly sized chunks
 // when the total stored chunk data significantly exceeds the logical file size,
 // which happens after many random writes create partially-overlapping small chunks.
@@ -816,8 +837,12 @@ func (wfs *WFS) maybeMergeChunks(fileFullPath util.FullPath, compactedChunks []*
 	reader := filer.NewChunkStreamReaderFromLookup(ctx, wfs.LookupFn(), allChunks)
 	defer reader.Close()
 
+	visibles, err := filer.NonOverlappingVisibleIntervals(ctx, wfs.LookupFn(), allChunks, 0, int64(fileSize))
+	if err != nil {
+		return nil, err
+	}
+
 	saveFunc := wfs.saveDataAsChunk(fileFullPath)
-	tsNs := filer.LatestModifiedTsNs(allChunks)
 	chunkSize := wfs.option.ChunkSizeLimit
 	if int64(fileSize) < chunkSize {
 		chunkSize = int64(fileSize)
@@ -830,7 +855,7 @@ func (wfs *WFS) maybeMergeChunks(fileFullPath util.FullPath, compactedChunks []*
 	for {
 		n, readErr := io.ReadFull(reader, buf)
 		if n > 0 {
-			chunk, uploadErr := saveFunc(bytes.NewReader(buf[:n]), "", offset, tsNs, uint64(n))
+			chunk, uploadErr := saveFunc(bytes.NewReader(buf[:n]), "", offset, oldestVisibleTsNs(visibles, offset, offset+int64(n)), uint64(n))
 			if uploadErr != nil {
 				return nil, uploadErr
 			}

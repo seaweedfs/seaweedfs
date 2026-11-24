@@ -123,3 +123,28 @@ func TestUnpublishedChunksStayCovered(t *testing.T) {
 		})
 	}
 }
+
+// A merged chunk yields to a write newer than any byte it holds, as a peer's
+// pending write over bytes the merge did not change must still show.
+func TestOldestVisibleTsNs(t *testing.T) {
+	chunk := func(key uint64, offset, size, ts int64) *filer_pb.FileChunk {
+		return &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: key, Cookie: 1}, Offset: offset, Size: uint64(size), ModifiedTsNs: ts}
+	}
+	visibles, err := filer.NonOverlappingVisibleIntervals(context.Background(), nil, []*filer_pb.FileChunk{chunk(1, 0, 8, 1), chunk(2, 4, 4, 5), chunk(3, 12, 4, 3)}, 0, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		start, stop, want int64
+	}{
+		{0, 8, 1},
+		{4, 8, 5},
+		{12, 16, 3},
+		{4, 16, 0},
+		{0, 16, 0},
+	} {
+		if got := oldestVisibleTsNs(visibles, tt.start, tt.stop); got != tt.want {
+			t.Errorf("[%d,%d): %d, want %d", tt.start, tt.stop, got, tt.want)
+		}
+	}
+}
