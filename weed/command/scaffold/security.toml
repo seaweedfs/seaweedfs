@@ -77,6 +77,17 @@ enabled = true
 user = ""
 password = ""
 
+# HTTP Basic Auth on the WebDAV gateway (weed webdav, weed server -webdav,
+# weed mini). Without a password, anyone who can reach the WebDAV port reads,
+# writes and deletes everything under its -filer.path, and weed mini binds
+# WebDAV to 127.0.0.1 unless -webdav.allowInsecureBind is set. Basic Auth
+# sends the password in every request, so serve WebDAV over TLS
+# (-webdav.cert.file, -webdav.key.file) on an untrusted network.
+# Env: WEED_WEBDAV_BASIC_AUTH_USER, WEED_WEBDAV_BASIC_AUTH_PASSWORD
+[webdav.basic_auth]
+user = ""
+password = ""
+
 # this jwt signing key is used for read operations on volume servers:
 # - the Master server generates the JWT, which can be used to read a certain file on a volume server
 # - every process that reads chunks straight from volume servers generates its
