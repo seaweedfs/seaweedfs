@@ -27,6 +27,8 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"net/http"
 
@@ -393,7 +395,7 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 		}
 		return &multipartCompletionState{deleteEntries: cleanupEntries, metadataOnlyCleanup: true}, output, s3err.ErrNone
 	}
-	if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, *input.Bucket, *input.Key, "", string(s3_constants.ACTION_WRITE), "CompleteMultipartUploadHandler"); errCode != s3err.ErrNone {
+	if errCode := s3a.recheckCompletionTarget(r, *input.Bucket, *input.Key, dirName, entryName); errCode != s3err.ErrNone {
 		return nil, nil, errCode
 	}
 
@@ -1152,6 +1154,28 @@ func (s3a *S3ApiServer) resumeCommittedObject(r *http.Request, input *s3.Complet
 // chunks, which a retried completion needs.
 func (s3a *S3ApiServer) rollbackMultipartVersion(versionDir, versionFileName string) error {
 	return s3a.rmObject(context.Background(), versionDir, versionFileName, false, false)
+}
+
+// recheckCompletionTarget evaluates tag conditions against the entry the
+// completion replaces: a key ending in "/" commits to dirName/entryName, not to
+// the entry the key itself names. Policy resources still match the request key.
+func (s3a *S3ApiServer) recheckCompletionTarget(r *http.Request, bucket, object, dirName, entryName string) s3err.ErrorCode {
+	if (s3a.policyEngine == nil || !s3a.policyEngine.HasPolicyForBucket(bucket)) && !s3a.hasVersionFileShape(object) {
+		return s3err.ErrNone
+	}
+	committedKey := strings.TrimPrefix(dirName+"/"+entryName, s3a.bucketDir(bucket)+"/")
+	entry, err := s3a.resolveObjectEntry(bucket, committedKey, "")
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
+			return s3err.ErrNone
+		}
+		glog.Errorf("CompleteMultipartUploadHandler: recheck lookup for %s/%s failed: %v", bucket, committedKey, err)
+		return s3err.ErrInternalError
+	}
+	if entry == nil {
+		return s3err.ErrNone
+	}
+	return s3a.recheckPolicyWithObjectEntry(r, bucket, object, string(s3_constants.ACTION_WRITE), entry.Extended, "CompleteMultipartUploadHandler")
 }
 
 func (s3a *S3ApiServer) getEntryNameAndDir(input *s3.CompleteMultipartUploadInput) (string, string) {
