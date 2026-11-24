@@ -351,10 +351,11 @@ filer:
 
 - An `s3-config-reloader` sidecar checks the mounted identities file every second, and
   sends SIGHUP to SeaweedFS when it changes and once when it starts. Kubelet updates the
-  file at its next sync of the pod. With the kubelet's default settings (a one-minute sync
-  period and the `Watch` Secret change detection strategy) that is within about 90 seconds
-  of a change to the Secret, and changing any annotation on the pod makes it happen within
-  seconds. Other kubelet settings can make it slower.
+  file at its next sync of the pod. Secret volumes are eventually consistent, so there is no
+  fixed bound: with the kubelet's default settings (a one-minute sync period and the `Watch`
+  Secret change detection strategy) it typically takes up to about 90 seconds, and changing
+  an annotation on the pod usually brings it down to seconds. Other kubelet settings can make
+  it slower. Until the file is updated, a revoked identity keeps working.
 - Changes to the content of `existingConfigSecret` no longer restart the pod: the chart
   leaves `checksum/s3config` off it. Adding, changing, disabling and deleting identities
   apply without a restart. Other files in the Secret, such as an audit log config, still
