@@ -32,6 +32,26 @@ func (s3a *S3ApiServer) mkdirExclusive(parentDirectoryPath string, dirName strin
 
 }
 
+// ensureObjectParent creates dir, the directory a stored object entry lives
+// in, when it is missing: the filer stores an entry before its parent
+// directories, so a create that failed on a parent leaves an object GET finds
+// but no listing shows. The bucket directory and upload directories are never
+// created here.
+func (s3a *S3ApiServer) ensureObjectParent(bucket, dir string) error {
+	uploads := s3a.genUploadsFolder(bucket)
+	if !strings.HasPrefix(dir, s3a.bucketDir(bucket)+"/") || dir == uploads || strings.HasPrefix(dir, uploads+"/") {
+		return nil
+	}
+	parent, name := util.FullPath(dir).DirAndName()
+	if exists, err := s3a.exists(parent, name, true); err == nil && exists {
+		return nil
+	}
+	if err := s3a.mkdirExclusive(parent, name, nil); err != nil && !errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+		return err
+	}
+	return nil
+}
+
 // concurrentEntryIsForeign: after PutBucket's exclusive mkdir met an entry,
 // whether that entry must be answered BucketAlreadyExists without looking at
 // its owner: a table bucket (it carries no S3 owner and must never read as
