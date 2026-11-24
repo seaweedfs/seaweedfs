@@ -376,6 +376,15 @@ func (fh *FileHandle) setAuthoritativeBase(base *filer_pb.Entry) {
 	fh.baseEntry.Store(base)
 }
 
+// unpublishedCreate reports a file this mount created whose deferred create
+// has not reached the filer yet: Create leaves such a handle dirty with no
+// base, and the first successful flush installs one. The filer holds nothing
+// of the file, so an event at its name from another mount is about another
+// file. The caller holds the handle's lock.
+func (fh *FileHandle) unpublishedCreate() bool {
+	return fh.dirtyMetadata && fh.baseEntry.Load() == nil
+}
+
 // advanceEntryVersion raises the entry version, never regresses it, and
 // records the clock domain the new position belongs to: a filer signature for
 // an RPC fence, zero for an event. The signature travels with the timestamp so
