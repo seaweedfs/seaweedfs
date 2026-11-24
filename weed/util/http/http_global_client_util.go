@@ -60,10 +60,18 @@ func AppendQueryParameter(rawURL, key, value string) string {
 	return result + fragment
 }
 
+// loadJwtConfig installs the volume read-signing key. A key too short for
+// GODEBUG=fips140=only is not installed, so a reload keeps the key in effect
+// and later reads do not panic signing with it.
 func loadJwtConfig() {
 	v := util.GetViper()
+	key := v.GetString("jwt.signing.read.key")
+	if err := util.CheckFips140HmacKeys([]string{"jwt.signing.read.key"}, []string{key}); err != nil {
+		glog.Errorf("not installing the volume read signing key, because %v", err)
+		return
+	}
 	jwtSigningReadConfigPtr.Store(&jwtSigningReadConfig{
-		key:     security.SigningKey(v.GetString("jwt.signing.read.key")),
+		key:     security.SigningKey(key),
 		expires: v.GetInt("jwt.signing.read.expires_after_seconds"),
 	})
 }
