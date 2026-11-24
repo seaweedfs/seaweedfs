@@ -114,14 +114,13 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 		return
 	}
 
-	body, contentMd5Hash := teeContentMd5(r, part1)
-	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, body, chunkSize, fileName, contentType, contentLength, so)
+	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, part1, chunkSize, fileName, contentType, contentLength, so)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	md5bytes = md5Hash.Sum(nil)
-	if contentMd5Mismatch(util.BodyMd5(md5bytes, contentMd5Hash), r.Header.Get("Content-Md5")) {
+	if contentMd5Mismatch(uploadBodyMd5(md5bytes, md5Hash), r.Header.Get("Content-Md5")) {
 		fs.filer.DeleteUncommittedChunks(ctx, fileChunks)
 		return nil, nil, errors.New(constants.ErrMsgBadDigest)
 	}
@@ -146,15 +145,14 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 		return nil, nil, err
 	}
 
-	body, contentMd5Hash := teeContentMd5(r, r.Body)
-	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, body, chunkSize, fileName, contentType, contentLength, so)
+	fileChunks, md5Hash, chunkOffset, err, smallContent := fs.uploadRequestToChunks(ctx, w, r, r.Body, chunkSize, fileName, contentType, contentLength, so)
 
 	if err != nil {
 		return nil, nil, err
 	}
 
 	md5bytes = md5Hash.Sum(nil)
-	if contentMd5Mismatch(util.BodyMd5(md5bytes, contentMd5Hash), r.Header.Get("Content-Md5")) {
+	if contentMd5Mismatch(uploadBodyMd5(md5bytes, md5Hash), r.Header.Get("Content-Md5")) {
 		fs.filer.DeleteUncommittedChunks(ctx, fileChunks)
 		return nil, nil, errors.New(constants.ErrMsgBadDigest)
 	}
@@ -727,17 +725,46 @@ func contentMd5Mismatch(bodyMd5 []byte, headerMd5 string) bool {
 	return util.Base64Encode(bodyMd5) != headerMd5 && fmt.Sprintf("%x", bodyMd5) != headerMd5
 }
 
-// teeContentMd5 returns body, teed into an MD5 hash when the request carries
-// Content-MD5 and the content digest is not itself an MD5; see
-// util.NewContentMd5. The hash is nil when no separate MD5 is needed or
-// possible.
-func teeContentMd5(r *http.Request, body io.Reader) (io.Reader, hash.Hash) {
-	if r.Header.Get("Content-Md5") == "" {
-		return body, nil
+// uploadHash is the content digest of an upload, which also feeds a separate
+// MD5 of the body for the client's Content-MD5.
+type uploadHash struct {
+	hash.Hash
+	contentMd5 hash.Hash
+}
+
+// newUploadHash returns the content digest hash for an upload of r's body. It
+// is an uploadHash when r carries Content-MD5 and the content digest is not
+// itself an MD5 (see util.NewContentMd5), else the plain digest; r may be nil.
+// The MD5 rides on the digest hash rather than on the body reader, so the
+// body's path through the upload stays as it is in every digest mode.
+func newUploadHash(r *http.Request) hash.Hash {
+	digest := util.NewMd5()
+	if r == nil || r.Header.Get("Content-Md5") == "" {
+		return digest
 	}
-	contentMd5Hash := util.NewContentMd5()
-	if contentMd5Hash == nil {
-		return body, nil
+	contentMd5 := util.NewContentMd5()
+	if contentMd5 == nil {
+		return digest
 	}
-	return io.TeeReader(body, contentMd5Hash), contentMd5Hash
+	return &uploadHash{Hash: digest, contentMd5: contentMd5}
+}
+
+func (h *uploadHash) Write(p []byte) (int, error) {
+	h.contentMd5.Write(p)
+	return h.Hash.Write(p)
+}
+
+func (h *uploadHash) Reset() {
+	h.Hash.Reset()
+	h.contentMd5.Reset()
+}
+
+// uploadBodyMd5 returns the body's MD5 for a Content-MD5 check, as
+// util.BodyMd5 does, given the content digest and the hash from newUploadHash.
+func uploadBodyMd5(contentDigest []byte, md5Hash hash.Hash) []byte {
+	var contentMd5 hash.Hash
+	if h, ok := md5Hash.(*uploadHash); ok {
+		contentMd5 = h.contentMd5
+	}
+	return util.BodyMd5(contentDigest, contentMd5)
 }

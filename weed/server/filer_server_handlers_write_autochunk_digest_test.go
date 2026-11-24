@@ -13,7 +13,7 @@ import (
 
 // TestContentMd5CheckedInBothDigests checks that the filer verifies a
 // client's Content-MD5 against the body's real MD5 under digest md5 and
-// digest sha256, reading the body once through teeContentMd5.
+// digest sha256, with the body's MD5 from the hash newUploadHash returns.
 func TestContentMd5CheckedInBothDigests(t *testing.T) {
 	if fips140.Enforced() {
 		t.Skip("GODEBUG=fips140=only refuses MD5")
@@ -34,14 +34,16 @@ func TestContentMd5CheckedInBothDigests(t *testing.T) {
 		} {
 			r := httptest.NewRequest("PUT", "/x/hello", nil)
 			r.Header.Set("Content-Md5", c.header)
-			body, contentMd5Hash := teeContentMd5(r, strings.NewReader("hello"))
-			contentDigest := util.NewMd5()
-			if _, err := io.Copy(contentDigest, body); err != nil {
+			md5Hash := newUploadHash(r)
+			if _, err := io.Copy(md5Hash, strings.NewReader("hello")); err != nil {
 				t.Fatal(err)
 			}
-			if got := contentMd5Mismatch(util.BodyMd5(contentDigest.Sum(nil), contentMd5Hash), c.header); got != c.mismatch {
+			if got := contentMd5Mismatch(uploadBodyMd5(md5Hash.Sum(nil), md5Hash), c.header); got != c.mismatch {
 				t.Errorf("digest %s, Content-MD5 %s: mismatch %v, want %v", digest, c.header, got, c.mismatch)
 			}
+		}
+		if _, ok := newUploadHash(nil).(*uploadHash); ok {
+			t.Errorf("digest %s: newUploadHash(nil) hashes a separate MD5", digest)
 		}
 	}
 }
