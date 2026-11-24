@@ -402,7 +402,21 @@ func (rc *ReaderCache) removeConsumed(downloader *SingleChunkCacher) {
 	removed := rc.removeConsumedLocked(downloader)
 	rc.Unlock()
 	if removed {
-		downloader.destroy()
+		downloader.destroyWhenDone()
+	}
+}
+
+// destroyWhenDone destroys a cacher dropped as consumed: at once when its
+// download has ended, otherwise once the download, cancelled when the cacher
+// was dropped, gives up. A read dropping the chunk its stream left must not
+// wait for that download while it holds its new chunk: the download can be in
+// a budget eviction of the new chunk, waiting for that very read to finish.
+func (s *SingleChunkCacher) destroyWhenDone() {
+	select {
+	case <-s.done:
+		s.destroy()
+	default:
+		go s.destroy()
 	}
 }
 

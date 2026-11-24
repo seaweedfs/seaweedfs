@@ -298,3 +298,91 @@ func TestReaderCacheBudgetStress(t *testing.T) {
 	waitBudgetDrained(t, budget)
 	t.Logf("%d reads with data", reads.Load())
 }
+
+// TestReaderCacheBudgetStreamsStress: streams moving between the chunks of one
+// file under a budget of two chunks, with reads given up midway. A read that
+// drops the chunk its stream left must not wait for that chunk's download
+// while it holds its new chunk: the download can be evicting the new chunk
+// for budget, waiting for that read. Run it with -race.
+func TestReaderCacheBudgetStreamsStress(t *testing.T) {
+	const (
+		chunkSize = 3 << 10
+		chunks    = 4
+		workers   = 8
+	)
+	duration := 2 * time.Second
+	if testing.Short() {
+		duration = 300 * time.Millisecond
+	}
+	budget := NewReaderCacheBudget(8 << 10)
+	rc := NewReaderCache(chunks, newMockChunkCacheForReaderCache(), func(context.Context, string) ([]string, error) { return []string{"unused"}, nil }, nil, budget)
+	rc.fetchChunkDataFn = func(_ context.Context, buffer []byte, _ []string, _ []byte, _ bool, _ bool, _ int64, fileId string, _ util_http.RefreshUrlsFunc) (int, error) {
+		time.Sleep(time.Duration(rand.Intn(1000)) * time.Microsecond)
+		for i := range buffer {
+			buffer[i] = fileId[1]
+		}
+		return len(buffer), nil
+	}
+	fids := make([]string, chunks)
+	for i := range fids {
+		fids[i] = string([]byte{'s', byte('A' + i)})
+	}
+	stop := make(chan struct{})
+	var wrongData, reads atomic.Int64
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(seed int64) {
+			defer wg.Done()
+			r := rand.New(rand.NewSource(seed))
+			stream := &chunkStream{}
+			defer rc.releaseStream(stream)
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				fid := fids[r.Intn(chunks)]
+				ctx, cancel := context.WithCancel(context.Background())
+				if r.Intn(3) == 0 {
+					time.AfterFunc(time.Duration(r.Intn(500))*time.Microsecond, cancel)
+				}
+				buf := make([]byte, 1+r.Intn(chunkSize))
+				n, err := rc.readChunkAt(ctx, stream, buf, fid, nil, false, int64(r.Intn(chunkSize)), chunkSize, false)
+				cancel()
+				if err == nil && n > 0 {
+					reads.Add(1)
+					for _, b := range buf[:n] {
+						if b != fid[1] {
+							wrongData.Add(1)
+							break
+						}
+					}
+				}
+			}
+		}(int64(w))
+	}
+	time.Sleep(duration)
+	close(stop)
+	finished := make(chan struct{})
+	go func() {
+		wg.Wait()
+		rc.destroy()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(20 * time.Second):
+		_ = pprof.Lookup("goroutine").WriteTo(os.Stderr, 1)
+		t.Fatal("streams are stuck")
+	}
+	if wrongData.Load() != 0 {
+		t.Fatalf("%d of %d reads returned bytes of another chunk", wrongData.Load(), reads.Load())
+	}
+	if reads.Load() == 0 {
+		t.Fatal("no read returned data")
+	}
+	waitBudgetDrained(t, budget)
+	t.Logf("%d reads with data", reads.Load())
+}
