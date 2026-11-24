@@ -271,9 +271,15 @@ func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
 	if err := fs.checkFilePermission(targetDir, "write"); err != nil {
 		return err
 	}
+	srcEntry, err := fs.getEntry(absPath)
+	if err != nil {
+		return err
+	}
+	if err := fs.checkEntryProtected(absPath, srcEntry); err != nil {
+		return err
+	}
 	requireAbsentTarget := false
 	if path.Clean(absPath) != path.Clean(absTarget) {
-		var err error
 		requireAbsentTarget, err = fs.checkRenameTargetDelete(absTarget, targetDir)
 		if err != nil {
 			return err
@@ -311,7 +317,10 @@ func (fs *SftpServer) renameEntry(absPath, absTarget string) error {
 // stay absent, so the filer rejects the overwrite of one created in the gap.
 // Lookup failures other than not-found fail closed.
 func (fs *SftpServer) checkRenameTargetDelete(absTarget, targetDir string) (requireAbsentTarget bool, err error) {
-	if _, err := fs.getEntry(absTarget); err == nil {
+	if entry, err := fs.getEntry(absTarget); err == nil {
+		if err := fs.checkEntryProtected(absTarget, entry); err != nil {
+			return false, err
+		}
 		return false, fs.checkFilePermission(absTarget, "delete")
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return false, err

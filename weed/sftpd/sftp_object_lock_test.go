@@ -25,6 +25,7 @@ type lockTestFiler struct {
 	mu      sync.Mutex
 	entries map[string]*filer_pb.Entry
 	deletes []*filer_pb.DeleteEntryRequest
+	renames []*filer_pb.AtomicRenameEntryRequest
 }
 
 func (f *lockTestFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -153,5 +154,60 @@ func TestRmdirRefusesLockedDirectoryMarker(t *testing.T) {
 	}
 	if len(fake.deleteRequests()) != 0 {
 		t.Fatalf("rmdir of a locked directory marker reached the filer")
+	}
+}
+
+func (f *lockTestFiler) AtomicRenameEntry(_ context.Context, req *filer_pb.AtomicRenameEntryRequest) (*filer_pb.AtomicRenameEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.renames = append(f.renames, req)
+	return &filer_pb.AtomicRenameEntryResponse{}, nil
+}
+
+func (f *lockTestFiler) renameRequests() []*filer_pb.AtomicRenameEntryRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*filer_pb.AtomicRenameEntryRequest(nil), f.renames...)
+}
+
+func TestRenameRefusesProtectedSourceAndTarget(t *testing.T) {
+	held := func(name string) *filer_pb.Entry {
+		return lockedEntry(name, map[string]string{s3_constants.ExtLegalHoldKey: s3_constants.LegalHoldOn})
+	}
+	tests := []struct {
+		name    string
+		entries map[string]*filer_pb.Entry
+		from    string
+		to      string
+		refused bool
+	}{
+		{"locked source", map[string]*filer_pb.Entry{"/buckets/b/f.versions/v_1": held("v_1")}, "/buckets/b/f.versions/v_1", "/buckets/b/moved", true},
+		{"locked target", map[string]*filer_pb.Entry{"/buckets/b/x": {Name: "x"}, "/buckets/b/f.versions/v_1": held("v_1")}, "/buckets/b/x", "/buckets/b/f.versions/v_1", true},
+		{"worm source", map[string]*filer_pb.Entry{"/buckets/worm/f": {Name: "f", WormEnforcedAtTsNs: time.Now().UnixNano()}}, "/buckets/worm/f", "/buckets/b/f", true},
+		{"unprotected", map[string]*filer_pb.Entry{"/buckets/b/x": {Name: "x"}, "/buckets/b/y": {Name: "y"}}, "/buckets/b/x", "/buckets/b/y", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.entries["/buckets/b"] = &filer_pb.Entry{Name: "b", IsDirectory: true}
+			tt.entries["/buckets/b/f.versions"] = &filer_pb.Entry{Name: "f.versions", IsDirectory: true}
+			fs, fake := newLockTestServer(t, tt.entries)
+			err := fs.renameEntry(tt.from, tt.to)
+			renames := fake.renameRequests()
+			if tt.refused {
+				if !errors.Is(err, os.ErrPermission) {
+					t.Fatalf("rename: got %v, want os.ErrPermission", err)
+				}
+				if len(renames) != 0 {
+					t.Fatalf("rename of a protected entry reached the filer")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("rename: %v", err)
+			}
+			if len(renames) != 1 {
+				t.Fatalf("got %d AtomicRenameEntry calls, want 1", len(renames))
+			}
+		})
 	}
 }
