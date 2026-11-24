@@ -99,6 +99,15 @@ func TestWorkloadCredentials(t *testing.T) {
 	if got := accessKeyOf(t, noKeys); got != "ROLEKEY" {
 		t.Errorf("workload, token file without a role: %q, want the instance role's key", got)
 	}
+	t.Setenv("AWS_ROLE_ARN", "arn:aws:iam::123456789012:role/pod") // web identity named but failing: no fall back to the instance role
+	c, err := MakeWithHTTPClient(noKeys, &http.Client{})
+	if err != nil {
+		t.Fatalf("MakeWithHTTPClient: %v", err)
+	}
+	if v, err := c.(*s3RemoteStorageClient).conn.(*awss3.S3).Config.Credentials.Get(); err == nil {
+		t.Errorf("workload, web identity failing: got %q, want an error (never the instance role)", v.AccessKeyID)
+	}
+	t.Setenv("AWS_ROLE_ARN", "")
 	t.Setenv("AWS_WEB_IDENTITY_TOKEN_FILE", "")
 	t.Setenv(workloadCredentialsEnv, "Workload")
 	if err := makeErr(noKeys); err == nil {
@@ -110,7 +119,7 @@ func TestWorkloadCredentials(t *testing.T) {
 	t.Setenv("AWS_ACCESS_KEY_ID", "")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
 	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", "")
-	c, err := MakeWithHTTPClient(noKeys, &http.Client{})
+	c, err = MakeWithHTTPClient(noKeys, &http.Client{})
 	if err != nil {
 		t.Fatalf("public bucket: %v", err)
 	}

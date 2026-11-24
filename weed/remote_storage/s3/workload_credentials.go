@@ -55,7 +55,7 @@ func workloadCredentialsMode() (bool, error) {
 }
 
 // workloadCredentials is the workload's identity alone: web identity when the
-// environment names a token file and a role (EKS IRSA), then the container
+// environment names a token file and a role (EKS IRSA), else the container
 // credentials endpoint or the EC2 instance metadata service. The session it
 // builds on carries anonymous credentials so that it resolves none of its own
 // (a token file without a role would otherwise fail every build), and it
@@ -70,16 +70,15 @@ func workloadCredentials(region string) (*credentials.Credentials, error) {
 	if err != nil {
 		return nil, err
 	}
-	var providers []credentials.Provider
 	if tokenFile, role := os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE"), os.Getenv("AWS_ROLE_ARN"); tokenFile != "" && role != "" {
 		name := os.Getenv("AWS_ROLE_SESSION_NAME")
 		if name == "" {
 			name = "seaweedfs-remote"
 		}
-		providers = append(providers, stscreds.NewWebIdentityRoleProviderWithOptions(
+		// no fallback: a failed exchange must not sign with the node's role
+		return credentials.NewCredentials(stscreds.NewWebIdentityRoleProviderWithOptions(
 			sts.New(sess), role, name, stscreds.FetchTokenPath(tokenFile),
-			func(p *stscreds.WebIdentityRoleProvider) { p.ExpiryWindow = 5 * time.Minute }))
+			func(p *stscreds.WebIdentityRoleProvider) { p.ExpiryWindow = 5 * time.Minute })), nil
 	}
-	providers = append(providers, defaults.RemoteCredProvider(*sess.Config, sess.Handlers))
-	return credentials.NewCredentials(&credentials.ChainProvider{Providers: providers, VerboseErrors: true}), nil
+	return credentials.NewCredentials(defaults.RemoteCredProvider(*sess.Config, sess.Handlers)), nil
 }
