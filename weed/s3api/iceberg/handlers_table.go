@@ -987,12 +987,18 @@ func (s *Server) cleanupStaleTableLocation(ctx context.Context, bucketName, tabl
 		return fmt.Errorf("cleanupStaleTableLocation: refusing unsafe table path %q", tablePath)
 	}
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		roots, err := s3tables.CatalogRecordRoots(ctx, client, bucketName)
-		if err != nil {
-			return err
+		checkUnclaimed := func() error {
+			roots, err := s3tables.CatalogRecordRoots(ctx, client, bucketName)
+			if err != nil {
+				return err
+			}
+			if s3tables.RootClaimed(roots, "", path.Join(parentDir, name)) {
+				return s3tables.ErrLocationInUse
+			}
+			return nil
 		}
-		if s3tables.RootClaimed(roots, "", path.Join(parentDir, name)) {
-			return s3tables.ErrLocationInUse
+		if err := checkUnclaimed(); err != nil {
+			return err
 		}
 		if holdsFiles != nil {
 			holds, err := holdsFiles(client, path.Join(parentDir, name))
@@ -1002,8 +1008,13 @@ func (s *Server) cleanupStaleTableLocation(ctx context.Context, bucketName, tabl
 			if holds {
 				return fmt.Errorf("keeping %s: it holds files the dropped entry did not write", path.Join(parentDir, name))
 			}
+			// The scan takes time in proportion to the tree; a record that
+			// claimed the location meanwhile keeps it.
+			if err := checkUnclaimed(); err != nil {
+				return err
+			}
 		}
-		err = filer_pb.DoRemove(ctx, client, parentDir, name, true, true, true, false, nil)
+		err := filer_pb.DoRemove(ctx, client, parentDir, name, true, true, true, false, nil)
 		if err == nil || errors.Is(err, filer_pb.ErrNotFound) {
 			return nil
 		}
