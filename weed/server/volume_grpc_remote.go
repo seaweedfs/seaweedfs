@@ -397,7 +397,7 @@ func guardedCredentialsVersion(conf *remote_pb.RemoteConf) string {
 		h.Write([]byte(remote_storage.FileVersion(config)))
 		for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_DEFAULT_PROFILE",
 			// the source a keyless remote's chain takes: workload mode, web identity, the container endpoint
-			"WEED_REMOTE_S3_CREDENTIALS", "AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_ROLE_ARN",
+			"WEED_REMOTE_S3_CREDENTIALS", "AWS_WEB_IDENTITY_TOKEN_FILE", "AWS_ROLE_ARN", "AWS_ROLE_SESSION_NAME",
 			"AWS_REGION", "AWS_DEFAULT_REGION", "AWS_STS_REGIONAL_ENDPOINTS",
 			"AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
 			"AWS_CONTAINER_AUTHORIZATION_TOKEN", "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE"} {
