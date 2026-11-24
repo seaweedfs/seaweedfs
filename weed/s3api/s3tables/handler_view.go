@@ -817,6 +817,9 @@ func (h *S3TablesHandler) authorizeViewOp(r *http.Request, operation, principal,
 		DefaultAllow:     h.defaultAllowFor(r),
 	}
 	bucketARN := h.generateTableBucketARN(bucketOwner, bucketName)
+	if resourceARN == bucketARN {
+		ctx.ResourceTags = bucketTags
+	}
 	return CheckTableOrBucketPermission(operation, principal,
 		resourceOwner, resourcePolicy, resourceARN,
 		bucketOwner, bucketPolicy, bucketARN, ctx)

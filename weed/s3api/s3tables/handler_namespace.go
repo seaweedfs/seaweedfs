@@ -167,6 +167,7 @@ func (h *S3TablesHandler) handleCreateNamespace(w http.ResponseWriter, r *http.R
 		TableBucketName:  bucketName,
 		Namespace:        namespaceName,
 		TableBucketTags:  bucketTags,
+		ResourceTags:     bucketTags,
 		IdentityActions:  identityActions,
 		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
@@ -394,6 +395,7 @@ func (h *S3TablesHandler) handleGetNamespace(w http.ResponseWriter, r *http.Requ
 		TableBucketName:  bucketName,
 		Namespace:        namespaceName,
 		TableBucketTags:  bucketTags,
+		ResourceTags:     bucketTags,
 		IdentityActions:  identityActions,
 		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
@@ -488,6 +490,7 @@ func (h *S3TablesHandler) handleUpdateNamespace(w http.ResponseWriter, r *http.R
 		TableBucketName:  bucketName,
 		Namespace:        namespaceName,
 		TableBucketTags:  bucketTags,
+		ResourceTags:     bucketTags,
 		IdentityActions:  identityActions,
 		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
@@ -659,6 +662,7 @@ func (h *S3TablesHandler) handleListNamespaces(w http.ResponseWriter, r *http.Re
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
 		TableBucketTags:  bucketTags,
+		ResourceTags:     bucketTags,
 		IdentityActions:  identityActions,
 		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
@@ -859,6 +863,7 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 		TableBucketName:  bucketName,
 		Namespace:        namespaceName,
 		TableBucketTags:  bucketTags,
+		ResourceTags:     bucketTags,
 		IdentityActions:  identityActions,
 		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
