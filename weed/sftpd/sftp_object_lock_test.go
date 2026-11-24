@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strconv"
 	"sync"
@@ -29,6 +31,7 @@ type lockTestFiler struct {
 	deletes []*filer_pb.DeleteEntryRequest
 	renames []*filer_pb.AtomicRenameEntryRequest
 	updates int
+	volume  string
 }
 
 func (f *lockTestFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -57,7 +60,9 @@ const lockTestFilerConf = `{"locations":[{"locationPrefix":"/buckets/worm/","wor
 
 func newLockTestServer(t *testing.T, entries map[string]*filer_pb.Entry) (*SftpServer, *lockTestFiler) {
 	t.Helper()
-	entries["/etc/seaweedfs/filer.conf"] = &filer_pb.Entry{Name: "filer.conf", Content: []byte(lockTestFilerConf), Attributes: &filer_pb.FuseAttributes{}}
+	if _, ok := entries["/etc/seaweedfs/filer.conf"]; !ok {
+		entries["/etc/seaweedfs/filer.conf"] = &filer_pb.Entry{Name: "filer.conf", Content: []byte(lockTestFilerConf), Attributes: &filer_pb.FuseAttributes{}}
+	}
 	for _, entry := range entries {
 		if entry.Attributes == nil {
 			entry.Attributes = &filer_pb.FuseAttributes{FileMode: 0644, Uid: 1000}
@@ -259,5 +264,33 @@ func TestRenameOntoItselfKeepsProtectedEntry(t *testing.T) {
 	})
 	if err := fs.renameEntry(p, p); err != nil {
 		t.Fatalf("rename onto itself: %v", err)
+	}
+}
+
+func (f *lockTestFiler) LookupVolume(_ context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
+	resp := &filer_pb.LookupVolumeResponse{LocationsMap: make(map[string]*filer_pb.Locations)}
+	for _, vid := range req.VolumeIds {
+		resp.LocationsMap[vid] = &filer_pb.Locations{Locations: []*filer_pb.Location{{Url: f.volume}}}
+	}
+	return resp, nil
+}
+
+func TestRemoveReadsChunkedFilerConf(t *testing.T) {
+	volume := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(lockTestFilerConf))
+	}))
+	defer volume.Close()
+	conf := &filer_pb.Entry{
+		Name:       "filer.conf",
+		Attributes: &filer_pb.FuseAttributes{FileSize: uint64(len(lockTestFilerConf))},
+		Chunks:     []*filer_pb.FileChunk{fileChunk("3,01", 0, int64(len(lockTestFilerConf)))},
+	}
+	fs, fake := newLockTestServer(t, map[string]*filer_pb.Entry{
+		"/etc/seaweedfs/filer.conf": conf,
+		"/buckets/worm/f":           {Name: "f", WormEnforcedAtTsNs: time.Now().UnixNano()},
+	})
+	fake.volume = volume.Listener.Addr().String()
+	if err := fs.removeEntry("/buckets/worm/f"); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("rm under a WORM rule from a chunked filer.conf: got %v, want os.ErrPermission", err)
 	}
 }

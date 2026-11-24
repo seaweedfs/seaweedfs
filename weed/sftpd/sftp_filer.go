@@ -2,6 +2,7 @@
 package sftpd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -753,7 +754,7 @@ func (fs *SftpServer) wormEnforcedForEntry(p string, entry *filer_pb.Entry) (boo
 	if entry.WormEnforcedAtTsNs == 0 {
 		return false, nil
 	}
-	fc, err := filer.ReadFilerConf(fs.filerAddr, fs.grpcDialOption, nil)
+	fc, err := fs.readFilerConf()
 	if err != nil {
 		return false, err
 	}
@@ -765,6 +766,32 @@ func (fs *SftpServer) wormEnforcedForEntry(p string, entry *filer_pb.Entry) (boo
 		return true, nil
 	}
 	return time.Since(time.Unix(0, entry.WormEnforcedAtTsNs)).Seconds() < float64(rule.WormRetentionTimeSeconds), nil
+}
+
+func (fs *SftpServer) readFilerConf() (*filer.FilerConf, error) {
+	fc := filer.NewFilerConf()
+	confPath := string(util.NewFullPath(filer.DirectoryEtcSeaweedFS, filer.FilerConfName))
+	entry, err := fs.getEntry(confPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return fc, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	content := entry.Content
+	if len(content) == 0 && len(entry.GetChunks()) > 0 {
+		var buf bytes.Buffer
+		if err := fs.copyExistingContent(confPath, &buf); err != nil {
+			return nil, fmt.Errorf("read %s: %w", confPath, err)
+		}
+		content = buf.Bytes()
+	}
+	if len(content) > 0 {
+		if err := fc.LoadFromBytes(content); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", confPath, err)
+		}
+	}
+	return fc, nil
 }
 
 // objectLockState makes the filer refuse the delete if the entry's Object
