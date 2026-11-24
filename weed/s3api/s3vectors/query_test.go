@@ -49,6 +49,7 @@ type queryClient struct {
 	headers           metadata.MD
 	err               error
 	indexed, ordinary int
+	table             *vector_pb.Table
 }
 
 func (c *queryClient) QueryVectors(context.Context, *vector_pb.QueryVectorsRequest, ...grpc.CallOption) (*vector_pb.QueryVectorsResponse, error) {
@@ -56,8 +57,9 @@ func (c *queryClient) QueryVectors(context.Context, *vector_pb.QueryVectorsReque
 	return &vector_pb.QueryVectorsResponse{}, nil
 }
 
-func (c *queryClient) QueryIndexedVectors(_ context.Context, _ *vector_pb.QueryVectorsRequest, opts ...grpc.CallOption) (*vector_pb.QueryVectorsResponse, error) {
+func (c *queryClient) QueryIndexedVectors(_ context.Context, req *vector_pb.QueryVectorsRequest, opts ...grpc.CallOption) (*vector_pb.QueryVectorsResponse, error) {
 	c.indexed++
+	c.table = req.Table
 	for _, opt := range opts {
 		if header, ok := opt.(grpc.HeaderCallOption); ok {
 			*header.HeaderAddr = c.headers
@@ -119,7 +121,13 @@ func TestQueryVectorsSearchMode(t *testing.T) {
 	if backend.ordinary != 2 || backend.indexed != 5 {
 		t.Fatalf("ordinary=%d indexed=%d", backend.ordinary, backend.indexed)
 	}
-	s.vectors = &routedQueryClient{VectorServiceClient: backend}
+	s.vectors = &describedClient{
+		VectorServiceClient: &routedQueryClient{VectorServiceClient: backend},
+		describe: func(_ context.Context, id []string) (string, map[string]string, error) {
+			return "s3://" + strings.Join(id, "/"), nil, nil
+		},
+		encrypts: func(context.Context, string) (bool, error) { return true, nil },
+	}
 	backend.headers, backend.err = metadata.Pairs(searchModeHeader, "indexed-only", excludedFragmentsHeader, "0"), nil
 	r := httptest.NewRequest(http.MethodPost, "/QueryVectors", strings.NewReader(body))
 	r.Header.Set(searchModeHeader, "indexed-only")
@@ -128,11 +136,16 @@ func TestQueryVectorsSearchMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.queryVectors(w, r, &vector_pb.QueryVectorsRequest{TopK: 1}, indexed)
+	_, err = s.queryVectors(w, r, &vector_pb.QueryVectorsRequest{
+		TopK: 1, Table: tableID("vec-bucket", "live-idx"),
+	}, indexed)
 	if err != nil {
 		vectorErr(w, r, vectorBucketARNs{}, err)
 	}
 	if w.Code != http.StatusOK || w.Header().Get(dataExcludedHeader) != "false" {
 		t.Fatalf("status=%d headers=%v body=%s", w.Code, w.Header(), w.Body)
+	}
+	if backend.table.GetLocation() != "s3://vec-bucket/vector/live-idx" || !backend.table.GetSseS3() {
+		t.Fatalf("backend table = %v", backend.table)
 	}
 }

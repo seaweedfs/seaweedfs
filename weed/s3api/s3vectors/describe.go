@@ -123,6 +123,13 @@ func (c *describedClient) QueryVectors(ctx context.Context, in *vector_pb.QueryV
 	return c.VectorServiceClient.QueryVectors(ctx, in, opts...)
 }
 
+func (c *describedClient) QueryIndexedVectors(ctx context.Context, in *vector_pb.QueryVectorsRequest, opts ...grpc.CallOption) (*vector_pb.QueryVectorsResponse, error) {
+	if err := c.resolve(ctx, in.Table); err != nil {
+		return nil, err
+	}
+	return c.VectorServiceClient.QueryIndexedVectors(ctx, in, opts...)
+}
+
 func (c *describedClient) MetadataKeys(ctx context.Context, in *vector_pb.MetadataKeysRequest, opts ...grpc.CallOption) (*vector_pb.MetadataKeysResponse, error) {
 	if err := c.resolve(ctx, in.Table); err != nil {
 		return nil, err

@@ -36,7 +36,9 @@ def test_indexed_only_requires_a_built_index(vectors):
         vectors.put_vectors(**target, vectors=[{"key": "new", "data": {"float32": [1, 0, 0]}}])
         query = {**target, "queryVector": {"float32": [1, 0, 0]}, "topK": 1}
         assert vectors.query_vectors(**query)["vectors"][0]["key"] == "new"
-        expect_error("ValidationException", query_indexed_vectors, client=vectors, **query)
+        with pytest.raises(ClientError, match="no usable index for vector") as exc:
+            query_indexed_vectors(vectors, **query)
+        assert exc.value.response["Error"]["Code"] == "ValidationException"
     finally:
         vectors.delete_index(**target)
         vectors.delete_vector_bucket(vectorBucketName=bucket)
