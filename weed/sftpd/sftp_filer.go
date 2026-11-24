@@ -2,7 +2,6 @@
 package sftpd
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -84,7 +83,7 @@ func isNotExistError(err error) bool {
 // updateEntry sends an UpdateEntryRequest for the given entry.
 func (fs *SftpServer) updateEntry(dir string, entry *filer_pb.Entry) error {
 	return fs.callWithClient(false, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
-		_, err := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{Directory: dir, Entry: entry, ExpectedExtended: objectLockState(entry)})
+		_, err := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{Directory: dir, Entry: entry, ExpectedExtended: s3_objectlock.ObjectLockState(entry)})
 		return err
 	})
 }
@@ -739,7 +738,7 @@ func (fs *SftpServer) deleteEntry(p string, recursive bool) error {
 	}
 	dir, name := util.FullPath(p).DirAndName()
 	return fs.callWithClient(false, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
-		r, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{Directory: dir, Name: name, IsDeleteData: true, IsRecursive: recursive, ExpectedExtended: objectLockState(entry)})
+		r, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{Directory: dir, Name: name, IsDeleteData: true, IsRecursive: recursive, ExpectedExtended: s3_objectlock.ObjectLockState(entry)})
 		if err != nil {
 			return err
 		}
@@ -757,11 +756,14 @@ func (fs *SftpServer) checkEntryProtected(p string, entry *filer_pb.Entry) error
 		glog.V(0).Infof("permission denied for user %s: %s is under Object Lock", fs.user.Username, p)
 		return os.ErrPermission
 	}
-	enforced, err := fs.wormEnforcedForEntry(p, entry)
+	if entry.WormEnforcedAtTsNs == 0 {
+		return nil
+	}
+	fc, err := fs.readFilerConf()
 	if err != nil {
 		return err
 	}
-	if enforced {
+	if fc.WormEnforced(p, entry.WormEnforcedAtTsNs) {
 		glog.V(0).Infof("permission denied for user %s: %s is write-once", fs.user.Username, p)
 		return os.ErrPermission
 	}
@@ -775,12 +777,7 @@ func (fs *SftpServer) checkSubtreeProtected(dir string) error {
 	if err != nil {
 		return err
 	}
-	prefix := strings.TrimRight(dir, "/") + "/"
-	worm := fc.MatchStorageRule(prefix).GetWorm()
-	for _, rule := range fc.ToProto().Locations {
-		worm = worm || rule.GetWorm() && strings.HasPrefix(rule.LocationPrefix, prefix)
-	}
-	if worm {
+	if fc.IntersectsWorm(dir) {
 		glog.V(0).Infof("permission denied for user %s: %s intersects a WORM rule", fs.user.Username, dir)
 		return os.ErrPermission
 	}
@@ -798,58 +795,12 @@ func (fs *SftpServer) checkSubtreeProtected(dir string) error {
 	return nil
 }
 
-func (fs *SftpServer) wormEnforcedForEntry(p string, entry *filer_pb.Entry) (bool, error) {
-	if entry.WormEnforcedAtTsNs == 0 {
-		return false, nil
-	}
-	fc, err := fs.readFilerConf()
-	if err != nil {
-		return false, err
-	}
-	rule := fc.MatchStorageRule(p)
-	if !rule.GetWorm() {
-		return false, nil
-	}
-	if rule.WormRetentionTimeSeconds == 0 {
-		return true, nil
-	}
-	return time.Since(time.Unix(0, entry.WormEnforcedAtTsNs)).Seconds() < float64(rule.WormRetentionTimeSeconds), nil
-}
-
-func (fs *SftpServer) readFilerConf() (*filer.FilerConf, error) {
-	fc := filer.NewFilerConf()
-	confPath := string(util.NewFullPath(filer.DirectoryEtcSeaweedFS, filer.FilerConfName))
-	entry, err := fs.getEntry(confPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return fc, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	content := entry.Content
-	if len(content) == 0 && len(entry.GetChunks()) > 0 {
-		var buf bytes.Buffer
-		if err := fs.copyExistingContent(confPath, &buf); err != nil {
-			return nil, fmt.Errorf("read %s: %w", confPath, err)
-		}
-		content = buf.Bytes()
-	}
-	if len(content) > 0 {
-		if err := fc.LoadFromBytes(content); err != nil {
-			return nil, fmt.Errorf("parse %s: %w", confPath, err)
-		}
-	}
-	return fc, nil
-}
-
-// objectLockState makes the filer refuse the delete if the entry's Object
-// Lock state changed after it was checked.
-func objectLockState(entry *filer_pb.Entry) map[string][]byte {
-	state := make(map[string][]byte, 3)
-	for _, key := range []string{s3_constants.ExtLegalHoldKey, s3_constants.ExtObjectLockModeKey, s3_constants.ExtRetentionUntilDateKey} {
-		state[key] = entry.Extended[key]
-	}
-	return state
+func (fs *SftpServer) readFilerConf() (fc *filer.FilerConf, err error) {
+	err = fs.withTimeoutContext(func(ctx context.Context) error {
+		fc, err = filer.ReadFilerConfFromClient(ctx, fs, lookupFileIdFn(filer.LookupFn(fs)))
+		return err
+	})
+	return fc, err
 }
 
 // ==================== Custom Types ====================

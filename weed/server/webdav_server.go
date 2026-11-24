@@ -20,6 +20,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_objectlock"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -527,6 +528,9 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		if err := fs.checkParentDir(ctx, dir); err != nil {
 			return nil, err
 		}
+		if err := fs.checkWritable(ctx, fullFilePath); err != nil {
+			return nil, err
+		}
 
 		var resp *filer_pb.CreateEntryResponse
 		err = fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -606,9 +610,34 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string, 
 	if fullpath == "/" {
 		return os.ErrInvalid
 	}
+	entry, err := fs.getEntry(ctx, string(fullpath))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := fs.checkEntryProtected(ctx, string(fullpath), entry); err != nil {
+		return err
+	}
+	if entry.IsDirectory && recursive {
+		if err := fs.checkSubtreeProtected(ctx, string(fullpath)); err != nil {
+			return err
+		}
+	}
 	dir, name := fullpath.DirAndName()
 
-	return filer_pb.Remove(ctx, fs, dir, name, true, recursive, false, false, []int32{fs.signature})
+	return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		_, err := filer_pb.DoRemoveRequest(ctx, client, &filer_pb.DeleteEntryRequest{
+			Directory:        dir,
+			Name:             name,
+			IsDeleteData:     true,
+			IsRecursive:      recursive,
+			Signatures:       []int32{fs.signature},
+			ExpectedExtended: s3_objectlock.ObjectLockState(entry),
+		})
+		return err
+	})
 
 }
 
@@ -646,7 +675,11 @@ func (fs *WebDavFileSystem) rename(ctx context.Context, oldName, newName string,
 
 	// an existing target is replaced inside the rename's transaction; a
 	// failed lookup aborts the move here
-	if _, err = fs.stat(ctx, newName); err != nil && err != os.ErrNotExist {
+	if oldName != newName {
+		if err := fs.checkRenameProtected(ctx, oldName, newName); err != nil {
+			return err
+		}
+	} else if _, err = fs.stat(ctx, newName); err != nil && err != os.ErrNotExist {
 		return err
 	}
 
@@ -803,6 +836,9 @@ func (f *WebDavFile) Write(buf []byte) (int, error) {
 				f.entry.Chunks = manifestedChunks
 			}
 
+			if err := f.fs.checkWritable(ctx, f.name); err != nil {
+				return err
+			}
 			flushErr := f.fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 				f.entry.Attributes.Mtime = time.Now().Unix()
 
