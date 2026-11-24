@@ -1072,6 +1072,9 @@ func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 				return err
 			}
 		}
+		if err := fs.checkScopeWorm(ctx, string(lockPath)); err != nil {
+			return err
+		}
 		newEntry = filer.FromPbEntry(req.Directory, req.Entry)
 		newEntry.Chunks = chunks
 		// Remote storage manages expiry for remote entries.
