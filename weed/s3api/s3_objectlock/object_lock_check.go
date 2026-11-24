@@ -95,7 +95,7 @@ func paginateEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 		for _, entry := range page {
 			// Skip invalid entry names to prevent path traversal
 			if entry.Name == "" || entry.Name == "." || entry.Name == ".." ||
-				strings.ContainsAny(entry.Name, "/\\") {
+				strings.Contains(entry.Name, "/") {
 				glog.V(2).Infof("Skipping invalid entry name: %q in %s", entry.Name, dir)
 				continue
 			}
