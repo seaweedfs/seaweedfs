@@ -1,13 +1,16 @@
 package s3
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	awss3 "github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
@@ -48,6 +51,52 @@ func accessKeyOf(t *testing.T, conf *remote_pb.RemoteConf) string {
 		t.Fatalf("credentials: %v", err)
 	}
 	return v.AccessKeyID
+}
+
+type stsHostRecorder struct {
+	next  http.RoundTripper
+	hosts []string
+}
+
+func (r *stsHostRecorder) RoundTrip(req *http.Request) (*http.Response, error) {
+	if strings.HasPrefix(req.URL.Host, "sts.") {
+		r.hosts = append(r.hosts, req.URL.Host)
+		return nil, errors.New("sts not reachable in tests")
+	}
+	return r.next.RoundTrip(req)
+}
+
+// IRSA in a pod of one region and a bucket in another: the role exchange goes
+// to the pod's regional STS endpoint, and S3 is still signed for the bucket's.
+func TestWorkloadWebIdentityAsksTheWorkloadRegion(t *testing.T) {
+	token := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(token, []byte("header.payload.signature"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(workloadCredentialsEnv, "workload")
+	t.Setenv("AWS_WEB_IDENTITY_TOKEN_FILE", token)
+	t.Setenv("AWS_ROLE_ARN", "arn:aws:iam::123456789012:role/pod")
+	t.Setenv("AWS_STS_REGIONAL_ENDPOINTS", "regional")
+	t.Setenv("AWS_REGION", "us-east-1")
+	t.Setenv("AWS_DEFAULT_REGION", "")
+	rec := &stsHostRecorder{next: http.DefaultTransport}
+	http.DefaultTransport = rec
+	defer func() { http.DefaultTransport = rec.next }()
+
+	c, err := MakeWithHTTPClient(&remote_pb.RemoteConf{Type: "s3", Name: "r", S3Region: "us-west-2"}, &http.Client{})
+	if err != nil {
+		t.Fatalf("MakeWithHTTPClient: %v", err)
+	}
+	conn := c.(*s3RemoteStorageClient).conn.(*awss3.S3)
+	if _, err := conn.Config.Credentials.Get(); err == nil {
+		t.Fatalf("credentials: want the recorded STS failure")
+	}
+	if len(rec.hosts) == 0 || rec.hosts[0] != "sts.us-east-1.amazonaws.com" {
+		t.Errorf("STS hosts %v, want sts.us-east-1.amazonaws.com", rec.hosts)
+	}
+	if got := aws.StringValue(conn.Config.Region); got != "us-west-2" {
+		t.Errorf("S3 region %q, want the bucket's us-west-2", got)
+	}
 }
 
 func makeErr(conf *remote_pb.RemoteConf) error {
