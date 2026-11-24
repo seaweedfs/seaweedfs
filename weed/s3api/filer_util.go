@@ -32,22 +32,36 @@ func (s3a *S3ApiServer) mkdirExclusive(parentDirectoryPath string, dirName strin
 
 }
 
-// ensureObjectParent creates dir, the directory a stored object entry lives
-// in, when it is missing: the filer stores an entry before its parent
-// directories, so a create that failed on a parent leaves an object GET finds
-// but no listing shows. The bucket directory and upload directories are never
-// created here.
+// ensureObjectParent creates the directories from the bucket down to dir, the
+// directory a stored object entry lives in, that are missing: the filer stores
+// an entry before its parent directories, so a create that failed on a parent
+// leaves an object GET finds but no listing shows. Each level is checked, as a
+// failed mkdir can leave a lower directory stored without its parent. The
+// bucket directory and upload directories are never created here.
 func (s3a *S3ApiServer) ensureObjectParent(bucket, dir string) error {
-	uploads := s3a.genUploadsFolder(bucket)
-	if !strings.HasPrefix(dir, s3a.bucketDir(bucket)+"/") || dir == uploads || strings.HasPrefix(dir, uploads+"/") {
+	bucketDir, uploads := s3a.bucketDir(bucket), s3a.genUploadsFolder(bucket)
+	if !strings.HasPrefix(dir, bucketDir+"/") || dir == uploads || strings.HasPrefix(dir, uploads+"/") {
 		return nil
 	}
-	parent, name := util.FullPath(dir).DirAndName()
-	if exists, err := s3a.exists(parent, name, true); err == nil && exists {
-		return nil
-	}
-	if err := s3a.mkdirExclusive(parent, name, nil); err != nil && !errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
-		return err
+	parent := bucketDir
+	for _, name := range strings.Split(strings.TrimPrefix(dir, bucketDir+"/"), "/") {
+		if name == "" {
+			continue
+		}
+		if exists, err := s3a.exists(parent, name, true); err != nil || !exists {
+			if err := s3a.mkdirExclusive(parent, name, nil); errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+				// A file left there by a failed promotion is not a directory a listing descends.
+				if exists, err = s3a.exists(parent, name, true); err == nil && !exists {
+					err = fmt.Errorf("%s/%s is not a directory", parent, name)
+				}
+				if err != nil {
+					return err
+				}
+			} else if err != nil {
+				return err
+			}
+		}
+		parent += "/" + name
 	}
 	return nil
 }
