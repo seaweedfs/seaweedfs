@@ -172,6 +172,9 @@ func TestHasObjectsWithActiveLocksUploadsDirectories(t *testing.T) {
 			"/buckets/b/.uploads":           {upload},
 			"/buckets/b/.uploads/upload-id": {{Name: "0001_x.part"}, {Name: "c", Extended: held}},
 		}, true},
+		{"upload directory renamed out of .uploads", map[string][]*filer_pb.Entry{
+			"/buckets/b": {upload},
+		}, true},
 		{"object below a .uploads prefix", map[string][]*filer_pb.Entry{
 			"/buckets/b":            {{Name: "a", IsDirectory: true}},
 			"/buckets/b/a":          {{Name: s3_constants.MultipartUploadsFolder, IsDirectory: true}},
