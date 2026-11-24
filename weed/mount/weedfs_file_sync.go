@@ -319,10 +319,10 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 
 	if entry.Attributes != nil {
 		entry.Attributes.Mime = fh.contentType
-		if entry.Attributes.Uid == 0 {
+		if entry.Attributes.Uid == 0 && uid != unknownCallerId {
 			entry.Attributes.Uid = uid
 		}
-		if entry.Attributes.Gid == 0 {
+		if entry.Attributes.Gid == 0 && gid != unknownCallerId {
 			entry.Attributes.Gid = gid
 		}
 		// Do not stamp mtime/ctime here. Write/SetAttr already maintain

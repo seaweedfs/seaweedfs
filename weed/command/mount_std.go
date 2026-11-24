@@ -37,6 +37,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fmt.Printf("Please specify a reasonable buffer size.\n")
 		return false
 	}
+	if err := checkIdmap(runtime.GOOS, *option.idmap, *option.defaultPermissions); err != nil {
+		fmt.Println(err)
+		return false
+	}
 
 	filerAddresses, grpcDialOption, cipher, bucketRootPath, ok := connectToFiler(option)
 	if !ok {
@@ -190,6 +194,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		ExplicitDataCacheControl: false,
 		DirectMount:              true,
 		DirectMountFlags:         0,
+		IDMappedMount:            *option.idmap,
 		//SyncRead:                 false, // set to false to enable the FUSE_CAP_ASYNC_READ capability
 		EnableAcl: true,
 	}
@@ -269,6 +274,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		removeMountSocket()
 		glog.Exitf("Mount fail: %v", err)
 	}
+	if *option.idmap && server.KernelSettings().Flags64()&fuse.CAP_ALLOW_IDMAP == 0 {
+		glog.Warningf("-idmap: this kernel does not support ID-mapped FUSE mounts (Linux 6.12 or later), so ID-mapped bind mounts of %s will fail", dir)
+	}
 	grace.OnInterrupt(func() {
 		if err := unmount.Unmount(dir); err != nil {
 			glog.Errorf("failed to unmount %s: %v", dir, err)
@@ -304,4 +312,20 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	seaweedFileSystem.ClearCacheDir()
 
 	return true
+}
+
+// checkIdmap refuses -idmap on an OS other than Linux and with
+// -defaultPermissions=false. The kernel accepts FUSE_ALLOW_IDMAP only with
+// default_permissions, and go-fuse then adds that option on its own, so the
+// kernel would ignore -defaultPermissions=false.
+func checkIdmap(goos string, idmap, defaultPermissions bool) error {
+	switch {
+	case !idmap:
+		return nil
+	case goos != "linux":
+		return fmt.Errorf("-idmap is only supported on Linux")
+	case !defaultPermissions:
+		return fmt.Errorf("-idmap requires -defaultPermissions")
+	}
+	return nil
 }

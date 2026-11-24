@@ -49,3 +49,26 @@ func Test_bucketPathForMountRoot(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckIdmap(t *testing.T) {
+	tests := []struct {
+		name               string
+		goos               string
+		idmap              bool
+		defaultPermissions bool
+		ok                 bool
+	}{
+		{"off", "darwin", false, false, true},
+		{"linux", "linux", true, true, true},
+		{"not linux", "darwin", true, true, false},
+		{"without default permissions", "linux", true, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checkIdmap(tt.goos, tt.idmap, tt.defaultPermissions)
+			if (err == nil) != tt.ok {
+				t.Fatalf("checkIdmap(%q, %v, %v) = %v, want ok=%v", tt.goos, tt.idmap, tt.defaultPermissions, err, tt.ok)
+			}
+		})
+	}
+}

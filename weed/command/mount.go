@@ -32,6 +32,7 @@ type MountOptions struct {
 	dataCenter           *string
 	allowOthers          *bool
 	defaultPermissions   *bool
+	idmap                *bool
 	umaskString          *string
 	nonempty             *bool
 	volumeServerAccess   *string
@@ -124,6 +125,7 @@ func init() {
 	mountOptions.dataCenter = cmdMount.Flag.String("dataCenter", "", "prefer to write to the data center")
 	mountOptions.allowOthers = cmdMount.Flag.Bool("allowOthers", true, "allows other users to access the file system; on Linux, when mounting as a non-root user, this requires 'user_allow_other' in /etc/fuse.conf, so set -allowOthers=false otherwise")
 	mountOptions.defaultPermissions = cmdMount.Flag.Bool("defaultPermissions", true, "enforce permissions by the operating system")
+	mountOptions.idmap = cmdMount.Flag.Bool("idmap", false, "allow ID-mapped bind mounts of this mount (mount --bind -o X-mount.idmap=...); needs Linux 6.12 or later and -defaultPermissions")
 	mountOptions.umaskString = cmdMount.Flag.String("umask", "022", "octal umask, e.g., 022, 0111")
 	mountOptions.nonempty = cmdMount.Flag.Bool("nonempty", false, "allows the mounting over a non-empty directory")
 	mountOptions.volumeServerAccess = cmdMount.Flag.String("volumeServerAccess", "direct", "access volume servers by [direct|publicUrl|filerProxy]")
