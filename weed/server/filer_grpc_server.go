@@ -1337,6 +1337,9 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 	}
 
 	so, err := fs.resolveAssignStorageOption(ctx, req)
+	if status.Code(err) == codes.PermissionDenied {
+		return nil, err
+	}
 	if err != nil {
 		glog.V(3).InfofCtx(ctx, "AssignVolume: %v", err)
 		resp = &filer_pb.AssignVolumeResponse{Error: fmt.Sprintf("assign volume: %v", err)}
@@ -1389,9 +1392,17 @@ func (fs *FilerServer) AssignVolume(ctx context.Context, req *filer_pb.AssignVol
 }
 
 func (fs *FilerServer) resolveAssignStorageOption(ctx context.Context, req *filer_pb.AssignVolumeRequest) (*operation.StorageOption, error) {
-	so, err := fs.detectStorageOption(ctx, req.Path, req.Collection, req.Replication, req.TtlSec, req.DiskType, req.DataCenter, req.Rack, req.DataNode)
+	// A scoped caller writes into the collection of its path, never another's.
+	collection := req.Collection
+	if scopeKeepOnly(ctx) {
+		collection = ""
+	}
+	so, err := fs.detectStorageOption(ctx, req.Path, collection, req.Replication, req.TtlSec, req.DiskType, req.DataCenter, req.Rack, req.DataNode)
 	if err != nil {
 		return nil, err
+	}
+	if collection != req.Collection && req.Collection != so.Collection {
+		return nil, status.Errorf(codes.PermissionDenied, "filer: scoped assign: collection %q is not %q of %s", req.Collection, so.Collection, req.Path)
 	}
 
 	// Mirror the HTTP write path: only apply the filer's default disk when the
