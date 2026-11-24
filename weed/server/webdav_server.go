@@ -651,7 +651,11 @@ func (fs *WebDavFileSystem) rename(ctx context.Context, oldName, newName string,
 
 	// an existing target is replaced inside the rename's transaction; a
 	// failed lookup aborts the move here
-	if _, err = fs.stat(ctx, newName); err != nil && err != os.ErrNotExist {
+	if oldName != newName {
+		if err := fs.checkRenameProtected(ctx, oldName, newName); err != nil {
+			return err
+		}
+	} else if _, err = fs.stat(ctx, newName); err != nil && err != os.ErrNotExist {
 		return err
 	}
 

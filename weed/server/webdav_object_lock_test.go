@@ -214,6 +214,56 @@ func TestWebDavRemoveAllRefusesDirectoryHoldingProtectedEntries(t *testing.T) {
 	}
 }
 
+func TestWebDavRenameRefusesProtectedEntries(t *testing.T) {
+	for _, tt := range webDavProtectionCases() {
+		t.Run("source "+tt.name, func(t *testing.T) {
+			fs, fake := newWebDavLockFS(t, map[string]*filer_pb.Entry{tt.path: tt.entry})
+			if tt.path != "/buckets/b/f" {
+				fake.entries[path.Dir(tt.path)] = &filer_pb.Entry{Name: path.Base(path.Dir(tt.path)), IsDirectory: true, Attributes: &filer_pb.FuseAttributes{FileMode: uint32(os.ModeDir | 0755)}}
+			}
+			assertWebDavRename(t, fs, fake, tt.path, "/buckets/b/moved", tt.refused)
+		})
+		t.Run("target "+tt.name, func(t *testing.T) {
+			fs, fake := newWebDavLockFS(t, map[string]*filer_pb.Entry{
+				tt.path:          tt.entry,
+				"/buckets/b/src": {Name: "src"},
+			})
+			if tt.path != "/buckets/b/f" {
+				fake.entries[path.Dir(tt.path)] = &filer_pb.Entry{Name: path.Base(path.Dir(tt.path)), IsDirectory: true, Attributes: &filer_pb.FuseAttributes{FileMode: uint32(os.ModeDir | 0755)}}
+			}
+			assertWebDavRename(t, fs, fake, "/buckets/b/src", tt.path, tt.refused)
+		})
+	}
+}
+
+func TestWebDavRenameRefusesDirectoryHoldingProtectedEntries(t *testing.T) {
+	fs, fake := newWebDavLockFS(t, map[string]*filer_pb.Entry{
+		"/buckets/b/f.versions":     {Name: "f.versions", IsDirectory: true},
+		"/buckets/b/f.versions/v_1": webDavLockedEntry("v_1", map[string]string{s3_constants.ExtLegalHoldKey: s3_constants.LegalHoldOn}),
+		"/buckets/worm/d":           {Name: "d", IsDirectory: true},
+		"/buckets/b/d":              {Name: "d", IsDirectory: true},
+	})
+	assertWebDavRename(t, fs, fake, "/buckets/b/f.versions", "/buckets/b/moved", true)
+	assertWebDavRename(t, fs, fake, "/buckets/worm/d", "/buckets/b/moved", true)
+	assertWebDavRename(t, fs, fake, "/buckets/b/d", "/buckets/b/moved", false)
+}
+
+func assertWebDavRename(t *testing.T, fs *WebDavFileSystem, fake *webDavLockFiler, from, to string, refused bool) {
+	t.Helper()
+	_, before, _ := fake.counts()
+	err := fs.Rename(context.Background(), from, to)
+	_, after, _ := fake.counts()
+	if refused {
+		if !errors.Is(err, os.ErrPermission) || after != before {
+			t.Fatalf("rename %s to %s: got %v with %d filer renames, want os.ErrPermission and none", from, to, err, after-before)
+		}
+		return
+	}
+	if err != nil || after != before+1 {
+		t.Fatalf("rename %s to %s: got %v with %d filer renames, want one", from, to, err, after-before)
+	}
+}
+
 func bytesEqualMap(a, b map[string][]byte) bool {
 	if len(a) != len(b) {
 		return false

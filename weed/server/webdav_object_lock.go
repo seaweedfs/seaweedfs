@@ -73,6 +73,31 @@ func (fs *WebDavFileSystem) checkSubtreeProtected(ctx context.Context, dir strin
 	return nil
 }
 
+// checkRenameProtected refuses to move a protected entry, a directory holding
+// one, or onto a protected target, which the rename would replace.
+func (fs *WebDavFileSystem) checkRenameProtected(ctx context.Context, oldName, newName string) error {
+	srcEntry, err := fs.getEntry(ctx, oldName)
+	if err != nil {
+		return err
+	}
+	if err := fs.checkEntryProtected(ctx, oldName, srcEntry); err != nil {
+		return err
+	}
+	if srcEntry.IsDirectory {
+		if err := fs.checkSubtreeProtected(ctx, oldName); err != nil {
+			return err
+		}
+	}
+	dstEntry, err := fs.getEntry(ctx, newName)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return fs.checkEntryProtected(ctx, newName, dstEntry)
+}
+
 func (fs *WebDavFileSystem) wormEnforcedForEntry(ctx context.Context, p string, entry *filer_pb.Entry) (bool, error) {
 	if entry.WormEnforcedAtTsNs == 0 {
 		return false, nil
