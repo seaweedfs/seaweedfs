@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"google.golang.org/protobuf/proto"
@@ -214,8 +215,9 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 /** Remove a file */
 func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name string) (code fuse.Status) {
 
-	// Sanitize before it reaches DeleteEntryRequest.Name; see sanitizeFuseName.
-	name = sanitizeFuseName(name)
+	if !utf8.ValidString(name) {
+		return fuse.ENOENT
+	}
 
 	dirFullPath, code := wfs.inodeToPath.GetPath(header.NodeId)
 	if code != fuse.OK {
