@@ -19,6 +19,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_objectlock"
 )
 
 type webDavLockFiler struct {
@@ -175,7 +176,7 @@ func TestWebDavRemoveAllRefusesProtectedEntries(t *testing.T) {
 			if deletes != 1 {
 				t.Fatalf("got %d filer deletes, want 1", deletes)
 			}
-			if got := fake.deletes[0].ExpectedExtended; len(got) != 3 || !bytesEqualMap(got, objectLockState(tt.entry)) {
+			if got := fake.deletes[0].ExpectedExtended; len(got) != 3 || !bytesEqualMap(got, s3_objectlock.ObjectLockState(tt.entry)) {
 				t.Fatalf("delete preconditions = %v, want the checked Object Lock state", got)
 			}
 		})

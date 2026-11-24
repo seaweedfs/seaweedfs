@@ -1,12 +1,9 @@
 package weed_server
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -48,11 +45,14 @@ func (fs *WebDavFileSystem) checkEntryProtected(ctx context.Context, p string, e
 		glog.V(0).Infof("webdav: %s is under Object Lock", p)
 		return os.ErrPermission
 	}
-	enforced, err := fs.wormEnforcedForEntry(ctx, p, entry)
+	if entry.WormEnforcedAtTsNs == 0 {
+		return nil
+	}
+	fc, err := filer.ReadFilerConfFromClient(ctx, fs, fs.filerClient)
 	if err != nil {
 		return err
 	}
-	if enforced {
+	if fc.WormEnforced(p, entry.WormEnforcedAtTsNs) {
 		glog.V(0).Infof("webdav: %s is write-once", p)
 		return os.ErrPermission
 	}
@@ -62,16 +62,11 @@ func (fs *WebDavFileSystem) checkEntryProtected(ctx context.Context, p string, e
 // checkSubtreeProtected refuses to delete or move a directory that a WORM
 // rule covers or that holds an object under Object Lock.
 func (fs *WebDavFileSystem) checkSubtreeProtected(ctx context.Context, dir string) error {
-	fc, err := fs.readFilerConf(ctx)
+	fc, err := filer.ReadFilerConfFromClient(ctx, fs, fs.filerClient)
 	if err != nil {
 		return err
 	}
-	prefix := strings.TrimRight(dir, "/") + "/"
-	worm := fc.MatchStorageRule(prefix).GetWorm()
-	for _, rule := range fc.ToProto().Locations {
-		worm = worm || rule.GetWorm() && strings.HasPrefix(rule.LocationPrefix, prefix)
-	}
-	if worm {
+	if fc.IntersectsWorm(dir) {
 		glog.V(0).Infof("webdav: %s intersects a WORM rule", dir)
 		return os.ErrPermission
 	}
@@ -112,58 +107,4 @@ func (fs *WebDavFileSystem) checkRenameProtected(ctx context.Context, oldName, n
 		return err
 	}
 	return fs.checkEntryProtected(ctx, newName, dstEntry)
-}
-
-func (fs *WebDavFileSystem) wormEnforcedForEntry(ctx context.Context, p string, entry *filer_pb.Entry) (bool, error) {
-	if entry.WormEnforcedAtTsNs == 0 {
-		return false, nil
-	}
-	fc, err := fs.readFilerConf(ctx)
-	if err != nil {
-		return false, err
-	}
-	rule := fc.MatchStorageRule(p)
-	if !rule.GetWorm() {
-		return false, nil
-	}
-	if rule.WormRetentionTimeSeconds == 0 {
-		return true, nil
-	}
-	return time.Since(time.Unix(0, entry.WormEnforcedAtTsNs)).Seconds() < float64(rule.WormRetentionTimeSeconds), nil
-}
-
-func (fs *WebDavFileSystem) readFilerConf(ctx context.Context) (*filer.FilerConf, error) {
-	fc := filer.NewFilerConf()
-	confPath := string(util.NewFullPath(filer.DirectoryEtcSeaweedFS, filer.FilerConfName))
-	entry, err := fs.getEntry(ctx, confPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return fc, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	content := entry.Content
-	if len(content) == 0 && len(entry.GetChunks()) > 0 {
-		var buf bytes.Buffer
-		if err := filer.StreamContent(fs.filerClient, &buf, entry.GetChunks(), 0, int64(filer.FileSize(entry))); err != nil {
-			return nil, fmt.Errorf("read %s: %w", confPath, err)
-		}
-		content = buf.Bytes()
-	}
-	if len(content) > 0 {
-		if err := fc.LoadFromBytes(content); err != nil {
-			return nil, fmt.Errorf("parse %s: %w", confPath, err)
-		}
-	}
-	return fc, nil
-}
-
-// objectLockState makes the filer refuse the change if the entry's Object
-// Lock state changed after it was checked.
-func objectLockState(entry *filer_pb.Entry) map[string][]byte {
-	state := make(map[string][]byte, 3)
-	for _, key := range []string{s3_constants.ExtLegalHoldKey, s3_constants.ExtObjectLockModeKey, s3_constants.ExtRetentionUntilDateKey} {
-		state[key] = entry.Extended[key]
-	}
-	return state
 }

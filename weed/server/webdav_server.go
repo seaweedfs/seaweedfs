@@ -20,6 +20,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_objectlock"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -613,7 +614,7 @@ func (fs *WebDavFileSystem) removeAll(ctx context.Context, fullFilePath string, 
 			IsDeleteData:     true,
 			IsRecursive:      recursive,
 			Signatures:       []int32{fs.signature},
-			ExpectedExtended: objectLockState(entry),
+			ExpectedExtended: s3_objectlock.ObjectLockState(entry),
 		})
 		return err
 	})
