@@ -60,6 +60,10 @@ var retryablePatterns = []string{
 	"lookup failed",             // Volume server discovery issues
 	"too many requests",         // Rate limiting / backpressure
 	"try again",                 // Explicit retry suggestion
+	// A volume server in maintenance mode refuses BatchDelete until it is switched off.
+	// The other replicas already dropped the needle, so a delete that is not retried
+	// leaves this replica live for good.
+	"is in maintenance mode",
 }
 
 // DeletionRetryItem represents a file deletion that failed and needs to be retried
