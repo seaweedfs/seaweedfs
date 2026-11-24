@@ -183,16 +183,9 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 					continue
 				}
 
-				bucketPath := GetTableBucketPath(entry.Entry.Name)
-				bucketPolicy := ""
-				policyData, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
-				if err != nil {
-					if !errors.Is(err, ErrAttributeNotFound) {
-						continue
-					}
-				} else {
-					bucketPolicy = string(policyData)
-				}
+				// The policy is stored on the bucket entry the listing returned,
+				// so checking it needs no lookup of its own.
+				bucketPolicy := string(entry.Entry.Extended[ExtendedKeyPolicy])
 
 				bucketARN := h.generateTableBucketARN(metadata.OwnerAccountID, entry.Entry.Name)
 				identityActions := getIdentityActions(r)
