@@ -265,14 +265,14 @@ func (c *listContextClient) ListEntries(ctx context.Context, in *filer_pb.ListEn
 // The walk stops at the first file with a page still unread. Its listings must
 // end with the call, not with the request, so the filer stops producing that page.
 func TestDirHoldsFilesEndsItsListings(t *testing.T) {
-	fs, m := startRenameManager(t)
+	fs, _ := startRenameManager(t)
 	leftover := GetTablePath(renameTestBucket, "ns", "leftover")
 	fs.Put(leftover, "a-dir", nil)
 	fs.PutFile(leftover, "b-file", time.Now())
 	fs.PutFile(leftover, "c-file", time.Now())
 	client := &listContextClient{SeaweedFilerClient: fs.Client}
 
-	holds, err := m.handler.dirHoldsFiles(context.Background(), client, leftover)
+	holds, err := DirHoldsFiles(context.Background(), client, leftover, time.Time{})
 
 	require.NoError(t, err)
 	assert.True(t, holds)

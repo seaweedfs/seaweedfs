@@ -208,6 +208,12 @@ func (h *S3TablesHandler) removeExtendedAttributes(ctx context.Context, client f
 	})
 }
 
+// catalogRecordKeys are the attributes that make a directory a catalog record.
+var catalogRecordKeys = []string{
+	ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
+	ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus, ExtendedKeyDeleting, ExtendedKeyMoving,
+}
+
 // removeExtendedAttributesIf drops the given attributes only while they still
 // hold the values the caller captured. A rename copies attributes to the
 // destination and then clears the source; without this, a write that landed in
@@ -899,15 +905,17 @@ func (w *markRemovalWrites) UpdateEntry(ctx context.Context, in *filer_pb.Update
 	return resp, err
 }
 
-// dirListPageSize is how many entries dirHoldsFiles reads per ListEntries call.
+// dirListPageSize is how many entries DirHoldsFiles reads per ListEntries call.
 const dirListPageSize = 1024
 
-// dirHoldsFiles reports whether any file sits under dirPath, at any depth. It
-// walks breadth-first, pages through each directory, and stops at the first
-// file it sees. Returning at that file abandons the page being read, so the
-// listings run on a context of their own that ends with the call: otherwise
-// the filer keeps producing that page until the whole request is over.
-func (h *S3TablesHandler) dirHoldsFiles(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath string) (bool, error) {
+// DirHoldsFiles reports whether any file sits under dirPath, at any depth. A
+// non-zero before counts only files created before it, other than Iceberg
+// metadata files in dirPath/metadata, which a create stages ahead of its
+// record. It walks breadth-first, pages through each directory, and stops at
+// the first file it sees. Returning at that file abandons the page being read,
+// so the listings run on a context of their own that ends with the call:
+// otherwise the filer keeps producing that page until the whole request is over.
+func DirHoldsFiles(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath string, before time.Time) (bool, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -947,7 +955,11 @@ func (h *S3TablesHandler) dirHoldsFiles(ctx context.Context, client filer_pb.Sea
 				received = true
 				lastFileName = entry.Entry.Name
 				if !entry.Entry.IsDirectory {
-					return true, nil
+					if before.IsZero() || (entry.Entry.GetAttributes().GetCrtime() < before.Unix() &&
+						!(dir == path.Join(dirPath, "metadata") && strings.HasSuffix(entry.Entry.Name, ".metadata.json"))) {
+						return true, nil
+					}
+					continue
 				}
 				pending = append(pending, path.Join(dir, entry.Entry.Name))
 			}

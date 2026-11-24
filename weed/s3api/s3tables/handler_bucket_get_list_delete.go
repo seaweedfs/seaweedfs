@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -420,7 +421,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 			return nil
 		}
 		for _, leftover := range leftovers {
-			holdsFiles, err := h.dirHoldsFiles(r.Context(), client, path.Join(bucketPath, leftover.Name))
+			holdsFiles, err := DirHoldsFiles(r.Context(), client, path.Join(bucketPath, leftover.Name), time.Time{})
 			if err != nil {
 				return err
 			}
