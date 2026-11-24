@@ -183,14 +183,17 @@ func estimateEntriesBytes(entries []*filer_pb.LogEntry) int64 {
 
 // loadLogFileEntries reads one log file chunk from volume servers and decodes
 // its records. fetchWholeChunk handles lookup, retries, cipher and gzip.
+//
+// The lookup asks the master when the cached volume map has no locations, as
+// the streaming reader does since #11964. Asked only of the map, a live volume
+// is not found until a starting filer has registered with the master, or once
+// a failed read has set its cached locations aside, and the replay would skip
+// the rest of the log file as if the volume were deleted.
 func loadLogFileEntries(masterClient *wdclient.MasterClient, chunk *filer_pb.FileChunk) (entries []*filer_pb.LogEntry, cacheable bool, err error) {
 	bytesBuffer := bytesBufferPool.Get().(*bytes.Buffer)
 	bytesBuffer.Reset()
 	defer bytesBufferPool.Put(bytesBuffer)
-	lookupFileIdFn := func(ctx context.Context, fileId string) (targetUrls []string, err error) {
-		return masterClient.LookupFileId(ctx, fileId)
-	}
-	if fetchErr := fetchWholeChunk(context.Background(), bytesBuffer, lookupFileIdFn, chunk.GetFileIdString(), chunk.CipherKey, chunk.IsCompressed, masterClient, nil); fetchErr != nil {
+	if fetchErr := fetchWholeChunk(context.Background(), bytesBuffer, masterClient.GetLookupFileIdFunction(), chunk.GetFileIdString(), chunk.CipherKey, chunk.IsCompressed, masterClient, nil); fetchErr != nil {
 		return nil, false, fetchErr
 	}
 	return decodeLogRecords(bytesBuffer.Bytes())
