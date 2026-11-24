@@ -1022,7 +1022,7 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 	// the old content back over what took the name. Marked from here, holding
 	// no other handle's lock.
 	if replacedInode != 0 {
-		wfs.markHandleDeleted(replacedInode)
+		wfs.markHandleReplaced(replacedInode)
 	}
 	// The kernel still resolves the name to the inode whose handle just lost
 	// it, for as long as it trusts its lookup. With that lookup dropped, a
@@ -1104,6 +1104,16 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	defer wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 	fh.entryLock.Lock()
 	defer fh.entryLock.Unlock()
+
+	// Another mount created, renamed or deleted a file at the name of one this
+	// mount created and has not published. That is not this handle's file:
+	// installing the peer's entry would discard the unflushed writes, and a
+	// rename or delete would move or unlink a file the filer never had. The
+	// handle keeps its writes and its name. Its flush creates the entry only
+	// if the name is free, so a taken name is reported as a conflict there.
+	if fh.unpublishedCreate() {
+		return
+	}
 
 	// A rename changes which name the inode answers to, not which version of
 	// its content the handle holds, so it is applied ahead of the version fence
