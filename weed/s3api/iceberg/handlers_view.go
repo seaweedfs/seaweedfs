@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/view"
@@ -224,7 +225,7 @@ func (s *Server) handleCreateView(w http.ResponseWriter, r *http.Request) {
 	if err := s.saveMetadataFile(r.Context(), metadataBucket, metadataPath, metadataFileName, metadataBytes, false); err != nil {
 		// Roll back the registered view so it doesn't linger pointing at metadata
 		// that was never written.
-		if dropErr := s.dropView(r, namespace, req.Name); dropErr != nil {
+		if dropErr := s.dropView(r, namespace, req.Name, ""); dropErr != nil {
 			glog.V(1).Infof("Iceberg: failed to roll back view %s.%s after metadata write error: %v", flattenNamespacePath(namespace), req.Name, dropErr)
 		}
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Failed to save view metadata file: "+err.Error())
@@ -296,12 +297,15 @@ func (s *Server) handleDropView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var storedMetadataLocation string
+	var storedMetadataLocation, storedVersionToken string
+	var storedCreatedAt time.Time
 	if getResp, err := s.getView(r, namespace, viewName); err == nil {
 		storedMetadataLocation = getResp.MetadataLocation
+		storedCreatedAt = getResp.CreatedAt
+		storedVersionToken = getResp.VersionToken
 	}
 
-	err := s.dropView(r, namespace, viewName)
+	err := s.dropView(r, namespace, viewName, storedVersionToken)
 	if err != nil {
 		if isViewNotFound(err) {
 			writeError(w, http.StatusNotFound, "NoSuchViewException", fmt.Sprintf("View does not exist: %s", viewName))
@@ -315,7 +319,10 @@ func (s *Server) handleDropView(w http.ResponseWriter, r *http.Request) {
 	if storedMetadataLocation != "" {
 		if viewLoc := tableLocationFromMetadataLocation(storedMetadataLocation); viewLoc != "" {
 			if dataBucket, dataPath, parseErr := parseS3Location(viewLoc); parseErr == nil {
-				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), dataBucket, dataPath); cleanupErr != nil {
+				holdsFiles := func(client filer_pb.SeaweedFilerClient, dir string) (bool, error) {
+					return s3tables.ViewHoldsFiles(r.Context(), client, dir, storedCreatedAt)
+				}
+				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), dataBucket, dataPath, holdsFiles); cleanupErr != nil {
 					glog.V(1).Infof("Iceberg: failed to purge dropped view location s3://%s/%s: %v", dataBucket, dataPath, cleanupErr)
 				}
 			}
@@ -326,11 +333,12 @@ func (s *Server) handleDropView(w http.ResponseWriter, r *http.Request) {
 }
 
 // dropView removes a view registration from the catalog.
-func (s *Server) dropView(r *http.Request, namespace []string, viewName string) error {
+func (s *Server) dropView(r *http.Request, namespace []string, viewName, versionToken string) error {
 	deleteReq := &s3tables.DeleteViewRequest{
 		TableBucketARN: buildTableBucketARN(getBucketFromPrefix(r)),
 		Namespace:      namespace,
 		Name:           viewName,
+		VersionToken:   versionToken,
 	}
 	identityName := s3_constants.GetIdentityNameFromContext(r)
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {

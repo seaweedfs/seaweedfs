@@ -958,7 +958,7 @@ func (h *S3TablesHandler) handleDeleteNamespace(w http.ResponseWriter, r *http.R
 				// namespace: the namespace directory stays, minus its catalog
 				// record. One such directory settles it, so the rest are not walked.
 				if entry.Entry.IsDirectory && !keepDir {
-					holdsFiles, err := h.dirHoldsFiles(r.Context(), client, path.Join(namespacePath, entry.Entry.Name))
+					holdsFiles, err := DirHoldsFiles(r.Context(), client, path.Join(namespacePath, entry.Entry.Name), time.Time{})
 					if err != nil {
 						return err
 					}
