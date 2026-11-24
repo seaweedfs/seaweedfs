@@ -81,8 +81,8 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 			// renamed (or deleted and recreated). Flushing metadata under
 			// the old path would re-insert a stale entry into the meta
 			// cache, breaking git's lock file protocol. An unpublished
-			// create loses the mapping only to another mount's file taking
-			// its name; its create-if-not-exists flush reports that.
+			// create has no stored entry to go stale: its flush creates the
+			// entry only if the name is free, or is refused and retained.
 			glog.V(3).Infof("completeAsyncFlush inode %d: saved path %s/%s no longer maps to this inode, skipping metadata flush",
 				fh.inode, fh.savedDir, fh.savedName)
 		} else {

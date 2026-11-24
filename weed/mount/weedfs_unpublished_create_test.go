@@ -133,8 +133,8 @@ func TestPeerRenameAwayLeavesUnpublishedCreateOnItsName(t *testing.T) {
 }
 
 // The peer renamed another file onto the name. That replaces nothing of the
-// file this mount created, so its handle is not marked deleted; its flush
-// reports the taken name instead of skipping the publish.
+// file this mount created, so its handle is not marked deleted; its flush is
+// refused instead of skipped, so the writes are not dropped silently.
 func TestPeerRenameOntoUnpublishedCreateDoesNotMarkItDeleted(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 	fh, _ := openUnpublishedCreate(t, wfs, util.FullPath("/dir/file"), []byte("BBBB"))

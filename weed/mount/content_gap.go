@@ -37,6 +37,9 @@ func (wfs *WFS) checkContentPublication(fh *FileHandle, base *filer_pb.Entry) er
 	if wfs.option.WritebackCache && (fh.writebackContentError == nil || fh.writebackContentError.Load()) {
 		return fmt.Errorf("writeback inode awaits Forget after content refusal: %w", filer_pb.ErrPreconditionFailed)
 	}
+	if fh.nameTaken {
+		return fmt.Errorf("another mount renamed a file onto this unpublished create: %w", filer_pb.ErrPreconditionFailed)
+	}
 	// This guard shares the CAS version with CreateEntry. A rewritten or
 	// manifest bounding range cannot conceal the original kernel WRITE frontier.
 	var eof uint64
