@@ -14761,6 +14761,23 @@ mod tests {
         (r.status, r.error.clone())
     }
 
+    #[tokio::test]
+    async fn batch_delete_in_maintenance_answers_like_go() {
+        let (service, _tmp) = make_local_service_with_volume("", None);
+        service.state.maintenance.store(true, Ordering::Relaxed);
+        let fid = needle::FileId::new(VolumeId(1), NeedleId(1), Cookie(1));
+        let err = service
+            .batch_delete(Request::new(volume_server_pb::BatchDeleteRequest {
+                file_ids: vec![fid.to_string()],
+                skip_cookie_check: true,
+                fsync: false,
+            }))
+            .await
+            .expect_err("a server in maintenance mode must refuse a batch delete");
+        assert_eq!(err.code(), tonic::Code::Unknown);
+        assert!(err.message().contains("is in maintenance mode"), "{err}");
+    }
+
     /// A batch delete only needs the needle's cookie, which is stored in the
     /// header, so it must not read the payload.
     #[tokio::test]

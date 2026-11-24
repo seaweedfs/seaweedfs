@@ -178,10 +178,12 @@ impl VolumeServerState {
     }
 
     /// Check if the server is in maintenance mode; return gRPC error if so.
+    /// Unknown, as Go's plain error arrives: Go clients take a detail-less
+    /// Unavailable for a dead channel and close the shared connection.
     pub fn check_maintenance(&self) -> Result<(), tonic::Status> {
         if self.maintenance.load(Ordering::Relaxed) {
             let id = self.store.read().unwrap().id.clone();
-            return Err(tonic::Status::unavailable(format!(
+            return Err(tonic::Status::unknown(format!(
                 "volume server {} is in maintenance mode",
                 id
             )));
