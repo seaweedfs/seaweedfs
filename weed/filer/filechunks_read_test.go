@@ -279,3 +279,91 @@ func TestActualReadResolvedChunks2(t *testing.T) {
 	}
 
 }
+
+func TestReadResolvedChunksTiedTimestamps(t *testing.T) {
+	a := &filer_pb.FileChunk{FileId: "1,aaa", Offset: 0, Size: 100, ModifiedTsNs: 7}
+	b := &filer_pb.FileChunk{FileId: "2,bbb", Offset: 50, Size: 100, ModifiedTsNs: 7}
+
+	visibles := readResolvedChunks([]*filer_pb.FileChunk{a, b}, 0, 300)
+
+	type span struct {
+		start, stop int64
+		fileId      string
+	}
+	var got []span
+	for x := visibles.Front(); x != nil; x = x.Next {
+		got = append(got, span{x.Value.start, x.Value.stop, x.Value.fileId})
+	}
+	want := []span{{0, 50, "1,aaa"}, {50, 150, "2,bbb"}}
+	if len(got) != len(want) {
+		t.Fatalf("visibles = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("visibles = %+v, want %+v", got, want)
+		}
+	}
+}
+
+func TestRandomizedReadResolvedChunksTiedTimestamps(t *testing.T) {
+	const limit = 4096
+	for round := 0; round < 200; round++ {
+		var chunks []*filer_pb.FileChunk
+		incremental := NewIntervalList[*VisibleInterval]()
+		for i := 0; i < 32; i++ {
+			start := rand.Int63n(limit)
+			size := 1 + rand.Int63n(256)
+			if start+size > limit {
+				size = limit - start
+			}
+			chunk := &filer_pb.FileChunk{
+				FileId:       fmt.Sprintf("%d,%d", round, i),
+				Offset:       start,
+				Size:         uint64(size),
+				ModifiedTsNs: rand.Int63n(4), // lots of ties
+			}
+			chunks = append(chunks, chunk)
+			MergeIntoVisibles(incremental, start, start+size, chunk)
+		}
+		var wantFileId [limit]string
+		for x := incremental.Front(); x != nil; x = x.Next {
+			for i := x.Value.start; i < x.Value.stop; i++ {
+				wantFileId[i] = x.Value.fileId
+			}
+		}
+
+		// expected max ts at each position, -1 when nothing covers it
+		var want [limit]int64
+		for i := range want {
+			want[i] = -1
+		}
+		for _, c := range chunks {
+			for i := c.Offset; i < c.Offset+int64(c.Size); i++ {
+				want[i] = max(want[i], c.ModifiedTsNs)
+			}
+		}
+
+		var got [limit]int64
+		for i := range got {
+			got[i] = -1
+		}
+		visibles := readResolvedChunks(chunks, 0, math.MaxInt64)
+		for x := visibles.Front(); x != nil; x = x.Next {
+			v := x.Value
+			for i := v.start; i < v.stop; i++ {
+				if got[i] != -1 {
+					t.Fatalf("round %d: position %d covered twice", round, i)
+				}
+				if v.fileId != wantFileId[i] {
+					t.Fatalf("round %d: position %d reads %s, MergeIntoVisibles has %s", round, i, v.fileId, wantFileId[i])
+				}
+				got[i] = v.modifiedTsNs
+			}
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("round %d: position %d expected ts %d actual ts %d", round, i, want[i], got[i])
+			}
+		}
+	}
+}
