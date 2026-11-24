@@ -66,6 +66,7 @@ func workloadCredentials(region string) (*credentials.Credentials, error) {
 		Config: aws.Config{Region: aws.String(region), HTTPClient: &http.Client{},
 			Credentials: credentials.AnonymousCredentials},
 		SharedConfigState: session.SharedConfigDisable,
+		SharedConfigFiles: []string{},
 	})
 	if err != nil {
 		return nil, err

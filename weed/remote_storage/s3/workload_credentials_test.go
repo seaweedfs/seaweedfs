@@ -3,6 +3,8 @@ package s3
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -109,6 +111,18 @@ func TestWorkloadCredentials(t *testing.T) {
 	}
 	t.Setenv("AWS_ROLE_ARN", "")
 	t.Setenv("AWS_WEB_IDENTITY_TOKEN_FILE", "")
+	// a selected profile in the shared credentials file is not read in workload mode
+	shared := filepath.Join(t.TempDir(), "credentials")
+	if err := os.WriteFile(shared, []byte("[irsa]\nrole_arn = arn:aws:iam::123456789012:role/pod\nweb_identity_token_file = /var/run/secrets/token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", shared)
+	t.Setenv("AWS_PROFILE", "irsa")
+	if got := accessKeyOf(t, noKeys); got != "ROLEKEY" {
+		t.Errorf("workload, a profile selected: %q, want the instance role's key", got)
+	}
+	t.Setenv("AWS_PROFILE", "")
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", "/nonexistent")
 	t.Setenv(workloadCredentialsEnv, "Workload")
 	if err := makeErr(noKeys); err == nil {
 		t.Errorf("unknown value: built, want a refusal (never a silent fall back to the environment's keys)")
