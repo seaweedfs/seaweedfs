@@ -914,9 +914,10 @@ var AnyFileTime = time.Unix(1<<62, 0)
 
 // DirHoldsFiles reports whether any file sits under dirPath, at any depth, or
 // an S3 object is stored on dirPath or a directory under it. A non-zero before
-// counts only those created no later than its second (file times have second
-// granularity), other than Iceberg metadata files in dirPath/metadata, which a
-// create stages ahead of its record. It walks breadth-first, pages through
+// counts only those created in an earlier second (file times have second
+// granularity, and a writer's first file can share the record's second), other
+// than Iceberg metadata files in dirPath/metadata, which a create stages ahead
+// of its record. It walks breadth-first, pages through
 // each directory, and stops at the first file it sees. Returning at that file
 // abandons the page being read, so the listings run on a context of their own
 // that ends with the call: otherwise the filer keeps producing that page until
@@ -929,7 +930,7 @@ func DirHoldsFiles(ctx context.Context, client filer_pb.SeaweedFilerClient, dirP
 		if entry.IsDirectory && !entry.IsDirectoryKeyObject() {
 			return false
 		}
-		return before.IsZero() || (entry.GetAttributes().GetCrtime() <= before.Unix() &&
+		return before.IsZero() || (entry.GetAttributes().GetCrtime() < before.Unix() &&
 			!(dir == path.Join(dirPath, "metadata") && strings.HasSuffix(entry.Name, ".metadata.json")))
 	}
 	parent, name := path.Split(dirPath)

@@ -51,14 +51,15 @@ func TestDeleteKeepsFilesOlderThanTheRecord(t *testing.T) {
 		assert.Empty(t, fs.Get(nsPath, "t2").Extended[ExtendedKeyMetadata])
 	})
 
-	t.Run("table created in the second of an upload", func(t *testing.T) {
+	t.Run("table purges a file from its own second", func(t *testing.T) {
 		fs, m := startRenameManager(t)
+		requireOK(t, m, fs, "CreateTable", &CreateTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "t2", Format: FormatIceberg,
+			MetadataLocation: renameLocation("ns/t2/metadata/v1.metadata.json")})
 		upload(fs, "t2", time.Now())
-		requireOK(t, m, fs, "CreateTable", &CreateTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "t2", Format: FormatIceberg})
 
 		requireOK(t, m, fs, "DeleteTable", &DeleteTableRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "t2"})
 
-		assert.NotNil(t, fs.Get(GetTablePath(renameTestBucket, "ns", "t2")+"/data", "file.parquet"))
+		assert.Nil(t, fs.Get(nsPath, "t2"))
 	})
 
 	t.Run("table located over other files", func(t *testing.T) {
