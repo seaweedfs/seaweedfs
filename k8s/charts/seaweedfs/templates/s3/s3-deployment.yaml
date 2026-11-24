@@ -1,6 +1,10 @@
 {{- include "seaweedfs.compat" . -}}
 {{- if .Values.s3.enabled }}
 {{- $preStopSeconds := .Values.s3.preStopSeconds | int }}
+{{- $s3ConfigReloader := (.Values.s3.configReloader | default dict).enabled }}
+{{- if and $s3ConfigReloader (not .Values.s3.enableAuth) }}
+{{- fail "s3.configReloader.enabled needs s3.enableAuth: it reloads the identities file that mounts" }}
+{{- end }}
 {{- $minGracePeriod := add $preStopSeconds 15 }}
 {{- if and (gt $preStopSeconds 0) (lt (.Values.s3.terminationGracePeriodSeconds | int) $minGracePeriod) }}
 {{- fail (printf "s3.terminationGracePeriodSeconds (%v) must be at least %d: the gateway keeps serving for s3.preStopSeconds (%d) after SIGTERM, then gives in-flight requests up to 15s to finish; add the time any s3.lifecycle.preStop hook takes" .Values.s3.terminationGracePeriodSeconds $minGracePeriod $preStopSeconds) -}}
@@ -47,8 +51,11 @@ spec:
       {{- end }}
       {{- $podAnnotations := mergeOverwrite (deepCopy (.Values.podAnnotations | default dict)) (.Values.s3.podAnnotations | default dict) }}
       {{- if .Values.s3.existingConfigSecret }}
+      {{- /* With the config reloader, a change to the existing Secret is applied by SIGHUP, so nothing in it may restart the pod. */}}
+      {{- if not $s3ConfigReloader }}
       {{- $configSecret := (lookup "v1" "Secret" (include "seaweedfs.namespace" .) .Values.s3.existingConfigSecret) | default dict }}
       {{- $_ := set $podAnnotations "checksum/s3config" ($configSecret | toYaml | sha256sum) }}
+      {{- end }}
       {{- else }}
       {{- $_ := set $podAnnotations "checksum/s3config" (include "seaweedfs.s3.configChecksum" .) }}
       {{- end }}
@@ -78,7 +85,7 @@ spec:
       schedulerName: {{ .Values.s3.schedulerName | quote }}
       {{- end }}
       enableServiceLinks: false
-      {{- if .Values.s3.shareProcessNamespace }}
+      {{- if or .Values.s3.shareProcessNamespace $s3ConfigReloader }}
       shareProcessNamespace: true
       {{- end }}
       {{- if .Values.s3.serviceAccountName }}
@@ -265,6 +272,9 @@ spec:
           {{- if .Values.s3.containerSecurityContext.enabled }}
           securityContext: {{- omit .Values.s3.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
+      {{- if $s3ConfigReloader }}
+        {{- include "seaweedfs.s3.configReloaderContainer" (dict "root" $ "image" (include "seaweedfs.s3.image" .) "port" .Values.s3.port "resources" .Values.s3.configReloader.resources "securityContext" .Values.s3.containerSecurityContext) | nindent 8 }}
+      {{- end }}
       {{- if .Values.s3.sidecars }}
       {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.s3.sidecars "context" $) | nindent 8 }}
       {{- end }}
