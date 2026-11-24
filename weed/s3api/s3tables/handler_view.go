@@ -716,7 +716,7 @@ func (h *S3TablesHandler) handleDeleteView(w http.ResponseWriter, r *http.Reques
 		}
 		// A view keeps nothing but its metadata files, so any other file
 		// under it was written by someone else and stays with the directory.
-		keepData, err := DirHoldsFiles(r.Context(), client, viewPath, time.Now())
+		keepData, err := DirHoldsFiles(r.Context(), client, viewPath, AnyFileTime)
 		if err != nil {
 			return err
 		}

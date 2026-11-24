@@ -30,7 +30,7 @@ func TestDeleteKeepsFilesOlderThanTheRecord(t *testing.T) {
 	t.Run("view", func(t *testing.T) {
 		fs, m := startRenameManager(t)
 		requireOK(t, m, fs, "CreateView", &CreateViewRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "v1"})
-		upload(fs, "v1", time.Now())
+		upload(fs, "v1", time.Now().Add(time.Minute))
 
 		requireOK(t, m, fs, "DeleteView", &DeleteViewRequest{TableBucketARN: mustBucketARN(t), Namespace: []string{"ns"}, Name: "v1"})
 

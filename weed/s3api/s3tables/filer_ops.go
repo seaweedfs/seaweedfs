@@ -908,6 +908,10 @@ func (w *markRemovalWrites) UpdateEntry(ctx context.Context, in *filer_pb.Update
 // dirListPageSize is how many entries DirHoldsFiles reads per ListEntries call.
 const dirListPageSize = 1024
 
+// AnyFileTime is a DirHoldsFiles cutoff past every file time, for a view: it
+// writes nothing but its metadata files.
+var AnyFileTime = time.Unix(1<<62, 0)
+
 // DirHoldsFiles reports whether any file sits under dirPath, at any depth, or
 // an S3 object is stored on dirPath or a directory under it. A non-zero before
 // counts only those created no later than its second (file times have second
