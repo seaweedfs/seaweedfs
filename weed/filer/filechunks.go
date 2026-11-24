@@ -21,6 +21,15 @@ func TotalSize(chunks []*filer_pb.FileChunk) (size uint64) {
 	return
 }
 
+// LatestModifiedTsNs is the newest ModifiedTsNs among chunks. A chunk
+// rewritten from them carries it, so it still yields to newer writes.
+func LatestModifiedTsNs(chunks []*filer_pb.FileChunk) (tsNs int64) {
+	for _, c := range chunks {
+		tsNs = max(tsNs, c.ModifiedTsNs)
+	}
+	return
+}
+
 func FileSize(entry *filer_pb.Entry) (size uint64) {
 	if entry == nil || entry.Attributes == nil {
 		return 0

@@ -30,8 +30,8 @@ func TestMergeMovesReadViewOffReplacedChunks(t *testing.T) {
 	// A bloated file: b rewrote the tail of a.
 	a := chunk(1, 1, 0, 8, 1)
 	b := chunk(1, 2, 4, 8, 2)
-	// The merge's rewrite, stamped zero as maybeMergeChunks stamps it.
-	merged := chunk(2, 1, 0, 12, 0)
+	// The merge's rewrite, stamped as the oldest data it holds.
+	merged := chunk(2, 1, 0, 12, 1)
 	// A write that was attached while the merge ran.
 	late := chunk(3, 1, 10, 4, 3)
 

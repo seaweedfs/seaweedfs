@@ -71,11 +71,11 @@ func (p *proxyVolume) CreateEntry(ctx context.Context, r *filer_pb.CreateEntryRe
 		inBefore[c.GetFileIdString()] = true
 	}
 	kept := make(map[string]bool, len(r.GetEntry().GetChunks()))
-	merged := false
+	// maybeMergeChunks replaces every chunk the entry named.
+	merged := len(before) > 0
 	for _, c := range r.GetEntry().GetChunks() {
 		kept[c.GetFileIdString()] = true
-		// maybeMergeChunks stamps the chunks it writes 0.
-		merged = merged || c.GetModifiedTsNs() == 0 && !inBefore[c.GetFileIdString()]
+		merged = merged && !inBefore[c.GetFileIdString()]
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -273,8 +273,8 @@ func TestFlushMergeThroughChunkProxy(t *testing.T) {
 		flush(t, w, fh, &contentPublication{writes: fh.pageWrites.Load()})
 
 		entry, committed := vol.committed(t)
-		if len(entry.Chunks) != 1 || entry.Chunks[0].ModifiedTsNs != 0 {
-			t.Fatalf("the quiet flush did not merge: %v", entry.Chunks)
+		if len(entry.Chunks) != 1 || entry.Chunks[0].ModifiedTsNs != a.ModifiedTsNs {
+			t.Fatalf("the quiet flush did not merge into one chunk stamped as the oldest data it holds: %v", entry.Chunks)
 		}
 		vol.mu.Lock()
 		blobs := len(vol.stored)
@@ -288,8 +288,8 @@ func TestFlushMergeThroughChunkProxy(t *testing.T) {
 	})
 
 	// An older page is still uploading when a newer page of the same bytes
-	// has attached. A merge would read the newer page, and the older one,
-	// attaching after it, would outrank the merged chunks, which are stamped 0.
+	// has attached. The flush leaves the merge to a later one, and the older
+	// page, attaching last, must not outrank the newer one.
 	t.Run("UploadInFlight", func(t *testing.T) {
 		vol := newVolume()
 		var hold atomic.Bool
