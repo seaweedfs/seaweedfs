@@ -217,8 +217,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 		return true
 	}
 	if err := replication.CheckDigestsMatch(*syncOptions.filerA, aFilerDigest, *syncOptions.filerB, bFilerDigest); err != nil {
-		glog.Errorf("%v", err)
-		return true
+		glog.Exitf("%v", err)
 	}
 
 	// register graceful shutdown hook to save checkpoints

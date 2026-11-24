@@ -260,6 +260,13 @@ func (f *Filer) MaybeBootstrapFromOnePeer(ctx context.Context, self pb.ServerAdd
 	glog.V(0).Infof("bootstrap from %v clientId:%d", earliestNode.Address, f.UniqueFilerId)
 
 	return pb.WithFilerClient(false, f.UniqueFilerId, pb.ServerAddress(earliestNode.Address), f.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return fmt.Errorf("read configuration of %s: %w", earliestNode.Address, err)
+		}
+		if err := checkPeerDigest(pb.ServerAddress(earliestNode.Address), resp.Digest, false); err != nil {
+			return err
+		}
 		return filer_pb.StreamBfs(ctx, client, "/", snapshotTime.UnixNano(), func(parentPath util.FullPath, pbEntry *filer_pb.Entry, entryTsNs int64) error {
 			entry := FromPbEntry(string(parentPath), pbEntry)
 			peerTsNs := entryTsNs
