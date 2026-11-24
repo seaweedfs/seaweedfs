@@ -48,7 +48,7 @@ func (f *parentFailFiler) CreateEntry(ctx context.Context, req *filer_pb.CreateE
 		return nil, status.Error(codes.Internal, "mkdir failed")
 	}
 	if f.entries[req.Directory][req.Entry.Name] != nil {
-		return nil, status.Error(codes.AlreadyExists, filer_pb.ErrEntryAlreadyExists.Error())
+		return &filer_pb.CreateEntryResponse{Error: filer_pb.ErrEntryAlreadyExists.Error(), ErrorCode: filer_pb.FilerError_ENTRY_ALREADY_EXISTS}, nil
 	}
 	f.put(req.Directory, req.Entry)
 	return &filer_pb.CreateEntryResponse{}, nil
@@ -125,6 +125,28 @@ func TestConfirmCreateLandedCreatesMissingParent(t *testing.T) {
 	}
 }
 
+func TestEnsureObjectParentChecksEveryLevel(t *testing.T) {
+	t.Run("lower directory stored without its parent", func(t *testing.T) {
+		f := newParentFailFiler()
+		s3a := parentRecoveryServer(t, f)
+		f.put("/buckets/b/a", &filer_pb.Entry{Name: "c", IsDirectory: true})
+		if err := s3a.ensureObjectParent("b", "/buckets/b/a/c"); err != nil {
+			t.Fatal(err)
+		}
+		if !f.isDir("/buckets/b", "a") {
+			t.Fatal("the missing ancestor was not created")
+		}
+	})
+	t.Run("parent left a file", func(t *testing.T) {
+		f := newParentFailFiler()
+		s3a := parentRecoveryServer(t, f)
+		f.put("/buckets/b", &filer_pb.Entry{Name: "d"})
+		if err := s3a.ensureObjectParent("b", "/buckets/b/d"); err == nil {
+			t.Fatal("accepted a file as the object's directory")
+		}
+	})
+}
+
 // A part's upload directory is never recreated: it is gone only when the
 // upload was aborted or completed.
 func TestEnsureObjectParentSkipsBucketAndUploads(t *testing.T) {
@@ -158,6 +180,12 @@ func TestCompleteMultipartUploadCreatesCommittedObjectsParent(t *testing.T) {
 		Chunks:     []*filer_pb.FileChunk{{FileId: "3,01637037d6", Size: 11}},
 		Extended:   map[string][]byte{s3_constants.ExtETagKey: []byte("5eb63bbbe01eeed093cb22bb8f5acdc3")},
 	})
+	f.put(uploadsDir+"/u1", &filer_pb.Entry{
+		Name:       "0001_old.part",
+		Attributes: &filer_pb.FuseAttributes{FileSize: 11},
+		Chunks:     []*filer_pb.FileChunk{{FileId: "3,02637037d6", Size: 11}},
+		Extended:   map[string][]byte{s3_constants.ExtETagKey: []byte("0f343b0931126a20f133d67c2b018a3b")},
+	})
 	complete := func() (*CompleteMultipartUploadResult, s3err.ErrorCode) {
 		input := &s3.CompleteMultipartUploadInput{Bucket: aws.String("b"), Key: aws.String("d/a.bin"), UploadId: aws.String("u1")}
 		parts := &CompleteMultipartUpload{Parts: []CompletedPart{{PartNumber: 1, ETag: `"5eb63bbbe01eeed093cb22bb8f5acdc3"`}}}
@@ -173,6 +201,9 @@ func TestCompleteMultipartUploadCreatesCommittedObjectsParent(t *testing.T) {
 	if f.entries[uploadsDir]["u1"] == nil {
 		t.Fatal("the upload directory was removed before the object was listed")
 	}
+	if deleteData, ok := f.deletedData["0001_old.part"]; !ok || !deleteData {
+		t.Errorf("unused part deleted = %v, with data = %v; want its data freed before the retry", ok, deleteData)
+	}
 
 	f.mkdirFails = false
 	output, code := complete()
@@ -181,5 +212,8 @@ func TestCompleteMultipartUploadCreatesCommittedObjectsParent(t *testing.T) {
 	}
 	if !f.isDir(s3a.bucketDir("b"), "d") {
 		t.Fatal("the retry did not create the committed object's directory")
+	}
+	if f.entries[uploadsDir]["u1"] != nil {
+		t.Error("the upload directory survived the completed retry")
 	}
 }
