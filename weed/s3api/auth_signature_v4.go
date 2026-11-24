@@ -297,10 +297,6 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 			authInfo.AccessKey, keyCount, iam.isAuthEnabled)
 		return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
 	}
-	if errCode = refuseFips140ShortSecret(r.Context(), s3err.RemoteIP(r), identity, cred); errCode != s3err.ErrNone {
-		return nil, nil, "", nil, errCode
-	}
-
 	// 3. Perform permission check
 	if shouldCheckPermissions {
 		bucket, object := s3_constants.GetBucketAndObject(r)
@@ -338,6 +334,10 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 
 	// 6. Get the query string for the canonical request
 	queryStr := getCanonicalQueryString(r, authInfo.IsPresigned)
+
+	if errCode = refuseFips140ShortSecret(r.Context(), s3err.RemoteIP(r), identity, cred); errCode != s3err.ErrNone {
+		return nil, nil, "", nil, errCode
+	}
 
 	// 7. Define a closure for the core verification logic to avoid repetition
 	verify := func(urlPath string) (string, s3err.ErrorCode) {

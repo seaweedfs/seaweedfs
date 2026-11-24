@@ -180,8 +180,6 @@ const (
 	// The request's snapshot changed during a conditional write; clients can retry.
 	ErrConditionalRequestConflict
 	ErrNoSuchPublicAccessBlockConfiguration
-	// The access key's secret is too short for SigV4 under GODEBUG=fips140=only.
-	ErrFips140SecretTooShort
 )
 
 // Error message constants for checksum validation
@@ -551,13 +549,6 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidAccessKeyID: {
 		Code:           "InvalidAccessKeyId",
 		Description:    "The access key ID you provided does not exist in our records.",
-		HTTPStatusCode: http.StatusForbidden,
-	},
-	// The message must not reveal the secret's length: it reaches callers
-	// whose signature has not been checked.
-	ErrFips140SecretTooShort: {
-		Code:           "AccessDenied",
-		Description:    "This access key cannot be used while the server runs in FIPS 140 mode. Ask the administrator for a new secret.",
 		HTTPStatusCode: http.StatusForbidden,
 	},
 

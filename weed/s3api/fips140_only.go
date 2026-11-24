@@ -33,7 +33,7 @@ func fips140SecretTooShort(secretKey string) bool {
 
 // warnFips140ShortSecrets logs each access key in config whose secret SigV4
 // cannot use under fips140=only. The credentials stay loaded and stored;
-// requests signed with them get AccessDenied (ErrFips140SecretTooShort).
+// requests signed with them get SignatureDoesNotMatch.
 func warnFips140ShortSecrets(config *iam_pb.S3ApiConfiguration) {
 	if !fips140Enforced() {
 		return
@@ -54,12 +54,13 @@ func warnFips140ShortSecrets(config *iam_pb.S3ApiConfiguration) {
 	}
 }
 
-// refuseFips140ShortSecret answers ErrFips140SecretTooShort, an AccessDenied
-// that says the key cannot be used in this mode, when cred's secret is too
-// short for SigV4 under fips140=only, where deriving the signing key from it
-// would panic. The key exists, so InvalidAccessKeyId would send the client
-// looking for a missing key. The log line carries the request ID the client
-// gets back, the client's address when known, and the identity.
+// refuseFips140ShortSecret answers SignatureDoesNotMatch when cred's secret is
+// too short for SigV4 under fips140=only, where deriving the signing key from it
+// would panic. Callers run it where the signature would be checked, and the
+// answer is the one a wrong signature gets, so a caller who knows the access key
+// ID cannot tell that its secret is short. The log line gives the real cause,
+// with the request ID the client gets back, the client's address when known,
+// and the identity.
 func refuseFips140ShortSecret(ctx context.Context, clientIP string, identity *Identity, cred *Credential) s3err.ErrorCode {
 	if !fips140SecretTooShort(cred.SecretKey) {
 		return s3err.ErrNone
@@ -72,7 +73,7 @@ func refuseFips140ShortSecret(ctx context.Context, clientIP string, identity *Id
 	if identity != nil {
 		owner = " (identity " + identity.Name + ")"
 	}
-	glog.Warningf("refused S3 request %s%s (AccessDenied): access key %s%s has a secret too short for SigV4 under FIPS 140; see the error logged when S3 loaded its identities",
+	glog.Warningf("refused S3 request %s%s (SignatureDoesNotMatch): access key %s%s has a secret too short for SigV4 under FIPS 140; see the error logged when S3 loaded its identities",
 		request_id.Get(ctx), from, cred.AccessKey, owner)
-	return s3err.ErrFips140SecretTooShort
+	return s3err.ErrSignatureDoesNotMatch
 }
