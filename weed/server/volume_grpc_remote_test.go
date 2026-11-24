@@ -1166,3 +1166,17 @@ func TestBuildGuardedRemoteStorageClientS3EnvironmentCredentials(t *testing.T) {
 		t.Fatalf("a changed environment credential must build a new client (err %v)", err)
 	}
 }
+
+func TestGuardedCredentialsVersionFollowsTheContainerToken(t *testing.T) {
+	conf := &remote_pb.RemoteConf{Type: "s3", Name: "r", S3Region: "us-east-1"}
+	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", "http://169.254.170.23/v1/credentials")
+	for _, k := range []string{"AWS_CONTAINER_AUTHORIZATION_TOKEN", "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE"} {
+		t.Setenv(k, "")
+		before := guardedCredentialsVersion(conf)
+		t.Setenv(k, "changed")
+		if guardedCredentialsVersion(conf) == before {
+			t.Errorf("%s changed, the guarded client's version did not", k)
+		}
+		t.Setenv(k, "")
+	}
+}
