@@ -137,3 +137,19 @@ func TestHasObjectsWithActiveLocksReadsEachPageBeforeSubdirectories(t *testing.T
 		t.Fatalf("expected the held object in the subdirectory to be reported")
 	}
 }
+
+func TestHasObjectsWithActiveLocksNamesWithBackslashes(t *testing.T) {
+	held := map[string][]byte{s3_constants.ExtLegalHoldKey: []byte(s3_constants.LegalHoldOn)}
+	for name, dirs := range map[string]map[string][]*filer_pb.Entry{
+		"object": {"/buckets/b": {{Name: `a\b`, Extended: held}}},
+		"prefix": {"/buckets/b": {{Name: `a\b`, IsDirectory: true}}, `/buckets/b/a\b`: {{Name: "c", Extended: held}}},
+	} {
+		has, err := HasObjectsWithActiveLocks(context.Background(), &fakeFilerClient{dirs: dirs}, "/buckets/b")
+		if err != nil {
+			t.Fatalf("%s: unexpected error: %v", name, err)
+		}
+		if !has {
+			t.Fatalf("%s: expected the held object with a backslash in its key to be reported", name)
+		}
+	}
+}
