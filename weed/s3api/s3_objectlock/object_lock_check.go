@@ -146,24 +146,15 @@ func recursivelyCheckLocksWithClient(ctx context.Context, client filer_pb.Seawee
 		}
 
 		if entry.IsDirectory {
-			subDir := dir + "/" + entry.Name
-			if entry.Name == s3_constants.VersionsFolder {
-				// Check all version files (exact match for .versions folder)
-				if err := checkVersionsForLocksWithClient(ctx, client, subDir, hasLocks, currentTime); err != nil {
-					return false, err
-				}
-			} else {
-				// A directory-marker object (key ending in "/") is stored as a
-				// directory entry and can carry a lock, so check it before recursing.
-				if EntryHasActiveLock(entry, currentTime) {
-					*hasLocks = true
-					glog.V(2).Infof("Found directory marker with active lock: %s/%s", dir, entry.Name)
-					return true, nil
-				}
-				// Recursively check subdirectories
-				if err := recursivelyCheckLocksWithClient(ctx, client, subDir, hasLocks, currentTime); err != nil {
-					return false, err
-				}
+			// A directory-marker object (key ending in "/") is stored as a
+			// directory entry and can carry a lock, so check it before recursing.
+			if EntryHasActiveLock(entry, currentTime) {
+				*hasLocks = true
+				glog.V(2).Infof("Found directory marker with active lock: %s/%s", dir, entry.Name)
+				return true, nil
+			}
+			if err := recursivelyCheckLocksWithClient(ctx, client, dir+"/"+entry.Name, hasLocks, currentTime); err != nil {
+				return false, err
 			}
 		} else {
 			// Check if this object has an active lock
@@ -172,22 +163,6 @@ func recursivelyCheckLocksWithClient(ctx context.Context, client filer_pb.Seawee
 				glog.V(2).Infof("Found object with active lock: %s/%s", dir, entry.Name)
 				return true, nil // Stop iteration
 			}
-		}
-		return false, nil // Continue
-	})
-}
-
-// checkVersionsForLocksWithClient checks all versions in a .versions directory for active locks
-func checkVersionsForLocksWithClient(ctx context.Context, client filer_pb.SeaweedFilerClient, versionsDir string, hasLocks *bool, currentTime time.Time) error {
-	return paginateEntries(ctx, client, versionsDir, func(entry *filer_pb.Entry) (bool, error) {
-		if *hasLocks {
-			return true, nil // Stop iteration
-		}
-
-		if EntryHasActiveLock(entry, currentTime) {
-			*hasLocks = true
-			glog.V(2).Infof("Found version with active lock: %s/%s", versionsDir, entry.Name)
-			return true, nil // Stop iteration
 		}
 		return false, nil // Continue
 	})
