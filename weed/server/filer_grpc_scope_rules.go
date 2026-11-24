@@ -7,6 +7,7 @@ package weed_server
 import (
 	"errors"
 	"fmt"
+	"math"
 	"path"
 	"reflect"
 	"strings"
@@ -113,9 +114,26 @@ func scopeCheckEntryShape(e *filer_pb.Entry) error {
 	if e.RemoteEntry != nil {
 		return errors.New("remote entries are not allowed")
 	}
+	if len(e.GetContent()) > 0 && len(e.GetChunks()) > 0 {
+		return errors.New("inline content and chunks cannot be combined")
+	}
+	if len(e.GetChunks()) > 0 && e.GetAttributes().GetFileSize() > math.MaxInt64 {
+		return errors.New("file size must fit a nonnegative signed offset")
+	}
+	if err := scopeCheckChunkRanges(e.GetChunks()); err != nil {
+		return err
+	}
 	for _, c := range e.GetChunks() {
 		if c == nil {
 			return errors.New("nil chunks are not allowed")
+		}
+		// Some readers use Fid directly. A suffixed FileId is not converted
+		// during serialization, so an unchecked Fid would survive alongside it.
+		if c.FileId != "" && c.Fid != nil {
+			structured := (&filer_pb.FileChunk{Fid: c.Fid}).GetFileIdString()
+			if c.FileId != structured {
+				return errors.New("chunk string and structured file ids must match")
+			}
 		}
 		if c.GetSourceFileId() != "" || c.GetSourceFid() != nil {
 			return fmt.Errorf("chunk %s: source file ids are not allowed", c.GetFileIdString())
@@ -143,6 +161,7 @@ func scopeLooksLikeNewHardLinkId(id []byte) bool {
 // rules in unaryScoped are selected by that type; a new RPC reusing a request
 // type cannot inherit permission accidentally. All absent methods are refused.
 var scopeUnaryMethods = map[string]reflect.Type{
+	"AssignVolume":           reflect.TypeOf((*filer_pb.AssignVolumeRequest)(nil)),
 	"LookupDirectoryEntry":   reflect.TypeOf((*filer_pb.LookupDirectoryEntryRequest)(nil)),
 	"LookupDirectoryEntries": reflect.TypeOf((*filer_pb.LookupDirectoryEntriesRequest)(nil)),
 	"TouchAccessTime":        reflect.TypeOf((*filer_pb.TouchAccessTimeRequest)(nil)),

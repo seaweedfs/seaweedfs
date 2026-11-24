@@ -9,6 +9,7 @@ import (
 
 func TestScopeDescriptorEveryFilerMethodIsAllowedOrExplicitlyRefused(t *testing.T) {
 	expectedUnary := map[string]reflect.Type{
+		"AssignVolume":           reflect.TypeOf((*filer_pb.AssignVolumeRequest)(nil)),
 		"LookupDirectoryEntry":   reflect.TypeOf((*filer_pb.LookupDirectoryEntryRequest)(nil)),
 		"LookupDirectoryEntries": reflect.TypeOf((*filer_pb.LookupDirectoryEntriesRequest)(nil)),
 		"CreateEntry":            reflect.TypeOf((*filer_pb.CreateEntryRequest)(nil)),
@@ -26,7 +27,6 @@ func TestScopeDescriptorEveryFilerMethodIsAllowedOrExplicitlyRefused(t *testing.
 	explicitlyRefusedUnary := map[string]bool{
 		"ObjectTransaction":               true,
 		"ObjectTransactionBatch":          true,
-		"AssignVolume":                    true,
 		"CollectionList":                  true,
 		"DeleteCollection":                true,
 		"ListMetadataSubscribers":         true,

@@ -50,7 +50,7 @@ func (s *filerGrpcScope) stream(srv any, ss grpc.ServerStream, info *grpc.Stream
 	if !scopeStreamMethods[strings.TrimPrefix(info.FullMethod, scopeFilerMethodPrefix)] {
 		return sc.deny(info.FullMethod, "not available to a scoped token")
 	}
-	w := &scopedStream{ServerStream: ss, sc: sc, ctx: withScopeKeepOnly(ss.Context())}
+	w := &scopedStream{ServerStream: ss, sc: sc, ctx: s.withWriteAuthority(ss.Context(), sc)}
 	switch info.FullMethod {
 	case filer_pb.SeaweedFiler_ListEntries_FullMethodName:
 		w.ctx = context.WithValue(w.Context(), scopeListContextKey{}, true)

@@ -139,7 +139,8 @@ type FilerServer struct {
 	grpcDialOptionVolume grpc.DialOption
 	grpcDialOptionS3     grpc.DialOption
 
-	grpcScope *filerGrpcScope
+	grpcScope         *filerGrpcScope
+	grpcScopeSettings atomic.Pointer[grpcScopeSettings]
 
 	// metrics read from the master
 	metricsAddress     string
@@ -335,9 +336,12 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.basicAuthFile = basicAuthFile
 	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec, "", "")
 
+	fs.loadGrpcScopeConfig(v)
 	fs.grpcScope = newFilerGrpcScope(scopeConfig{
-		verificationKeys:  func() (security.SigningKey, security.SigningKey) { return fs.filerGuard.VerificationKeys(true) },
+		verificationKeys:  fs.grpcScopeVerificationKeys,
 		subscriptionScope: fs.metadataSubscriptionScope,
+		leeway:            func() time.Duration { return fs.grpcScopeSettings.Load().leeway },
+		assignLifetime:    func() time.Duration { return fs.grpcScopeSettings.Load().assignLifetime },
 	}, fs)
 
 	fs.checkWithMaster()
@@ -792,6 +796,7 @@ func (fs *FilerServer) FilerGuard() *security.Guard {
 
 func (fs *FilerServer) Reload() {
 	glog.V(0).Infoln("Reload filer server...")
+	previousScopeKey, _ := fs.grpcScopeVerificationKeys()
 
 	util.LoadConfiguration("security", false)
 	v := util.GetViper()
@@ -812,5 +817,51 @@ func (fs *FilerServer) Reload() {
 		"",
 		"",
 	)
+	if fresh, used := util.ReadConfiguration("security", ""); used != "" {
+		fs.loadGrpcScopeConfig(fresh)
+	}
+	if key, _ := fs.grpcScopeVerificationKeys(); len(previousScopeKey) > 0 && len(key) == 0 {
+		glog.Warningf("filer gRPC reload: no verification key is configured; scope enforcement is now off")
+	}
 	util_http.ReloadJwtSigningReadConfig()
+}
+
+// grpcScopeSettings is replaced as one snapshot on configuration reload.
+type grpcScopeSettings struct {
+	key            security.SigningKey
+	previousKey    security.SigningKey
+	leeway         time.Duration
+	assignLifetime time.Duration
+}
+
+func (fs *FilerServer) loadGrpcScopeConfig(v *util.ViperProxy) {
+	v.SetDefault("jwt.filer_signing.assign_expires_after_seconds", int(security.DefaultAssignTokenLifetime/time.Second))
+	v.SetDefault("jwt.filer_signing.clock_leeway_seconds", 30)
+	key := security.SigningKey(v.GetString("jwt.filer_signing.grpc_key"))
+	previousKey := security.SigningKey(v.GetString("jwt.filer_signing.grpc_previous_key"))
+	lifetime := time.Duration(v.GetInt("jwt.filer_signing.assign_expires_after_seconds")) * time.Second
+	if lifetime <= 0 {
+		lifetime = security.DefaultAssignTokenLifetime
+	}
+	leeway := time.Duration(v.GetInt("jwt.filer_signing.clock_leeway_seconds")) * time.Second
+	if leeway < 0 {
+		leeway = 0
+	}
+	// An explicit gRPC key is a separate trust domain. The shared HTTP
+	// previous_key must not authenticate scoped gRPC calls under that key.
+	// When no gRPC key is configured, grpcScopeVerificationKeys falls back to
+	// filerGuard, which retains the shared current/previous rotation pair.
+	fs.grpcScopeSettings.Store(&grpcScopeSettings{
+		key:            key,
+		previousKey:    previousKey,
+		leeway:         leeway,
+		assignLifetime: lifetime,
+	})
+}
+
+func (fs *FilerServer) grpcScopeVerificationKeys() (security.SigningKey, security.SigningKey) {
+	if settings := fs.grpcScopeSettings.Load(); settings != nil && len(settings.key) > 0 {
+		return settings.key, settings.previousKey
+	}
+	return fs.filerGuard.VerificationKeys(true)
 }
