@@ -250,23 +250,15 @@ func (f *Filer) buildRemoteStorageClient(ctx context.Context, remoteConf *remote
 // only at bootstrap is not enough: the store signature is written when the
 // store opens, so a fresh filer refused at bootstrap would restart as an
 // initialized store, skip the bootstrap and serve without its peers' files.
-// A peer that cannot be reached is skipped; checkPeerDigest decides the rest.
+// A peer that cannot be reached, or does not answer within
+// peerDigestReadTimeout, is skipped; checkPeerDigest decides the rest.
 func (f *Filer) CheckPeerDigests(ctx context.Context, self pb.ServerAddress, nodes []*master_pb.ClusterNodeUpdate) error {
 	for _, node := range nodes {
 		peer := pb.ServerAddress(node.Address)
 		if peer.Equals(self) {
 			continue
 		}
-		var signature int32
-		var digest string
-		err := pb.WithFilerClient(false, f.UniqueFilerId, peer, f.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
-			if err != nil {
-				return err
-			}
-			signature, digest = resp.Signature, resp.Digest
-			return nil
-		})
+		signature, digest, err := f.readPeerDigest(ctx, peer)
 		if err != nil {
 			glog.Warningf("check digest of peer filer %s: %v", peer, err)
 			continue
@@ -276,6 +268,27 @@ func (f *Filer) CheckPeerDigests(ctx context.Context, self pb.ServerAddress, nod
 		}
 	}
 	return nil
+}
+
+// peerDigestReadTimeout bounds each peer's configuration read at startup, so a
+// peer that accepts the connection but never answers is skipped rather than
+// holding the filer's startup. A variable so tests can shorten it.
+var peerDigestReadTimeout = 10 * time.Second
+
+// readPeerDigest reads a peer filer's store signature and digest within
+// peerDigestReadTimeout.
+func (f *Filer) readPeerDigest(ctx context.Context, peer pb.ServerAddress) (signature int32, digest string, err error) {
+	ctx, cancel := context.WithTimeout(ctx, peerDigestReadTimeout)
+	defer cancel()
+	err = pb.WithFilerClient(false, f.UniqueFilerId, peer, f.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		signature, digest = resp.Signature, resp.Digest
+		return nil
+	})
+	return
 }
 
 func (f *Filer) MaybeBootstrapFromOnePeer(ctx context.Context, self pb.ServerAddress, existingNodes []*master_pb.ClusterNodeUpdate, snapshotTime time.Time) (err error) {

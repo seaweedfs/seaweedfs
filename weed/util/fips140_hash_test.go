@@ -59,10 +59,11 @@ func TestNewMd5UsesTruncatedSha256WhenEnforced(t *testing.T) {
 	}
 }
 
-// setDigestForTest sets the digest mode and restores the GODEBUG default after the test.
+// setDigestForTest sets the digest mode and restores the previous setting after the test.
 func setDigestForTest(t *testing.T, name string) error {
 	t.Helper()
-	t.Cleanup(func() { digestSetting.Store(digestFollowGodebug) })
+	previous := digestSetting.Load()
+	t.Cleanup(func() { digestSetting.Store(previous) })
 	return SetDigest(name)
 }
 

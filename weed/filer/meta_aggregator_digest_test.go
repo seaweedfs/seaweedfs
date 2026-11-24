@@ -101,3 +101,55 @@ func TestRefusedPeerIsRetiredLikeAnUnreachableOne(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// silentFiler is a peer filer that accepts the connection but never answers
+// GetFilerConfiguration.
+type silentFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+}
+
+func (silentFiler) GetFilerConfiguration(ctx context.Context, _ *filer_pb.GetFilerConfigurationRequest) (*filer_pb.GetFilerConfigurationResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestCheckPeerDigestsSkipsASilentPeer checks that a peer that never answers
+// its configuration read is skipped after peerDigestReadTimeout, so it cannot
+// hold the filer's startup.
+func TestCheckPeerDigestsSkipsASilentPeer(t *testing.T) {
+	saved := peerDigestReadTimeout
+	t.Cleanup(func() { peerDigestReadTimeout = saved })
+	peerDigestReadTimeout = 300 * time.Millisecond
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(server, silentFiler{})
+	go server.Serve(ln)
+	defer server.Stop()
+	_, portStr, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	grpcPort, err := strconv.Atoi(portStr)
+	if err != nil || grpcPort <= 10000 {
+		t.Skipf("listener port %q cannot carry the filer's gRPC offset", portStr)
+	}
+	peer := pb.ServerAddress(fmt.Sprintf("127.0.0.1:%d", grpcPort-10000))
+	f := &Filer{Signature: 1, GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials())}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- f.CheckPeerDigests(context.Background(), "127.0.0.1:2", []*master_pb.ClusterNodeUpdate{{Address: string(peer)}})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("a silent peer should be skipped, got %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("CheckPeerDigests waited on a peer that never answers")
+	}
+}
