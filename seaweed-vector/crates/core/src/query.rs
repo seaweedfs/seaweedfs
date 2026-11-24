@@ -126,6 +126,13 @@ pub async fn indexed_only(
     if eligible.is_empty() {
         return Ok((Vec::new(), excluded));
     }
+    if excluded == 0
+        && query.filter.is_none()
+        && query.index_segments.is_none()
+        && query.fragments.is_none()
+    {
+        return Ok((ann(dataset, table, query).await?, 0));
+    }
     let eligible: Vec<u64> = eligible.iter().map(u64::from).collect();
     let hits = ann_with_scope(dataset, table, query, Some(&eligible)).await?;
     Ok((hits, excluded))
