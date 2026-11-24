@@ -84,7 +84,7 @@ func isNotExistError(err error) bool {
 // updateEntry sends an UpdateEntryRequest for the given entry.
 func (fs *SftpServer) updateEntry(dir string, entry *filer_pb.Entry) error {
 	return fs.callWithClient(false, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
-		_, err := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{Directory: dir, Entry: entry})
+		_, err := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{Directory: dir, Entry: entry, ExpectedExtended: objectLockState(entry)})
 		return err
 	})
 }

@@ -32,6 +32,8 @@ type lockTestFiler struct {
 	renames []*filer_pb.AtomicRenameEntryRequest
 	updates int
 	volume  string
+
+	lastUpdate *filer_pb.UpdateEntryRequest
 }
 
 func (f *lockTestFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -224,6 +226,7 @@ func (f *lockTestFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntry
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.updates++
+	f.lastUpdate = req
 	return &filer_pb.UpdateEntryResponse{}, nil
 }
 
@@ -253,6 +256,9 @@ func TestWriteAndSetstatRefuseProtectedEntries(t *testing.T) {
 	}
 	if err := fs.setFileStatWithRequest("/buckets/b/unlocked", sftp.NewRequest("Setstat", "/b/unlocked")); err != nil {
 		t.Fatalf("setstat of an unprotected entry: %v", err)
+	}
+	if _, ok := fake.lastUpdate.ExpectedExtended[s3_constants.ExtLegalHoldKey]; !ok {
+		t.Fatalf("setstat is not pinned to the Object Lock state it checked")
 	}
 }
 
