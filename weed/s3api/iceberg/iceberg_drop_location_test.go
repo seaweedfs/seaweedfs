@@ -208,3 +208,85 @@ func TestDropStagedTablePurgesFilesWrittenBeforeItsCommit(t *testing.T) {
 		t.Errorf("drop kept a file the staged create wrote before its commit")
 	}
 }
+
+// swapFiler runs before ahead of the n-th WithFilerClient call.
+type swapFiler struct {
+	*memFiler
+	calls  int
+	n      int
+	before func()
+}
+
+func (f *swapFiler) WithFilerClient(streaming bool, fn func(client filer_pb.SeaweedFilerClient) error) error {
+	f.calls++
+	if f.calls == f.n {
+		f.before()
+	}
+	return f.memFiler.WithFilerClient(streaming, fn)
+}
+
+// A record replaced between a drop's lookup and its delete is not dropped,
+// and the files dated after the looked-up record stay.
+func TestDropKeepsRecordReplacedAfterLookup(t *testing.T) {
+	base := time.Now().Add(-2 * time.Hour).Truncate(time.Second)
+	for _, tc := range []struct {
+		kind, file, verb string
+		extended         map[string][]byte
+	}{
+		{"table", "data/f.parquet", "tables", nil},
+		{"view", "metadata/user.metadata.json", "views", map[string][]byte{s3tables.ExtendedKeyEntryType: []byte(s3tables.EntryTypeView)}},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			fc := newMemFiler()
+			seedNamespace(fc, ownerTestBucket, "finance", "alice")
+			otherPath := s3tables.GetTablePath(ownerTestBucket, "finance", "other")
+			fc.seed(otherPath, &filer_pb.Entry{Name: "other", IsDirectory: true})
+			fc.seed(path.Dir(otherPath+"/"+tc.file), &filer_pb.Entry{Name: path.Base(path.Dir(tc.file)), IsDirectory: true})
+			fc.seed(otherPath+"/"+tc.file, &filer_pb.Entry{Name: path.Base(tc.file), Content: []byte("x"),
+				Attributes: &filer_pb.FuseAttributes{Crtime: base.Add(30 * time.Minute).Unix()}})
+			aliasPath := s3tables.GetTablePath(ownerTestBucket, "finance", "alias")
+			record := func(createdAt time.Time, token string) *filer_pb.Entry {
+				meta, err := json.Marshal(map[string]any{
+					"name":             "alias",
+					"namespace":        "finance",
+					"format":           "ICEBERG",
+					"createdAt":        createdAt,
+					"ownerAccountId":   "mallory",
+					"versionToken":     token,
+					"metadataVersion":  1,
+					"metadataLocation": "s3://" + ownerTestBucket + "/finance/other/metadata/v1.metadata.json",
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				extended := map[string][]byte{s3tables.ExtendedKeyMetadata: meta}
+				for k, v := range tc.extended {
+					extended[k] = v
+				}
+				return &filer_pb.Entry{Name: "alias", IsDirectory: true, Extended: extended}
+			}
+			fc.seed(aliasPath, record(base, "v1"))
+			sf := &swapFiler{memFiler: fc, n: 2, before: func() { fc.seed(aliasPath, record(base.Add(time.Hour), "v2")) }}
+			s := NewServer(sf, nil)
+
+			r := httptest.NewRequest(http.MethodDelete, "/v1/"+ownerTestBucket+"/namespaces/finance/"+tc.verb+"/alias", nil)
+			r = mux.SetURLVars(r, map[string]string{"prefix": ownerTestBucket, "namespace": "finance", "table": "alias", "view": "alias"})
+			w := httptest.NewRecorder()
+			if tc.kind == "table" {
+				s.handleDropTable(w, withActions(r, "mallory", append(creatorActions, "s3tables:DeleteTable")...))
+			} else {
+				s.handleDropView(w, withActions(r, "mallory", creatorActions...))
+			}
+
+			if w.Code != http.StatusConflict {
+				t.Fatalf("status = %d, want %d (body: %s)", w.Code, http.StatusConflict, w.Body.String())
+			}
+			if _, ok := fc.entries[aliasPath]; !ok {
+				t.Errorf("the replacement record was dropped")
+			}
+			if _, ok := fc.entries[otherPath+"/"+tc.file]; !ok {
+				t.Errorf("files dated after the looked-up record were purged")
+			}
+		})
+	}
+}
