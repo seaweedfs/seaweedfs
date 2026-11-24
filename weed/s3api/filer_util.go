@@ -37,11 +37,17 @@ func (s3a *S3ApiServer) mkdirExclusive(parentDirectoryPath string, dirName strin
 // an entry before its parent directories, so a create that failed on a parent
 // leaves an object GET finds but no listing shows. Each level is checked, as a
 // failed mkdir can leave a lower directory stored without its parent. The
-// bucket directory and upload directories are never created here.
+// bucket directory and upload directories are never created here: a missing
+// bucket fails the repair, as the filer would recreate it as a plain directory.
 func (s3a *S3ApiServer) ensureObjectParent(ctx context.Context, bucket, dir string) error {
 	bucketDir, uploads := s3a.bucketDir(bucket), s3a.genUploadsFolder(bucket)
 	if !strings.HasPrefix(dir, bucketDir+"/") || dir == uploads || strings.HasPrefix(dir, uploads+"/") {
 		return nil
+	}
+	if exists, err := filer_pb.Exists(ctx, s3a, s3a.bucketRoot(bucket), bucket, true); err != nil {
+		return err
+	} else if !exists {
+		return fmt.Errorf("bucket directory %s is missing", bucketDir)
 	}
 	parent := bucketDir
 	for _, name := range strings.Split(strings.TrimPrefix(dir, bucketDir+"/"), "/") {

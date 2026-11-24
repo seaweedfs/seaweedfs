@@ -18,6 +18,7 @@ import (
 func parentRecoveryServer(t *testing.T, f *parentFailFiler) *S3ApiServer {
 	s3a := ambiguousRouteServer(t, startFakeFiler(t, f))
 	s3a.option.BucketsPath = "/buckets"
+	f.put("/buckets", &filer_pb.Entry{Name: "b", IsDirectory: true})
 	return s3a
 }
 
@@ -145,6 +146,17 @@ func TestEnsureObjectParentChecksEveryLevel(t *testing.T) {
 			t.Fatal("accepted a file as the object's directory")
 		}
 	})
+	t.Run("missing bucket is not recreated", func(t *testing.T) {
+		f := newParentFailFiler()
+		s3a := parentRecoveryServer(t, f)
+		delete(f.entries["/buckets"], "b")
+		if err := s3a.ensureObjectParent(context.Background(), "b", "/buckets/b/d"); err == nil {
+			t.Fatal("repaired an object's directory under a deleted bucket")
+		}
+		if f.mkdirs != 0 {
+			t.Fatalf("mkdirs = %d, want none under a missing bucket", f.mkdirs)
+		}
+	})
 }
 
 // A part's upload directory is never recreated: it is gone only when the
@@ -173,6 +185,7 @@ func TestCompleteMultipartUploadCreatesCommittedObjectsParent(t *testing.T) {
 	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
 	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b"})
 	uploadsDir := s3a.genUploadsFolder("b")
+	f.put(s3a.bucketRoot("b"), &filer_pb.Entry{Name: "b", IsDirectory: true})
 	f.put(uploadsDir, &filer_pb.Entry{Name: "u1", IsDirectory: true, Extended: map[string][]byte{s3_constants.ExtMultipartObjectKey: []byte("d/a.bin")}})
 	f.put(uploadsDir+"/u1", &filer_pb.Entry{
 		Name:       "0001.part",
