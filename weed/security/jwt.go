@@ -238,9 +238,6 @@ func LoadFilerJwtFromFile(configFile string) (FilerJwtProvider, error) {
 		return nil, fmt.Errorf("failed to read security config %s: %v", configFile, err)
 	}
 
-	if err := util.CheckFips140SigningKeys(configFile, v); err != nil {
-		return nil, fmt.Errorf("security config %s: %v", configFile, err)
-	}
 	signingKey := SigningKey(v.GetString("jwt.filer_signing.key"))
 	readSigningKey := SigningKey(v.GetString("jwt.filer_signing.read.key"))
 	if len(signingKey) == 0 && len(readSigningKey) == 0 {
@@ -258,6 +255,9 @@ func LoadFilerJwtFromFile(configFile string) (FilerJwtProvider, error) {
 			readSigningKey = SigningKey(gv.GetString("jwt.filer_signing.read.key"))
 			readSigningKeyExpires = gv.GetInt("jwt.filer_signing.read.expires_after_seconds")
 		}
+	}
+	if err := util.CheckFips140HmacKeys([]string{"jwt.filer_signing.key", "jwt.filer_signing.read.key"}, []string{string(signingKey), string(readSigningKey)}); err != nil {
+		return nil, fmt.Errorf("security config %s: %v", configFile, err)
 	}
 	if signingKeyExpires < 0 || readSigningKeyExpires < 0 {
 		return nil, fmt.Errorf("jwt.filer_signing lifetimes must not be negative")
