@@ -52,4 +52,14 @@ func TestAuthorizeIAMActionSeesRequestTags(t *testing.T) {
 
 	allowed, _ = h.authorizeIAMAction(r, []string{"tagged"}, "CreateTableBucket", map[string]string{"env": "prod"}, bucketARN)
 	require.False(t, allowed)
+
+	var paired policy.PolicyDocument
+	require.NoError(t, json.Unmarshal([]byte(`{"Version":"2012-10-17","Statement":[
+		{"Effect":"Allow","Action":"s3tables:CreateTableBucket","Resource":"*","Condition":{"StringEquals":{"aws:RequestTag/owner":"${aws:RequestTag/team}"}}}]}`), &paired))
+	require.NoError(t, engine.AddPolicy("", "paired", &paired))
+	allowed, err = h.authorizeIAMAction(r, []string{"paired"}, "CreateTableBucket", map[string]string{"owner": "data", "team": "data"}, bucketARN)
+	require.NoError(t, err)
+	require.True(t, allowed)
+	allowed, _ = h.authorizeIAMAction(r, []string{"paired"}, "CreateTableBucket", map[string]string{"owner": "data", "team": "ops"}, bucketARN)
+	require.False(t, allowed)
 }

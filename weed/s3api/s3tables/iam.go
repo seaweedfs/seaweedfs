@@ -233,7 +233,7 @@ func getIdentityClaims(r *http.Request) map[string]interface{} {
 func buildIAMRequestContext(r *http.Request, claims map[string]interface{}, requestTags map[string]string) map[string]interface{} {
 	ctx := make(map[string]interface{})
 	for key, value := range requestTags {
-		ctx["aws:RequestTag/"+key] = []string{value}
+		ctx["aws:RequestTag/"+key] = value
 	}
 	if keys := mapKeys(requestTags); len(keys) > 0 {
 		ctx["aws:TagKeys"] = keys
