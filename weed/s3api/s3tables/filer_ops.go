@@ -909,12 +909,13 @@ func (w *markRemovalWrites) UpdateEntry(ctx context.Context, in *filer_pb.Update
 const dirListPageSize = 1024
 
 // DirHoldsFiles reports whether any file sits under dirPath, at any depth. A
-// non-zero before counts only files created before it, other than Iceberg
-// metadata files in dirPath/metadata, which a create stages ahead of its
-// record. It walks breadth-first, pages through each directory, and stops at
-// the first file it sees. Returning at that file abandons the page being read,
-// so the listings run on a context of their own that ends with the call:
-// otherwise the filer keeps producing that page until the whole request is over.
+// non-zero before counts only files created no later than its second (file
+// times have second granularity), other than Iceberg metadata files in
+// dirPath/metadata, which a create stages ahead of its record. It walks
+// breadth-first, pages through each directory, and stops at the first file it
+// sees. Returning at that file abandons the page being read, so the listings
+// run on a context of their own that ends with the call: otherwise the filer
+// keeps producing that page until the whole request is over.
 func DirHoldsFiles(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath string, before time.Time) (bool, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -955,7 +956,7 @@ func DirHoldsFiles(ctx context.Context, client filer_pb.SeaweedFilerClient, dirP
 				received = true
 				lastFileName = entry.Entry.Name
 				if !entry.Entry.IsDirectory {
-					if before.IsZero() || (entry.Entry.GetAttributes().GetCrtime() < before.Unix() &&
+					if before.IsZero() || (entry.Entry.GetAttributes().GetCrtime() <= before.Unix() &&
 						!(dir == path.Join(dirPath, "metadata") && strings.HasSuffix(entry.Entry.Name, ".metadata.json"))) {
 						return true, nil
 					}

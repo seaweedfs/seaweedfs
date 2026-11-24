@@ -316,7 +316,7 @@ func (s *Server) handleDropView(w http.ResponseWriter, r *http.Request) {
 	if storedMetadataLocation != "" {
 		if viewLoc := tableLocationFromMetadataLocation(storedMetadataLocation); viewLoc != "" {
 			if dataBucket, dataPath, parseErr := parseS3Location(viewLoc); parseErr == nil {
-				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), dataBucket, dataPath, time.Now().Add(time.Second)); cleanupErr != nil {
+				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), dataBucket, dataPath, time.Now()); cleanupErr != nil {
 					glog.V(1).Infof("Iceberg: failed to purge dropped view location s3://%s/%s: %v", dataBucket, dataPath, cleanupErr)
 				}
 			}
