@@ -65,3 +65,31 @@ func TestBucketPolicyDenyHonorsBucketResourceTag(t *testing.T) {
 		require.Len(t, listed(seed(t, "dev")), 1)
 	})
 }
+
+// Deleting the bucket policy is refused when the bucket's tags change between
+// the authorization and the deletion.
+func TestDeleteTableBucketPolicyRechecksTagsAtDeletion(t *testing.T) {
+	bucketARN := policyDenyBucketARN(t)
+	fs, m := startPolicyDenyManager(t)
+	entry := fs.Get(TablesPath, policyDenyBucket)
+	require.NotNil(t, entry)
+	policy := []byte(fmt.Sprintf(`{"Statement":[`+
+		`{"Effect":"Allow","Principal":%q,"Action":"s3tables:*","Resource":"*"},`+
+		`{"Effect":"Deny","Principal":%q,"Action":"s3tables:*","Resource":%q,"Condition":{"StringEquals":{"aws:ResourceTag/env":"prod"}}}]}`,
+		policyDenyWriter, policyDenyWriter, bucketARN))
+	entry.Extended[ExtendedKeyPolicy] = policy
+	entry.Extended[ExtendedKeyTags] = []byte(`{"env":"dev"}`)
+	fs.Put(TablesPath, policyDenyBucket, entry.Extended)
+	fs.BeforeUpdate = func() {
+		current := fs.Get(TablesPath, policyDenyBucket)
+		current.Extended[ExtendedKeyTags] = []byte(`{"env":"prod"}`)
+		fs.Put(TablesPath, policyDenyBucket, current.Extended)
+	}
+
+	err := m.Execute(context.Background(), NewManagerClient(fs.Client), "DeleteTableBucketPolicy",
+		&DeleteTableBucketPolicyRequest{TableBucketARN: bucketARN}, nil, policyDenyWriter)
+	var apiErr *S3TablesError
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, ErrCodeConflict, apiErr.Type)
+	require.Equal(t, policy, fs.Get(TablesPath, policyDenyBucket).Extended[ExtendedKeyPolicy])
+}
