@@ -38,7 +38,7 @@ func warnFips140ShortSecrets(config *iam_pb.S3ApiConfiguration) {
 	}
 	warn := func(owner string, cred *iam_pb.Credential) {
 		if cred != nil && fips140SecretTooShort(cred.SecretKey) {
-			glog.Warningf("access key %s of %s: secret is shorter than %d characters, which SigV4 cannot use under GODEBUG=fips140=only; requests signed with it are refused",
+			glog.Errorf("access key %s of %s: secret is shorter than %d characters, which SigV4 cannot use under GODEBUG=fips140=only; requests signed with it are refused",
 				cred.AccessKey, owner, iamlib.Fips140MinSecretAccessKeyLength)
 		}
 	}
