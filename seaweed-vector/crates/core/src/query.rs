@@ -179,7 +179,9 @@ pub async fn ann_with_scope(
     }
     let (scanner, indexed) = scanner(dataset, table, query, true, restriction).await?;
     let hits = run(scanner, table).await?;
-    let short_prefilter = query.filter.is_some() && !query.postfilter && hits.len() < query.k;
+    let short_prefilter = (query.filter.is_some() || restriction.is_some())
+        && !query.postfilter
+        && hits.len() < query.k;
     if indexed && (short_prefilter || hits.iter().any(|h| !h.distance.is_finite())) {
         return exact_in_scope(dataset, table, query, restriction).await;
     }
@@ -482,7 +484,7 @@ mod tests {
             .unwrap();
         crate::testing::append_dataset(&mut dataset, &[vec![0.0; DIM]], &["late"]).await;
         let table = VectorTable::resolve(&dataset, None, None).unwrap();
-        let query = Query {
+        let mut query = Query {
             vector: vec![0.0; DIM],
             k: vectors.len(),
             filter: None,
@@ -493,12 +495,15 @@ mod tests {
             fragments: None,
             exact_match_limit: None,
         };
-        let (hits, excluded) = indexed_only(&dataset, &table, &query).await.unwrap();
-        assert_eq!(excluded, 1);
-        assert_eq!(hits.len(), vectors.len());
-        for hit in hits {
-            let index: usize = hit.key[1..].parse().unwrap();
-            assert_eq!(hit.distance, l2(&query.vector, &vectors[index]));
+        for nprobes in [None, Some(1)] {
+            query.nprobes = nprobes;
+            let (hits, excluded) = indexed_only(&dataset, &table, &query).await.unwrap();
+            assert_eq!(excluded, 1);
+            assert_eq!(hits.len(), vectors.len());
+            for hit in hits {
+                let index: usize = hit.key[1..].parse().unwrap();
+                assert_eq!(hit.distance, l2(&query.vector, &vectors[index]));
+            }
         }
     }
 
