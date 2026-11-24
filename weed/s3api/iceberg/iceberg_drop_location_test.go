@@ -63,13 +63,14 @@ func TestDropViewKeepsAnotherRecordsFiles(t *testing.T) {
 // A view's location keeps metadata files that predate the view, and loses
 // the ones the view wrote.
 func TestDropViewKeepsOlderMetadataAtItsLocation(t *testing.T) {
+	createdAt := time.Now().Truncate(time.Second)
 	for _, tc := range []struct {
 		name   string
 		crtime time.Time
 		kept   bool
 	}{
-		{"older", time.Now().Add(-time.Hour), true},
-		{"own", time.Now().Add(time.Second), false},
+		{"older", createdAt.Add(-time.Hour), true},
+		{"own", createdAt.Add(time.Second), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fc := newMemFiler()
@@ -82,7 +83,7 @@ func TestDropViewKeepsOlderMetadataAtItsLocation(t *testing.T) {
 			viewMeta, err := json.Marshal(map[string]any{
 				"name":             "alias",
 				"namespace":        "finance",
-				"createdAt":        time.Now(),
+				"createdAt":        createdAt,
 				"ownerAccountId":   "mallory",
 				"versionToken":     "v1",
 				"metadataVersion":  1,
