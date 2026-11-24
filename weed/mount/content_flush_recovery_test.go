@@ -240,3 +240,53 @@ func TestContentRecoverySkipsAnotherUsersDirectory(t *testing.T) {
 		t.Fatalf("recovery records %v, error %v", files, globErr)
 	}
 }
+
+// With -writebackCache, another mount renaming its file onto the name of an
+// unpublished create drops the create's inode from that name. The drain must
+// still attempt the create-if-not-exists commit there: a taken name keeps a
+// recovery record, a free one publishes.
+func TestAsyncFlushPublishesUnpublishedCreateAfterPeerRenameOnto(t *testing.T) {
+	oldSleep := metadataFlushSleep
+	metadataFlushSleep = func(context.Context, time.Duration) {}
+	defer func() { metadataFlushSleep = oldSleep }()
+	for _, taken := range []bool{true, false} {
+		w := newInvalidateTestWFS(t)
+		w.option.CacheDirForWrite = t.TempDir()
+		s := &committedContentFiler{}
+		if taken {
+			s.entry = &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{FileSize: 10}}
+		}
+		startFakeFiler(t, w, s)
+		fh, _ := openUnpublishedCreate(t, w, util.FullPath("/dir/file"), nil)
+		w.inodeToPath.Lookup(util.FullPath("/dir/other"), time.Now().Unix(), false, false, 0, true)
+		applyPeerEvent(t, w, &filer_pb.SubscribeMetadataResponse{
+			Directory: "/dir",
+			TsNs:      1500,
+			EventNotification: &filer_pb.EventNotification{
+				OldEntry:      &filer_pb.Entry{Name: "other"},
+				NewEntry:      &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{FileSize: 10}},
+				NewParentPath: "/dir",
+			},
+		})
+		peer := proto.Clone(s.entry).(*filer_pb.Entry)
+
+		done := make(chan struct{})
+		w.pendingAsyncFlush = map[uint64]chan struct{}{fh.inode: done}
+		w.asyncFlushWg.Add(1)
+		w.processAsyncFlushItem(&asyncFlushItem{fh: fh, done: done})
+
+		files, err := globFailedContent(t, w)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if taken {
+			if s.calls == 0 || len(files) != 1 || !proto.Equal(peer, s.entry) {
+				t.Fatalf("taken name: calls=%d recovery=%v peer kept=%v", s.calls, files, proto.Equal(peer, s.entry))
+			}
+			continue
+		}
+		if s.calls != 1 || len(files) != 0 || s.entry.GetName() != "file" {
+			t.Fatalf("free name: calls=%d recovery=%v entry=%v", s.calls, files, s.entry)
+		}
+	}
+}

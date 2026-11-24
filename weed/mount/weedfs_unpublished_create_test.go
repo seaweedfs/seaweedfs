@@ -25,8 +25,10 @@ func openUnpublishedCreate(t *testing.T, wfs *WFS, path util.FullPath, data []by
 	fh.RememberPath(path)
 	fh.dirtyMetadata = true
 	fh.baseEntry.Store(nil)
-	if _, err := fh.dirtyPages.AddPage(0, data, true, time.Now().UnixNano()); err != nil {
-		t.Fatalf("AddPage: %v", err)
+	if len(data) > 0 {
+		if _, err := fh.dirtyPages.AddPage(0, data, true, time.Now().UnixNano()); err != nil {
+			t.Fatalf("AddPage: %v", err)
+		}
 	}
 	fh.UpdateEntry(func(entry *filer_pb.Entry) {
 		entry.Attributes.FileSize = uint64(len(data))
