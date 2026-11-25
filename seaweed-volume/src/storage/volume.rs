@@ -122,6 +122,51 @@ fn exceeds_expected_compacted_size(expected_live_bytes: u64, dst_dat_size: u64) 
     expected_live_bytes > dst_dat_size
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct LiveTally {
+    count: u64,
+    bytes: u64,
+}
+
+impl LiveTally {
+    fn add(&mut self, size: Size) {
+        self.count += 1;
+        self.bytes += size.0.max(0) as u64;
+    }
+}
+
+fn is_live_index_entry(offset: Offset, size: Size) -> bool {
+    !offset.is_zero() && !size.is_deleted()
+}
+
+/// Fails when the copy did not account for every live entry of the snapshot,
+/// or the compacted .dat is short of them.
+fn check_compacted_against_snapshot(
+    id: VolumeId,
+    snapshot: LiveTally,
+    copied: LiveTally,
+    expired: LiveTally,
+    unreadable: LiveTally,
+    dst_dat_size: u64,
+) -> Result<(), String> {
+    let accounted = copied.count + expired.count + unreadable.count;
+    let dropped_bytes = expired.bytes + unreadable.bytes;
+    if accounted != snapshot.count || dropped_bytes > snapshot.bytes {
+        return Err(format!(
+            "volume {} compaction accounted for {} of {} live index entries ({} copied, {} expired, {} unreadable)",
+            id.0, accounted, snapshot.count, copied.count, expired.count, unreadable.count
+        ));
+    }
+    let expected_live_bytes = snapshot.bytes - dropped_bytes;
+    if exceeds_expected_compacted_size(expected_live_bytes, dst_dat_size) {
+        return Err(format!(
+            "volume {} unexpected new data size: {} does not match expected live content size {} from the pre-compaction snapshot",
+            id.0, dst_dat_size, expected_live_bytes
+        ));
+    }
+    Ok(())
+}
+
 /// Read and parse the needle at `offset` through `read_at`.
 fn read_needle_with(
     read_at: impl Fn(&mut [u8], u64) -> Result<(), VolumeError>,
@@ -1053,11 +1098,11 @@ impl CompactionJob {
             .unwrap_or_default()
             .as_secs();
 
-        let entries = self.live_entries()?;
+        let (entries, snapshot) = self.live_entries()?;
 
-        let mut skipped_needles: u64 = 0;
-        let mut skipped_data_bytes: u64 = 0;
-        let mut expected_live_bytes: u64 = 0;
+        let mut copied = LiveTally::default();
+        let mut expired = LiveTally::default();
+        let mut unreadable = LiveTally::default();
         for (id, offset, size) in entries {
             // Progress callback
             if !progress_fn(offset.to_actual_offset()) {
@@ -1098,10 +1143,7 @@ impl CompactionJob {
                         e
                     ))));
                 }
-                skipped_needles += 1;
-                if size.is_valid() {
-                    skipped_data_bytes += size.0 as u64;
-                }
+                unreadable.add(size);
                 error!(
                     volume_id = self.id.0,
                     key = id.0,
@@ -1114,13 +1156,10 @@ impl CompactionJob {
             }
 
             if vacuum_ttl_expired(&n, &self.super_block.ttl, now) {
+                expired.add(size);
                 continue;
             }
-
-            // Tally the live bytes from the frozen snapshot this loop copied
-            // from, not the live needle map. Unreadable needles return before
-            // this point, so no further skipped-byte adjustment is needed.
-            expected_live_bytes += size.0 as u64;
+            copied.add(size);
 
             // Write needle to destination
             let bytes = n.write_bytes(version);
@@ -1131,38 +1170,48 @@ impl CompactionJob {
             new_offset += bytes.len() as i64;
         }
 
-        if skipped_needles > 0 {
+        if unreadable.count > 0 {
             warn!(
                 volume_id = self.id.0,
-                skipped_needles,
-                skipped_data_bytes,
+                skipped_needles = unreadable.count,
+                skipped_data_bytes = unreadable.bytes,
                 "vacuum: dropped unreadable index entries during compaction"
+            );
+        }
+        if expired.count > 0 {
+            debug!(
+                volume_id = self.id.0,
+                expired_needles = expired.count,
+                expired_data_bytes = expired.bytes,
+                "vacuum: dropped TTL-expired needles"
             );
         }
 
         dst.sync_all()?;
 
-        if self.super_block.ttl.is_empty() {
-            let dst_dat_size = dst.metadata()?.len();
-            if exceeds_expected_compacted_size(expected_live_bytes, dst_dat_size) {
-                let _ = fs::remove_file(cpd_path);
-                let _ = fs::remove_file(cpx_path);
-                return Err(VolumeError::Io(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    format!(
-                        "volume {} unexpected new data size: {} does not match expected live content size {} from the pre-compaction snapshot",
-                        self.id.0, dst_dat_size, expected_live_bytes
-                    ),
-                )));
-            }
+        let dst_dat_size = dst.metadata()?.len();
+        if let Err(msg) = check_compacted_against_snapshot(
+            self.id,
+            snapshot,
+            copied,
+            expired,
+            unreadable,
+            dst_dat_size,
+        ) {
+            let _ = fs::remove_file(cpd_path);
+            let _ = fs::remove_file(cpx_path);
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                msg,
+            )));
         }
 
         // Save new index
         new_nm.save_to_idx(cpx_path)?;
-        if skipped_needles > 0 {
+        if unreadable.count > 0 {
             crate::metrics::VACUUMING_DROPPED_NEEDLES_COUNTER
                 .with_label_values(&[&self.collection])
-                .inc_by(skipped_needles);
+                .inc_by(unreadable.count);
         }
 
         Ok(())
@@ -1171,9 +1220,12 @@ impl CompactionJob {
     /// Replay `.idx` up to the recorded size, as Go's `LoadFromIdx` does, and
     /// return the live entries in `.dat` order. A short read fails: treating
     /// it as the whole index would compact away every needle past it.
-    fn live_entries(&self) -> Result<Vec<(NeedleId, Offset, Size)>, VolumeError> {
+    /// Returns the live entries in offset order, and a tally of them taken
+    /// while replaying the rows, independently of the map traversal.
+    fn live_entries(&self) -> Result<(Vec<(NeedleId, Offset, Size)>, LiveTally), VolumeError> {
         let rows = self.idx_size / NEEDLE_MAP_ENTRY_SIZE as u64;
         let mut snapshot = CompactNeedleMap::new();
+        let mut live = LiveTally::default();
         let mut seen = 0u64;
         // Rows past the recorded size are makeup_diff's; do not read them.
         let mut reader = io::BufReader::new((&self.src_idx).take(self.idx_size));
@@ -1185,10 +1237,17 @@ impl CompactionJob {
                 Err(e) => return Err(e.into()),
             }
             let (key, offset, size) = idx_entry_from_bytes(&buf);
-            if offset.is_zero() || size.is_deleted() {
-                snapshot.delete(key, offset)?;
-            } else {
+            if let Some(prior) = snapshot.get(key)
+                && is_live_index_entry(prior.offset, prior.size)
+            {
+                live.count -= 1;
+                live.bytes -= prior.size.0.max(0) as u64;
+            }
+            if is_live_index_entry(offset, size) {
+                live.add(size);
                 snapshot.put(key, offset, size)?;
+            } else {
+                snapshot.delete(key, offset)?;
             }
             seen += 1;
         }
@@ -1204,13 +1263,13 @@ impl CompactionJob {
 
         let mut entries: Vec<(NeedleId, Offset, Size)> = Vec::new();
         let _ = snapshot.ascending_visit(|id, nv| {
-            if !nv.offset.is_zero() && !nv.size.is_deleted() {
+            if is_live_index_entry(nv.offset, nv.size) {
                 entries.push((id, nv.offset, nv.size));
             }
             Ok::<(), std::convert::Infallible>(())
         });
         entries.sort_by_key(|(_, offset, _)| *offset);
-        Ok(entries)
+        Ok((entries, live))
     }
 }
 
@@ -11137,6 +11196,61 @@ mod tests {
             secs
         ));
         assert!(vacuum_ttl_expired(&ttl_needle(ttl_7d, 7200), &ttl_1h, secs));
+    }
+
+    #[test]
+    fn test_compact_by_index_checks_ttl_volume() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let ttl = crate::storage::needle::ttl::TTL::read("1h").unwrap();
+        let v = make_ttl_volume(dir, ttl);
+        for i in 1..=8u64 {
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: format!("data-{}", i).into_bytes(),
+                data_size: format!("data-{}", i).len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+
+        for i in 1..=8u64 {
+            let mut got = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                ..Needle::default()
+            };
+            v.read_needle(&mut got).unwrap();
+            assert_eq!(got.data, format!("data-{}", i).into_bytes());
+        }
+    }
+
+    #[test]
+    fn test_check_compacted_against_snapshot() {
+        let tally = |count, bytes| LiveTally { count, bytes };
+        let none = LiveTally::default();
+        let snapshot = tally(4, 400);
+        let check = |copied, expired, unreadable, dst| {
+            check_compacted_against_snapshot(
+                VolumeId(1),
+                snapshot,
+                copied,
+                expired,
+                unreadable,
+                dst,
+            )
+        };
+        assert!(check(tally(4, 400), none, none, 500).is_ok());
+        assert!(check(tally(2, 200), tally(1, 100), tally(1, 100), 260).is_ok());
+        // A traversal that skipped entries.
+        assert!(check(tally(2, 200), none, none, 260).is_err());
+        // A short write.
+        assert!(check(tally(4, 400), none, none, 300).is_err());
+        assert!(check(none, tally(2, 300), tally(2, 300), 8).is_err());
     }
 
     #[test]
