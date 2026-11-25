@@ -16,6 +16,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -37,7 +38,13 @@ func (s *filerGrpcScope) stream(srv any, ss grpc.ServerStream, info *grpc.Stream
 			// subscription token returns a non-nil scope; general/admin tokens that
 			// this filer accepts already passed resolve above.
 			if raw, authErr := bearerFromMetadata(ss.Context()); authErr == nil && raw != "" {
-				if subScope, subErr := s.cfg.subscriptionScope(ss.Context(), method); subErr == nil && (!requireToken || subScope != nil) {
+				verificationContext := ss.Context()
+				if requireToken {
+					// Verify the bearer independently of the subscription verifier's
+					// mTLS shortcut. Keep the handler's original transport authority.
+					verificationContext = peer.NewContext(verificationContext, &peer.Peer{})
+				}
+				if subScope, subErr := s.cfg.subscriptionScope(verificationContext, method); subErr == nil && (!requireToken || subScope != nil) {
 					return handler(srv, ss)
 				}
 			}

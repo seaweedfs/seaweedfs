@@ -132,12 +132,44 @@ func TestFilerGrpcRequireTokenPreservesDedicatedSubscriptionTokenFallback(t *tes
 	scope := subscriptionScopeServer(true)
 	scope.cfg.requireToken = func() bool { return true }
 	token := string(security.GenJwtForMetadataSubscription(security.SigningKey(subscriptionTokenKey), 60, []string{aliceWS}))
-	called := false
-	err := callSubscriptionStream(t, scope, security.MethodSubscribeMetadata, subscriptionStreamContext(token), func() {
-		called = true
-	})
-	if err != nil || !called {
-		t.Fatalf("dedicated subscription token under require-mode error=%v called=%v, want handler dispatch", err, called)
+	for _, method := range []string{security.MethodSubscribeMetadata, security.MethodSubscribeLocalMetadata} {
+		for _, transport := range []struct {
+			name string
+			ctx  func(string) context.Context
+		}{
+			{"plain", subscriptionStreamContext},
+			{"mtls", verifiedSubscriptionContext},
+		} {
+			for _, bearer := range []struct {
+				name, token string
+				allowed     bool
+			}{
+				{"valid", token, true},
+				{"invalid", "invalid", false},
+				{"missing", "", false},
+			} {
+				t.Run(method+"/"+transport.name+"/"+bearer.name, func(t *testing.T) {
+					ctx := transport.ctx(bearer.token)
+					called := false
+					err := scope.stream(nil, &scopeExpiryServerStream{ctx: ctx}, &grpc.StreamServerInfo{
+						FullMethod: scopeFilerMethodPrefix + method,
+					}, func(_ any, stream grpc.ServerStream) error {
+						called = true
+						if stream.Context() != ctx {
+							t.Fatal("subscription admission replaced the handler's transport context")
+						}
+						return nil
+					})
+					if bearer.allowed {
+						if err != nil || !called {
+							t.Fatalf("valid subscription bearer error=%v called=%v, want dispatch", err, called)
+						}
+					} else if status.Code(err) != codes.Unauthenticated || called {
+						t.Fatalf("invalid or missing subscription bearer error=%v called=%v, want rejection", err, called)
+					}
+				})
+			}
+		}
 	}
 }
 
