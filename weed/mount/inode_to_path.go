@@ -4,6 +4,7 @@ import (
 	"sync"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -12,6 +13,7 @@ import (
 type InodeToPath struct {
 	sync.RWMutex
 	nextInodeId     uint64
+	forgotten       *lru.Cache[uint64, util.FullPath]
 	cacheMetaTtlSec time.Duration
 	inode2path      map[uint64]*InodeEntry
 	path2inode      map[util.FullPath]uint64
@@ -170,6 +172,20 @@ func NewInodeToPath(root util.FullPath, ttlSec int) *InodeToPath {
 	return t
 }
 
+// RetainForgotten keeps the paths of the last n inodes the kernel forgot, so a
+// file handle it decodes after evicting the inode can still be resolved.
+func (i *InodeToPath) RetainForgotten(n int) {
+	i.forgotten, _ = lru.New[uint64, util.FullPath](n)
+}
+
+// GetForgottenPath returns the path of an inode the kernel forgot, if retained.
+func (i *InodeToPath) GetForgottenPath(inode uint64) (util.FullPath, bool) {
+	if i.forgotten == nil {
+		return "", false
+	}
+	return i.forgotten.Get(inode)
+}
+
 // EnsurePath make sure the full path is tracked, used by symlink.
 func (i *InodeToPath) EnsurePath(path util.FullPath, isDirectory bool) bool {
 	dir, _ := path.DirAndName()
@@ -220,6 +236,9 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 		}
 		if isDirectory {
 			i.setDirState(inode, &dirState{path: path})
+		}
+		if i.forgotten != nil {
+			i.forgotten.Remove(inode)
 		}
 	}
 
@@ -759,6 +778,9 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onRelease func(inode uint64)
 		if path.nlookup == 0 {
 			if onRelease != nil {
 				onRelease(inode)
+			}
+			if i.forgotten != nil {
+				i.forgotten.Add(inode, path.path)
 			}
 			if _, isDir := i.dirStates[inode]; isDir && onForgetDir != nil {
 				dirPaths = path.appendPaths(nil)
