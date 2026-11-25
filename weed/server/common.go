@@ -72,6 +72,18 @@ func writePrepareWriteFnErr(w http.ResponseWriter, err error) {
 	}
 }
 
+// logStreamError logs a response that failed mid-body. net/http cancels the
+// request context once a write to the client fails, so a canceled context means
+// the client hung up (a player seeking, a browser closing a download) and the
+// broken pipe or connection reset that follows is not a server fault.
+func logStreamError(ctx context.Context, format string, args ...interface{}) {
+	if ctx.Err() == context.Canceled {
+		glog.V(3).InfofCtx(ctx, format, args...)
+		return
+	}
+	glog.ErrorfCtx(ctx, format, args...)
+}
+
 func init() {
 	serverStats = stats.NewServerStats()
 	go serverStats.Start()
@@ -361,7 +373,7 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 			return fmt.Errorf("ProcessRangeRequest: %w", err)
 		}
 		if err = writeFn(bufferedWriter); err != nil {
-			glog.Errorf("ProcessRangeRequest: %v", err)
+			logStreamError(r.Context(), "ProcessRangeRequest: %v", err)
 			// Drop the unflushed tail: flushing it would finish a 200 whose
 			// Content-Length is already set, delivering corrupt bytes as a
 			// complete body.
@@ -421,7 +433,7 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 		w.WriteHeader(http.StatusPartialContent)
 		err = writeFn(bufferedWriter)
 		if err != nil {
-			glog.Errorf("ProcessRangeRequest range[0]: %+v err: %v", w.Header(), err)
+			logStreamError(r.Context(), "ProcessRangeRequest range[0]: %+v err: %v", w.Header(), err)
 			// WriteHeader was already called: drop the unflushed tail and
 			// abort so the client does not read corrupt bytes as a full body.
 			discardBuffered = true
@@ -476,7 +488,7 @@ func ProcessRangeRequest(r *http.Request, w http.ResponseWriter, totalSize int64
 	}
 	w.WriteHeader(http.StatusPartialContent)
 	if _, err := io.CopyN(bufferedWriter, sendContent, sendSize); err != nil {
-		glog.Errorf("ProcessRangeRequest err: %v", err)
+		logStreamError(r.Context(), "ProcessRangeRequest err: %v", err)
 		// WriteHeader was already called: drop the unflushed tail and abort.
 		discardBuffered = true
 		panic(http.ErrAbortHandler)
