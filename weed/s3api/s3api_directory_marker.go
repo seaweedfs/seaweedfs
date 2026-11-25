@@ -122,22 +122,37 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 		return s3err.ErrInternalError
 	}
 
-	// Each delete runs on the filer its entry was checked on: a nonempty marker is
-	// demoted by a read and an update that must find it there too.
+	// Each delete checks the entry of the filer it runs on, which a failover can
+	// make another filer than the one read above. A nonempty marker is demoted by
+	// a read and an update that must find it there too.
+	refused := s3err.ErrNone
 	deleteMarker := func(client filer_pb.SeaweedFilerClient) error {
+		resp, lookupErr := filer_pb.LookupEntry(r.Context(), client, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: name})
+		switch {
+		case errors.Is(lookupErr, filer_pb.ErrNotFound):
+			// The filer sends a delete it misses on to the key's write owner.
+		case lookupErr != nil:
+			return lookupErr
+		default:
+			if remove, code := s3a.checkDirectoryMarker(resp.Entry, bucket, object, governanceBypassAllowed); !remove {
+				refused = code
+				return nil
+			}
+		}
 		return s3a.deleteUnversionedObjectWithClient(r.Context(), client, bucket, object, false)
 	}
 	if err := s3a.withWriteOwnerFilerClient(owner, deleteMarker); err != nil {
 		glog.Errorf("deleteDirectoryMarker: failed to delete %s/%s: %v", bucket, object, err)
 		return s3err.ErrInternalError
 	}
-	if priorOwner != "" {
-		if err := pb.WithFilerClient(false, 0, priorOwner, s3a.option.GrpcDialOption, deleteMarker); err != nil {
-			glog.Errorf("deleteDirectoryMarker: failed to delete %s/%s on prior owner %s: %v", bucket, object, priorOwner, err)
-			return s3err.ErrInternalError
-		}
+	if refused != s3err.ErrNone || priorOwner == "" {
+		return refused
 	}
-	return s3err.ErrNone
+	if err := pb.WithFilerClient(false, 0, priorOwner, s3a.option.GrpcDialOption, deleteMarker); err != nil {
+		glog.Errorf("deleteDirectoryMarker: failed to delete %s/%s on prior owner %s: %v", bucket, object, priorOwner, err)
+		return s3err.ErrInternalError
+	}
+	return refused
 }
 
 // checkDirectoryMarker reports whether entry is a "<dir>/" marker the delete may
