@@ -847,6 +847,7 @@ func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobP
 
 	now := time.Now().UTC()
 	resolvedWorkerID := strings.TrimSpace(workerID)
+	jobType := update.JobType
 
 	if strings.TrimSpace(update.JobId) != "" {
 		r.jobsMu.Lock()
@@ -869,6 +870,7 @@ func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobP
 		if update.JobType != "" {
 			job.JobType = update.JobType
 		}
+		jobType = job.JobType
 		if update.RequestId != "" {
 			job.RequestID = update.RequestId
 		}
@@ -893,7 +895,7 @@ func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobP
 		r.jobsMu.Unlock()
 	}
 
-	r.trackWorkerActivities(update.JobType, update.JobId, update.RequestId, resolvedWorkerID, update.Activities)
+	r.trackWorkerActivities(jobType, update.JobId, update.RequestId, resolvedWorkerID, update.Activities)
 	if update.Message != "" || update.Stage != "" {
 		source := "worker_progress"
 		if strings.TrimSpace(update.JobId) == "" {
@@ -901,7 +903,7 @@ func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobP
 		}
 		r.appendActivity(JobActivity{
 			JobID:      update.JobId,
-			JobType:    update.JobType,
+			JobType:    jobType,
 			RequestID:  update.RequestId,
 			WorkerID:   resolvedWorkerID,
 			Source:     source,

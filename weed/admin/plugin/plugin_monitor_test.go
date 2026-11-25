@@ -3,6 +3,7 @@ package plugin
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -267,6 +268,24 @@ func TestAdminScriptRunningActivityKeepsOnlyCommandName(t *testing.T) {
 	}
 	if got := messages["worker_progress"]; got != "executed 1/1 command(s)" {
 		t.Fatalf("progress activity message = %q", got)
+	}
+
+	pluginSvc.handleJobProgressUpdate("worker-a", &plugin_pb.JobProgressUpdate{
+		JobId: "job-admin-script",
+		State: plugin_pb.JobState_JOB_STATE_RUNNING,
+		Stage: "running",
+		Activities: []*plugin_pb.ActivityEvent{
+			{
+				Source:  plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR,
+				Stage:   "running",
+				Message: "s3.configure -access_key other",
+			},
+		},
+	})
+	for _, activity := range pluginSvc.ListJobActivities("job-admin-script", 0) {
+		if strings.Contains(activity.Message, "-access_key") {
+			t.Fatalf("report without a job type kept the command arguments: %q", activity.Message)
+		}
 	}
 }
 
