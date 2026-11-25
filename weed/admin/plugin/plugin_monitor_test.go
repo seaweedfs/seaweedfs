@@ -276,14 +276,19 @@ func TestAdminScriptRunningActivityKeepsOnlyCommandName(t *testing.T) {
 			{
 				Source:  plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR,
 				Stage:   "running",
-				Message: "s3.configure -access_key other",
+				Message: "s3.bucket.create -access_key other",
 			},
 		},
 	})
+	found := false
 	for _, activity := range pluginSvc.ListJobActivities("job-admin-script", 0) {
 		if strings.Contains(activity.Message, "-access_key") {
 			t.Fatalf("report without a job type kept the command arguments: %q", activity.Message)
 		}
+		found = found || activity.Message == "s3.bucket.create"
+	}
+	if !found {
+		t.Fatalf("report without a job type was not recorded")
 	}
 }
 
