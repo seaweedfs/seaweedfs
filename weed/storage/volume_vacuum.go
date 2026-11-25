@@ -58,6 +58,57 @@ func exceedsExpectedCompactedSize(expectedLiveBytes uint64, dstDatSize int64) bo
 	return expectedLiveBytes > uint64(dstDatSize)
 }
 
+type liveTally struct {
+	count int
+	bytes uint64
+}
+
+func (t *liveTally) add(size Size) {
+	t.count++
+	t.bytes += uint64(size)
+}
+
+func isLiveIndexEntry(offset Offset, size Size) bool {
+	return !offset.IsZero() && !size.IsDeleted()
+}
+
+// loadIdxSnapshot loads idxPath into nm and tallies its live entries by
+// replaying the rows, independently of any later traversal of nm.
+func loadIdxSnapshot(nm *needle_map.MemDb, idxPath string) (live liveTally, err error) {
+	idxFile, err := os.Open(idxPath)
+	if err != nil {
+		return live, err
+	}
+	defer idxFile.Close()
+	err = idx2.WalkIndexFile(idxFile, 0, func(key NeedleId, offset Offset, size Size) error {
+		if prior, found := nm.Get(key); found && isLiveIndexEntry(prior.Offset, prior.Size) {
+			live.count--
+			live.bytes -= uint64(prior.Size)
+		}
+		if !isLiveIndexEntry(offset, size) {
+			return nm.Delete(key)
+		}
+		live.add(size)
+		return nm.Set(key, offset, size)
+	})
+	return live, err
+}
+
+// checkCompactedAgainstSnapshot fails when the copy did not account for
+// every live entry of the snapshot, or the compacted .dat is short of them.
+func checkCompactedAgainstSnapshot(vid needle.VolumeId, snapshot, copied, expired, unreadable liveTally, dstDatSize int64) error {
+	if copied.count+expired.count+unreadable.count != snapshot.count || expired.bytes+unreadable.bytes > snapshot.bytes {
+		return fmt.Errorf("volume %s compaction accounted for %d of %d live index entries (%d copied, %d expired, %d unreadable)",
+			vid, copied.count+expired.count+unreadable.count, snapshot.count, copied.count, expired.count, unreadable.count)
+	}
+	expectedLiveBytes := snapshot.bytes - expired.bytes - unreadable.bytes
+	if exceedsExpectedCompactedSize(expectedLiveBytes, dstDatSize) {
+		return fmt.Errorf("volume %s unexpected new data size: %d does not match expected live content size %d from the pre-compaction snapshot",
+			vid, dstDatSize, expectedLiveBytes)
+	}
+	return nil
+}
+
 type ProgressFunc func(processed int64) bool
 
 func (v *Volume) garbageLevel() float64 {
@@ -836,7 +887,8 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	var (
 		srcDatBackend, dstDatBackend backend.BackendStorageFile
 		dataFile                     *os.File
-		skippedNeedles               int
+		snapshot                     liveTally
+		copied, expired, unreadable  liveTally
 	)
 	if dstDatBackend, err = backend.CreateVolumeFile(opts.destDatPath, opts.PreallocateBytes, 0); err != nil {
 		return err
@@ -849,8 +901,8 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 		if closeErr := dstDatBackend.Close(); closeErr != nil && err == nil {
 			err = fmt.Errorf("close compacted dat %s: %v", opts.destDatPath, closeErr)
 		}
-		if err == nil && skippedNeedles > 0 {
-			stats.VolumeServerVacuumingDroppedNeedlesCounter.WithLabelValues(v.Collection).Add(float64(skippedNeedles))
+		if err == nil && unreadable.count > 0 {
+			stats.VolumeServerVacuumingDroppedNeedlesCounter.WithLabelValues(v.Collection).Add(float64(unreadable.count))
 		}
 	}()
 
@@ -858,7 +910,7 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	defer oldNm.Close()
 	newNm := needle_map.NewMemDb()
 	defer newNm.Close()
-	if err = oldNm.LoadFromIdx(opts.srcIdxPath); err != nil {
+	if snapshot, err = loadIdxSnapshot(oldNm, opts.srcIdxPath); err != nil {
 		return err
 	}
 	if dataFile, err = os.Open(opts.srcDatPath); err != nil {
@@ -876,15 +928,11 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	}
 
 	writeThrottler := util.NewWriteThrottler(opts.MaxBytesPerSecond)
-	var (
-		skippedDataBytes  uint64
-		expectedLiveBytes uint64
-	)
 	err = oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
 
 		offset, size := value.Offset, value.Size
 
-		if offset.IsZero() || size.IsDeleted() {
+		if !isLiveIndexEntry(offset, size) {
 			return nil
 		}
 
@@ -905,20 +953,17 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 			if !isSkippableNeedleReadError(err) {
 				return fmt.Errorf("cannot hydrate needle from file: %w", err)
 			}
-			skippedNeedles++
-			if size.IsValid() {
-				skippedDataBytes += uint64(size)
-			}
+			unreadable.add(size)
 			glog.Errorf("vacuum volume %d: dropping unreadable needle key=%d offset=%d size=%d: %v",
 				v.Id, value.Key, offset.ToActualOffset(), size, err)
 			return nil
 		}
 
 		if isVacuumTtlExpired(n, opts.superBlock.Ttl, now) {
+			expired.add(size)
 			return nil
 		}
-
-		expectedLiveBytes += uint64(size)
+		copied.add(size)
 
 		if err = newNm.Set(n.Id, ToOffset(newOffset), n.Size); err != nil {
 			return fmt.Errorf("cannot put needle: %s", err)
@@ -936,22 +981,19 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	if err != nil {
 		return err
 	}
-	if skippedNeedles > 0 {
+	if unreadable.count > 0 {
 		glog.Warningf("vacuum volume %d: dropped %d unreadable index entries (%d data bytes) during compaction",
-			v.Id, skippedNeedles, skippedDataBytes)
+			v.Id, unreadable.count, unreadable.bytes)
 	}
-	if v.Ttl.String() == "" {
-		dstDatSize, _, err := dstDatBackend.GetStat()
-		if err != nil {
-			return err
-		}
-		// expectedLiveBytes is tallied from oldNm (the frozen snapshot this
-		// loop copied from), not the live v.nm; unreadable needles already
-		// return before the tally, so no further skipped-byte adjustment.
-		if exceedsExpectedCompactedSize(expectedLiveBytes, dstDatSize) {
-			return fmt.Errorf("volume %s unexpected new data size: %d does not match expected live content size %d from the pre-compaction snapshot",
-				v.Id.String(), dstDatSize, expectedLiveBytes)
-		}
+	if expired.count > 0 {
+		glog.V(1).Infof("vacuum volume %d: dropped %d TTL-expired needles (%d data bytes)", v.Id, expired.count, expired.bytes)
+	}
+	dstDatSize, _, err := dstDatBackend.GetStat()
+	if err != nil {
+		return err
+	}
+	if err = checkCompactedAgainstSnapshot(v.Id, snapshot, copied, expired, unreadable, dstDatSize); err != nil {
+		return err
 	}
 	err = newNm.SaveToIdx(opts.destIdxPath)
 	if err != nil {

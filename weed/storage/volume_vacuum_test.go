@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -1022,6 +1023,89 @@ func TestIsVacuumTtlExpired(t *testing.T) {
 	for _, tt := range tests {
 		if got := isVacuumTtlExpired(tt.n, tt.volumeTtl, now); got != tt.want {
 			t.Errorf("%s: isVacuumTtlExpired = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestLoadIdxSnapshotTalliesLiveEntries(t *testing.T) {
+	idxPath := filepath.Join(t.TempDir(), "1.idx")
+	var rows []byte
+	appendRow := func(key uint64, offset int64, size types.Size) {
+		rows = append(rows, needle_map.ToBytes(types.Uint64ToNeedleId(key), types.ToOffset(offset), size)...)
+	}
+	appendRow(1, 8, 100)
+	appendRow(2, 200, 50)
+	appendRow(1, 400, 120) // overwrite
+	appendRow(2, 0, types.TombstoneFileSize)
+	appendRow(3, 600, 0) // empty needle stays live
+	appendRow(4, 800, 70)
+	appendRow(4, 800, -70)
+	appendRow(4, 900, 30) // re-put after delete
+	if err := os.WriteFile(idxPath, rows, 0644); err != nil {
+		t.Fatal(err)
+	}
+	nm := needle_map.NewMemDb()
+	defer nm.Close()
+	live, err := loadIdxSnapshot(nm, idxPath)
+	if err != nil {
+		t.Fatalf("loadIdxSnapshot: %v", err)
+	}
+	if live.count != 3 || live.bytes != 150 {
+		t.Fatalf("tally = %+v, want 3 entries, 150 bytes", live)
+	}
+	visited := 0
+	if err := nm.AscendingVisit(func(needle_map.NeedleValue) error { visited++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if visited != live.count {
+		t.Fatalf("map holds %d entries, tally %d", visited, live.count)
+	}
+}
+
+func TestCheckCompactedAgainstSnapshot(t *testing.T) {
+	snapshot := liveTally{count: 4, bytes: 400}
+	tests := []struct {
+		name                        string
+		copied, expired, unreadable liveTally
+		dstDatSize                  int64
+		wantErr                     bool
+	}{
+		{"all copied", liveTally{4, 400}, liveTally{}, liveTally{}, 500, false},
+		{"expired and unreadable accounted", liveTally{2, 200}, liveTally{1, 100}, liveTally{1, 100}, 260, false},
+		{"traversal skipped entries", liveTally{2, 200}, liveTally{}, liveTally{}, 260, true},
+		{"short write", liveTally{4, 400}, liveTally{}, liveTally{}, 300, true},
+		{"drops exceed snapshot bytes", liveTally{0, 0}, liveTally{2, 300}, liveTally{2, 300}, 8, true},
+	}
+	for _, tt := range tests {
+		err := checkCompactedAgainstSnapshot(1, snapshot, tt.copied, tt.expired, tt.unreadable, tt.dstDatSize)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("%s: err = %v, wantErr %v", tt.name, err, tt.wantErr)
+		}
+	}
+}
+
+func TestCompactByIndexChecksTtlVolume(t *testing.T) {
+	dir := t.TempDir()
+	ttl, _ := needle.ReadTTL("1h")
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+	for i := 1; i <= 8; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false); err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+	}
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("CompactByIndex: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	for i := 1; i <= 8; i++ {
+		if _, err := v.readNeedle(&needle.Needle{Id: types.Uint64ToNeedleId(uint64(i))}, nil, nil); err != nil {
+			t.Fatalf("read needle %d after compaction: %v", i, err)
 		}
 	}
 }
