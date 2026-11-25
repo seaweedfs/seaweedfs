@@ -35,6 +35,9 @@ env:
   GRAPHIFY_VERSION: "0.9.112"
   # Stable community ids across runs.
   PYTHONHASHSEED: "0"
+  # Never call an LLM, even if a runner image ships an API key or the claude
+  # CLI: cluster-only auto-detects a labeling backend otherwise.
+  GRAPHIFY_BACKEND: "none"
   TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
 jobs:
@@ -63,8 +66,8 @@ jobs:
       - name: Build the graph
         run: |
           # Cluster once: extract alone does not write the report or HTML.
-          # cluster-only names communities after their hub nodes; no LLM is
-          # called without a configured backend.
+          # cluster-only names communities after their hub nodes
+          # (GRAPHIFY_BACKEND=none keeps it from calling an LLM).
           graphify extract . --code-only --no-cluster
           graphify cluster-only .
 
