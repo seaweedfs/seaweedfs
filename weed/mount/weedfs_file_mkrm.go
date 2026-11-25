@@ -2,6 +2,7 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"syscall"
 	"time"
@@ -469,6 +470,9 @@ func (wfs *WFS) createRegularFile(ctx context.Context, dirFullPath util.FullPath
 		Entry:                    newEntry,
 		Signatures:               []int32{wfs.signature},
 		SkipCheckParentDirectory: true,
+		// Without OExcl the filer stores a duplicate as an update of the
+		// existing file, so a name another mount holds would be replaced.
+		OExcl: true,
 	}
 
 	glog.V(1).Infof("createFile: %s", entryFullPath)
@@ -491,6 +495,11 @@ func (wfs *WFS) createRegularFile(ctx context.Context, dirFullPath util.FullPath
 	glog.V(3).Infof("createFile %s: %v", entryFullPath, err)
 
 	if err != nil {
+		if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+			// See Mkdir: the next lookup must fetch the winner's entry.
+			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
+			return 0, nil, fuse.Status(syscall.EEXIST)
+		}
 		return 0, nil, grpcErrorToFuseStatus(err)
 	}
 
