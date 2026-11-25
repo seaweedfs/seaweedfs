@@ -136,7 +136,7 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 
 // isNeedleTtlExpired applies the needle's own TTL, counted from its append time.
 func isNeedleTtlExpired(n *needle.Needle, now time.Time) bool {
-	if !n.HasTtl() || !n.HasLastModifiedDate() {
+	if !n.HasTtl() || n.Ttl == nil || !n.HasLastModifiedDate() {
 		return false
 	}
 	ttlMinutes := n.Ttl.Minutes()

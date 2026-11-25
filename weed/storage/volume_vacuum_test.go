@@ -1016,6 +1016,7 @@ func TestIsVacuumTtlExpired(t *testing.T) {
 		{"own ttl not expired on plain volume", newTtlNeedle(ttl7d, time.Hour), noTtl, false},
 		{"own ttl expired on plain volume", newTtlNeedle(ttl1h, 2*time.Hour), noTtl, true},
 		{"own ttl zero on plain volume", newTtlNeedle(noTtl, 48*time.Hour), noTtl, false},
+		{"ttl flag without ttl bytes", newTtlNeedle(nil, 48*time.Hour), noTtl, false},
 		{"nil volume ttl uses own ttl", newTtlNeedle(ttl1h, 2*time.Hour), nil, true},
 		{"volume ttl not expired", newTtlNeedle(ttl1h, 30*time.Minute), ttl1h, false},
 		{"volume ttl expired", newTtlNeedle(ttl7d, 2*time.Hour), ttl1h, true},
