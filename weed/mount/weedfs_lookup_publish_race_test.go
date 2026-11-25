@@ -167,7 +167,7 @@ func createDeferredFile(t *testing.T, wfs *WFS, dirInode uint64, name string) *f
 	out := &fuse.CreateOut{}
 	if st := wfs.Create(make(chan struct{}), &fuse.CreateIn{
 		InHeader: fuse.InHeader{NodeId: dirInode, Caller: fuse.Caller{Owner: fuse.Owner{Uid: 123, Gid: 456}}},
-		Flags:    syscall.O_RDWR | syscall.O_CREAT | syscall.O_EXCL,
+		Flags:    syscall.O_RDWR | syscall.O_CREAT,
 		Mode:     0o600,
 	}, name, out); st != fuse.OK {
 		t.Fatalf("Create %s = %v, want OK", name, st)
