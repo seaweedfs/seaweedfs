@@ -771,6 +771,13 @@ func stripTrackedJobDetailFields(job *TrackedJob) {
 	job.ResultOutputValues = nil
 }
 
+// StripJobDetailFields reduces a built detail to what job listings return.
+func StripJobDetailFields(detail *JobDetail) {
+	if detail != nil {
+		stripTrackedJobDetailFields(detail.Job)
+	}
+}
+
 func hasTrackedJobRichDetails(job TrackedJob) bool {
 	return strings.TrimSpace(job.Detail) != "" ||
 		len(job.Parameters) > 0 ||

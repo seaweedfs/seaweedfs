@@ -208,6 +208,9 @@ func (s *AdminServer) GetPluginJobDetailAPI(w http.ResponseWriter, r *http.Reque
 		writeJSONError(w, http.StatusNotFound, "job detail not found")
 		return
 	}
+	if IsReadOnlyRole(RoleFromContext(r.Context())) {
+		plugin.StripJobDetailFields(detail)
+	}
 
 	writeJSON(w, http.StatusOK, detail)
 }
