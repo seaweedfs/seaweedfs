@@ -5,8 +5,7 @@ name: Graph
 # needs no API key or secret.
 #
 # The graph is not committed: graph.json is ~150 MiB, above GitHub's 100 MiB
-# file limit. Release assets are produced by graph-release.yml, which restores
-# the cache saved here.
+# file limit. Release assets are produced by graph-release.yml.
 
 on:
   schedule:
@@ -24,9 +23,6 @@ env:
   GRAPHIFY_VERSION: "0.9.112"
   # Stable community ids across runs.
   PYTHONHASHSEED: "0"
-  # Without this, graphify snapshots the whole graph into graphify-out/<date>/
-  # before every overwrite and never prunes it, so the cache would grow daily.
-  GRAPHIFY_NO_BACKUP: "1"
 
 jobs:
   graph:
@@ -45,28 +41,16 @@ jobs:
       - name: Install graphify
         run: python -m pip install "graphifyy==${GRAPHIFY_VERSION}"
 
-      - name: Restore graph state
-        uses: actions/cache@v6
-        with:
-          path: |
-            graphify-out
-            !graphify-out/20*
-          key: graphify-${{ runner.os }}-${{ github.ref_name }}-${{ github.sha }}
-          restore-keys: |
-            graphify-${{ runner.os }}-${{ github.ref_name }}-
-            graphify-${{ runner.os }}-
-
-      - name: Build or update the graph
+      # Always a full extraction: graphify update re-extracts only changed
+      # files, so callers in unchanged files keep edges to a function's old
+      # id after it moves to another file.
+      - name: Build the graph
         run: |
-          if [ -f graphify-out/graph.json ]; then
-            graphify update .
-          else
-            # Cluster once: extract alone does not write the report or HTML.
-            # cluster-only names communities after their hub nodes; no LLM is
-            # called without a configured backend.
-            graphify extract . --code-only --no-cluster
-            graphify cluster-only .
-          fi
+          # Cluster once: extract alone does not write the report or HTML.
+          # cluster-only names communities after their hub nodes; no LLM is
+          # called without a configured backend.
+          graphify extract . --code-only --no-cluster
+          graphify cluster-only .
 
       - name: Graph health
         run: |

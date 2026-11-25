@@ -22,7 +22,6 @@ permissions:
 env:
   GRAPHIFY_VERSION: "0.9.112"
   PYTHONHASHSEED: "0"
-  GRAPHIFY_NO_BACKUP: "1"
   TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
 jobs:
@@ -44,27 +43,10 @@ jobs:
       - name: Install graphify
         run: python -m pip install "graphifyy==${GRAPHIFY_VERSION}"
 
-      # Start from the default branch's graph so only files changed since the
-      # last scheduled run are re-extracted. Restore only: release runs never
-      # write to the cache.
-      - name: Restore graph state
-        uses: actions/cache/restore@v6
-        with:
-          path: |
-            graphify-out
-            !graphify-out/20*
-          key: graphify-${{ runner.os }}-${{ github.event.repository.default_branch }}-${{ github.sha }}
-          restore-keys: |
-            graphify-${{ runner.os }}-${{ github.event.repository.default_branch }}-
-
       - name: Build the code graph
         run: |
-          if [ -f graphify-out/graph.json ]; then
-            graphify update .
-          else
-            graphify extract . --code-only --no-cluster
-            graphify cluster-only .
-          fi
+          graphify extract . --code-only --no-cluster
+          graphify cluster-only .
 
       - name: Bundle outputs
         run: |
