@@ -437,6 +437,11 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 	}
 	defer rows.Close()
 
+	// A transaction has one connection, and the callback may query on it (a
+	// hard link's KvGet), so its entries are handed over after the rows close.
+	_, inTx := db.(*sql.Tx)
+	var entries []*filer.Entry
+
 	stoppedEarly := false
 	for rows.Next() {
 		var name string
@@ -453,6 +458,11 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 		if err = entry.DecodeAttributesAndChunks(util.MaybeDecompressData(data)); err != nil {
 			glog.V(0).InfofCtx(ctx, "scan decode %s : %v", entry.FullPath, err)
 			return lastFileName, fmt.Errorf("scan decode %s : %v", entry.FullPath, err)
+		}
+
+		if inTx {
+			entries = append(entries, entry)
+			continue
 		}
 
 		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
@@ -476,8 +486,22 @@ func (store *AbstractSqlStore) ListDirectoryPrefixedEntries(ctx context.Context,
 			err = fmt.Errorf("list %s: %w", dirPath, rowsErr)
 		}
 	}
+	if err != nil {
+		return lastFileName, err
+	}
 
-	return lastFileName, err
+	rows.Close()
+	for _, entry := range entries {
+		lastFileName = entry.Name()
+		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+		if resEachEntryFuncErr != nil {
+			return lastFileName, fmt.Errorf("failed to process eachEntryFunc: %w", resEachEntryFuncErr)
+		}
+		if !resEachEntryFunc {
+			break
+		}
+	}
+	return lastFileName, nil
 }
 
 func (store *AbstractSqlStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (lastFileName string, err error) {
