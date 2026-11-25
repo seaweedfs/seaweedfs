@@ -40,6 +40,18 @@ func isSkippableNeedleReadError(err error) bool {
 		errors.Is(err, needle.ErrorCorrupted)
 }
 
+// isVacuumTtlExpired applies the volume TTL when the volume has one, and
+// otherwise the needle's own TTL the way reads do.
+func isVacuumTtlExpired(n *needle.Needle, volumeTtl *needle.TTL, now time.Time) bool {
+	if !n.HasTtl() {
+		return false
+	}
+	if volumeTtl == nil || volumeTtl.Minutes() == 0 {
+		return isNeedleTtlExpired(n, now)
+	}
+	return uint64(now.Unix()) >= n.LastModified+uint64(volumeTtl.Minutes())*60
+}
+
 // exceedsExpectedCompactedSize reports whether the compacted .dat is short of
 // the live bytes the pre-compaction index snapshot expected.
 func exceedsExpectedCompactedSize(expectedLiveBytes uint64, dstDatSize int64) bool {
@@ -715,7 +727,7 @@ func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset in
 		scanner.dropped[offset] = true
 		return nil
 	}
-	if n.HasTtl() && scanner.now >= n.LastModified+uint64(scanner.v.Ttl.Minutes()*60) {
+	if isVacuumTtlExpired(n, scanner.v.Ttl, time.Unix(int64(scanner.now), 0)) {
 		scanner.dropped[offset] = true
 		return nil
 	}
@@ -855,7 +867,7 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	srcDatBackend = backend.NewDiskFile(dataFile)
 	defer srcDatBackend.Close()
 
-	now := uint64(time.Now().Unix())
+	now := time.Now()
 
 	opts.superBlock.CompactionRevision++
 	newOffset := int64(opts.superBlock.BlockSize())
@@ -902,7 +914,7 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 			return nil
 		}
 
-		if n.HasTtl() && now >= n.LastModified+uint64(opts.superBlock.Ttl.Minutes()*60) {
+		if isVacuumTtlExpired(n, opts.superBlock.Ttl, now) {
 			return nil
 		}
 

@@ -952,3 +952,76 @@ func TestCompactByVolumeData_SkipsRunOfDamagedIds(t *testing.T) {
 		t.Errorf("resumed scans made %d reads for a run of %d damaged headers", reads.readCount, run)
 	}
 }
+
+func TestVacuumKeepsUnexpiredNeedleTtlOnPlainVolume(t *testing.T) {
+	for _, method := range []string{"index", "data"} {
+		t.Run(method, func(t *testing.T) {
+			dir := t.TempDir()
+			v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+			if err != nil {
+				t.Fatalf("volume creation: %v", err)
+			}
+			defer v.Close()
+			for i := 1; i <= 8; i++ {
+				if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false); err != nil {
+					t.Fatalf("write needle %d: %v", i, err)
+				}
+			}
+			n := newRandomNeedle(100)
+			n.Ttl, _ = needle.ReadTTL("7d")
+			n.SetHasTtl()
+			n.LastModified = uint64(time.Now().Unix())
+			n.SetHasLastModifiedDate()
+			if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
+				t.Fatalf("write ttl needle: %v", err)
+			}
+			compact := v.CompactByIndex
+			if method == "data" {
+				compact = v.CompactByVolumeData
+			}
+			if err := compact(nil); err != nil {
+				t.Fatalf("compact: %v", err)
+			}
+			if err := v.CommitCompact(); err != nil {
+				t.Fatalf("commit: %v", err)
+			}
+			if _, err := v.readNeedle(&needle.Needle{Id: 100}, nil, nil); err != nil {
+				t.Fatalf("needle with an unexpired 7d TTL was removed by vacuum: %v", err)
+			}
+		})
+	}
+}
+
+func TestIsVacuumTtlExpired(t *testing.T) {
+	now := time.Now()
+	ttl7d, _ := needle.ReadTTL("7d")
+	ttl1h, _ := needle.ReadTTL("1h")
+	newTtlNeedle := func(ttl *needle.TTL, age time.Duration) *needle.Needle {
+		n := &needle.Needle{Ttl: ttl}
+		n.SetHasTtl()
+		n.SetHasLastModifiedDate()
+		n.LastModified = uint64(now.Add(-age).Unix())
+		n.AppendAtNs = uint64(now.Add(-age).UnixNano())
+		return n
+	}
+	noTtl := &needle.TTL{}
+	tests := []struct {
+		name      string
+		n         *needle.Needle
+		volumeTtl *needle.TTL
+		want      bool
+	}{
+		{"no ttl flag", &needle.Needle{}, ttl1h, false},
+		{"own ttl not expired on plain volume", newTtlNeedle(ttl7d, time.Hour), noTtl, false},
+		{"own ttl expired on plain volume", newTtlNeedle(ttl1h, 2*time.Hour), noTtl, true},
+		{"own ttl zero on plain volume", newTtlNeedle(noTtl, 48*time.Hour), noTtl, false},
+		{"nil volume ttl uses own ttl", newTtlNeedle(ttl1h, 2*time.Hour), nil, true},
+		{"volume ttl not expired", newTtlNeedle(ttl1h, 30*time.Minute), ttl1h, false},
+		{"volume ttl expired", newTtlNeedle(ttl7d, 2*time.Hour), ttl1h, true},
+	}
+	for _, tt := range tests {
+		if got := isVacuumTtlExpired(tt.n, tt.volumeTtl, now); got != tt.want {
+			t.Errorf("%s: isVacuumTtlExpired = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
