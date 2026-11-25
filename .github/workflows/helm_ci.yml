@@ -162,6 +162,23 @@ jobs:
           done
           echo "shareProcessNamespace renders correctly"
 
+          echo "=== Testing volumeAttributesClassName ==="
+          pvc_args=(--set allInOne.enabled=true --set allInOne.data.type=persistentVolumeClaim
+            --set admin.enabled=true --set admin.allowInsecureBind=true --set volume.dataDirs[0].name=data1)
+          for claim in master.data master.logs filer.data filer.logs admin.data admin.logs \
+            volume.idx volume.logs volume.dataDirs[0]; do
+            pvc_args+=(--set "$claim.type=persistentVolumeClaim" --set "$claim.size=1Gi")
+          done
+          helm template test $CHART_DIR "${pvc_args[@]}" > /tmp/vac-default.yaml
+          test "$(grep -c 'volumeAttributesClassName' /tmp/vac-default.yaml)" -eq 0
+          for claim in master.data master.logs filer.data filer.logs admin.data admin.logs \
+            volume.idx volume.logs volume.dataDirs[0] allInOne.data; do
+            pvc_args+=(--set "$claim.volumeAttributesClassName=fast")
+          done
+          helm template test $CHART_DIR "${pvc_args[@]}" > /tmp/vac.yaml
+          test "$(grep -c '^ *volumeAttributesClassName: fast$' /tmp/vac.yaml)" -eq 10
+          echo "volumeAttributesClassName renders correctly"
+
           echo "=== Testing the S3 config reloader ==="
           for workload in filer.s3:templates/filer/filer-statefulset.yaml s3:templates/s3/s3-deployment.yaml; do
             prefix=${workload%%:*}
