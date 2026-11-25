@@ -15,6 +15,16 @@ import (
 )
 
 func (fs *FilerServer) metadataSubscriptionScope(ctx context.Context, method string) (*security.MetadataSubscriptionScope, error) {
+	if sc, ok := ctx.Value(scopeSubscriptionContextKey{}).(*scope); ok {
+		if sc.expired() {
+			return nil, scopeExpiredError(sc)
+		}
+		prefixes := make([]string, 0, len(sc.grants))
+		for _, grant := range sc.grants {
+			prefixes = append(prefixes, grant.path)
+		}
+		return &security.MetadataSubscriptionScope{Prefixes: prefixes, ExpiresAt: sc.exp}, nil
+	}
 	var adminKey, previousAdminKey security.SigningKey
 	if fs.filerGuard != nil {
 		adminKey, previousAdminKey = fs.filerGuard.VerificationKeys(true)
@@ -75,9 +85,10 @@ var errMetadataSubscriptionExpired = status.Error(codes.Unauthenticated, "metada
 // scopedMetadataStream ends its context when the token expires, so an open
 // subscription stops there.
 type scopedMetadataStream struct {
-	ctx      context.Context
-	scope    *security.MetadataSubscriptionScope
-	withheld *int64
+	ctx        context.Context
+	scope      *security.MetadataSubscriptionScope
+	withheld   *int64
+	filerScope *scope
 }
 
 // scopedClientEpoch is below every other epoch, so a scoped registration
@@ -99,9 +110,10 @@ func (fs *FilerServer) unusedClientId() int32 {
 	}
 }
 
-func newScopedMetadataStream(parent context.Context, scope *security.MetadataSubscriptionScope) (scopedMetadataStream, context.CancelFunc) {
-	ctx, cancel := context.WithDeadline(parent, scope.ExpiresAt)
-	return scopedMetadataStream{ctx: ctx, scope: scope, withheld: new(int64)}, cancel
+func newScopedMetadataStream(parent context.Context, subscription *security.MetadataSubscriptionScope) (scopedMetadataStream, context.CancelFunc) {
+	ctx, cancel := context.WithDeadline(parent, subscription.ExpiresAt)
+	filerScope, _ := parent.Value(scopeSubscriptionContextKey{}).(*scope)
+	return scopedMetadataStream{ctx: ctx, scope: subscription, withheld: new(int64), filerScope: filerScope}, cancel
 }
 
 func (s scopedMetadataStream) Context() context.Context { return s.ctx }
@@ -110,7 +122,13 @@ func (s scopedMetadataStream) send(resp *filer_pb.SubscribeMetadataResponse, sen
 	if !time.Now().Before(s.scope.ExpiresAt) {
 		return errMetadataSubscriptionExpired
 	}
-	if scoped := scopeMetadataResponse(resp, s.scope.Prefixes); scoped != nil {
+	var scoped *filer_pb.SubscribeMetadataResponse
+	if s.filerScope != nil {
+		scoped = s.filerScope.filterEvent(resp)
+	} else {
+		scoped = scopeMetadataResponse(resp, s.scope.Prefixes)
+	}
+	if scoped != nil {
 		if err := send(scoped); err != nil {
 			return err
 		}

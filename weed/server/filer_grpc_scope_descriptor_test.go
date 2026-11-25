@@ -42,14 +42,14 @@ func TestScopeDescriptorEveryFilerMethodIsAllowedOrExplicitlyRefused(t *testing.
 		"MountList":                       true,
 	}
 	expectedStreams := map[string]bool{
-		"ListEntries":       true,
-		"StreamRenameEntry": true,
-		"StreamMutateEntry": true,
-	}
-	explicitlyRefusedStreams := map[string]bool{
-		"TraverseBfsMetadata":    true,
+		"ListEntries":            true,
+		"StreamRenameEntry":      true,
+		"StreamMutateEntry":      true,
 		"SubscribeMetadata":      true,
 		"SubscribeLocalMetadata": true,
+	}
+	explicitlyRefusedStreams := map[string]bool{
+		"TraverseBfsMetadata": true,
 	}
 
 	for _, method := range filer_pb.SeaweedFiler_ServiceDesc.Methods {

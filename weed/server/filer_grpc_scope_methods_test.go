@@ -129,9 +129,9 @@ func TestScopeAssignVolumeAllowedAndMountRegisterRefused(t *testing.T) {
 	}
 }
 
-func TestScopeSubscriptionMethodsAreRefused(t *testing.T) {
+func TestScopeSubscriptionMethodsRequireMethodGrant(t *testing.T) {
 	h := newScopeHarness(t)
-	c := h.client(scopedToken("alice", time.Hour, []string{aliceWS}, nil))
+	c := h.client(methodScopedToken(t, "alice", []string{aliceWS}, []string{"ListEntries"}))
 
 	for _, tc := range []struct {
 		name   string
