@@ -20,7 +20,10 @@ import (
 func TestTwoClientsLinkingOneFileAreBothCounted(t *testing.T) {
 	testFiler := filer.NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", 255, nil)
 	store := &LevelDBStore{}
-	store.initialize(t.TempDir())
+	if err := store.initialize(t.TempDir()); err != nil {
+		t.Fatalf("initialize leveldb: %v", err)
+	}
+	t.Cleanup(store.Shutdown)
 	testFiler.SetStore(store)
 	ctx := context.Background()
 
