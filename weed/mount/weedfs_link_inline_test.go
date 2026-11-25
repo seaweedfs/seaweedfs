@@ -5,6 +5,8 @@ import (
 	"context"
 	"testing"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -52,26 +54,31 @@ func TestLinkCarriesInlineContentToTheNewName(t *testing.T) {
 }
 
 // A file under a remote mount that is not cached yet has no chunks and no
-// content: its RemoteEntry is what tells a read to fetch the object. Left out
-// of the create, the shared record lost it and both names read zeros.
-func TestLinkCarriesRemoteEntryToTheNewName(t *testing.T) {
-	wfs, _ := newCreateTestWFS(t)
+// content, and its remote object is keyed by its own path, which the new name
+// does not resolve to. The link caches it first, so both names share local
+// chunks and keep the RemoteEntry.
+func TestLinkCachesARemoteOnlyFileForTheNewName(t *testing.T) {
+	wfs, server := newCreateTestWFS(t)
 
 	remote := &filer_pb.RemoteEntry{StorageName: "cloud1", RemoteMtime: 1, RemoteSize: 4096, RemoteETag: "etag"}
-	source := &filer_pb.Entry{
-		Name:        "remote.bin",
-		RemoteEntry: remote,
-		Attributes: &filer_pb.FuseAttributes{
-			FileMode: 0o644,
-			FileSize: uint64(remote.RemoteSize),
-			Crtime:   1,
-			Mtime:    1,
-			Uid:      99,
-			Gid:      100,
-		},
+	attributes := &filer_pb.FuseAttributes{
+		FileMode: 0o644,
+		FileSize: uint64(remote.RemoteSize),
+		Crtime:   1,
+		Mtime:    1,
+		Uid:      99,
+		Gid:      100,
 	}
+	source := &filer_pb.Entry{Name: "remote.bin", RemoteEntry: remote, Attributes: attributes}
 	if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry("/", source), 0); err != nil {
 		t.Fatalf("InsertEntry: %v", err)
+	}
+	chunk := &filer_pb.FileChunk{FileId: "3,01637037d6", Size: uint64(remote.RemoteSize), ModifiedTsNs: 1}
+	server.cachedRemote = &filer_pb.Entry{
+		Name:        source.Name,
+		RemoteEntry: remote,
+		Attributes:  proto.Clone(attributes).(*filer_pb.FuseAttributes),
+		Chunks:      []*filer_pb.FileChunk{chunk},
 	}
 	sourcePath := util.FullPath("/remote.bin")
 	sourceInode := wfs.inodeToPath.Lookup(sourcePath, source.Attributes.Crtime, false, false, 0, true)
@@ -79,8 +86,21 @@ func TestLinkCarriesRemoteEntryToTheNewName(t *testing.T) {
 	doLink(t, wfs, sourceInode, "hardlink.bin")
 
 	for _, path := range []util.FullPath{sourcePath, "/hardlink.bin"} {
-		if got := cachedLink(t, wfs, path).Remote; !proto.Equal(got, remote) {
-			t.Fatalf("%s has remote entry %v after the link, want %v", path, got, remote)
+		got := cachedLink(t, wfs, path)
+		if !proto.Equal(got.Remote, remote) {
+			t.Fatalf("%s has remote entry %v after the link, want %v", path, got.Remote, remote)
+		}
+		if len(got.GetChunks()) != 1 || got.GetChunks()[0].GetFileIdString() != chunk.GetFileIdString() {
+			t.Fatalf("%s has chunks %v after the link, want the cached %v", path, got.GetChunks(), chunk)
 		}
 	}
+}
+
+func (s *createEntryTestServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cachedRemote == nil {
+		return nil, status.Errorf(codes.NotFound, "%s/%s", req.GetDirectory(), req.GetName())
+	}
+	return &filer_pb.CacheRemoteObjectToLocalClusterResponse{Entry: proto.Clone(s.cachedRemote).(*filer_pb.Entry)}, nil
 }

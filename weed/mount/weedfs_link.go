@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"syscall"
 	"time"
 
@@ -102,6 +103,17 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 			return freshStatus
 		}
 		oldEntry = fresh
+	}
+
+	// A new name resolves the remote object from its own path, so the names
+	// have to share local chunks before the link.
+	if oldEntry.IsInRemoteOnly() {
+		cached, err := wfs.cacheRemoteOnlyEntry(ctx, oldEntryPath)
+		if err != nil {
+			glog.V(0).Infof("Link %v: cache remote object: %v", oldEntryPath, err)
+			return fuse.EIO
+		}
+		oldEntry = cached
 	}
 
 	// update old file to hardlink mode
@@ -226,6 +238,33 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	wfs.outputPbEntry(out, sourceInode, request.Entry)
 
 	return fuse.OK
+}
+
+// cacheRemoteOnlyEntry has the filer download the remote object of the entry
+// at path and returns the entry, in local ids, with its local chunks.
+func (wfs *WFS) cacheRemoteOnlyEntry(ctx context.Context, path util.FullPath) (*filer_pb.Entry, error) {
+	dir, name := path.DirAndName()
+	var cached *filer_pb.Entry
+	err := wfs.withFilerClient(ctx, false, 0, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.CacheRemoteObjectToLocalCluster(ctx, &filer_pb.CacheRemoteObjectToLocalClusterRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if err != nil {
+			return err
+		}
+		cached = resp.GetEntry()
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if cached == nil || cached.IsInRemoteOnly() {
+		return nil, fmt.Errorf("%s is still remote-only", path)
+	}
+	cached = proto.Clone(cached).(*filer_pb.Entry)
+	wfs.mapPbIdFromFilerToLocal(cached)
+	return cached, nil
 }
 
 // adoptLinkChange moves the handle past a hard link change this mount made,
