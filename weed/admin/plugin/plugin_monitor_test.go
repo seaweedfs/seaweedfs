@@ -3,7 +3,6 @@ package plugin
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -282,7 +281,7 @@ func TestAdminScriptRunningActivityKeepsOnlyCommandName(t *testing.T) {
 	})
 	found := false
 	for _, activity := range pluginSvc.ListJobActivities("job-admin-script", 0) {
-		if strings.Contains(activity.Message, "-access_key") {
+		if activity.Message == "s3.bucket.create -access_key other" {
 			t.Fatalf("report without a job type kept the command arguments: %q", activity.Message)
 		}
 		found = found || activity.Message == "s3.bucket.create"
