@@ -894,6 +894,13 @@ func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobP
 		r.dirtyJobs = true
 		r.jobsMu.Unlock()
 	}
+	if jobType == "" && update.RequestId != "" {
+		r.pendingExecutionMu.Lock()
+		if pending := r.pendingExecution[update.RequestId]; pending != nil {
+			jobType = pending.jobType
+		}
+		r.pendingExecutionMu.Unlock()
+	}
 
 	r.trackWorkerActivities(jobType, update.JobId, update.RequestId, resolvedWorkerID, update.Activities)
 	if update.Message != "" || update.Stage != "" {
