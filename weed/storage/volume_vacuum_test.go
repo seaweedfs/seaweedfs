@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -950,5 +951,162 @@ func TestCompactByVolumeData_SkipsRunOfDamagedIds(t *testing.T) {
 	// records and the resumed scans read through v.DataBackend.
 	if reads.readCount > 2*run {
 		t.Errorf("resumed scans made %d reads for a run of %d damaged headers", reads.readCount, run)
+	}
+}
+
+func TestVacuumKeepsUnexpiredNeedleTtlOnPlainVolume(t *testing.T) {
+	for _, method := range []string{"index", "data"} {
+		t.Run(method, func(t *testing.T) {
+			dir := t.TempDir()
+			v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+			if err != nil {
+				t.Fatalf("volume creation: %v", err)
+			}
+			defer v.Close()
+			for i := 1; i <= 8; i++ {
+				if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false); err != nil {
+					t.Fatalf("write needle %d: %v", i, err)
+				}
+			}
+			n := newRandomNeedle(100)
+			n.Ttl, _ = needle.ReadTTL("7d")
+			n.SetHasTtl()
+			n.LastModified = uint64(time.Now().Unix())
+			n.SetHasLastModifiedDate()
+			if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
+				t.Fatalf("write ttl needle: %v", err)
+			}
+			compact := v.CompactByIndex
+			if method == "data" {
+				compact = v.CompactByVolumeData
+			}
+			if err := compact(nil); err != nil {
+				t.Fatalf("compact: %v", err)
+			}
+			if err := v.CommitCompact(); err != nil {
+				t.Fatalf("commit: %v", err)
+			}
+			if _, err := v.readNeedle(&needle.Needle{Id: 100}, nil, nil); err != nil {
+				t.Fatalf("needle with an unexpired 7d TTL was removed by vacuum: %v", err)
+			}
+		})
+	}
+}
+
+func TestIsVacuumTtlExpired(t *testing.T) {
+	now := time.Now()
+	ttl7d, _ := needle.ReadTTL("7d")
+	ttl1h, _ := needle.ReadTTL("1h")
+	newTtlNeedle := func(ttl *needle.TTL, age time.Duration) *needle.Needle {
+		n := &needle.Needle{Ttl: ttl}
+		n.SetHasTtl()
+		n.SetHasLastModifiedDate()
+		n.LastModified = uint64(now.Add(-age).Unix())
+		n.AppendAtNs = uint64(now.Add(-age).UnixNano())
+		return n
+	}
+	noTtl := &needle.TTL{}
+	tests := []struct {
+		name      string
+		n         *needle.Needle
+		volumeTtl *needle.TTL
+		want      bool
+	}{
+		{"no ttl flag", &needle.Needle{}, ttl1h, false},
+		{"own ttl not expired on plain volume", newTtlNeedle(ttl7d, time.Hour), noTtl, false},
+		{"own ttl expired on plain volume", newTtlNeedle(ttl1h, 2*time.Hour), noTtl, true},
+		{"own ttl zero on plain volume", newTtlNeedle(noTtl, 48*time.Hour), noTtl, false},
+		{"ttl flag without ttl bytes", newTtlNeedle(nil, 48*time.Hour), noTtl, false},
+		{"nil volume ttl uses own ttl", newTtlNeedle(ttl1h, 2*time.Hour), nil, true},
+		{"volume ttl not expired", newTtlNeedle(ttl1h, 30*time.Minute), ttl1h, false},
+		{"volume ttl expired", newTtlNeedle(ttl7d, 2*time.Hour), ttl1h, true},
+	}
+	for _, tt := range tests {
+		if got := isVacuumTtlExpired(tt.n, tt.volumeTtl, now); got != tt.want {
+			t.Errorf("%s: isVacuumTtlExpired = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestLoadIdxSnapshotTalliesLiveEntries(t *testing.T) {
+	idxPath := filepath.Join(t.TempDir(), "1.idx")
+	var rows []byte
+	appendRow := func(key uint64, offset int64, size types.Size) {
+		rows = append(rows, needle_map.ToBytes(types.Uint64ToNeedleId(key), types.ToOffset(offset), size)...)
+	}
+	appendRow(1, 8, 100)
+	appendRow(2, 200, 50)
+	appendRow(1, 400, 120) // overwrite
+	appendRow(2, 0, types.TombstoneFileSize)
+	appendRow(3, 600, 0) // empty needle stays live
+	appendRow(4, 800, 70)
+	appendRow(4, 800, -70)
+	appendRow(4, 900, 30) // re-put after delete
+	if err := os.WriteFile(idxPath, rows, 0644); err != nil {
+		t.Fatal(err)
+	}
+	nm := needle_map.NewMemDb()
+	defer nm.Close()
+	live, err := loadIdxSnapshot(nm, idxPath)
+	if err != nil {
+		t.Fatalf("loadIdxSnapshot: %v", err)
+	}
+	if live.count != 3 || live.bytes != 150 {
+		t.Fatalf("tally = %+v, want 3 entries, 150 bytes", live)
+	}
+	visited := 0
+	if err := nm.AscendingVisit(func(needle_map.NeedleValue) error { visited++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if visited != live.count {
+		t.Fatalf("map holds %d entries, tally %d", visited, live.count)
+	}
+}
+
+func TestCheckCompactedAgainstSnapshot(t *testing.T) {
+	snapshot := liveTally{count: 4, bytes: 400}
+	tests := []struct {
+		name                        string
+		copied, expired, unreadable liveTally
+		dstDatSize                  int64
+		wantErr                     bool
+	}{
+		{"all copied", liveTally{4, 400}, liveTally{}, liveTally{}, 500, false},
+		{"expired and unreadable accounted", liveTally{2, 200}, liveTally{1, 100}, liveTally{1, 100}, 260, false},
+		{"traversal skipped entries", liveTally{2, 200}, liveTally{}, liveTally{}, 260, true},
+		{"short write", liveTally{4, 400}, liveTally{}, liveTally{}, 300, true},
+		{"drops exceed snapshot bytes", liveTally{0, 0}, liveTally{2, 300}, liveTally{2, 300}, 8, true},
+	}
+	for _, tt := range tests {
+		err := checkCompactedAgainstSnapshot(1, snapshot, tt.copied, tt.expired, tt.unreadable, tt.dstDatSize)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("%s: err = %v, wantErr %v", tt.name, err, tt.wantErr)
+		}
+	}
+}
+
+func TestCompactByIndexChecksTtlVolume(t *testing.T) {
+	dir := t.TempDir()
+	ttl, _ := needle.ReadTTL("1h")
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+	for i := 1; i <= 8; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false); err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+	}
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("CompactByIndex: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	for i := 1; i <= 8; i++ {
+		if _, err := v.readNeedle(&needle.Needle{Id: types.Uint64ToNeedleId(uint64(i))}, nil, nil); err != nil {
+			t.Fatalf("read needle %d after compaction: %v", i, err)
+		}
 	}
 }
