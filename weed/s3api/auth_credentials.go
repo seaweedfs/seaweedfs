@@ -1774,13 +1774,14 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		// authRequestWithAuthType keeps the resolved identity when authN
 		// succeeds but authZ denies, so the denied request still audits its
 		// requester; a failed authN resolves no identity at all.
+		since := iam.inFlightGeneration()
 		identity, errCode, _ := iam.authRequestWithAuthType(r, action)
 		errCode = refineDenialForBucketName(r, identity, errCode)
 		if errCode != s3err.ErrNone {
 			glog.V(3).Infof("auth error: %v", errCode)
 		}
 
-		iam.handleAuthResult(w, r, identity, errCode, iam.abortWhenRevoked(f, identity, action))
+		iam.handleAuthResult(w, r, identity, errCode, iam.abortWhenRevoked(f, identity, action, since))
 	}
 }
 
@@ -1819,7 +1820,7 @@ func (iam *IdentityAccessManagement) AuthPostPolicy(f http.HandlerFunc, action A
 			glog.V(3).Infof("auth error: %v", errCode)
 		}
 
-		iam.handleAuthResult(w, r, identity, errCode, iam.abortWhenRevoked(f, identity, action))
+		iam.handleAuthResult(w, r, identity, errCode, f)
 	}
 }
 

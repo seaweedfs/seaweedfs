@@ -23,6 +23,8 @@ const (
 	revokeSecretA = "alice-secret-for-loopback-tests-only"
 	revokeKeyB    = "AKIAREVOKEBOB0000000"
 	revokeSecretB = "bob-secret-for-loopback-tests-only00"
+	revokeKeyC    = "AKIAREVOKECAROL00000"
+	revokeSecretC = "carol-secret-for-loopback-tests-only"
 )
 
 func revokeIdentity(name, key, secret string, actions ...string) *iam_pb.Identity {
@@ -48,10 +50,10 @@ func newRevokeIAM(t *testing.T, identities ...*iam_pb.Identity) *IdentityAccessM
 	return iam
 }
 
-// serveRevokeS3 serves GET /{bucket}/{object} through iam.Auth on a listener
-// like the gateway's, streaming each body for two seconds. Every request
-// reports on started once it streams.
-func serveRevokeS3(t *testing.T, iam *IdentityAccessManagement, started chan<- struct{}) string {
+// serveRevokeS3 serves GET /{bucket}/{object} through auth on a listener like
+// the gateway's, streaming each body for two seconds. Every request reports on
+// started once it streams.
+func serveRevokeS3(t *testing.T, started chan<- struct{}, auth func(http.HandlerFunc) http.HandlerFunc) string {
 	t.Helper()
 	stream := func(w http.ResponseWriter, r *http.Request) {
 		started <- struct{}{}
@@ -70,7 +72,7 @@ func serveRevokeS3(t *testing.T, iam *IdentityAccessManagement, started chan<- s
 	}
 	router := mux.NewRouter()
 	router.Methods(http.MethodGet).Path("/{bucket}/{object:.+}").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		iam.Auth(stream, s3_constants.ACTION_READ)(w, s3_constants.EnsureIdentityHolder(r))
+		auth(stream)(w, s3_constants.EnsureIdentityHolder(r))
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -78,6 +80,10 @@ func serveRevokeS3(t *testing.T, iam *IdentityAccessManagement, started chan<- s
 	go func() { _ = server.Serve(&util.Listener{Listener: listener}) }()
 	t.Cleanup(func() { _ = server.Close() })
 	return "http://" + listener.Addr().String()
+}
+
+func authRead(iam *IdentityAccessManagement) func(http.HandlerFunc) http.HandlerFunc {
+	return func(f http.HandlerFunc) http.HandlerFunc { return iam.Auth(f, s3_constants.ACTION_READ) }
 }
 
 // download reads an object to its end, signed with key unless it is empty,
@@ -129,30 +135,59 @@ func downloadResult(t *testing.T, done <-chan error, within time.Duration) error
 	}
 }
 
-// Revoking access aborts the downloads it denies, signed with an access key or
-// anonymous, while a download whose access stays runs to its end.
+// Revoking access aborts the downloads it denies: signed with an access key
+// that lost its grant or whose secret was rotated, or anonymous. A download
+// whose access stays runs to its end.
 func TestAbortRevokedRequests(t *testing.T) {
 	iam := newRevokeIAM(t,
 		revokeIdentity("alice", revokeKeyA, revokeSecretA, "Read:bkt"),
 		revokeIdentity("bob", revokeKeyB, revokeSecretB, "Read:bkt"),
+		revokeIdentity("carol", revokeKeyC, revokeSecretC, "Read:bkt"),
 		revokeIdentity(s3_constants.AccountAnonymousId, "", "", "Read:bkt"),
 	)
-	started := make(chan struct{}, 3)
-	url := serveRevokeS3(t, iam, started) + "/bkt/object"
+	started := make(chan struct{}, 4)
+	url := serveRevokeS3(t, started, authRead(iam)) + "/bkt/object"
 	alice := download(t, url, revokeKeyA, revokeSecretA)
 	bob := download(t, url, revokeKeyB, revokeSecretB)
+	carol := download(t, url, revokeKeyC, revokeSecretC)
 	anonymous := download(t, url, "", "")
-	waitStarted(t, started, 3)
+	waitStarted(t, started, 4)
 
 	require.NoError(t, iam.ReplaceS3ApiConfiguration(&iam_pb.S3ApiConfiguration{Identities: []*iam_pb.Identity{
 		revokeIdentity("alice", revokeKeyA, revokeSecretA, "Read:bkt", "Write:bkt"),
 		revokeIdentity("bob", revokeKeyB, revokeSecretB),
+		revokeIdentity("carol", revokeKeyC, "carol-rotated-secret-for-loopback-only", "Read:bkt"),
 		revokeIdentity(s3_constants.AccountAnonymousId, "", ""),
 	}}))
 
 	assert.Error(t, downloadResult(t, bob, time.Second), "bob lost Read")
+	assert.Error(t, downloadResult(t, carol, time.Second), "carol's secret was rotated")
 	assert.Error(t, downloadResult(t, anonymous, time.Second), "anonymous lost Read")
 	assert.NoError(t, downloadResult(t, alice, 5*time.Second), "alice kept Read")
+}
+
+// A request whose access is revoked after it authenticated, but before it is
+// tracked, is still aborted.
+func TestAbortRequestRevokedBeforeItIsTracked(t *testing.T) {
+	iam := newRevokeIAM(t, revokeIdentity("bob", revokeKeyB, revokeSecretB, "Read:bkt"))
+	bob := iam.lookupByIdentityName("bob")
+	since := iam.inFlightGeneration()
+	started := make(chan struct{}, 1)
+	// As if Auth had admitted bob just before the change below.
+	url := serveRevokeS3(t, started, func(f http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			r.Header.Set(s3_constants.AmzAuthType, "SigV4")
+			r = r.WithContext(s3_constants.SetAccessKeyIdInContext(r.Context(), revokeKeyB))
+			iam.abortWhenRevoked(f, bob, s3_constants.ACTION_READ, since)(w, r)
+		}
+	}) + "/bkt/object"
+	require.NoError(t, iam.ReplaceS3ApiConfiguration(&iam_pb.S3ApiConfiguration{Identities: []*iam_pb.Identity{
+		revokeIdentity("bob", revokeKeyB, revokeSecretB),
+	}}))
+
+	done := download(t, url, "", "")
+	waitStarted(t, started, 1)
+	assert.Error(t, downloadResult(t, done, time.Second))
 }
 
 // A bucket policy that starts denying aborts the requests on its bucket only.
@@ -160,7 +195,7 @@ func TestAbortRequestsDeniedByBucketPolicy(t *testing.T) {
 	iam := newRevokeIAM(t, revokeIdentity("bob", revokeKeyB, revokeSecretB, "Read"))
 	iam.policyEngine = NewBucketPolicyEngine()
 	started := make(chan struct{}, 2)
-	base := serveRevokeS3(t, iam, started)
+	base := serveRevokeS3(t, started, authRead(iam))
 	denied := download(t, base+"/bkt/object", revokeKeyB, revokeSecretB)
 	other := download(t, base+"/other/object", revokeKeyB, revokeSecretB)
 	waitStarted(t, started, 2)

@@ -174,8 +174,6 @@ func (s3a *S3ApiServer) onRoleChange(dir string) {
 	}
 	s3iam.iamManager.InvalidateRoleCache()
 	glog.V(2).Infof("Invalidated cached roles after %s change", dir)
-	// Sessions are authorized against their role's policies.
-	s3a.iam.revalidateInFlight()
 }
 
 // onCircuitBreakerConfigChange handles circuit breaker config file changes (create, update, delete)

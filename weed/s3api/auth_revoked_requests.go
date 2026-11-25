@@ -2,9 +2,11 @@ package s3api
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -12,10 +14,17 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// inFlightRequests holds the authorized requests being served, so a change
-// that revokes their access aborts them (-s3.abortRevokedRequests). Otherwise
-// access is only checked when a request starts, and a download or upload that
-// started before an identity, policy or bucket policy change runs to its end.
+// inFlightRequests holds the requests the S3 auth middleware admitted for a
+// configured identity, so a change that revokes their access aborts them
+// (-s3.abortRevokedRequests). Otherwise access is only checked when a request
+// starts, and a download or upload that started before an identity, policy or
+// bucket policy change runs to its end.
+//
+// Only the middleware's decision is checked again. STS and JWT sessions are not
+// tracked: they keep the access they started with until they expire, and
+// checking them again would treat expiry as a revocation. Nor is what a handler
+// authorizes itself: anonymous reads a public ACL or bucket policy allows,
+// browser form uploads, the source of a copy, and conditions on object tags.
 type inFlightRequests struct {
 	mu       sync.Mutex
 	requests map[*inFlightRequest]struct{}
@@ -24,13 +33,16 @@ type inFlightRequests struct {
 	all     bool
 	buckets map[string]struct{}
 	kick    chan struct{}
+	// generation counts scheduled re-checks, so a request whose access changed
+	// while it was being admitted is checked again once it is tracked.
+	generation atomic.Uint64
 }
 
 // identitySource is how a re-check finds a request's identity again.
 type identitySource int
 
 const (
-	// A session's identity (JWT, STS), which no configuration lists.
+	// A session (JWT, STS), which is not tracked.
 	fromSession identitySource = iota
 	// Signed with a configured access key.
 	fromAccessKey
@@ -43,16 +55,21 @@ const (
 type inFlightRequest struct {
 	// req is a copy taken before the handler ran, which may change the
 	// original. Only revalidateLoop uses it.
-	req       *http.Request
-	identity  *Identity
-	action    Action
-	bucket    string
-	source    identitySource
+	req      *http.Request
+	identity *Identity
+	action   Action
+	bucket   string
+	source   identitySource
+	// The key the request was signed with, and its secret, so rotating the
+	// secret revokes the request too.
 	accessKey string
+	secretKey string
 	cancel    context.CancelFunc
-	// conn is closed to abort an HTTP/1.x request. An HTTP/2 connection
-	// carries other streams, so those requests are only canceled.
+	// An HTTP/1.x request is aborted by closing its connection. An HTTP/2
+	// connection carries other streams, so such a request has its context
+	// canceled and its body closed instead.
 	conn net.Conn
+	body io.Closer
 }
 
 func newInFlightRequests() *inFlightRequests {
@@ -62,66 +79,91 @@ func newInFlightRequests() *inFlightRequests {
 	}
 }
 
+// inFlightGeneration is taken before a request authenticates and handed to
+// abortWhenRevoked.
+func (iam *IdentityAccessManagement) inFlightGeneration() uint64 {
+	if iam.inFlight == nil {
+		return 0
+	}
+	return iam.inFlight.generation.Load()
+}
+
 // abortWhenRevoked wraps the handler of an authorized request, so the request
 // is checked again whenever its access may have changed, and aborted once it
-// is denied.
-func (iam *IdentityAccessManagement) abortWhenRevoked(f http.HandlerFunc, identity *Identity, action Action) http.HandlerFunc {
+// is denied. since is the generation from before the request authenticated.
+func (iam *IdentityAccessManagement) abortWhenRevoked(f http.HandlerFunc, identity *Identity, action Action, since uint64) http.HandlerFunc {
 	tracked := iam.inFlight
 	if tracked == nil || identity == nil {
 		return f
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
+		source, cred := iam.identitySource(r, identity)
+		if source == fromSession {
+			f(w, r)
+			return
+		}
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 		r = r.WithContext(ctx)
 		bucket, _ := s3_constants.GetBucketAndObject(r)
-		req := &inFlightRequest{req: r.Clone(ctx), identity: identity, action: action, bucket: bucket, cancel: cancel}
-		req.source, req.accessKey = iam.identitySource(r, identity)
+		req := &inFlightRequest{req: r.Clone(ctx), identity: identity, action: action, bucket: bucket, source: source, cancel: cancel}
+		if cred != nil {
+			req.accessKey, req.secretKey = cred.AccessKey, cred.SecretKey
+		}
 		if r.ProtoMajor == 1 {
 			req.conn = util.ConnFromContext(ctx)
+		} else {
+			req.body = r.Body
 		}
 		tracked.add(req)
 		defer tracked.remove(req)
+		if tracked.generation.Load() != since {
+			iam.scheduleRevalidation(bucket)
+		}
 		f(w, r)
 	}
 }
 
-func (iam *IdentityAccessManagement) identitySource(r *http.Request, identity *Identity) (identitySource, string) {
+// identitySource tells from how the request authenticated how a re-check finds
+// its identity again, and the credential it was signed with.
+func (iam *IdentityAccessManagement) identitySource(r *http.Request, identity *Identity) (identitySource, *Credential) {
 	switch r.Header.Get(s3_constants.AmzAuthType) {
 	case "Anonymous", "Certificate":
-		return fromUnsigned, ""
+		return fromUnsigned, nil
+	case "Jwt":
+		return fromSession, nil
 	}
+	if extractSessionToken(r) != "" {
+		return fromSession, nil
+	}
+	key := s3_constants.GetAccessKeyIdFromContext(r)
 	iam.m.RLock()
 	defer iam.m.RUnlock()
-	if key := s3_constants.GetAccessKeyIdFromContext(r); key != "" && iam.accessKeyIdent[key] == identity {
-		return fromAccessKey, key
+	for _, cred := range identity.Credentials {
+		if key != "" && cred.AccessKey == key {
+			return fromAccessKey, cred
+		}
 	}
-	if iam.nameToIdentity[identity.Name] == identity {
-		return fromName, ""
-	}
-	return fromSession, ""
+	return fromName, nil
 }
 
 // currentIdentity returns the request's identity as the configuration has it
-// now, or nil when it no longer authenticates the request. A session identity
-// stays as it is: its policies are evaluated afresh.
+// now, or nil when it no longer authenticates the request.
 func (iam *IdentityAccessManagement) currentIdentity(req *inFlightRequest) *Identity {
 	var identity *Identity
 	switch req.source {
 	case fromAccessKey:
 		var cred *Credential
 		var found bool
-		if identity, cred, found = iam.lookupByAccessKey(req.accessKey); !found || cred.isCredentialExpired() {
+		if identity, cred, found = iam.lookupByAccessKey(req.accessKey); !found || cred.SecretKey != req.secretKey || cred.isCredentialExpired() {
 			return nil
 		}
 	case fromUnsigned:
 		identity, _, _ = iam.authenticateUnsigned(req.req)
-	case fromName:
+	default:
 		if identity = iam.lookupByIdentityName(req.identity.Name); identity != nil && identity.Disabled {
 			return nil
 		}
-	default:
-		return req.identity
 	}
 	if identity == nil || identity.Name != req.identity.Name {
 		return nil
@@ -156,6 +198,7 @@ func (iam *IdentityAccessManagement) scheduleRevalidation(bucket string) {
 		t.buckets[bucket] = struct{}{}
 	}
 	t.mu.Unlock()
+	t.generation.Add(1)
 	select {
 	case t.kick <- struct{}{}:
 	default:
@@ -163,7 +206,8 @@ func (iam *IdentityAccessManagement) scheduleRevalidation(bucket string) {
 }
 
 // revalidateLoop runs the re-checks outside their callers, which can hold
-// locks that authorization takes itself.
+// locks that authorization takes itself. It holds reloadMu, so it never sees a
+// reload halfway, with identities installed but their policies not yet synced.
 func (iam *IdentityAccessManagement) revalidateLoop() {
 	t := iam.inFlight
 	for {
@@ -172,6 +216,7 @@ func (iam *IdentityAccessManagement) revalidateLoop() {
 			return
 		case <-t.kick:
 		}
+		iam.reloadMu.Lock()
 		for _, req := range t.pending() {
 			if identity := iam.currentIdentity(req); identity != nil && iam.authorizeRequest(req.req, identity, req.action) == s3err.ErrNone {
 				continue
@@ -180,6 +225,7 @@ func (iam *IdentityAccessManagement) revalidateLoop() {
 				glog.V(0).Infof("aborted %s %s of %s: its access was revoked", req.req.Method, req.req.URL.Path, req.identity.Name)
 			}
 		}
+		iam.reloadMu.Unlock()
 	}
 }
 
@@ -222,6 +268,8 @@ func (t *inFlightRequests) abort(req *inFlightRequest) bool {
 	req.cancel()
 	if req.conn != nil {
 		_ = req.conn.Close()
+	} else if req.body != nil {
+		_ = req.body.Close()
 	}
 	return true
 }
