@@ -47,11 +47,7 @@ func CheckFips140HmacKeys(settings []string, keys []string) error {
 	var short []string
 	for i, setting := range settings {
 		if CheckFips140HmacKey(setting, []byte(keys[i])) != nil {
-			if len(short) == 0 {
-				short = append(short, fmt.Sprintf("%s (%d characters)", setting, len(keys[i])))
-			} else {
-				short = append(short, fmt.Sprintf("%s (%d characters)", setting, len(keys[i])))
-			}
+			short = append(short, fmt.Sprintf("%s (%d characters)", setting, len(keys[i])))
 		}
 	}
 	switch len(short) {
