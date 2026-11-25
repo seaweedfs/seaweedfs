@@ -1,12 +1,14 @@
 package storage
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -644,6 +646,9 @@ type VolumeFileScanner4Vacuum struct {
 	newOffset      int64
 	now            uint64
 	writeThrottler *util.WriteThrottler
+	dropped        map[int64]bool
+	resumed        map[int64]bool
+	datSize        int64
 }
 
 func (scanner *VolumeFileScanner4Vacuum) VisitSuperBlock(superBlock super_block.SuperBlock) error {
@@ -655,15 +660,65 @@ func (scanner *VolumeFileScanner4Vacuum) VisitSuperBlock(superBlock super_block.
 
 }
 func (scanner *VolumeFileScanner4Vacuum) ReadNeedleBody() bool {
-	return true
+	return false
+}
+
+// reached reports whether the scan already copied or dropped the live record
+// at offset.
+func (scanner *VolumeFileScanner4Vacuum) reached(key NeedleId, offset int64) bool {
+	_, copied := scanner.nm.Get(key)
+	return copied || scanner.dropped[offset]
+}
+
+// checkRecordEnd fails a record whose header size runs past the end of the
+// .dat, before that size is used to allocate the read buffer.
+func (scanner *VolumeFileScanner4Vacuum) checkRecordEnd(offset int64, size Size) error {
+	end := offset + needle.GetActualSize(size, scanner.v.Version())
+	if end <= scanner.datSize {
+		return nil
+	}
+	datSize, _, err := scanner.v.DataBackend.GetStat()
+	if err != nil {
+		return err
+	}
+	scanner.datSize = datSize
+	if end > datSize {
+		return fmt.Errorf("record of size %d at offset %d ends past the %d-byte file: %w", size, offset, datSize, io.ErrUnexpectedEOF)
+	}
+	return nil
 }
 
 func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
-	if n.HasTtl() && scanner.now >= n.LastModified+uint64(scanner.v.Ttl.Minutes()*60) {
-		return nil
+	if scanner.resumed != nil {
+		if scanner.resumed[offset] {
+			return io.EOF
+		}
+		scanner.resumed[offset] = true
 	}
 	nv, ok := scanner.v.nm.Get(n.Id)
 	glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
+	if !ok || nv.Offset.ToActualOffset() != offset {
+		return nil
+	}
+	if scanner.reached(n.Id, offset) {
+		return io.EOF
+	}
+	err := scanner.checkRecordEnd(offset, n.Size)
+	if err == nil {
+		err = n.ReadData(scanner.v.DataBackend, offset, n.Size, scanner.v.Version())
+	}
+	if err != nil {
+		if !isSkippableNeedleReadError(err) {
+			return fmt.Errorf("read needle %d at offset %d: %w", n.Id, offset, err)
+		}
+		glog.Errorf("compact volume %d: dropping unreadable needle key=%d offset=%d size=%d: %v", scanner.v.Id, n.Id, offset, n.Size, err)
+		scanner.dropped[offset] = true
+		return nil
+	}
+	if n.HasTtl() && scanner.now >= n.LastModified+uint64(scanner.v.Ttl.Minutes()*60) {
+		scanner.dropped[offset] = true
+		return nil
+	}
 	if ok && nv.Offset.ToActualOffset() == offset && nv.Size > 0 && nv.Size.IsValid() {
 		if err := scanner.nm.Set(n.Id, ToOffset(scanner.newOffset), n.Size); err != nil {
 			return fmt.Errorf("cannot put needle: %s", err)
@@ -693,10 +748,14 @@ func (v *Volume) copyDataAndGenerateIndexFile(opts *CompactOptions) (err error) 
 		v:              v,
 		now:            uint64(time.Now().Unix()),
 		nm:             nm,
+		dropped:        make(map[int64]bool),
 		dstBackend:     dst,
 		writeThrottler: util.NewWriteThrottler(opts.MaxBytesPerSecond),
 	}
 	err = ScanVolumeFile(v.dir, v.Collection, v.Id, v.needleMapKind, scanner)
+	if scanner.newOffset > 0 {
+		err = v.copyPastUnreadableRecords(scanner, err)
+	}
 	if err != nil {
 		v.checkReadWriteError(err)
 		return err
@@ -706,6 +765,59 @@ func (v *Volume) copyDataAndGenerateIndexFile(opts *CompactOptions) (err error) 
 		return err
 	}
 	return v.loadTmpNeedleMap(opts.destIdxPath)
+}
+
+// copyPastUnreadableRecords resumes the scan at each live record it did not
+// reach. The scan follows record headers, so a corrupt one ends it early or
+// makes it jump over records; compacting by index copies past such a record,
+// and so does this. A read error still fails the compaction.
+func (v *Volume) copyPastUnreadableRecords(scanner *VolumeFileScanner4Vacuum, scanErr error) error {
+	if scanErr != nil {
+		if !errors.Is(scanErr, needle.ErrorCorrupted) {
+			return scanErr
+		}
+		glog.Warningf("compact volume %d: %v", v.Id, scanErr)
+	}
+	missed, err := v.liveRecordsNotReached(scanner)
+	if err != nil {
+		return err
+	}
+	scanner.resumed = make(map[int64]bool)
+	for _, record := range missed {
+		offset := record.Offset.ToActualOffset()
+		if scanner.reached(record.Key, offset) || scanner.resumed[offset] {
+			continue
+		}
+		glog.Warningf("compact volume %d: scan did not reach live record %d at offset %d, resuming there", v.Id, record.Key, offset)
+		if err := ScanVolumeFileFrom(v.Version(), v.DataBackend, offset, scanner); err != nil {
+			if !errors.Is(err, needle.ErrorCorrupted) {
+				return err
+			}
+			glog.Warningf("compact volume %d: %v", v.Id, err)
+		}
+	}
+	return nil
+}
+
+// liveRecordsNotReached returns, in .dat order, the live records of the index
+// the scan has not reached.
+func (v *Volume) liveRecordsNotReached(scanner *VolumeFileScanner4Vacuum) ([]needle_map.NeedleValue, error) {
+	indexFile, err := os.Open(v.FileName(".idx"))
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", v.FileName(".idx"), err)
+	}
+	defer indexFile.Close()
+	var records []needle_map.NeedleValue
+	err = idx2.WalkIndexFile(indexFile, 0, func(key NeedleId, offset Offset, size Size) error {
+		if nv, ok := v.nm.Get(key); ok && nv.Offset == offset && nv.Size > 0 && nv.Size.IsValid() && !scanner.reached(key, offset.ToActualOffset()) {
+			records = append(records, *nv)
+		}
+		return nil
+	})
+	slices.SortFunc(records, func(a, b needle_map.NeedleValue) int {
+		return cmp.Compare(a.Offset.ToActualOffset(), b.Offset.ToActualOffset())
+	})
+	return records, err
 }
 
 func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {

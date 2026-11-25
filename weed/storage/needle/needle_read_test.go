@@ -3,9 +3,12 @@ package needle
 import (
 	"bytes"
 	"errors"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
@@ -101,5 +104,28 @@ func TestReadNeedleBodyBytesWrittenNeedles(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestReadNeedleBlobRejectsSizePastInt(t *testing.T) {
+	if strconv.IntSize > 32 {
+		t.Skip("int holds every needle size")
+	}
+	f, err := os.CreateTemp(t.TempDir(), "dat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	datFile := backend.NewDiskFile(f)
+	defer datFile.Close()
+	if _, err := ReadNeedleBlob(datFile, 0, Size(0x7ffffff0), Version3); !errors.Is(err, ErrorSizeInvalid) {
+		t.Fatalf("ReadNeedleBlob: %v, want ErrorSizeInvalid", err)
+	}
+}
+
+func TestReadNeedleDataRejectsDataSizePastBody(t *testing.T) {
+	n := new(Needle)
+	body := []byte{0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0}
+	if err := n.readNeedleDataVersion2(body); !errors.Is(err, ErrorCorrupted) {
+		t.Fatalf("readNeedleDataVersion2: %v, want ErrorCorrupted", err)
 	}
 }

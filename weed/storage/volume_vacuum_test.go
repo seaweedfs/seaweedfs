@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -726,9 +727,9 @@ func TestCompactByVolumeData_SkipsNegativeSizeHeader(t *testing.T) {
 	}
 }
 
-// A corrupt header the scan cannot advance past must fail compaction and
-// leave the original volume untouched.
-func TestCompactByVolumeData_FailsOnHeaderThatCannotAdvance(t *testing.T) {
+// A corrupt header the scan cannot advance past is skipped: compaction resumes
+// at the next live record and leaves the original volume untouched.
+func TestCompactByVolumeData_SkipsHeaderThatCannotAdvance(t *testing.T) {
 	for _, size := range []types.Size{-36, -100} {
 		t.Run(fmt.Sprintf("size%d", size), func(t *testing.T) {
 			dir := t.TempDir()
@@ -770,12 +771,26 @@ func TestCompactByVolumeData_FailsOnHeaderThatCannotAdvance(t *testing.T) {
 				stuck = true
 				t.Fatalf("CompactByVolumeData: %v", err)
 			}
-			if !errors.Is(err, needle.ErrorCorrupted) {
-				t.Fatalf("CompactByVolumeData error = %v, want one wrapping ErrorCorrupted", err)
+			if err != nil {
+				t.Fatalf("CompactByVolumeData: %v", err)
 			}
 
-			if _, err := os.Stat(v.FileName(".cpx")); !os.IsNotExist(err) {
-				t.Errorf("failed compaction left a compacted index: %v", err)
+			cpx, err := os.Open(v.FileName(".cpx"))
+			if err != nil {
+				t.Fatalf("open .cpx: %v", err)
+			}
+			var kept []types.NeedleId
+			if err := idx.WalkIndexFile(cpx, 0, func(key types.NeedleId, _ types.Offset, size types.Size) error {
+				if size.IsValid() {
+					kept = append(kept, key)
+				}
+				return nil
+			}); err != nil {
+				t.Fatalf("walk .cpx: %v", err)
+			}
+			cpx.Close()
+			if want := []types.NeedleId{1, 2}; !slices.Equal(kept, want) {
+				t.Errorf("compacted index holds %v, want %v", kept, want)
 			}
 			datAfter, err := os.ReadFile(v.FileName(".dat"))
 			if err != nil {
@@ -881,4 +896,59 @@ func newEmptyNeedle(id uint64) *needle.Needle {
 	n := new(needle.Needle)
 	n.Id = types.Uint64ToNeedleId(id)
 	return n
+}
+
+// A run of records whose header ids are damaged but whose sizes are intact:
+// data compaction keeps the records around it, and resuming at each damaged
+// record does not walk the rest of the run again, so the resumed scans read
+// each header once instead of once per later resume.
+func TestCompactByVolumeData_SkipsRunOfDamagedIds(t *testing.T) {
+	const run = 32
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+	var offsets []int64
+	for i := 1; i <= run+2; i++ {
+		offset, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false)
+		if err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+		offsets = append(offsets, int64(offset))
+	}
+	damagedId := bytes.Repeat([]byte{0xa5}, types.NeedleIdSize)
+	for _, offset := range offsets[1 : run+1] {
+		if _, err := v.DataBackend.WriteAt(damagedId, offset+types.CookieSize); err != nil {
+			t.Fatalf("damage id at %d: %v", offset, err)
+		}
+	}
+	reads := &countingBackend{BackendStorageFile: v.DataBackend}
+	v.DataBackend = reads
+
+	if err := v.CompactByVolumeData(nil); err != nil {
+		t.Fatalf("CompactByVolumeData: %v", err)
+	}
+
+	cpx, err := os.Open(v.FileName(".cpx"))
+	if err != nil {
+		t.Fatalf("open .cpx: %v", err)
+	}
+	defer cpx.Close()
+	var kept []types.NeedleId
+	if err := idx.WalkIndexFile(cpx, 0, func(key types.NeedleId, _ types.Offset, _ types.Size) error {
+		kept = append(kept, key)
+		return nil
+	}); err != nil {
+		t.Fatalf("walk .cpx: %v", err)
+	}
+	if want := []types.NeedleId{1, run + 2}; !slices.Equal(kept, want) {
+		t.Errorf("compacted index holds %v, want %v", kept, want)
+	}
+	// The main scan reads through its own handle; the copies of the two kept
+	// records and the resumed scans read through v.DataBackend.
+	if reads.readCount > 2*run {
+		t.Errorf("resumed scans made %d reads for a run of %d damaged headers", reads.readCount, run)
+	}
 }
