@@ -30,24 +30,24 @@ func TestCheckKeyHashMarksEmptyDatabases(t *testing.T) {
 		t.Fatalf("marked databases: %v", err)
 	}
 	err := CheckKeyHash(dbs, false, false)
-	if err == nil || !strings.Contains(err.Error(), "fips140=only") {
-		t.Fatalf("marked databases opened without fips140=only: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "digest sha256") {
+		t.Fatalf("marked databases opened with digest md5: %v", err)
 	}
 }
 
 func TestCheckKeyHashRefusesMd5Keys(t *testing.T) {
 	dbs := openMemDBs(t, 2)
 	if err := CheckKeyHash(dbs, false, false); err != nil {
-		t.Fatalf("empty databases without fips140=only: %v", err)
+		t.Fatalf("empty databases with digest md5: %v", err)
 	}
 	if err := dbs[1].Put([]byte("0123456789abcdefname"), []byte("entry"), nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := CheckKeyHash(dbs, false, false); err != nil {
-		t.Fatalf("md5 keys without fips140=only: %v", err)
+		t.Fatalf("md5 keys with digest md5: %v", err)
 	}
 	if err := CheckKeyHash(dbs, true, false); err == nil || !strings.Contains(err.Error(), "MD5") {
-		t.Fatalf("md5 keys under fips140=only: %v", err)
+		t.Fatalf("md5 keys with digest sha256: %v", err)
 	}
 	if _, err := dbs[0].Get(sha256KeyMarker, nil); err == nil {
 		t.Fatalf("a refused check must not mark the empty database")

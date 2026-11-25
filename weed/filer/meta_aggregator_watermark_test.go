@@ -17,6 +17,7 @@ func newTestAggregator() *MetaAggregator {
 		peerResumeTsNs:      make(map[pb.ServerAddress]int64),
 
 		peerUnreachableSinceNs: make(map[pb.ServerAddress]int64),
+		peerSharesStore:        make(map[pb.ServerAddress]bool),
 	}
 	ma.peerSubscribeLoop = ma.loopSubscribeToOneFiler
 	return ma
@@ -341,5 +342,28 @@ func TestLongUnreachablePeerIsReportedOnce(t *testing.T) {
 	ma.peerWatermarksLock.Unlock()
 	if ma.notePeerUnreachable(b, stopB, t0+2*int64(peerUnreachableRemovalAfter)) {
 		t.Fatal("an untracked peer was reported as newly marked")
+	}
+}
+
+func TestSharesStoreFollowsTheConnectedSubscription(t *testing.T) {
+	ma := newTestAggregator()
+	ma.peerSubscribeLoop = func(_ *Filer, _, _ pb.ServerAddress, _ time.Time, _ chan struct{}) {}
+	shared, separate := pb.ServerAddress("filer-a:8888"), pb.ServerAddress("filer-b:8888")
+	ma.OnPeerUpdate(&master_pb.ClusterNodeUpdate{Address: string(shared), IsAdd: true}, time.Now())
+	ma.OnPeerUpdate(&master_pb.ClusterNodeUpdate{Address: string(separate), IsAdd: true}, time.Now())
+	if ma.SharesStore(shared) {
+		t.Fatal("a peer that has not connected yet must not count as sharing the store")
+	}
+	stopShared := ma.peerChans[shared]
+	ma.notePeerStore(shared, stopShared, true)
+	ma.notePeerStore(separate, ma.peerChans[separate], false)
+	if !ma.SharesStore(shared) || ma.SharesStore(separate) {
+		t.Fatalf("shared=%v separate=%v, want true false", ma.SharesStore(shared), ma.SharesStore(separate))
+	}
+
+	ma.OnPeerUpdate(&master_pb.ClusterNodeUpdate{Address: string(shared), IsAdd: false}, time.Now())
+	ma.notePeerStore(shared, stopShared, true)
+	if ma.SharesStore(shared) {
+		t.Fatal("a removed peer, or its exiting subscription, must not keep the shared mark")
 	}
 }

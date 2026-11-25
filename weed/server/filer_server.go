@@ -414,6 +414,9 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Warningf("%s cannot list existing peers: %v; retrying", option.Host, listErr)
 		time.Sleep(2 * time.Second)
 	}
+	if err := fs.filer.CheckPeerDigests(context.Background(), option.Host, existingNodes); err != nil {
+		glog.Fatalf("%s: %v", option.Host, err)
+	}
 	startFromTime := time.Now().Add(-filer.LogFlushInterval)
 	if isFresh {
 		glog.V(0).Infof("%s bootstrap from peers %+v", option.Host, existingNodes)

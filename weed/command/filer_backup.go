@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/replication"
 	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink/filersink"
@@ -185,6 +186,12 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		return resumeTsNs, fmt.Errorf("SSE initialization failed: %v", err)
 	}
 	dataSink.SetSourceFiler(filerSource)
+	if err := replication.CheckSinkDigest(filerSource.GrpcAddress(), filerSource.Digest, dataSink); err != nil {
+		if replication.IsDigestMismatch(err) {
+			glog.Exitf("%v", err)
+		}
+		return resumeTsNs, err
+	}
 
 	var flattener *s3VersionFlattener
 	if *backupOption.s3FlattenVersions {

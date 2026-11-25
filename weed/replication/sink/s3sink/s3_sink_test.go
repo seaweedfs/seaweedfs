@@ -1,6 +1,7 @@
 package S3Sink
 
 import (
+	"encoding/base64"
 	"io"
 	"net/http"
 	"net/url"
@@ -235,5 +236,25 @@ func TestToMetadataPrefersCanonicalKeyOnCaseCollision(t *testing.T) {
 		})
 		require.Len(t, metadata, 1)
 		require.Equal(t, "canonical", *metadata["project"])
+	}
+}
+
+func TestS3SinkCreateEntryForwardsOnlyMd5DigestsAsContentMd5(t *testing.T) {
+	digest := []byte("0123456789abcdef")
+	forwarded := base64.StdEncoding.EncodeToString(digest)
+	for _, sourceIsMd5 := range []bool{true, false} {
+		sink, rt := newCapturingS3Sink(t)
+		sink.sourceDigestIsMd5 = func() bool { return sourceIsMd5 }
+		entry := &filer_pb.Entry{
+			Attributes: &filer_pb.FuseAttributes{Md5: digest},
+			Content:    []byte("data"),
+		}
+		require.NoError(t, sink.CreateEntry("/dir/test.bin", entry, nil))
+		require.NotNil(t, rt.uploadReq, "uploader should have issued a PUT")
+		if sourceIsMd5 {
+			require.Equal(t, forwarded, rt.uploadReq.Header.Get("Content-Md5"))
+		} else {
+			require.NotEqual(t, forwarded, rt.uploadReq.Header.Get("Content-Md5"), "a sha256 digest must not go out as Content-MD5")
+		}
 	}
 }

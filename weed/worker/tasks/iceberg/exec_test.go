@@ -217,6 +217,12 @@ func (f *fakeFilerServer) AssignVolume(_ context.Context, _ *filer_pb.AssignVolu
 	}, nil
 }
 
+// GetFilerConfiguration reports no digest, as a filer that predates the
+// setting does, so uploads use the test process's digest mode.
+func (f *fakeFilerServer) GetFilerConfiguration(context.Context, *filer_pb.GetFilerConfigurationRequest) (*filer_pb.GetFilerConfigurationResponse, error) {
+	return &filer_pb.GetFilerConfigurationResponse{}, nil
+}
+
 func (f *fakeFilerServer) Ping(_ context.Context, _ *filer_pb.PingRequest) (*filer_pb.PingResponse, error) {
 	now := time.Now().UnixNano()
 	return &filer_pb.PingResponse{
