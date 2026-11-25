@@ -648,6 +648,7 @@ type VolumeFileScanner4Vacuum struct {
 	writeThrottler *util.WriteThrottler
 	dropped        map[int64]bool
 	resumed        map[int64]bool
+	datSize        int64
 }
 
 func (scanner *VolumeFileScanner4Vacuum) VisitSuperBlock(superBlock super_block.SuperBlock) error {
@@ -669,6 +670,24 @@ func (scanner *VolumeFileScanner4Vacuum) reached(key NeedleId, offset int64) boo
 	return copied || scanner.dropped[offset]
 }
 
+// checkRecordEnd fails a record whose header size runs past the end of the
+// .dat, before that size is used to allocate the read buffer.
+func (scanner *VolumeFileScanner4Vacuum) checkRecordEnd(offset int64, size Size) error {
+	end := offset + needle.GetActualSize(size, scanner.v.Version())
+	if end <= scanner.datSize {
+		return nil
+	}
+	datSize, _, err := scanner.v.DataBackend.GetStat()
+	if err != nil {
+		return err
+	}
+	scanner.datSize = datSize
+	if end > datSize {
+		return fmt.Errorf("record of size %d at offset %d ends past the %d-byte file: %w", size, offset, datSize, io.ErrUnexpectedEOF)
+	}
+	return nil
+}
+
 func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
 	if scanner.resumed != nil {
 		if scanner.resumed[offset] {
@@ -684,7 +703,11 @@ func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset in
 	if scanner.reached(n.Id, offset) {
 		return io.EOF
 	}
-	if err := n.ReadData(scanner.v.DataBackend, offset, n.Size, scanner.v.Version()); err != nil {
+	err := scanner.checkRecordEnd(offset, n.Size)
+	if err == nil {
+		err = n.ReadData(scanner.v.DataBackend, offset, n.Size, scanner.v.Version())
+	}
+	if err != nil {
 		if !isSkippableNeedleReadError(err) {
 			return fmt.Errorf("read needle %d at offset %d: %w", n.Id, offset, err)
 		}
