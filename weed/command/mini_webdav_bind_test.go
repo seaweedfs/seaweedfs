@@ -31,3 +31,17 @@ func TestMiniWebDavBindIP(t *testing.T) {
 		})
 	}
 }
+
+// mini is a single-host sandbox, so its unauthenticated Admin and WebDAV
+// listen on -ip.bind like every other component unless an operator opts out.
+func TestMiniAllowsInsecureBindByDefault(t *testing.T) {
+	for name, flag := range map[string]string{"admin": "admin.allowInsecureBind", "webdav": "webdav.allowInsecureBind"} {
+		f := cmdMini.Flag.Lookup(flag)
+		if f == nil {
+			t.Fatalf("%s: flag -%s is not defined", name, flag)
+		}
+		if f.DefValue != "true" {
+			t.Fatalf("%s: -%s defaults to %s, want true", name, flag, f.DefValue)
+		}
+	}
+}

@@ -595,7 +595,7 @@ func initMiniWebDAVFlags() {
 	miniWebDavOptions.maxMB = cmdMini.Flag.Int("webdav.maxMB", 4, "split files larger than the limit")
 	miniWebDavOptions.filerRootPath = cmdMini.Flag.String("webdav.filer.path", "/", "use this remote path from filer server")
 	miniWebDavOptions.idleTimeout = cmdMini.Flag.Int("webdav.idleTimeout", 10, "connection idle seconds")
-	miniWebDavAllowInsecureBind = cmdMini.Flag.Bool("webdav.allowInsecureBind", false, "INSECURE: allow WebDAV without [webdav.basic_auth] to bind to -ip.bind instead of loopback")
+	miniWebDavAllowInsecureBind = cmdMini.Flag.Bool("webdav.allowInsecureBind", true, "INSECURE: allow WebDAV without [webdav.basic_auth] to bind to -ip.bind; set to false to keep it on loopback")
 }
 
 // initMiniAdminFlags initializes Admin server flag options
@@ -611,7 +611,7 @@ func initMiniAdminFlags() {
 	miniAdminOptions.adminPassword = cmdMini.Flag.String("admin.password", "", "admin interface password (if empty, auth is disabled)")
 	miniAdminOptions.readOnlyUser = cmdMini.Flag.String("admin.readOnlyUser", "", "read-only user username (optional, for view-only access)")
 	miniAdminOptions.readOnlyPassword = cmdMini.Flag.String("admin.readOnlyPassword", "", "read-only user password (optional, for view-only access; requires admin.password to be set)")
-	miniAdminOptions.allowInsecureBind = cmdMini.Flag.Bool("admin.allowInsecureBind", false, "INSECURE: allow the unauthenticated admin interface to bind to -ip.bind instead of loopback")
+	miniAdminOptions.allowInsecureBind = cmdMini.Flag.Bool("admin.allowInsecureBind", true, "INSECURE: allow the unauthenticated admin interface to bind to -ip.bind; set to false to keep it on loopback")
 	miniAdminWorkerBindIP = cmdMini.Flag.String("admin.worker.ip", "127.0.0.1", "worker gRPC bind address; expose only with grpc.admin mTLS configured")
 	miniAdminOptions.urlPrefix = cmdMini.Flag.String("admin.urlPrefix", "", "URL path prefix when running the admin UI behind a reverse proxy under a subdirectory (e.g. /seaweedfs)")
 	miniAdminOptions.uploadMaxSizeMB = cmdMini.Flag.Int("admin.uploadMaxSizeMB", dash.DefaultUploadMaxSizeMB, "maximum total size in MB of one file browser upload (0 for no limit)")
@@ -1935,7 +1935,7 @@ func applyMiniAdminCredentialFallback(options *AdminOptions) {
 }
 
 // miniAdminBindIP selects a loopback HTTP bind unless Admin authentication,
-// mTLS, or an explicit insecure opt-out permits the requested address.
+// mTLS, or allowInsecure (mini's default) permits the requested address.
 func miniAdminBindIP(requestedIP string, passwordConfigured, mtlsConfigured, allowInsecure bool) string {
 	if isLoopbackIp(requestedIP) || passwordConfigured || mtlsConfigured || allowInsecure {
 		return requestedIP
@@ -1944,7 +1944,7 @@ func miniAdminBindIP(requestedIP string, passwordConfigured, mtlsConfigured, all
 }
 
 // miniWebDavBindIP keeps WebDAV on loopback unless [webdav.basic_auth] or
-// -webdav.allowInsecureBind permits the requested address.
+// -webdav.allowInsecureBind (the default) permits the requested address.
 func miniWebDavBindIP(requestedIP string) string {
 	return miniAdminBindIP(requestedIP, webDavBasicAuth() != nil, false, *miniWebDavAllowInsecureBind)
 }
