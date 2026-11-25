@@ -438,6 +438,11 @@ func verifyDatFileWith(datName string, vid needle.VolumeId, opts datVerifyOption
 	if version < needle.Version1 || version > needle.Version3 {
 		return nil, nil, fmt.Errorf("%s: unsupported needle version %d in super block", datName, version)
 	}
+	// A super block extra describes an erasure-coded volume layout; its .dat was
+	// re-striped into .ecXX shards and is not a plain needle file any more.
+	if sb.ExtraSize > 0 || sb.Extra != nil {
+		return nil, nil, fmt.Errorf("%s: super block extra (erasure-coded layout) is not supported", datName)
+	}
 	base := int64(sb.BlockSize())
 
 	s := &datVerifier{
