@@ -376,7 +376,7 @@ func (fi *FileInfo) ETag(ctx context.Context) (string, error) {
 		// an empty DAV:getetag is not a valid entity-tag; let webdav derive one
 		return "", webdav.ErrNotImplemented
 	}
-	return fi.etag, nil
+	return `"` + fi.etag + `"`, nil
 }
 
 type WebDavFile struct {

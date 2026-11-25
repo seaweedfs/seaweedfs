@@ -11,6 +11,7 @@ import (
 	"path"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/net/webdav"
 	"google.golang.org/grpc"
@@ -58,8 +59,19 @@ func TestFileInfoETag(t *testing.T) {
 	if _, err := (&FileInfo{}).ETag(ctx); err != webdav.ErrNotImplemented {
 		t.Errorf("empty etag returned %v, want ErrNotImplemented so webdav derives one", err)
 	}
-	if etag, err := (&FileInfo{etag: "abc"}).ETag(ctx); err != nil || etag != "abc" {
-		t.Errorf("ETag() = %q, %v, want \"abc\", nil", etag, err)
+	etag, err := (&FileInfo{etag: "abc"}).ETag(ctx)
+	if err != nil || etag != `"abc"` {
+		t.Fatalf("ETag() = %q, %v, want %q, nil", etag, err, `"abc"`)
+	}
+
+	// webdav hands the tag to http.ServeContent, which only matches quoted tags.
+	req := httptest.NewRequest(http.MethodGet, "/f", nil)
+	req.Header.Set("If-None-Match", etag)
+	rec := httptest.NewRecorder()
+	rec.Header().Set("ETag", etag)
+	http.ServeContent(rec, req, "f", time.Time{}, strings.NewReader("hello"))
+	if rec.Code != http.StatusNotModified {
+		t.Errorf("If-None-Match with the served ETag got %d, want 304", rec.Code)
 	}
 }
 
