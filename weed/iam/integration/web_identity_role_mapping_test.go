@@ -49,6 +49,7 @@ func TestWebIdentityRoleMappingLimitsNamedRoles(t *testing.T) {
 				{Claim: "groups", Value: "admins", Role: "arn:aws:iam::role/AdminRole"},
 				{Claim: "groups", Value: "readers", Role: "arn:aws:iam::role/ReadRole"},
 				{Claim: "groups", Value: "auditors", Role: " arn:aws:iam::role/AuditRole "},
+				{Claim: "groups", Value: "leads", Role: "arn:aws:iam::role/AdminRole,Lead"},
 			},
 			DefaultRole: "arn:aws:iam::role/GuestRole",
 		},
@@ -67,7 +68,7 @@ func TestWebIdentityRoleMappingLimitsNamedRoles(t *testing.T) {
 	}, func() string { return "localhost:8888" }))
 	require.NoError(t, iamManager.RegisterIdentityProvider(provider))
 
-	for _, roleName := range []string{"AdminRole", "ReadRole", "AuditRole", "GuestRole", "UnmappedRole"} {
+	for _, roleName := range []string{"AdminRole", "ReadRole", "AuditRole", "AdminRole,Lead", "GuestRole", "UnmappedRole"} {
 		require.NoError(t, iamManager.CreateRole(ctx, "", roleName, &RoleDefinition{
 			RoleName: roleName,
 			TrustPolicy: &policy.PolicyDocument{
@@ -109,6 +110,9 @@ func TestWebIdentityRoleMappingLimitsNamedRoles(t *testing.T) {
 		{[]string{"admins", "readers"}, "ReadRole", true},
 		{[]string{"readers"}, "AuditRole", false},
 		{[]string{"auditors"}, "AuditRole", true},
+		{[]string{"leads"}, "AdminRole", false},
+		{[]string{"leads"}, "AdminRole,Lead", true},
+		{[]string{"admins"}, "AdminRole,Lead", false},
 		{nil, "GuestRole", true},
 		{nil, "AdminRole", false},
 		{nil, "ReadRole", false},

@@ -1117,7 +1117,7 @@ func roleMappingRefuses(provider providers.IdentityProvider, roleArn string, ide
 	if !named {
 		return false
 	}
-	for _, mapped := range strings.Split(identity.Attributes["roles"], ",") {
+	for _, mapped := range identity.MappedRoles {
 		if utils.ExtractRoleNameFromArn(strings.TrimSpace(mapped)) == roleName {
 			return false
 		}

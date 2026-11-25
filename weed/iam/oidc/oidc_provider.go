@@ -576,6 +576,7 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, token string) (*provide
 		Issuer:        claims.Issuer,
 		PrincipalTags: filterPrincipalTags(extractPrincipalTags(claims.Claims), p.config.AllowedPrincipalTagKeys),
 		ClaimPolicies: extractClaimPolicies(claims.Claims, p.config.PolicyClaim),
+		MappedRoles:   roles,
 	}
 
 	// Pass the token expiration to limit session duration
