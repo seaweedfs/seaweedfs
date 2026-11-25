@@ -1,11 +1,13 @@
 package policy
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAWSIAMMatch(t *testing.T) {
@@ -290,6 +292,45 @@ func TestAWSWildcardMatch(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := wildcard.MatchesWildcard(strings.ToLower(tt.pattern), strings.ToLower(tt.value))
 			assert.Equal(t, tt.expected, result, "AWS wildcard match should match expected")
+		})
+	}
+}
+
+func TestResourceMatchingIsCaseSensitive(t *testing.T) {
+	engine := NewPolicyEngine()
+	require.NoError(t, engine.Initialize(&PolicyEngineConfig{DefaultEffect: "Deny", StoreType: "memory"}))
+	ctx := context.Background()
+
+	require.NoError(t, engine.AddPolicy("", "object-policy", &PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []Statement{
+			{
+				Effect:   "Allow",
+				Action:   []string{"S3:GetObject"},
+				Resource: []string{"arn:aws:s3:::bucket/report.txt", "arn:aws:s3:::bucket/docs/*"},
+			},
+		},
+	}))
+
+	tests := []struct {
+		resource string
+		expected Effect
+	}{
+		{"arn:aws:s3:::bucket/report.txt", EffectAllow},
+		{"arn:aws:s3:::bucket/REPORT.txt", EffectDeny},
+		{"arn:aws:s3:::BUCKET/report.txt", EffectDeny},
+		{"arn:aws:s3:::bucket/docs/a.txt", EffectAllow},
+		{"arn:aws:s3:::bucket/DOCS/a.txt", EffectDeny},
+	}
+	for _, tt := range tests {
+		t.Run(tt.resource, func(t *testing.T) {
+			result, err := engine.Evaluate(ctx, "", &EvaluationContext{
+				Principal: "user",
+				Action:    "s3:getobject",
+				Resource:  tt.resource,
+			}, []string{"object-policy"})
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result.Effect)
 		})
 	}
 }

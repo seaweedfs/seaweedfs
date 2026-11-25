@@ -653,7 +653,7 @@ func (e *PolicyEngine) matchesActions(actions []string, requestedAction string, 
 // matchesResources checks if any resource in the list matches the requested resource
 func (e *PolicyEngine) matchesResources(resources []string, requestedResource string, evalCtx *EvaluationContext) bool {
 	for _, resource := range resources {
-		if awsIAMMatch(resource, requestedResource, evalCtx) {
+		if awsIAMResourceMatch(resource, requestedResource, evalCtx) {
 			return true
 		}
 	}
@@ -1240,18 +1240,6 @@ func awsIAMMatch(pattern, value string, evalCtx *EvaluationContext) bool {
 		return true // Universal wildcard
 	}
 
-	// IAM identity ARNs match case-sensitively: identity lookup is
-	// case-sensitive, so a case-variant names a different identity.
-	if strings.HasPrefix(value, "arn:aws:iam::") {
-		if expandedPattern == value {
-			return true
-		}
-		if strings.Contains(expandedPattern, "*") || strings.Contains(expandedPattern, "?") {
-			return wildcard.MatchesWildcard(expandedPattern, value)
-		}
-		return false
-	}
-
 	// Step 3: Case-insensitive exact match
 	if strings.EqualFold(expandedPattern, value) {
 		return true
@@ -1262,6 +1250,19 @@ func awsIAMMatch(pattern, value string, evalCtx *EvaluationContext) bool {
 		return wildcard.MatchesWildcard(strings.ToLower(expandedPattern), strings.ToLower(value))
 	}
 
+	return false
+}
+
+// awsIAMResourceMatch matches resource ARNs case-sensitively: object keys and
+// identity names that differ only in case name different resources.
+func awsIAMResourceMatch(pattern, value string, evalCtx *EvaluationContext) bool {
+	expandedPattern := expandPolicyVariables(pattern, evalCtx)
+	if expandedPattern == "*" || expandedPattern == value {
+		return true
+	}
+	if strings.Contains(expandedPattern, "*") || strings.Contains(expandedPattern, "?") {
+		return wildcard.MatchesWildcard(expandedPattern, value)
+	}
 	return false
 }
 
