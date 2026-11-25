@@ -9,6 +9,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -33,6 +34,41 @@ func (fs *FilerServer) writeOwner(key string) pb.ServerAddress {
 		return ""
 	}
 	return owner
+}
+
+// ownerKeepsOwnStore reports whether key's write owner is another filer that
+// is not known to run on this filer's store.
+func (fs *FilerServer) ownerKeepsOwnStore(key string) bool {
+	owner := fs.writeOwner(key)
+	if owner == "" {
+		return false
+	}
+	return fs.filer.MetaAggregator == nil || !fs.filer.MetaAggregator.SharesStore(owner)
+}
+
+// forwardDeleteEntry sends the delete to its write owner. handled=false means
+// this filer is the owner and applies it.
+func (fs *FilerServer) forwardDeleteEntry(ctx context.Context, req *filer_pb.DeleteEntryRequest, fullpath util.FullPath) (*filer_pb.DeleteEntryResponse, bool, error) {
+	var ownerResp *filer_pb.DeleteEntryResponse
+	handled, err := fs.forwardToWriteOwner(ctx, entryRouteKey(fullpath), func(owner pb.ServerAddress) error {
+		if scopeKeepOnly(ctx) {
+			return status.Error(codes.PermissionDenied, "filer: scoped DeleteEntry cannot be forwarded to the write owner")
+		}
+		glog.V(2).InfofCtx(ctx, "DeleteEntry %s: forwarding to owner %s", fullpath, owner)
+		req.IsMoved = true
+		return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			forwarded, e := client.DeleteEntry(ctx, req)
+			if e != nil {
+				return e
+			}
+			ownerResp = forwarded
+			return nil
+		})
+	})
+	if err != nil {
+		return &filer_pb.DeleteEntryResponse{}, handled, err
+	}
+	return ownerResp, handled, nil
 }
 
 // forwardToWriteOwner sends the request to key's write owner so a single filer's
