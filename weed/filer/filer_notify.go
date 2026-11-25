@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool, signatures []int32) {
@@ -437,6 +438,10 @@ var (
 // when reading persisted log files since the data is unrecoverable.
 func isChunkNotFoundError(err error) bool {
 	if err == nil {
+		return false
+	}
+	// "volume N not found" without an answer says nothing about the volume.
+	if errors.Is(err, wdclient.ErrLookupUnanswered) {
 		return false
 	}
 	if errors.Is(err, util_http.ErrNotFound) || errors.Is(err, nethttp.ErrMissingFile) {

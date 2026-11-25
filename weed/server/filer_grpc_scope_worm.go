@@ -3,7 +3,6 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/constants"
 	"google.golang.org/grpc/codes"
@@ -37,15 +36,8 @@ func (fs *FilerServer) checkScopeWormDirectory(ctx context.Context, fullPath str
 	if !scopeKeepOnly(ctx) {
 		return nil
 	}
-	prefix := strings.TrimRight(fullPath, "/") + "/"
-	conf := fs.filer.FilerConf
-	if conf.MatchStorageRule(prefix).GetWorm() {
+	if fs.filer.FilerConf.IntersectsWorm(fullPath) {
 		return status.Error(codes.PermissionDenied, "scoped directory mutation intersects a WORM rule")
-	}
-	for _, rule := range conf.ToProto().Locations {
-		if rule.GetWorm() && strings.HasPrefix(rule.LocationPrefix, prefix) {
-			return status.Error(codes.PermissionDenied, "scoped directory mutation intersects a WORM rule")
-		}
 	}
 	return nil
 }

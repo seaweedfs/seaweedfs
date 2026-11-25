@@ -195,6 +195,46 @@ mod tests {
         assert_eq!(got, want);
     }
 
+    #[tokio::test]
+    async fn indexed_only_keeps_assigned_segments_and_excludes_tail_work() {
+        let dir = TempDir::new().unwrap();
+        let mut dataset = testing::write_dataset(&dir, &testing::vectors(64, 4), &["a"; 64]).await;
+        crate::index::build(&mut dataset, "vector", crate::index::INDEX_NAME, 4, false)
+            .await
+            .unwrap();
+        testing::append_dataset(&mut dataset, &testing::vectors(4, 4), &["b"; 4]).await;
+        let table = VectorTable::resolve(&dataset, None, None).unwrap();
+        let segments = index_segments(&dataset, "vector").await.unwrap();
+        let query = Query {
+            vector: vec![0.0; 4],
+            k: 100,
+            filter: None,
+            postfilter: false,
+            distance: DistanceType::L2,
+            nprobes: Some(4),
+            index_segments: Some(segments),
+            fragments: Some(vec![1]),
+            exact_match_limit: None,
+        };
+        let (hits, excluded) = query::indexed_only(&dataset, &table, &query).await.unwrap();
+        assert_eq!(excluded, 1);
+        assert_eq!(hits.len(), 64);
+        let tail = Query {
+            index_segments: Some(Vec::new()),
+            ..query.clone()
+        };
+        let (hits, excluded) = query::indexed_only(&dataset, &table, &tail).await.unwrap();
+        assert!(hits.is_empty());
+        assert_eq!(excluded, 1);
+        let empty = Query {
+            fragments: None,
+            ..tail
+        };
+        let (hits, excluded) = query::indexed_only(&dataset, &table, &empty).await.unwrap();
+        assert!(hits.is_empty());
+        assert_eq!(excluded, 0);
+    }
+
     /// named_segment_fragments must carry the logical index name through —
     /// a fanout planner groups tasks by name.
     #[tokio::test]

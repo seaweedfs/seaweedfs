@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"google.golang.org/protobuf/proto"
@@ -214,8 +215,9 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 /** Remove a file */
 func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name string) (code fuse.Status) {
 
-	// Sanitize before it reaches DeleteEntryRequest.Name; see sanitizeFuseName.
-	name = sanitizeFuseName(name)
+	if !utf8.ValidString(name) {
+		return fuse.ENOENT
+	}
 
 	dirFullPath, code := wfs.inodeToPath.GetPath(header.NodeId)
 	if code != fuse.OK {
@@ -512,6 +514,28 @@ func (wfs *WFS) markHandleDeleted(inode uint64) uint64 {
 	epoch := fh.deleteEpoch
 	wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 	return epoch
+}
+
+// markHandleReplaced marks the handle of a file another mount's rename
+// replaced, so its flush does not put the old content back over what took
+// the name. A file this mount created and has not published was never on the
+// filer, so the rename replaced nothing of it: its handle keeps its writes,
+// but the name is no longer its own. Its publication is refused, so the
+// writes are reported or retained instead of landing later at a name that
+// was unlinked or whose directory moved since.
+func (wfs *WFS) markHandleReplaced(inode uint64) {
+	fh, found := wfs.fhMap.FindFileHandle(inode)
+	if !found {
+		return
+	}
+	fhActiveLock := wfs.fhLockTable.AcquireLock("markHandleReplaced", fh.fh, util.ExclusiveLock)
+	defer wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+	if fh.unpublishedCreate() {
+		fh.nameTaken = true
+		return
+	}
+	fh.isDeleted = true
+	fh.deleteEpoch++
 }
 
 // clearHandleDeleted lifts a mark whose delete did not go through. Only the

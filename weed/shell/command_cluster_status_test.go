@@ -77,6 +77,23 @@ func TestPrintClusterInfo(t *testing.T) {
 	}
 }
 
+func TestPrintClusterInfoShowsTheClusterUUID(t *testing.T) {
+	topology := &master_pb.TopologyInfo{Id: "topo", TopologyId: "5b2f0c1e-77a4-4d1e-9c0a-1f3e8b6d2a91"}
+	var buf bytes.Buffer
+	sp := &ClusterStatusPrinter{writer: &buf, humanize: true, topology: topology}
+	sp.printClusterInfo()
+	want := `cluster:
+	id:       5b2f0c1e-77a4-4d1e-9c0a-1f3e8b6d2a91
+	status:   unlocked
+	nodes:    0
+	topology: 0 DCs, 0 disks on 0 racks
+
+`
+	if got := buf.String(); got != want {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
 // TestPrintClusterInfo_multiDiskPerNode covers a node whose several physical
 // disks of the same type collapse into a single DiskInfo on the wire (keyed by
 // disk type), so counting len(DiskInfos) under-reports the physical disk count.

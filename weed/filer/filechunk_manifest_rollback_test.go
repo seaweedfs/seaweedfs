@@ -3,6 +3,7 @@ package filer
 import (
 	"fmt"
 	"io"
+	"slices"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -34,7 +35,7 @@ func (s *fakeManifestStore) save(reader io.Reader, name string, offset int64, ts
 	if _, err := io.Copy(io.Discard, reader); err != nil {
 		return nil, err
 	}
-	return &filer_pb.FileChunk{FileId: fmt.Sprintf("2,%x", s.saves), Offset: offset}, nil
+	return &filer_pb.FileChunk{FileId: fmt.Sprintf("2,%x", s.saves), Offset: offset, ModifiedTsNs: tsNs}, nil
 }
 
 func (s *fakeManifestStore) delete(chunks []*filer_pb.FileChunk) {
@@ -59,6 +60,42 @@ func TestMaybeManifestizeFolds(t *testing.T) {
 	}
 	if manifests[0].Offset != 0 || manifests[0].Size != uint64(ManifestBatch*smallChunkSize) {
 		t.Errorf("manifest span [%d,%d) wrong", manifests[0].Offset, manifests[0].Size)
+	}
+}
+
+// A manifest is as new as the newest chunk it folds: stamped older, a chunk it
+// holds would lose to an older overlapping one.
+func TestMaybeManifestizeStampsNewestFoldedChunk(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		n    int
+		size uint64
+		want []int64
+	}{
+		{"large", ManifestBatch + 50, smallChunkSize, []int64{ManifestBatch}},
+		{"small", 2*SmallChunkManifestBatch + 3, 1024, []int64{SmallChunkManifestBatch, 2 * SmallChunkManifestBatch}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			chunks := flatTestChunks(tt.n)
+			for i, c := range chunks {
+				c.Size = tt.size
+				c.Offset = int64(i) * int64(tt.size)
+				c.ModifiedTsNs = int64(i + 1)
+			}
+			store := &fakeManifestStore{}
+			result, err := MaybeManifestize(store.save, store.delete, chunks)
+			if err != nil {
+				t.Fatalf("MaybeManifestize: %v", err)
+			}
+			manifests, _ := SeparateManifestChunks(result)
+			var got []int64
+			for _, m := range manifests {
+				got = append(got, m.ModifiedTsNs)
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("manifest stamps %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

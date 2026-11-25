@@ -1,0 +1,69 @@
+{
+  "carried_patch": "0007",
+  "provenance": "Adapted from an earlier assignment-token fixture: CreateEntryRequest chunk_auth was moved to field 10 for the existing fsync=9 field, and the hard-link source field was removed with a structured wire transform.",
+  "cases": [
+    {
+      "message": "CreateEntryRequest",
+      "wire_hex": "0a0a2f6275636b6574732f6112290a0a6c65676163792e7478741a160a10332c30303031303030303030303030311007180b3a0301020352210a10332c3030303130303030303030303031120d666978747572652d70726f6f66",
+      "with_unknown_hex": "0a0a2f6275636b6574732f6112290a0a6c65676163792e7478741a160a10332c30303031303030303030303030311007180b3a0301020352210a10332c3030303130303030303030303031120d666978747572652d70726f6f6680b518118ab51815666978747572652d756e6b6e6f776e2d6669656c64",
+      "fields": [
+        {"name": "directory", "number": 1, "kind": "string", "map": false},
+        {"name": "entry", "number": 2, "kind": "message", "map": false},
+        {"name": "o_excl", "number": 3, "kind": "bool", "map": false},
+        {"name": "is_from_other_cluster", "number": 4, "kind": "bool", "map": false},
+        {"name": "signatures", "number": 5, "kind": "int32", "map": false},
+        {"name": "skip_check_parent_directory", "number": 6, "kind": "bool", "map": false},
+        {"name": "condition", "number": 7, "kind": "message", "map": false},
+        {"name": "is_moved", "number": 8, "kind": "bool", "map": false},
+        {"name": "fsync", "number": 9, "kind": "bool", "map": false},
+        {"name": "chunk_auth", "number": 10, "kind": "message", "map": true}
+      ]
+    },
+    {
+      "message": "UpdateEntryRequest",
+      "wire_hex": "0a0a2f6275636b6574732f6112290a0a6c65676163792e7478741a160a10332c30303031303030303030303030311007180b3a0301020342210a10332c3030303130303030303030303031120d666978747572652d70726f6f66",
+      "with_unknown_hex": "0a0a2f6275636b6574732f6112290a0a6c65676163792e7478741a160a10332c30303031303030303030303030311007180b3a0301020342210a10332c3030303130303030303030303031120d666978747572652d70726f6f6680b518118ab51815666978747572652d756e6b6e6f776e2d6669656c64",
+      "fields": [
+        {"name": "directory", "number": 1, "kind": "string", "map": false},
+        {"name": "entry", "number": 2, "kind": "message", "map": false},
+        {"name": "is_from_other_cluster", "number": 3, "kind": "bool", "map": false},
+        {"name": "signatures", "number": 4, "kind": "int32", "map": false},
+        {"name": "expected_extended", "number": 5, "kind": "message", "map": true},
+        {"name": "condition", "number": 6, "kind": "message", "map": false},
+        {"name": "is_moved", "number": 7, "kind": "bool", "map": false},
+        {"name": "chunk_auth", "number": 8, "kind": "message", "map": true}
+      ]
+    },
+    {
+      "message": "AppendToEntryRequest",
+      "wire_hex": "0a0a2f6275636b6574732f61120a6c65676163792e7478741a160a10332c30303031303030303030303030311007180b22210a10332c3030303130303030303030303031120d666978747572652d70726f6f66",
+      "with_unknown_hex": "0a0a2f6275636b6574732f61120a6c65676163792e7478741a160a10332c30303031303030303030303030311007180b22210a10332c3030303130303030303030303031120d666978747572652d70726f6f6680b518118ab51815666978747572652d756e6b6e6f776e2d6669656c64",
+      "fields": [
+        {"name": "directory", "number": 1, "kind": "string", "map": false},
+        {"name": "entry_name", "number": 2, "kind": "string", "map": false},
+        {"name": "chunks", "number": 3, "kind": "message", "map": false},
+        {"name": "chunk_auth", "number": 4, "kind": "message", "map": true}
+      ]
+    },
+    {
+      "message": "AssignVolumeResponse",
+      "wire_hex": "0a10332c303030313030303030303030303120016a12666978747572652d61737369676e6d656e74",
+      "with_unknown_hex": "0a10332c303030313030303030303030303120016a12666978747572652d61737369676e6d656e7480b518118ab51815666978747572652d756e6b6e6f776e2d6669656c64",
+      "fields": [
+        {"name": "file_id", "number": 1, "kind": "string", "map": false},
+        {"name": "count", "number": 4, "kind": "int32", "map": false},
+        {"name": "auth", "number": 5, "kind": "string", "map": false},
+        {"name": "collection", "number": 6, "kind": "string", "map": false},
+        {"name": "replication", "number": 7, "kind": "string", "map": false},
+        {"name": "error", "number": 8, "kind": "string", "map": false},
+        {"name": "location", "number": 9, "kind": "message", "map": false},
+        {"name": "replicas", "number": 10, "kind": "message", "map": false},
+        {"name": "fsync", "number": 11, "kind": "bool", "map": false},
+        {"name": "error_code", "number": 12, "kind": "enum", "map": false},
+        {"name": "assign_auth", "number": 13, "kind": "string", "map": false}
+      ]
+    }
+  ],
+  "unknown_hex": "80b518118ab51815666978747572652d756e6b6e6f776e2d6669656c64",
+  "upstream_tag": "4.51"
+}

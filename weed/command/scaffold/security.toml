@@ -20,6 +20,9 @@
 #                                         HTTP API
 #   WEED_JWT_FILER_SIGNING_READ_KEY       filer, s3, and clients of the filer HTTP API
 #   WEED_JWT_FILER_SIGNING_SUBSCRIBE_KEY  filer metadata subscriptions
+#   WEED_JWT_FILER_SIGNING_GRPC_KEY       filer filesystem gRPC scope and assignment proofs
+#   WEED_JWT_FILER_SIGNING_GRPC_PREVIOUS_KEY
+#                                         previous gRPC scope and assignment-proof key during rotation
 # A set env var wins over the file, so the file can stay empty (or absent).
 
 # comma separated origins allowed to make requests to the filer and s3 gateway.
@@ -74,6 +77,17 @@ enabled = true
 user = ""
 password = ""
 
+# HTTP Basic Auth on the WebDAV gateway (weed webdav, weed server -webdav,
+# weed mini). Without a password, anyone who can reach the WebDAV port reads,
+# writes and deletes everything under its -filer.path, and weed mini binds
+# WebDAV to 127.0.0.1 unless -webdav.allowInsecureBind is set. Basic Auth
+# sends the password in every request, so serve WebDAV over TLS
+# (-webdav.cert.file, -webdav.key.file) on an untrusted network.
+# Env: WEED_WEBDAV_BASIC_AUTH_USER, WEED_WEBDAV_BASIC_AUTH_PASSWORD
+[webdav.basic_auth]
+user = ""
+password = ""
+
 # this jwt signing key is used for read operations on volume servers:
 # - the Master server generates the JWT, which can be used to read a certain file on a volume server
 # - every process that reads chunks straight from volume servers generates its
@@ -103,15 +117,33 @@ previous_key = ""
 # Filesystem gRPC callers may send authorization: Bearer <token> signed with
 # this key. allowed_prefixes grant read/write paths; read_prefixes grant reads.
 # allowed_methods optionally restricts gRPC method names. Scoped tokens require
-# jti and exp, cannot introduce new chunk ids, and cannot call unruled methods.
+# jti and exp, need assignment proofs for new chunk ids, and cannot call unruled
+# methods. New inline content is allowed within the token's writable paths.
 # Calls without a token retain their existing behavior. This is scope enforcement,
 # not mandatory authentication; restrict network access to the filer as before.
-# Rolling upgrades: older filers treat a read_prefixes-only token as an admin
-# token. Mint read-only tokens only after every filer runs this version or newer.
+# Rolling upgrades: enable scoped writers only after every filer runs this
+# version or newer. Scope-only filers refuse new chunk ids even with a proof;
+# older filers without scope enforcement treat scoped tokens as unscoped.
 [jwt.filer_signing]
 key = ""
 expires_after_seconds = 10           # seconds
 previous_key = ""
+# Optional filesystem gRPC signing key; when unset, key above is used. Setting
+# this alone enables gRPC scope checks without changing HTTP authentication.
+# When grpc_key is set, grpc_previous_key is also accepted for gRPC scope
+# tokens and assignment proofs. The HTTP previous_key remains excluded from
+# this separate trust domain. Keep grpc_previous_key configured for at least
+# assign_expires_after_seconds plus the scoped token lifetime after rotating.
+# When grpc_key is unset, the shared HTTP current/previous pair is used.
+# grpc_key = ""
+# grpc_previous_key = ""
+# AssignVolume returns a proof bound to the holder, chunk-ID range and resolved
+# collection in assign_auth. Return it under the chunk's file id in chunk_auth
+# when storing the entry. Auth remains the separate volume-upload credential.
+# Proofs always expire: zero or negative lifetime uses the default of 86400 seconds.
+# assign_expires_after_seconds = 86400
+# Clock-skew allowance for scope and proof validation; negative means zero.
+# clock_leeway_seconds = 30
 
 # If this JWT key is configured, Filer only accepts reads over HTTP if they are signed with this JWT:
 # - f.e. the S3 API Shim generates the JWT

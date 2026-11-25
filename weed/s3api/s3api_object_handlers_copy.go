@@ -227,6 +227,13 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Policy rechecks see the headers the caller sent, not the bucket defaults below.
+	dstPolicyReq := r.Clone(r.Context())
+	if errCode := s3a.recheckTagConditionedPolicyWithLookup(dstPolicyReq, dstBucket, dstObject, "", string(s3_constants.ACTION_WRITE), "CopyObjectHandler"); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
 	// A copy request without SSE headers takes the destination bucket's
 	// default encryption, including its configured KMS key and bucket-key
 	// setting. Surface them as headers so every downstream parse sees them.
@@ -388,6 +395,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 				return errCode
 			}
 			if errCode = s3a.validateConditionalHeaders(r, headers, currentEntry, dstBucket, dstObject); errCode != s3err.ErrNone {
+				return errCode
+			}
+			if errCode = s3a.recheckPolicyWithObjectEntry(dstPolicyReq, dstBucket, dstObject, string(s3_constants.ACTION_WRITE), currentEntry.Extended, "CopyObjectHandler"); errCode != s3err.ErrNone {
 				return errCode
 			}
 			if err := ValidateCopyEncryption(currentEntry.Extended, r.Header); err != nil {
@@ -665,6 +675,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	applyPutObjectACL(r, dstEntry)
 
 	finalizeCode := s3a.withObjectWriteLock(dstBucket, dstObject, func() s3err.ErrorCode {
+		if errCode := s3a.recheckTagConditionedPolicyWithLookup(dstPolicyReq, dstBucket, dstObject, "", string(s3_constants.ACTION_WRITE), "CopyObjectHandler"); errCode != s3err.ErrNone {
+			return errCode
+		}
 		return s3a.checkConditionalHeaders(r, dstBucket, dstObject)
 	}, func() s3err.ErrorCode {
 		var finalizeErr error

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -38,6 +39,7 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 
 	var metadata tableBucketMetadata
 	var bucketPolicy string
+	var bucketTags map[string]string
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 		if err != nil {
@@ -53,6 +55,11 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 			bucketPolicy = string(policyData)
 		} else if !errors.Is(err, ErrAttributeNotFound) {
 			return fmt.Errorf("failed to fetch bucket policy: %v", err)
+		}
+		if bucketPolicy != "" {
+			if bucketTags, err = h.readTags(r.Context(), client, bucketPath); err != nil {
+				return err
+			}
 		}
 
 		return nil
@@ -75,6 +82,8 @@ func (h *S3TablesHandler) handleGetTableBucket(w http.ResponseWriter, r *http.Re
 		Subject:          callerSubject(r),
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
+		TableBucketTags:  bucketTags,
+		ResourceTags:     bucketTags,
 		IdentityActions:  identityActions,
 		DefaultAllow:     h.defaultAllowFor(r),
 	}) {
@@ -183,9 +192,13 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 					continue
 				}
 
-				// The policy is stored on the bucket entry the listing returned,
-				// so checking it needs no lookup of its own.
 				bucketPolicy := string(entry.Entry.Extended[ExtendedKeyPolicy])
+				var bucketTags map[string]string
+				if tagData, ok := entry.Entry.Extended[ExtendedKeyTags]; ok && bucketPolicy != "" {
+					if err := json.Unmarshal(tagData, &bucketTags); err != nil {
+						continue
+					}
+				}
 
 				bucketARN := h.generateTableBucketARN(metadata.OwnerAccountID, entry.Entry.Name)
 				identityActions := getIdentityActions(r)
@@ -194,6 +207,8 @@ func (h *S3TablesHandler) handleListTableBuckets(w http.ResponseWriter, r *http.
 					Subject:          callerSubject(r),
 					IsLocalAccountID: h.localAccountIDs,
 					TableBucketName:  entry.Entry.Name,
+					TableBucketTags:  bucketTags,
+					ResourceTags:     bucketTags,
 					IdentityActions:  identityActions,
 					DefaultAllow:     h.defaultAllowFor(r),
 				}) {
@@ -321,6 +336,12 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 		} else {
 			bucketPolicy = string(policyData)
 		}
+		var bucketTags map[string]string
+		if bucketPolicy != "" {
+			if bucketTags, err = h.readTags(r.Context(), client, bucketPath); err != nil {
+				return err
+			}
+		}
 
 		bucketARN := h.generateTableBucketARN(metadata.OwnerAccountID, bucketName)
 		principal := h.getAccountID(r)
@@ -330,6 +351,8 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 			Subject:          callerSubject(r),
 			IsLocalAccountID: h.localAccountIDs,
 			TableBucketName:  bucketName,
+			TableBucketTags:  bucketTags,
+			ResourceTags:     bucketTags,
 			IdentityActions:  identityActions,
 			DefaultAllow:     h.defaultAllowFor(r),
 		}) {
@@ -413,7 +436,7 @@ func (h *S3TablesHandler) handleDeleteTableBucket(w http.ResponseWriter, r *http
 			return nil
 		}
 		for _, leftover := range leftovers {
-			holdsFiles, err := h.dirHoldsFiles(r.Context(), client, path.Join(bucketPath, leftover.Name))
+			holdsFiles, err := DirHoldsFiles(r.Context(), client, path.Join(bucketPath, leftover.Name), time.Time{})
 			if err != nil {
 				return err
 			}

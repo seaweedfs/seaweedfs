@@ -230,8 +230,28 @@ func MakeWithHTTPClient(conf *remote_pb.RemoteConf, httpClient *http.Client) (re
 	if httpClient != nil {
 		config.HTTPClient = httpClient
 	}
+	workload := false
+	if conf.Type == "s3" {
+		var err error
+		if workload, err = workloadCredentialsMode(); err != nil {
+			return nil, err
+		}
+	}
 	if opt.accessKey != "" && opt.secretKey != "" {
 		config.Credentials = credentials.NewStaticCredentials(opt.accessKey, opt.secretKey, "")
+	} else if workload {
+		// the process asks for the workload's identity only
+		// (WEED_REMOTE_S3_CREDENTIALS=workload): never the environment's keys,
+		// which may be this server's own S3 identity
+		if opt.accessKey != "" || opt.secretKey != "" {
+			return nil, fmt.Errorf("%s remote %q has only one of access key and secret; with %s=workload give both or neither",
+				opt.name, conf.Name, workloadCredentialsEnv)
+		}
+		creds, err := workloadCredentials(opt.region)
+		if err != nil {
+			return nil, fmt.Errorf("create %s workload credentials: %w", opt.name, err)
+		}
+		config.Credentials = creds
 	} else if opt.anonymousWhenNoCreds && opt.accessKey == "" && opt.secretKey == "" && !awsCredentialSourceConfigured() {
 		// Explicitly disable signing for public buckets. When the environment
 		// names an AWS credential source, leave Credentials nil so the SDK
@@ -254,10 +274,14 @@ func MakeWithHTTPClient(conf *remote_pb.RemoteConf, httpClient *http.Client) (re
 		config.Credentials = credSess.Config.Credentials
 	}
 
-	sess, err := session.NewSessionWithOptions(session.Options{
+	sessOpts := session.Options{
 		Config:            *config,
 		SharedConfigState: session.SharedConfigEnable,
-	})
+	}
+	if workload {
+		sessOpts.SharedConfigFiles = []string{}
+	}
+	sess, err := session.NewSessionWithOptions(sessOpts)
 	if err != nil {
 		return nil, fmt.Errorf("create %s session: %w", opt.name, err)
 	}

@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -191,9 +192,9 @@ renameat2()
 */
 const (
 	RenameEmptyFlag = 0
-	RenameNoReplace = 1
-	RenameExchange  = 2
-	RenameWhiteout  = 3
+	RenameNoReplace = 1 << 0
+	RenameExchange  = 1 << 1
+	RenameWhiteout  = 1 << 2
 )
 
 func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string, newName string) (code fuse.Status) {
@@ -201,21 +202,18 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		return fuse.Status(syscall.ENOSPC)
 	}
 
-	// Both names end up in StreamRenameEntryRequest (proto string fields), so
-	// sanitize both. checkName handles newName's length check; oldName may
-	// legitimately be a pre-existing entry whose bytes were not validated.
-	oldName = sanitizeFuseName(oldName)
+	if !utf8.ValidString(oldName) {
+		return fuse.ENOENT
+	}
 	var s fuse.Status
 	if newName, s = checkName(newName); s != fuse.OK {
 		return s
 	}
 
+	// The filer moves one entry: it can neither swap two nor leave a whiteout.
 	switch in.Flags {
 	case RenameEmptyFlag:
 	case RenameNoReplace:
-	case RenameExchange:
-	case RenameWhiteout:
-		return fuse.ENOTSUP
 	default:
 		return fuse.EINVAL
 	}

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net"
 	"os"
+	"path"
+	"strings"
 	"testing"
 
 	"github.com/pkg/sftp"
@@ -15,6 +17,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestPathWithin(t *testing.T) {
@@ -385,6 +388,19 @@ func (f *permissionTestFiler) LookupDirectoryEntry(_ context.Context, req *filer
 		return &filer_pb.LookupDirectoryEntryResponse{Entry: entry}, nil
 	}
 	return nil, status.Error(codes.NotFound, "no entry is found")
+}
+
+func (f *permissionTestFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream grpc.ServerStreamingServer[filer_pb.ListEntriesResponse]) error {
+	for p, entry := range f.entries {
+		if dir, name := path.Split(p); strings.TrimSuffix(dir, "/") == req.Directory && name > req.StartFromFileName {
+			child := proto.Clone(entry).(*filer_pb.Entry)
+			child.Name = name
+			if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: child}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (f *permissionTestFiler) AtomicRenameEntry(_ context.Context, req *filer_pb.AtomicRenameEntryRequest) (*filer_pb.AtomicRenameEntryResponse, error) {

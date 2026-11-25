@@ -789,6 +789,65 @@ on install.
   | toJson | sha256sum -}}
 {{- end -}}
 
+{{/*
+The s3-config-reloader sidecar of the filer and S3 pods. It checks the mounted identities file every
+second and sends SIGHUP to SeaweedFS when it changes, so SeaweedFS loads it again without a restart.
+It only signals once SeaweedFS listens on its S3 port, because SeaweedFS registers the reload when it
+starts serving S3, and it sends one SIGHUP when it starts, which catches changes made while it was not
+running. It needs the pod's process namespace to see SeaweedFS, and the same user to signal it, so it
+uses the component's image and container security context.
+Usage: include "seaweedfs.s3.configReloaderContainer" (dict "root" $ "image" <image> "port" <S3 port>
+  "resources" <resources> "securityContext" <the component's containerSecurityContext>)
+*/}}
+{{- define "seaweedfs.s3.configReloaderContainer" -}}
+- name: s3-config-reloader
+  image: {{ .image }}
+  imagePullPolicy: {{ default "IfNotPresent" .root.Values.global.seaweedfs.imagePullPolicy }}
+  command:
+    - /bin/sh
+    - -c
+    - |
+      config_file=/etc/sw/seaweedfs_s3_config
+      # /proc/net/tcp lists ports in hex, and 0A is the state LISTEN.
+      s3_port=$(printf '%04X' {{ .port }})
+      last_hash=""
+      warned=""
+      while sleep 1; do
+        current_hash=$(sha256sum "$config_file" 2>/dev/null | cut -d' ' -f1)
+        if [ -z "$current_hash" ] || [ "$current_hash" = "$last_hash" ]; then
+          continue
+        fi
+        if ! grep -qE ":$s3_port [0-9A-F]+:[0-9A-F]+ 0A " /proc/net/tcp /proc/net/tcp6 2>/dev/null; then
+          continue
+        fi
+        signalled=""
+        for process_dir in /proc/[0-9]*; do
+          if [ "$(cat "$process_dir/comm" 2>/dev/null)" = "weed" ] && kill -HUP "${process_dir#/proc/}" 2>/dev/null; then
+            echo "S3 config changed (sha256 $current_hash), sent SIGHUP to weed (PID ${process_dir#/proc/})"
+            signalled=1
+          fi
+        done
+        if [ -n "$signalled" ]; then
+          last_hash=$current_hash
+          warned=""
+        elif [ -z "$warned" ]; then
+          echo "S3 config changed, but no weed process is visible: the pod must share its process namespace, and the sidecar must run as the same user as SeaweedFS" >&2
+          warned=1
+        fi
+      done
+  volumeMounts:
+    - name: config-users
+      mountPath: /etc/sw
+      readOnly: true
+  {{- with .resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- if .securityContext.enabled }}
+  securityContext: {{- omit .securityContext "enabled" | toYaml | nindent 4 }}
+  {{- end }}
+{{- end -}}
+
 {{/* Master ConfigMap checksum, ignoring commonLabels so labels do not roll the pods */}}
 {{- define "seaweedfs.master.configChecksum" -}}
 {{- $context := merge (dict "Values" (omit .Values "commonLabels")) (omit . "Values") -}}

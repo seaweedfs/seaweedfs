@@ -887,7 +887,7 @@ func isLoopbackIp(ip string) bool {
 	if ip == "" {
 		return false
 	}
-	parsed := net.ParseIP(ip)
+	parsed := net.ParseIP(strings.TrimSuffix(strings.TrimPrefix(ip, "["), "]"))
 	if parsed == nil {
 		// Unresolved hostname — treat as non-loopback to be safe.
 		return false

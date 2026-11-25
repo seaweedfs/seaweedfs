@@ -130,8 +130,9 @@ func (t *Topology) ToVolumeLocations() (volumeLocations []*master_pb.VolumeLocat
 
 func (t *Topology) ToTopologyInfo(filter VolumeFilter) *master_pb.TopologyInfo {
 	m := &master_pb.TopologyInfo{
-		Id:        string(t.Id()),
-		DiskInfos: t.diskUsages.ToDiskInfo(),
+		Id:         string(t.Id()),
+		DiskInfos:  t.diskUsages.ToDiskInfo(),
+		TopologyId: t.GetTopologyId(),
 	}
 	for _, c := range t.Children() {
 		dc := c.(*DataCenter)

@@ -236,6 +236,8 @@ message KeepConnectedRequest {
   uint32 metrics_port = 9;
   // Port an S3 gateway serves its Lance Namespace on, or 0 when it serves none.
   uint32 lance_port = 10;
+  // URL an S3 gateway serves the S3 API on, or empty when it advertises none.
+  string s3_endpoint = 11;
 }
 
 message VolumeLocation {
@@ -450,6 +452,8 @@ message TopologyInfo {
   string id = 1;
   repeated DataCenterInfo data_center_infos = 2;
   map<string, DiskInfo> diskInfos = 3;
+  // The cluster's persisted UUID, the same value as topology_id in heartbeats.
+  string topology_id = 4;
 }
 message VolumeListRequest {
   // Empty and zero take everything. Only the volumes and ec shards listed
@@ -562,6 +566,7 @@ message ListClusterNodesResponse {
     string version = 2;
     int64 created_at_ns = 4;
     uint32 lance_port = 7;
+    string s3_endpoint = 8;
     string data_center = 5;
     string rack = 6;
   }

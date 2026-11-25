@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"google.golang.org/protobuf/proto"
@@ -101,24 +102,13 @@ func (wfs *WFS) mapPbIdFromLocalToFiler(entry *filer_pb.Entry) {
 	entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.LocalToFiler(entry.Attributes.Uid, entry.Attributes.Gid)
 }
 
-// sanitizeFuseName scrubs a name arriving from the kernel before it is placed
-// in a proto string field. Linux (and macOS) pass raw bytes for filenames;
-// apps like GNOME Trash produce partial files whose names contain binary
-// payloads. Proto3 `string` fields require valid UTF-8, so an unsanitized
-// name causes gRPC to fail the whole AssignVolume / CreateEntry / DeleteEntry
-// RPC with "grpc: error while marshaling: string field contains invalid
-// UTF-8", which surfaces to userspace as EIO. Sanitizing at every FUSE
-// boundary keeps filer RPCs marshalable and prevents a single ill-named file
-// from poisoning the shared gRPC channel for every other in-flight request.
-//
-// Delegates to util.SanitizeUTF8Name so the replacement character is chosen
-// in exactly one place across the codebase.
-func sanitizeFuseName(name string) string {
-	return util.SanitizeUTF8Name(name)
-}
-
+// checkName refuses a name that is not valid UTF-8 instead of rewriting it:
+// proto string fields cannot carry it, and any rewrite maps different names
+// to one entry.
 func checkName(name string) (string, fuse.Status) {
-	name = sanitizeFuseName(name)
+	if !utf8.ValidString(name) {
+		return name, fuse.Status(syscall.EILSEQ)
+	}
 	// The Linux FUSE kernel module enforces NAME_MAX=255 at the VFS layer.
 	// Return ENAMETOOLONG early to avoid creating entries that cannot be
 	// looked up via normal syscalls (stat, chmod, etc.).

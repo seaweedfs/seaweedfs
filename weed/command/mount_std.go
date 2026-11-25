@@ -3,6 +3,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mount"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/mount/unmount"
 
@@ -35,6 +37,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		fmt.Printf("Please specify a reasonable buffer size.\n")
 		return false
 	}
+	if err := checkIdmap(runtime.GOOS, *option.idmap, *option.defaultPermissions); err != nil {
+		fmt.Println(err)
+		return false
+	}
 
 	filerAddresses, grpcDialOption, cipher, bucketRootPath, ok := connectToFiler(option)
 	if !ok {
@@ -42,6 +48,33 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	filerMountRootPath := *option.filerMountRootPath
+	var sseReader *mount.SSES3Reader
+	if *option.sseS3Read {
+		bucketPath, ok := bucketPathForMountRoot(filerMountRootPath, bucketRootPath)
+		if !ok || !*option.readOnly || *option.allowOthers {
+			glog.Errorf("-sseS3Read requires a bucket-root mount, -readOnly and -allowOthers=false")
+			return false
+		}
+		if resolveMountRoot(filerMountRootPath) != bucketPath {
+			glog.Errorf("-sseS3Read requires -filer.path=%s", bucketPath)
+			return false
+		}
+		for _, opt := range option.extraOptions {
+			for _, token := range strings.Split(opt, ",") {
+				switch token {
+				case "allow_other", "allow_root", "rw":
+					glog.Errorf("-sseS3Read is incompatible with mount option %q", token)
+					return false
+				}
+			}
+		}
+		var err error
+		sseReader, err = mount.NewSSES3Reader(context.Background(), bucketPath, filerAddresses, grpcDialOption)
+		if err != nil {
+			glog.Errorf("configure SSE-S3 reads: %v", err)
+			return false
+		}
+	}
 
 	// clean up mount point
 	dir := util.ResolvePath(*option.dir)
@@ -161,6 +194,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		ExplicitDataCacheControl: false,
 		DirectMount:              true,
 		DirectMountFlags:         0,
+		IDMappedMount:            *option.idmap,
 		//SyncRead:                 false, // set to false to enable the FUSE_CAP_ASYNC_READ capability
 		EnableAcl: true,
 	}
@@ -212,6 +246,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	cacheDirForRead, cacheDirForWrite := resolveCacheDirs(option)
 
 	seaweedFileSystem := buildSeaweedFileSystem(option, fileSystemParams{
+		sseS3Reader:      sseReader,
 		dir:              dir,
 		mountRoot:        mountRoot,
 		filerAddresses:   filerAddresses,
@@ -238,6 +273,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		// setuid, stale mount point); the goroutine dump Fatalf adds buries it.
 		removeMountSocket()
 		glog.Exitf("Mount fail: %v", err)
+	}
+	if *option.idmap && server.KernelSettings().Flags64()&fuse.CAP_ALLOW_IDMAP == 0 {
+		glog.Warningf("-idmap: this kernel does not support ID-mapped FUSE mounts (Linux 6.12 or later), so ID-mapped bind mounts of %s will fail", dir)
 	}
 	grace.OnInterrupt(func() {
 		if err := unmount.Unmount(dir); err != nil {
@@ -274,4 +312,20 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	seaweedFileSystem.ClearCacheDir()
 
 	return true
+}
+
+// checkIdmap refuses -idmap on an OS other than Linux and with
+// -defaultPermissions=false. The kernel accepts FUSE_ALLOW_IDMAP only with
+// default_permissions, and go-fuse then adds that option on its own, so the
+// kernel would ignore -defaultPermissions=false.
+func checkIdmap(goos string, idmap, defaultPermissions bool) error {
+	switch {
+	case !idmap:
+		return nil
+	case goos != "linux":
+		return fmt.Errorf("-idmap is only supported on Linux")
+	case !defaultPermissions:
+		return fmt.Errorf("-idmap requires -defaultPermissions")
+	}
+	return nil
 }

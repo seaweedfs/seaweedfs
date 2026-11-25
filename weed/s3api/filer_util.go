@@ -32,6 +32,46 @@ func (s3a *S3ApiServer) mkdirExclusive(parentDirectoryPath string, dirName strin
 
 }
 
+// ensureObjectParent creates the directories from the bucket down to dir, the
+// directory a stored object entry lives in, that are missing: the filer stores
+// an entry before its parent directories, so a create that failed on a parent
+// leaves an object GET finds but no listing shows. Each level is checked, as a
+// failed mkdir can leave a lower directory stored without its parent. The
+// bucket directory and upload directories are never created here: a missing
+// bucket fails the repair, as the filer would recreate it as a plain directory.
+func (s3a *S3ApiServer) ensureObjectParent(ctx context.Context, bucket, dir string) error {
+	bucketDir, uploads := s3a.bucketDir(bucket), s3a.genUploadsFolder(bucket)
+	if !strings.HasPrefix(dir, bucketDir+"/") || dir == uploads || strings.HasPrefix(dir, uploads+"/") {
+		return nil
+	}
+	if exists, err := filer_pb.Exists(ctx, s3a, s3a.bucketRoot(bucket), bucket, true); err != nil {
+		return err
+	} else if !exists {
+		return fmt.Errorf("bucket directory %s is missing", bucketDir)
+	}
+	parent := bucketDir
+	for _, name := range strings.Split(strings.TrimPrefix(dir, bucketDir+"/"), "/") {
+		if name == "" {
+			continue
+		}
+		if exists, err := filer_pb.Exists(ctx, s3a, parent, name, true); err != nil || !exists {
+			if err := filer_pb.MkdirExclusive(ctx, s3a, parent, name, nil); errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+				// A file left there by a failed promotion is not a directory a listing descends.
+				if exists, err = filer_pb.Exists(ctx, s3a, parent, name, true); err == nil && !exists {
+					err = fmt.Errorf("%s/%s is not a directory", parent, name)
+				}
+				if err != nil {
+					return err
+				}
+			} else if err != nil {
+				return err
+			}
+		}
+		parent += "/" + name
+	}
+	return nil
+}
+
 // concurrentEntryIsForeign: after PutBucket's exclusive mkdir met an entry,
 // whether that entry must be answered BucketAlreadyExists without looking at
 // its owner: a table bucket (it carries no S3 owner and must never read as

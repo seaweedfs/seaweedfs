@@ -17,6 +17,7 @@ service VectorService {
   rpc DeleteVectors(DeleteVectorsRequest) returns (DeleteVectorsResponse);
   rpc ListVectors(ListVectorsRequest) returns (ListVectorsResponse);
   rpc QueryVectors(QueryVectorsRequest) returns (QueryVectorsResponse);
+  rpc QueryIndexedVectors(QueryVectorsRequest) returns (QueryVectorsResponse);
   // How this engine's queries of an index filtered on each metadata key
   // over the last hour.
   rpc FilterStats(FilterStatsRequest) returns (FilterStatsResponse);

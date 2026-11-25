@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -212,8 +213,26 @@ func runFuse(cmd *Command, args []string) bool {
 			} else {
 				panic(fmt.Errorf("nonempty: %s", err))
 			}
+		case "defaultPermissions":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.defaultPermissions = &parsed
+			} else {
+				panic(fmt.Errorf("defaultPermissions: %s", err))
+			}
+		case "idmap":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.idmap = &parsed
+			} else {
+				panic(fmt.Errorf("idmap: %s", err))
+			}
 		case "volumeServerAccess":
 			mountOptions.volumeServerAccess = &parameter.value
+		case "sseS3Read":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.sseS3Read = &parsed
+			} else {
+				panic(fmt.Errorf("sseS3Read: %s", err))
+			}
 		case "map.uid":
 			mountOptions.uidMap = &parameter.value
 		case "map.gid":
@@ -297,6 +316,10 @@ func runFuse(cmd *Command, args []string) bool {
 			}
 			mountOptions.extraOptions = append(mountOptions.extraOptions, t)
 		}
+	}
+
+	if err := checkIdmap(runtime.GOOS, *mountOptions.idmap, *mountOptions.defaultPermissions); err != nil {
+		panic(err)
 	}
 
 	util_http.InitGlobalHttpClient()

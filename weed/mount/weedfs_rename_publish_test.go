@@ -190,6 +190,48 @@ func renameFile(wfs *WFS, oldDirInode, newDirInode uint64, oldName, newName stri
 	}, oldName, newName)
 }
 
+// An unsupported flag must not fall through to a plain rename over the target.
+func TestRenameRefusesFlagsItDoesNotImplement(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		flags uint32
+	}{
+		{"exchange", RenameExchange},
+		{"whiteout", RenameWhiteout},
+		{"noreplace-and-exchange", RenameNoReplace | RenameExchange},
+		{"unknown", 1 << 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wfs, fake, dirInode, _ := newRenameRaceWFS(t)
+			file := func(name string, inode uint64) *filer_pb.Entry {
+				return &filer_pb.Entry{
+					Name:       name,
+					Attributes: &filer_pb.FuseAttributes{FileMode: 0o644, Uid: 123, Gid: 456, Mtime: 1, Crtime: 1, Inode: inode},
+				}
+			}
+			fake.mu.Lock()
+			fake.entries["/checkpoints/a"] = file("a", 11)
+			fake.entries["/checkpoints/b"] = file("b", 22)
+			fake.mu.Unlock()
+
+			code := wfs.Rename(make(chan struct{}), &fuse.RenameIn{
+				InHeader: fuse.InHeader{NodeId: dirInode, Caller: fuse.Caller{Owner: fuse.Owner{Uid: 123, Gid: 456}}},
+				Newdir:   dirInode,
+				Flags:    tc.flags,
+			}, "a", "b")
+			if code != fuse.EINVAL {
+				t.Fatalf("rename with flags %#x: %v, want EINVAL", tc.flags, code)
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			a, b := fake.entries["/checkpoints/a"], fake.entries["/checkpoints/b"]
+			if a.GetAttributes().GetInode() != 11 || b.GetAttributes().GetInode() != 22 {
+				t.Fatalf("after the refused rename a=%v b=%v, want both where they were", a, b)
+			}
+		})
+	}
+}
+
 func waitFor(t *testing.T, what string, ch chan struct{}) {
 	t.Helper()
 	select {

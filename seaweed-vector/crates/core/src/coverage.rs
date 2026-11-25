@@ -150,6 +150,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn indexed_only_skips_new_rows_until_indexed_and_honors_deletes() {
+        let dir = TempDir::new().unwrap();
+        let mut dataset = indexed_dataset(&dir, &["a"; 64]).await;
+        append_dataset(&mut dataset, &[vec![9.0; DIM]], &["b"]).await;
+        let table = VectorTable::resolve(&dataset, None, None).unwrap();
+        let query = Query {
+            vector: vec![9.0; DIM],
+            k: 100,
+            filter: None,
+            postfilter: false,
+            distance: DistanceType::L2,
+            nprobes: Some(4),
+            index_segments: None,
+            fragments: None,
+            exact_match_limit: None,
+        };
+        let (hits, excluded) = crate::query::indexed_only(&dataset, &table, &query)
+            .await
+            .unwrap();
+        assert_eq!(excluded, 1);
+        assert_eq!(hits.len(), 64);
+        assert!(hits.iter().all(|h| h.key != "k64"));
+        dataset
+            .optimize_indices(&lance_index::optimize::OptimizeOptions::append())
+            .await
+            .unwrap();
+        let (hits, excluded) = crate::query::indexed_only(&dataset, &table, &query)
+            .await
+            .unwrap();
+        assert_eq!(excluded, 0);
+        assert_eq!(hits[0].key, "k64");
+        dataset.delete("key = 'k64'").await.unwrap();
+        let (hits, _) = crate::query::indexed_only(&dataset, &table, &query)
+            .await
+            .unwrap();
+        assert!(hits.iter().all(|h| h.key != "k64"));
+        let missing = write_dataset(&TempDir::new().unwrap(), &vectors(4, DIM), &["a"; 4]).await;
+        assert!(
+            crate::query::indexed_only(&missing, &table, &query)
+                .await
+                .unwrap_err()
+                .is::<crate::query::IndexedOnlyError>()
+        );
+    }
+
+    #[tokio::test]
     async fn prefiltered_ann_matches_filtered_flat() {
         let dir = TempDir::new().unwrap();
         let tags: Vec<&str> = (0..64)

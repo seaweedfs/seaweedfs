@@ -488,11 +488,10 @@ var ErrFullTeardownNotAcked = erasure_coding.ErrFullTeardownNotAcked
 
 // PingVolumeServer probes node liveness with an empty-target Ping, which is never
 // maintenance-gated, and returns the raw Ping error (nil on success). It lets the
-// orphan sweep disambiguate a delete codes.Unavailable: a Rust volume server in
-// maintenance mode fails the maintenance-gated delete with Unavailable yet answers
-// Ping, whereas a genuinely-down node fails Ping with a transport Unavailable too.
-// A Go server returns Unknown for maintenance, which IsNodeUnreachable already
-// treats as fatal. The caller classifies the result with ClassifyNodeLiveness:
+// orphan sweep disambiguate a delete codes.Unavailable: a server that refuses the
+// delete with Unavailable yet answers Ping is up, whereas a genuinely-down node
+// fails Ping with a transport Unavailable too. A server in maintenance mode
+// returns Unknown, which IsNodeUnreachable already treats as fatal. The caller classifies the result with ClassifyNodeLiveness:
 // only a Ping that itself transport-failed (codes.Unavailable) confirms the node
 // is down; a nil error (reachable) or any other Ping error (inconclusive — e.g. a
 // pre-Ping server returning Unimplemented, which means the node is up) is fatal.
@@ -521,8 +520,8 @@ func IsNodeUnreachable(err error) bool {
 type NodeLiveness int
 
 const (
-	// NodeUp: Ping succeeded — the node is reachable (e.g. a Rust volume server
-	// in maintenance mode that fails the delete but answers Ping).
+	// NodeUp: Ping succeeded — the node is reachable (e.g. a server that refuses
+	// the delete but answers Ping).
 	NodeUp NodeLiveness = iota
 	// NodeDown: Ping itself transport-failed with codes.Unavailable — the node is
 	// confirmed unreachable. The only state the orphan sweep may skip.

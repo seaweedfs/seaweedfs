@@ -203,8 +203,8 @@ func (fs *FilerServer) checkPermissions(ctx context.Context, r *http.Request, fi
 }
 
 func (fs *FilerServer) wormEnforcedForEntry(ctx context.Context, fullPath string) (bool, error) {
-	rule := fs.filer.FilerConf.MatchStorageRule(fullPath)
-	if !rule.GetWorm() {
+	conf := fs.filer.FilerConf
+	if !conf.MatchStorageRule(fullPath).GetWorm() {
 		return false, nil
 	}
 
@@ -217,24 +217,7 @@ func (fs *FilerServer) wormEnforcedForEntry(ctx context.Context, fullPath string
 		return false, err
 	}
 
-	// worm is not enforced
-	if entry.WORMEnforcedAtTsNs == 0 {
-		return false, nil
-	}
-
-	// worm will never expire
-	if rule.WormRetentionTimeSeconds == 0 {
-		return true, nil
-	}
-
-	enforcedAt := time.Unix(0, entry.WORMEnforcedAtTsNs)
-
-	// worm is expired
-	if time.Now().Sub(enforcedAt).Seconds() >= float64(rule.WormRetentionTimeSeconds) {
-		return false, nil
-	}
-
-	return true, nil
+	return conf.WormEnforced(fullPath, entry.WORMEnforcedAtTsNs), nil
 }
 
 func (fs *FilerServer) fixFilePath(ctx context.Context, r *http.Request, fileName string) string {
