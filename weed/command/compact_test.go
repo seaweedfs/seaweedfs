@@ -52,25 +52,38 @@ func compactedKeys(t *testing.T, base string) (indexed, intact []uint64) {
 	return indexed, intact
 }
 
-// A damaged header in the middle of the .dat: -method data copies every live
-// record past it and drops the damaged one, where -method index copies it as is.
+func damageDat(at int64, b []byte) func(t *testing.T, base string, offsets []int64) {
+	return func(t *testing.T, base string, offsets []int64) {
+		overwriteAt(t, base+".dat", offsets[2]+at, b)
+	}
+}
+
+// Damage to the middle record of five: both methods drop it and keep the
+// others. -method data trusts an intact record over a wrong index size.
 func TestCompactDataMethodSkipsUnreadableRecord(t *testing.T) {
 	sizeAt := int64(types.NeedleIdSize + types.CookieSize)
+	others := []uint64{1, 2, 4, 5}
 	for _, tc := range []struct {
-		name   string
-		at     int64
-		damage []byte
+		name      string
+		corrupt   func(t *testing.T, base string, offsets []int64)
+		wantData  []uint64
+		wantIndex []uint64
 	}{
-		{"garbage header", 0, bytes.Repeat([]byte{0xa5}, 16)},
-		{"size past the end", sizeAt, []byte{0x7f, 0xff, 0xff, 0xf0}},
-		{"size into the next record", sizeAt, []byte{0x00, 0x00, 0x00, 0x10}},
+		{"garbage header", damageDat(0, bytes.Repeat([]byte{0xa5}, 16)), others, others},
+		{"size past the end", damageDat(sizeAt, []byte{0x7f, 0xff, 0xff, 0xf0}), others, others},
+		{"size into the next record", damageDat(sizeAt, []byte{0x00, 0x00, 0x00, 0x10}), others, others},
+		{"data", damageDat(types.NeedleHeaderSize+10, []byte{0xee}), others, others},
+		{"index size", func(t *testing.T, base string, _ []int64) {
+			row := int64(slices.Index(indexedKeys(t, base+".idx"), 3))
+			overwriteAt(t, base+".idx", row*types.NeedleMapEntrySize+types.NeedleIdSize+types.OffsetSize, []byte{0x00, 0x00, 0x00, 0x01})
+		}, []uint64{1, 2, 3, 4, 5}, others},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			for _, method := range []string{"data", "index"} {
+			for method, want := range map[string][]uint64{"data": tc.wantData, "index": tc.wantIndex} {
 				dir := t.TempDir()
 				base, offsets := writeFixTestVolume(t, dir, 5)
 				doFixOneVolume(dir, "fix_7", "fix", 7, true)
-				overwriteAt(t, base+".dat", offsets[2]+tc.at, tc.damage)
+				tc.corrupt(t, base, offsets)
 
 				runCompactOnFixTestVolume(t, dir, method)
 
@@ -78,11 +91,8 @@ func TestCompactDataMethodSkipsUnreadableRecord(t *testing.T) {
 					t.Fatalf("-method %s: exit status %d", method, CommandExitStatus())
 				}
 				indexed, intact := compactedKeys(t, base)
-				if !slices.Equal(intact, []uint64{1, 2, 4, 5}) {
-					t.Errorf("-method %s: intact keys %v, want [1 2 4 5]", method, intact)
-				}
-				if method == "data" && !slices.Equal(indexed, intact) {
-					t.Errorf("-method data: indexed keys %v, want only the intact ones", indexed)
+				if !slices.Equal(indexed, want) || !slices.Equal(intact, want) {
+					t.Errorf("-method %s: indexed keys %v, intact keys %v, want %v", method, indexed, intact, want)
 				}
 			}
 		})

@@ -658,18 +658,25 @@ func (scanner *VolumeFileScanner4Vacuum) VisitSuperBlock(superBlock super_block.
 
 }
 func (scanner *VolumeFileScanner4Vacuum) ReadNeedleBody() bool {
-	return true
+	return false
 }
 
 func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) (err error) {
 	scanner.visited = offset
 	defer func() { scanner.visitErr = err }()
-	if n.HasTtl() && scanner.now >= n.LastModified+uint64(scanner.v.Ttl.Minutes()*60) {
-		return nil
-	}
 	nv, ok := scanner.v.nm.Get(n.Id)
 	glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
-	if ok && n.Size != nv.Size {
+	if !ok || nv.Offset.ToActualOffset() != offset {
+		return nil
+	}
+	if err := n.ReadData(scanner.v.DataBackend, offset, n.Size, scanner.v.Version()); err != nil {
+		if !isSkippableNeedleReadError(err) {
+			return fmt.Errorf("read needle %d at offset %d: %w", n.Id, offset, err)
+		}
+		glog.Errorf("compact volume %d: dropping unreadable needle key=%d offset=%d size=%d: %v", scanner.v.Id, n.Id, offset, n.Size, err)
+		return nil
+	}
+	if n.HasTtl() && scanner.now >= n.LastModified+uint64(scanner.v.Ttl.Minutes()*60) {
 		return nil
 	}
 	if ok && nv.Offset.ToActualOffset() == offset && nv.Size > 0 && nv.Size.IsValid() {
