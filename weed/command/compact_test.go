@@ -55,12 +55,15 @@ func compactedKeys(t *testing.T, base string) (indexed, intact []uint64) {
 // A damaged header in the middle of the .dat: -method data copies every live
 // record past it and drops the damaged one, where -method index copies it as is.
 func TestCompactDataMethodSkipsUnreadableRecord(t *testing.T) {
+	sizeAt := int64(types.NeedleIdSize + types.CookieSize)
 	for _, tc := range []struct {
 		name   string
 		at     int64
 		damage []byte
 	}{
 		{"garbage header", 0, bytes.Repeat([]byte{0xa5}, 16)},
+		{"size past the end", sizeAt, []byte{0x7f, 0xff, 0xff, 0xf0}},
+		{"size into the next record", sizeAt, []byte{0x00, 0x00, 0x00, 0x10}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, method := range []string{"data", "index"} {
