@@ -267,7 +267,11 @@ func (c *ChunkReadAt) doReadAt(ctx context.Context, p []byte, offset int64) (n i
 			copied, readErr := c.readChunkSliceAt(ctx, p[task.bufferStart:task.bufferEnd], task.chunk, nil, task.chunkOffset)
 			ts = max(ts, task.chunk.ModifiedTsNs)
 			if readErr != nil {
-				glog.Errorf("fetching chunk %+v: %v\n", task.chunk, readErr)
+				if ctx.Err() == context.Canceled {
+					glog.V(3).Infof("fetching chunk %+v: %v", task.chunk, readErr)
+				} else {
+					glog.Errorf("fetching chunk %+v: %v", task.chunk, readErr)
+				}
 				return n + copied, ts, readErr
 			}
 			n += copied
