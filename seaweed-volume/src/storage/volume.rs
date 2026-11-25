@@ -973,6 +973,23 @@ fn needle_expired(n: &Needle) -> bool {
     now_ns >= expire_at_ns
 }
 
+/// Applies the volume TTL when the volume has one, and otherwise the needle's
+/// own TTL the way reads do.
+fn vacuum_ttl_expired(
+    n: &Needle,
+    volume_ttl: &crate::storage::needle::ttl::TTL,
+    now_secs: u64,
+) -> bool {
+    if !n.has_ttl() {
+        return false;
+    }
+    let ttl_minutes = volume_ttl.minutes();
+    if ttl_minutes == 0 {
+        return needle_expired(n);
+    }
+    n.last_modified > 0 && now_secs >= n.last_modified + (ttl_minutes as u64) * 60
+}
+
 /// Holds `Volume::is_compacting` set; dropping it clears the flag.
 struct CompactionClaim(Arc<AtomicBool>);
 
@@ -1096,15 +1113,8 @@ impl CompactionJob {
                 continue;
             }
 
-            // Skip TTL-expired needles using the volume's TTL (matches Go's volume_vacuum.go)
-            if n.has_ttl() {
-                let ttl_minutes = self.super_block.ttl.minutes();
-                if ttl_minutes > 0 && n.last_modified > 0 {
-                    let expire_at = n.last_modified + (ttl_minutes as u64) * 60;
-                    if now >= expire_at {
-                        continue;
-                    }
-                }
+            if vacuum_ttl_expired(&n, &self.super_block.ttl, now) {
+                continue;
             }
 
             // Tally the live bytes from the frozen snapshot this loop copied
@@ -11040,6 +11050,93 @@ mod tests {
         };
         v.read_needle(&mut got).unwrap();
         assert_eq!(got.data, b"late-write");
+    }
+
+    #[test]
+    fn test_compact_by_index_keeps_unexpired_needle_ttl_on_plain_volume() {
+        use crate::storage::needle::ttl::TTL;
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let v = make_test_volume(dir);
+
+        for i in 1..=8u64 {
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: format!("data-{}", i).into_bytes(),
+                data_size: format!("data-{}", i).len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true, false).unwrap();
+        }
+        let mut n = Needle {
+            id: NeedleId(100),
+            cookie: Cookie(100),
+            data: b"own-ttl".to_vec(),
+            data_size: 7,
+            ttl: Some(TTL::read("7d").unwrap()),
+            last_modified: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            ..Needle::default()
+        };
+        n.set_has_ttl();
+        n.set_has_last_modified_date();
+        v.write_needle(&mut n, true, false).unwrap();
+
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+
+        let mut got = Needle {
+            id: NeedleId(100),
+            cookie: Cookie(100),
+            ..Needle::default()
+        };
+        v.read_needle(&mut got).unwrap();
+        assert_eq!(got.data, b"own-ttl");
+    }
+
+    #[test]
+    fn test_vacuum_ttl_expired() {
+        use crate::storage::needle::ttl::TTL;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let ttl_7d = TTL::read("7d").unwrap();
+        let ttl_1h = TTL::read("1h").unwrap();
+        let ttl_needle = |ttl: TTL, age_secs: u64| {
+            let mut n = Needle {
+                ttl: Some(ttl),
+                last_modified: now.as_secs() - age_secs,
+                append_at_ns: (now.as_nanos() as u64) - age_secs * 1_000_000_000,
+                ..Needle::default()
+            };
+            n.set_has_ttl();
+            n.set_has_last_modified_date();
+            n
+        };
+        let secs = now.as_secs();
+        assert!(!vacuum_ttl_expired(&Needle::default(), &ttl_1h, secs));
+        assert!(!vacuum_ttl_expired(
+            &ttl_needle(ttl_7d, 3600),
+            &TTL::EMPTY,
+            secs
+        ));
+        assert!(vacuum_ttl_expired(
+            &ttl_needle(ttl_1h, 7200),
+            &TTL::EMPTY,
+            secs
+        ));
+        assert!(!vacuum_ttl_expired(
+            &ttl_needle(TTL::EMPTY, 172800),
+            &TTL::EMPTY,
+            secs
+        ));
+        assert!(!vacuum_ttl_expired(
+            &ttl_needle(ttl_1h, 1800),
+            &ttl_1h,
+            secs
+        ));
+        assert!(vacuum_ttl_expired(&ttl_needle(ttl_7d, 7200), &ttl_1h, secs));
     }
 
     #[test]
