@@ -85,9 +85,16 @@ func TestPutAnswersCommittedETag(t *testing.T) {
 	outcome := &putOutcome{}
 	f := &WebDavFile{
 		bufWriter: buffered_writer.NewBufferedWriteCloser(1024),
-		entry: &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{},
-			Chunks: []*filer_pb.FileChunk{{FileId: "1,01", ETag: "XUFAKrxLKna5cZ2REBfFkg=="}}},
-		ctx: context.WithValue(context.Background(), putOutcomeKey{}, outcome),
+		entry:     &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{}},
+		ctx:       context.WithValue(context.Background(), putOutcomeKey{}, outcome),
+	}
+	// the last chunk is only uploaded by Close
+	f.bufWriter.FlushFunc = func(data []byte, offset int64) error {
+		f.entry.Chunks = append(f.entry.Chunks, &filer_pb.FileChunk{FileId: "1,01", ETag: "XUFAKrxLKna5cZ2REBfFkg=="})
+		return nil
+	}
+	if _, err := f.bufWriter.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
 	}
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
