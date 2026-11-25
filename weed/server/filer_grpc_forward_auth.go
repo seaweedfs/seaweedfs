@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc/metadata"
@@ -24,6 +25,18 @@ func withHTTPBearerContext(ctx context.Context, token security.EncodedJwt) conte
 		return withAuthorizationValues(ctx, nil)
 	}
 	return withAuthorizationValues(ctx, []string{security.BearerPrefix + string(token)})
+}
+
+// withHTTPForwardAuthContext carries an HTTP caller's bearer only when
+// require-mode is enabled. In the compatibility mode,
+// explicitly remove authorization so a stale token from an outer call cannot
+// change the request's existing tokenless behavior.
+func (fs *FilerServer) withHTTPForwardAuthContext(ctx context.Context, r *http.Request) context.Context {
+	var token security.EncodedJwt
+	if settings := fs.grpcScopeSettings.Load(); settings != nil && settings.requireToken {
+		token = security.GetJwt(r)
+	}
+	return withHTTPBearerContext(ctx, token)
 }
 
 func withAuthorizationValues(ctx context.Context, values []string) context.Context {
