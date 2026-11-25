@@ -50,10 +50,10 @@ func (fh *FileHandle) bufferInlineContent(entry *filer_pb.Entry, tsNs int64) err
 }
 
 // resizeInlineContent gets entry's content ready for the file's size to
-// become size: cut to it, or, when the file grows past the content, stored as
-// a chunk with save, for the bytes after it to read as zeros. chunked reports
-// that entry has a chunk more.
-func resizeInlineContent(entry *filer_pb.Entry, size uint64, tsNs int64, save filer.SaveDataAsChunkFunctionType) (chunked bool, err error) {
+// become size: cut to it, or, when the file grows past the content, stored
+// with save in chunks of chunkSize as buffered writes are, for the bytes after
+// it to read as zeros. chunked reports that entry has chunks more.
+func resizeInlineContent(entry *filer_pb.Entry, size uint64, tsNs int64, chunkSize int64, save filer.SaveDataAsChunkFunctionType) (chunked bool, err error) {
 	if len(entry.GetContent()) == 0 {
 		return false, nil
 	}
@@ -64,14 +64,20 @@ func resizeInlineContent(entry *filer_pb.Entry, size uint64, tsNs int64, save fi
 		}
 		return false, nil
 	}
-	if len(content) > 0 {
-		chunk, err := save(bytes.NewReader(content), entry.GetName(), 0, tsNs, uint64(len(content)))
+	var chunks []*filer_pb.FileChunk
+	for offset := int64(0); offset < int64(len(content)); {
+		n := int64(len(content)) - offset
+		if chunkSize > 0 && n > chunkSize {
+			n = chunkSize
+		}
+		chunk, err := save(bytes.NewReader(content[offset:offset+n]), entry.GetName(), offset, tsNs, uint64(n))
 		if err != nil {
 			return false, fmt.Errorf("inline content of %s: %w", entry.GetName(), err)
 		}
-		entry.Chunks = append(entry.Chunks, chunk)
-		chunked = true
+		chunks = append(chunks, chunk)
+		offset += n
 	}
+	entry.Chunks = append(entry.Chunks, chunks...)
 	entry.Content = nil
-	return chunked, nil
+	return len(chunks) > 0, nil
 }

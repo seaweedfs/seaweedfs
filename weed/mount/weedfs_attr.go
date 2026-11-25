@@ -135,7 +135,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		wfs.invalidateOpenMtimeCache(input.NodeId)
 		// Content inside the entry is cut to the new size, or stored as a
 		// chunk when the file grows past it.
-		if chunked, err := resizeInlineContent(entry, size, time.Now().UnixNano(), wfs.saveDataAsChunk(path)); err != nil {
+		if chunked, err := resizeInlineContent(entry, size, time.Now().UnixNano(), wfs.option.ChunkSizeLimit, wfs.saveDataAsChunk(path)); err != nil {
 			glog.Errorf("setattr %v size=%v: %v", path, size, err)
 			return writeErrorToFuseStatus(err)
 		} else if chunked && fh != nil {

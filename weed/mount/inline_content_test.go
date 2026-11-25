@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"sort"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -222,10 +223,11 @@ func TestResizeInlineContent(t *testing.T) {
 		wantContent string
 		wantSaved   []string
 	}{
+		// in chunks of 4 bytes
 		{"cut", entry(inlineTestContent, 10), 4, "0123", nil},
 		{"cut to nothing", entry(inlineTestContent, 10), 0, "", nil},
 		{"the same size", entry(inlineTestContent, 10), 10, inlineTestContent, nil},
-		{"grown", entry(inlineTestContent, 10), 16, "", []string{inlineTestContent}},
+		{"grown", entry(inlineTestContent, 10), 16, "", []string{"0123", "4567", "89"}},
 		// an older mount cut the size and left the content
 		{"grown after an old cut", entry(inlineTestContent, 4), 16, "", []string{"0123"}},
 		{"the size of the content after an old cut", entry(inlineTestContent, 4), 10, "", []string{"0123"}},
@@ -234,21 +236,25 @@ func TestResizeInlineContent(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			saved = nil
-			chunked, err := resizeInlineContent(tc.entry, tc.size, 7, save)
+			chunked, err := resizeInlineContent(tc.entry, tc.size, 7, 4, save)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if string(tc.entry.Content) != tc.wantContent {
 				t.Fatalf("content %q, want %q", tc.entry.Content, tc.wantContent)
 			}
-			if len(saved) != len(tc.wantSaved) || len(saved) == 1 && saved[0] != tc.wantSaved[0] {
+			if strings.Join(saved, "|") != strings.Join(tc.wantSaved, "|") {
 				t.Fatalf("saved %q as chunks, want %q", saved, tc.wantSaved)
 			}
 			if chunked != (len(tc.wantSaved) > 0) || len(tc.entry.Chunks) != len(tc.wantSaved) {
 				t.Fatalf("chunked=%v with %d chunks, want %d", chunked, len(tc.entry.Chunks), len(tc.wantSaved))
 			}
-			if chunked && (tc.entry.Chunks[0].Offset != 0 || tc.entry.Chunks[0].ModifiedTsNs != 7) {
-				t.Fatalf("chunk %v, want it at 0 with the time given", tc.entry.Chunks[0])
+			var offset int64
+			for i, chunk := range tc.entry.Chunks {
+				if chunk.Offset != offset || chunk.ModifiedTsNs != 7 {
+					t.Fatalf("chunk %d: %v, want it at %d with the time given", i, chunk, offset)
+				}
+				offset += int64(chunk.Size)
 			}
 		})
 	}
@@ -256,8 +262,12 @@ func TestResizeInlineContent(t *testing.T) {
 	t.Run("not saved", func(t *testing.T) {
 		e := entry(inlineTestContent, 10)
 		refused := errors.New("no volume to write to")
-		_, err := resizeInlineContent(e, 16, 7, func(io.Reader, string, int64, int64, uint64) (*filer_pb.FileChunk, error) {
-			return nil, refused
+		var saves int
+		_, err := resizeInlineContent(e, 16, 7, 4, func(_ io.Reader, _ string, offset int64, _ int64, n uint64) (*filer_pb.FileChunk, error) {
+			if saves++; saves == 2 {
+				return nil, refused
+			}
+			return &filer_pb.FileChunk{FileId: "3,01", Offset: offset, Size: n}, nil
 		})
 		if !errors.Is(err, refused) {
 			t.Fatalf("err %v, want the save's", err)
