@@ -354,6 +354,14 @@ func (p *OIDCProvider) GetIssuer() string {
 	return p.config.Issuer
 }
 
+// GetRoleMapping returns the configured claim-to-role mapping, or nil
+func (p *OIDCProvider) GetRoleMapping() *providers.RoleMapping {
+	if p.config == nil {
+		return nil
+	}
+	return p.config.RoleMapping
+}
+
 // Initialize initializes the OIDC provider with configuration
 func (p *OIDCProvider) Initialize(config interface{}) error {
 	if config == nil {
