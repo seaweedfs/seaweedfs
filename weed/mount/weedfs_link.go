@@ -160,10 +160,14 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 			return wfs.withFilerClient(context.Background(), false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 				var updateErr error
 				updateResp, updateErr = client.UpdateEntry(ctx, updateOldEntryRequest)
+				if grpcstatus.Code(updateErr) == codes.FailedPrecondition {
+					// the filer's verdict: no other filer's error replaces it
+					return errors.Join(filer_pb.ErrPreconditionFailed, updateErr)
+				}
 				return updateErr
 			})
 		}
-		if err = update(); grpcstatus.Code(err) == codes.FailedPrecondition {
+		if err = update(); errors.Is(err, filer_pb.ErrPreconditionFailed) {
 			// link under the id the file has by now
 			stored, _, _, getErr := filer_pb.GetEntry(ctx, wfs, oldEntryPath)
 			if getErr == nil && stored != nil && len(stored.HardLinkId) > 0 && stored.Attributes != nil {

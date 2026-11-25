@@ -3,6 +3,7 @@ package mount
 import (
 	"bytes"
 	"context"
+	"net"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
@@ -342,7 +344,25 @@ func TestSyncHardLinkSiblingFetchFailureKeepsVersion(t *testing.T) {
 // filer refused, moving the file to an id of its own and splitting its names
 // over two.
 func TestFirstLinkTakesTheLinkIdAnotherClientGaveTheFile(t *testing.T) {
-	wfs, server := newCreateTestWFS(t)
+	t.Run("one filer", func(t *testing.T) {
+		wfs, server := newCreateTestWFS(t)
+		testFirstLinkTakesTheLinkId(t, wfs, server)
+	})
+	// the refusal stays the answer when the next filer cannot be reached
+	t.Run("next filer down", func(t *testing.T) {
+		wfs, server := newCreateTestWFS(t)
+		down, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("listen: %v", err)
+		}
+		downPort := down.Addr().(*net.TCPAddr).Port
+		down.Close()
+		wfs.option.FilerAddresses = append(wfs.option.FilerAddresses, pb.NewServerAddressWithGrpcPort("127.0.0.1:1", downPort))
+		testFirstLinkTakesTheLinkId(t, wfs, server)
+	})
+}
+
+func testFirstLinkTakesTheLinkId(t *testing.T, wfs *WFS, server *createEntryTestServer) {
 	sourcePath, sourceInode := linkTestSource(t, wfs, "shared.txt", 0)
 
 	theirs := filer.NewHardLinkId()
