@@ -151,12 +151,14 @@ master:
     # Enter any extra configuration for master.toml here.
     # It may be a multi-line string.
 
+  # volumeAttributesClassName (optional) needs Kubernetes 1.34+, or 1.31+ with the VolumeAttributesClass feature gate.
   # You may use ANY storage-class, example with local-path-provisioner
   # Annotations are optional.
   #  data:
   #    type: "persistentVolumeClaim"
   #    size: "24Ti"
   #    storageClass: "local-path-provisioner"
+  #    volumeAttributesClassName: "my-attributes-class"
   #    annotations:
   #      "key": "value"
   #
@@ -184,6 +186,7 @@ master:
   #   type: "persistentVolumeClaim"
   #   size: "24Ti"
   #   storageClass: "local-path-provisioner"
+  #   volumeAttributesClassName: "my-attributes-class"
   #   annotations:
   #     "key": "value"
 
@@ -416,6 +419,7 @@ volume:
   # extraArgs: ["-customFlag", "value", "-anotherFlag"]
   extraArgs: []
 
+  # volumeAttributesClassName (optional) needs Kubernetes 1.34+, or 1.31+ with the VolumeAttributesClass feature gate.
   # For each data disk you may use ANY storage-class, example with local-path-provisioner
   # Annotations are optional.
   #  dataDirs:
@@ -423,6 +427,7 @@ volume:
   #     type: "persistentVolumeClaim"
   #     size: "24Ti"
   #     storageClass: "local-path-provisioner"
+  #     volumeAttributesClassName: "my-attributes-class"
   #     annotations:
   #      "key": "value"
   #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
@@ -477,6 +482,7 @@ volume:
   #  type: "persistentVolumeClaim"
   #  size: "20Gi"
   #  storageClass: "local-path-provisioner"
+  #  volumeAttributesClassName: "my-attributes-class"
   #
   # or
   #
@@ -799,12 +805,16 @@ filer:
   storage: 25Gi
   # storageClass is the class of storage which defaults to null (the Kube cluster will pick the default).
   storageClass: null
+  # volumeAttributesClassName is the VolumeAttributesClass of the enablePVC claim; null leaves it unset.
+  volumeAttributesClassName: null
+  # volumeAttributesClassName (optional) needs Kubernetes 1.34+, or 1.31+ with the VolumeAttributesClass feature gate.
   # You may use ANY storage-class, example with local-path-provisioner
   # Annotations are optional.
   #  data:
   #    type: "persistentVolumeClaim"
   #    size: "24Ti"
   #    storageClass: "local-path-provisioner"
+  #    volumeAttributesClassName: "my-attributes-class"
   #    annotations:
   #      "key": "value"
   #
@@ -828,6 +838,7 @@ filer:
   #   type: "persistentVolumeClaim"
   #   size: "24Ti"
   #   storageClass: "local-path-provisioner"
+  #   volumeAttributesClassName: "my-attributes-class"
   #   annotations:
   #     "key": "value"
 
@@ -1633,10 +1644,12 @@ admin:
   extraArgs: []
 
   # Storage configuration
+  # volumeAttributesClassName (optional) needs Kubernetes 1.34+, or 1.31+ with the VolumeAttributesClass feature gate.
   data:
     type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
     size: "10Gi"
     storageClass: ""
+    volumeAttributesClassName: ""
     hostPathPrefix: /storage
     claimName: ""
     annotations: {}
@@ -1645,6 +1658,7 @@ admin:
     type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
     size: "5Gi"
     storageClass: ""
+    volumeAttributesClassName: ""
     hostPathPrefix: /storage
     claimName: ""
     annotations: {}
@@ -2140,6 +2154,7 @@ allInOne:
     claimName: seaweedfs-data-pvc  # Name of the PVC to use (for existingClaim type)
     size: null  # Size of the PVC (null defaults to 10Gi for persistentVolumeClaim type)
     storageClass: null  # Storage class for the PVC (null uses cluster default)
+    volumeAttributesClassName: null  # VolumeAttributesClass for the PVC; needs Kubernetes 1.34+, or 1.31+ with the feature gate
     # accessModes for the PVC. Default is ["ReadWriteOnce"].
     # For multi-replica deployments, use ["ReadWriteMany"] with a compatible storage class.
     accessModes: []
