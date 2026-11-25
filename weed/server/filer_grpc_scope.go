@@ -509,7 +509,11 @@ func (s *filerGrpcScope) unary(ctx context.Context, req any, info *grpc.UnarySer
 	if !ok || reflect.TypeOf(req) != expected {
 		return nil, sc.deny(info.FullMethod, "not available to a scoped token")
 	}
-	return s.unaryScoped(s.withWriteAuthority(ctx, sc), sc, req, handler)
+	resp, err := s.unaryScoped(s.withWriteAuthority(ctx, sc), sc, req, handler)
+	if err != nil {
+		return resp, err
+	}
+	return scopeRedactResponse(resp), nil
 }
 
 // isScopeFilerConf reports whether (dir, name) is the filer's per-path config

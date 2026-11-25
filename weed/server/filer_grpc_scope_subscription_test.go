@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -18,6 +19,107 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestGeneralScopedSubscriptionHidesRemoteRenameSourceKey(t *testing.T) {
+	token := scopeSubscriptionToken(t, time.Minute, []string{"/t/allowed"}, nil)
+	h := newScopeSubscriptionGRPCHarness(t, token)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := h.client.SubscribeLocalMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
+		ClientName: "scope-subscription-remote-source",
+		ClientId:   77,
+		PathPrefix: "/t/allowed",
+	})
+	if err != nil {
+		t.Fatalf("start subscription: %v", err)
+	}
+	entry := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Extended: map[string][]byte{
+			filer.ExtRemoteRenameSourceKey: []byte("/buckets/t1/source"),
+			"client-tag":                   []byte("keep"),
+		}}
+	}
+	nested := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/t/allowed",
+		TsNs:      2,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: entry("nested-old"),
+			NewEntry: entry("nested-new"),
+		},
+	}
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/t/allowed",
+		TsNs:      1,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      entry("old"),
+			NewEntry:      entry("new"),
+			NewParentPath: "/t/allowed",
+		},
+		Events: []*filer_pb.SubscribeMetadataResponse{nested},
+	}
+	appendScopeSubscriptionMetadataEvent(h.subscribeHarness, event)
+
+	resp := nextScopeSubscriptionEvent(t, stream)
+	checkEntry := func(where string, got *filer_pb.Entry) {
+		t.Helper()
+		if got == nil {
+			t.Fatalf("%s entry missing", where)
+		}
+		if marker := got.GetExtended()[filer.ExtRemoteRenameSourceKey]; len(marker) != 0 {
+			t.Fatalf("%s exposed remote rename source %q", where, marker)
+		}
+		if tag := string(got.GetExtended()["client-tag"]); tag != "keep" {
+			t.Fatalf("%s lost client metadata %q", where, tag)
+		}
+	}
+	checkEntry("old", resp.GetEventNotification().GetOldEntry())
+	checkEntry("new", resp.GetEventNotification().GetNewEntry())
+	redacted := scopeRedactMetadataResponse(event)
+	if len(redacted.GetEvents()) != 1 {
+		t.Fatalf("redacted subscription batch events = %d, want 1", len(redacted.GetEvents()))
+	}
+	checkEntry("nested old", redacted.GetEvents()[0].GetEventNotification().GetOldEntry())
+	checkEntry("nested new", redacted.GetEvents()[0].GetEventNotification().GetNewEntry())
+	for _, source := range []*filer_pb.Entry{
+		event.GetEventNotification().GetOldEntry(), event.GetEventNotification().GetNewEntry(),
+		event.GetEvents()[0].GetEventNotification().GetOldEntry(), event.GetEvents()[0].GetEventNotification().GetNewEntry(),
+	} {
+		if marker := source.GetExtended()[filer.ExtRemoteRenameSourceKey]; len(marker) == 0 {
+			t.Fatalf("redaction mutated the source event")
+		}
+	}
+}
+
+func TestDedicatedSubscriptionHidesRemoteRenameSourceKey(t *testing.T) {
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/t/allowed",
+		EventNotification: &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{
+			Name:     "legacy",
+			Extended: map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("/buckets/t1/source")},
+		}},
+	}
+	scoped, cancel := newScopedMetadataStream(context.Background(), &security.MetadataSubscriptionScope{
+		Prefixes:  []string{"/t/allowed"},
+		ExpiresAt: time.Now().Add(time.Minute),
+	})
+	defer cancel()
+	var got *filer_pb.SubscribeMetadataResponse
+	if err := scoped.send(event, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		got = resp
+		return nil
+	}); err != nil {
+		t.Fatalf("dedicated subscription send: %v", err)
+	}
+	if got == event {
+		t.Fatal("dedicated subscription response was not cloned")
+	}
+	if marker := got.GetEventNotification().GetNewEntry().GetExtended()[filer.ExtRemoteRenameSourceKey]; len(marker) != 0 {
+		t.Fatalf("dedicated subscription exposed remote rename source %q", marker)
+	}
+	if marker := event.GetEventNotification().GetNewEntry().GetExtended()[filer.ExtRemoteRenameSourceKey]; len(marker) == 0 {
+		t.Fatal("dedicated subscription redaction mutated the source event")
+	}
+}
 
 const (
 	scopeSubscriptionScopeKey     = "scope-subscription-scope-signing-key"

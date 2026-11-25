@@ -192,6 +192,7 @@ func (w *scopedStream) SendMsg(m any) error {
 		}
 		m = out
 	}
+	m = scopeRedactResponse(m)
 	return w.sendRaw(m)
 }
 
