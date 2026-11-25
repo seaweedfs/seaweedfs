@@ -158,8 +158,7 @@ func TestIssue12914RewrittenNeedleBehindDamage(t *testing.T) {
 
 // TestIssue5674ZeroedSuperBlock covers the second half of #5674: when the first
 // bytes are gone too, the file must fail with an explicit version error instead
-// of being parsed as a version-0 volume, and fix.verify must count it as
-// not verifiable (exit status 1), not as damaged.
+// of being parsed as a version-0 volume.
 func TestIssue5674ZeroedSuperBlock(t *testing.T) {
 	datName := filepath.Join(t.TempDir(), "1.dat")
 	if err := os.WriteFile(datName, make([]byte, 4096), 0644); err != nil {
@@ -168,14 +167,6 @@ func TestIssue5674ZeroedSuperBlock(t *testing.T) {
 	_, _, err := verifyDatFile(datName, 1, datVerifyOptions{}, func(*needle.Needle, int64) {})
 	if err == nil || !strings.Contains(err.Error(), "unsupported needle version") {
 		t.Fatalf("want an explicit unsupported-version error, got %v", err)
-	}
-
-	report := ""
-	flags := &datVerifyFlags{report: &report, maxNeedleSizeMB: new(int), windowMB: new(int), zeroWindow: new(int)}
-	*flags.maxNeedleSizeMB, *flags.windowMB, *flags.zeroWindow = 64, 1, 4096
-	damaged, failed, err := fixVerifyPaths([]string{datName}, "", 0, flags)
-	if err != nil || damaged != 0 || failed != 1 {
-		t.Fatalf("damaged=%d failed=%d err=%v, want 0/1/nil (fix.verify exit code 1)", damaged, failed, err)
 	}
 }
 
@@ -225,7 +216,7 @@ func buildVerifyFixtureVersion(t *testing.T, count int, version needle.Version) 
 
 // TestFixRefusesPendingCompactMarker: a .cpc marker means an interrupted
 // vacuum commit is waiting for the volume server to reconcile it. Writing a
-// rebuilt .idx or new .cpd/.cpx on top of that decision must be refused with a
+// rebuilt .idx on top of that decision must be refused with a
 // clear, scriptable error.
 func TestFixRefusesPendingCompactMarker(t *testing.T) {
 	dir := t.TempDir()
@@ -249,42 +240,6 @@ func TestFixRefusesPendingCompactMarker(t *testing.T) {
 	}
 	if _, err := os.Stat(base + ".cpc"); err != nil {
 		t.Fatalf("the pending marker must be left for the volume server: %v", err)
-	}
-}
-
-// TestFixCompactClearsCommitMarkerAfterSwap: even if a marker slips past the
-// start guard (e.g. a test harness or a race), a completed swap must not leave
-// it behind to be rolled forward later.
-func TestFixCompactClearsCommitMarkerAfterSwap(t *testing.T) {
-	datName, _ := buildVerifyFixture(t, 3)
-	idxName := strings.TrimSuffix(datName, ".dat") + ".idx"
-	c, err := newDatCompactor(datName, idxName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.src.Close()
-	if _, err := c.cpxW.WriteString("rebuilt index"); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.cpxW.Flush(); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.cpx.Close(); err != nil {
-		t.Fatal(err)
-	}
-	cpc := strings.TrimSuffix(datName, ".dat") + ".cpc"
-	if err := os.WriteFile(cpc, nil, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, _, err := c.commit(false, false); err != nil {
-		t.Fatalf("commit: %v", err)
-	}
-	if _, err := os.Stat(cpc); !os.IsNotExist(err) {
-		t.Fatal("a stale .cpc marker survived a completed swap")
-	}
-	if _, err := os.Stat(idxName); err != nil {
-		t.Fatalf("the new index was not swapped in: %v", err)
 	}
 }
 

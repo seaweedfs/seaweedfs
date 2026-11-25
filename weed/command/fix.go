@@ -38,7 +38,7 @@ var cmdFix = &Command{
   With -ignoreError, fix keeps going and writes what it could index, but still exits non-zero if any volume failed.
   With -verifyCrc, fix also reads every needle, indexes the ones whose data fails its CRC check as deleted, and exits non-zero if it found any.
   The rebuilt .idx is written next to the .dat. If the volume server runs with a separate -dir.idx directory, replace the .idx there afterwards and drop any stale .ldb, or run the server without -dir.idx until the volume is repaired.
-  -verify and -compact refuse to run while a .cpc compaction commit marker exists: start the volume server once so it reconciles the interrupted vacuum, then re-run.
+  -verify refuses to run while a .cpc compaction commit marker exists: start the volume server once so it reconciles the interrupted vacuum, then re-run.
 `,
 }
 
@@ -296,7 +296,7 @@ func (scanner *VolumeFileScanner4Fix) verifyNeedle(n *needle.Needle, offset int6
 func doFixOneVolume(basepath string, baseFileName string, collection string, volumeId int64, fixIncludeDeleted bool) {
 	indexFileName := path.Join(basepath, baseFileName+".idx")
 
-	if *fixVerify || *fixCompact {
+	if *fixVerify {
 		doFixOneVolumeVerified(basepath, baseFileName, volumeId, indexFileName)
 		return
 	}
