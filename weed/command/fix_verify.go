@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
@@ -290,28 +289,36 @@ func (s *datVerifier) candidateOK(h *needle.Needle, chunk []byte, i int, off int
 		return true // the payload CRC matched; a false positive is not realistic
 	}
 	// No payload to checksum: only a delete record (size 0) gets here, since a
-	// live record without data fails checkRecordFields. A v3 delete record
-	// carries its append time: one that is believable, not older than the last
-	// verified record and followed by zero padding stands on its own, so a
-	// delete is not lost when the bytes after it are damaged too. Otherwise the
-	// record needs the end of the file or a verifiable successor.
-	end := off + disk
-	if h.Size == 0 {
-		stamped := s.version != needle.Version3 || n.AppendAtNs != 0
-		if s.version == needle.Version3 && n.AppendAtNs != 0 {
-			if !plausibleAppendAtNs(n.AppendAtNs) {
-				return false
-			}
-			if n.AppendAtNs >= s.lastAppendAtNs && allZero(s.body[needle.NeedleChecksumSize+types.TimestampSize:disk-types.NeedleHeaderSize]) {
-				return true
-			}
-		}
-		if end == s.size || (stamped && s.size-end < types.NeedleHeaderSize) {
+	// live record without data fails checkRecordFields. A delete found while
+	// resynchronising must prove itself, or stray bytes in a damaged region
+	// could delete a live file. Every v3 writer stamps a delete record, so it
+	// needs a believable time, not older than the last verified record, and
+	// zero padding. v1/v2 records carry no time: the chain that follows must
+	// reach a record whose data passes its CRC, or end exactly at the file end.
+	if s.version == needle.Version3 {
+		return n.AppendAtNs != 0 && plausibleAppendAtNs(n.AppendAtNs) && n.AppendAtNs >= s.lastAppendAtNs &&
+			allZero(s.body[needle.NeedleChecksumSize+types.TimestampSize:disk-types.NeedleHeaderSize])
+	}
+	return s.chainReachesData(off + disk)
+}
+
+// chainReachesData follows the records from off and reports whether they
+// reach one whose data verifies, or end exactly at the end of the file.
+func (s *datVerifier) chainReachesData(off int64) bool {
+	for i := 0; i < 16; i++ {
+		if off == s.size {
 			return true
 		}
+		n, disk, err := s.readNeedleAt(off, true)
+		if err != nil {
+			return false
+		}
+		if len(n.Data) > 0 {
+			return true
+		}
+		off += disk
 	}
-	_, _, err = s.readNeedleAt(end, false)
-	return err == nil
+	return false
 }
 
 func allZero(b []byte) bool {
@@ -653,6 +660,10 @@ func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64
 
 	printAnomalies(volumeId, anomalies)
 	printVerifySummary(volumeId, sum, time.Since(started))
+	if sum.BadRegions > 0 || len(stale) > 0 {
+		// like plain fix and -verifyCrc: damage was found, so a script knows to check replicas
+		SetCommandExitStatus(1)
+	}
 
 	if *fixDryRun {
 		return nil
@@ -686,35 +697,57 @@ func installRebuiltIndex(scanner *VolumeFileScanner4Fix, indexFileName string, v
 		os.Remove(staged)
 		return fmt.Errorf("save to .idx File: %v", strings.TrimSpace(err.Error()))
 	}
+	if err := syncFile(staged); err != nil {
+		os.Remove(staged)
+		return fmt.Errorf("sync %s: %w", staged, err)
+	}
+	// keep the previous index as a second link, so a live .idx exists at every moment
 	if _, statErr := os.Stat(indexFileName); statErr == nil {
 		bak := backupName(indexFileName)
-		if err := os.Rename(indexFileName, bak); err != nil {
+		if err := os.Link(indexFileName, bak); err != nil {
 			os.Remove(staged)
 			return fmt.Errorf("back up %s: %w", indexFileName, err)
 		}
 		fmt.Printf("volume %d: previous index saved as %s\n", volumeId, bak)
 	}
 	if err := os.Rename(staged, indexFileName); err != nil {
-		return fmt.Errorf("install %s as %s (the previous index is in its .bak): %w", staged, indexFileName, err)
+		os.Remove(staged)
+		return fmt.Errorf("install %s: %w", indexFileName, err)
 	}
 	if err := util.FsyncDir(path.Dir(indexFileName)); err != nil {
-		glog.Warningf("sync directory of %s: %v", indexFileName, err)
+		return fmt.Errorf("sync directory of %s: %w", indexFileName, err)
 	}
-	if ldb := strings.TrimSuffix(indexFileName, ".idx") + ".ldb"; util.FileExists(ldb) || util.FolderExists(ldb) {
-		if err := os.RemoveAll(ldb); err != nil {
-			return fmt.Errorf("remove the stale %s (delete it before starting the volume server): %w", ldb, err)
+	// these caches describe the previous index; the volume server rebuilds them
+	for _, ext := range []string{".ldb", ".sdx", ".rdb"} {
+		cache := strings.TrimSuffix(indexFileName, ".idx") + ext
+		if !util.FileExists(cache) && !util.FolderExists(cache) {
+			continue
 		}
-		fmt.Printf("volume %d: removed the stale %s; the volume server rebuilds it from the new index\n", volumeId, ldb)
+		if err := os.RemoveAll(cache); err != nil {
+			return fmt.Errorf("remove the stale %s (delete it before starting the volume server): %w", cache, err)
+		}
+		fmt.Printf("volume %d: removed the stale %s; the volume server rebuilds it from the new index\n", volumeId, cache)
 	}
 	return nil
 }
 
-// printIdxDirHint reminds the operator that a volume server started with a
-// separate -dir.idx directory keeps its own .idx there: this command writes the
-// rebuilt index next to the .dat, so the file must be moved over (and any stale
-// .ldb dropped) or the server keeps using the old index.
+func syncFile(name string) error {
+	f, err := os.OpenFile(name, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	err = f.Sync()
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// printIdxDirHint explains where the rebuilt index lands: next to the .dat.
+// A volume server prefers an .idx next to the .dat over one in -dir.idx, so it
+// picks the rebuilt index up as is.
 func printIdxDirHint(volumeId int64) {
-	fmt.Printf("volume %d: the rebuilt index was written next to the .dat; if the server uses a separate -dir.idx directory, replace the .idx there and drop any stale .ldb\n", volumeId)
+	fmt.Printf("volume %d: the rebuilt index was written next to the .dat; a volume server started with -dir.idx uses it in preference to the copy in that directory\n", volumeId)
 }
 
 // backupName returns path.bak, or path.bak.<unix time> when that already exists.

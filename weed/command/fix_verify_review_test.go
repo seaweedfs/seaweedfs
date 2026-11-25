@@ -2,6 +2,7 @@ package command
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
@@ -164,6 +166,11 @@ func TestFixVerifyStagesIndexAndDropsLevelDb(t *testing.T) {
 	if err := os.MkdirAll(base+".ldb", 0755); err != nil {
 		t.Fatal(err)
 	}
+	for _, ext := range []string{".sdx", ".rdb"} {
+		if err := os.WriteFile(base+ext, []byte("stale"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	withVerifyFlags(t, false)
 
 	doFixOneVolume(dir, "fix_7", "fix", 7, true)
@@ -174,8 +181,10 @@ func TestFixVerifyStagesIndexAndDropsLevelDb(t *testing.T) {
 	if b, err := os.ReadFile(base + ".idx.bak"); err != nil || string(b) != "old index, 16 b" {
 		t.Fatalf("old index not kept as .idx.bak: %q %v", b, err)
 	}
-	if _, err := os.Stat(base + ".ldb"); !os.IsNotExist(err) {
-		t.Fatalf("stale .ldb cache was left next to the rebuilt index")
+	for _, ext := range []string{".ldb", ".sdx", ".rdb"} {
+		if _, err := os.Stat(base + ext); !os.IsNotExist(err) {
+			t.Fatalf("stale %s cache was left next to the rebuilt index", ext)
+		}
 	}
 	matches, _ := filepath.Glob(base + ".idx.tmp*")
 	if len(matches) != 0 {
@@ -216,5 +225,103 @@ func TestRunFixRejectsVolumeIdBeyondUint32(t *testing.T) {
 	})
 	if !strings.Contains(out, "Failed to parse volume id") {
 		t.Fatalf("output %q, want a parse error", out)
+	}
+}
+
+// Stray bytes in a zero-filled region can form a header with a small id and
+// size 0. Unstamped, and followed by another such header, it used to pass as
+// a delete record and delete a live file.
+func TestVerifyStrayBytesDoNotDeleteLiveFiles(t *testing.T) {
+	datName, layout := buildVerifyFixture(t, 9)
+	start, end := layout[4].offset, layout[7].offset
+	z := make([]byte, end-start)
+	z[64+11] = 0x02
+	z[96+11] = 0x09
+	patchDat(t, datName, start, z)
+
+	if _, _, err := verifyDatFile(datName, 1, datVerifyOptions{window: 64 << 10, zeroWindow: 512}, func(n *needle.Needle, offset int64) {
+		if !n.Size.IsValid() && offset >= start && offset < end {
+			t.Errorf("a delete record for key %d was taken from the damaged region at %d", n.Id, offset)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A run that found damage exits non-zero, like plain fix and -verifyCrc, so a
+// script knows to restore from a replica; a clean volume exits 0.
+func TestFixVerifyExitStatusReportsDamage(t *testing.T) {
+	dir := t.TempDir()
+	base, offsets := writeFixTestVolume(t, dir, 4)
+	withVerifyFlags(t, false)
+	doFixOneVolume(dir, "fix_7", "fix", 7, true)
+	if CommandExitStatus() != 0 {
+		t.Fatalf("clean volume: exit status %d, want 0", CommandExitStatus())
+	}
+	patchDat(t, base+".dat", offsets[1], bytes.Repeat([]byte{0xA5}, types.NeedleHeaderSize))
+	doFixOneVolume(dir, "fix_7", "fix", 7, true)
+	if CommandExitStatus() != 1 {
+		t.Fatalf("damaged volume: exit status %d, want 1", CommandExitStatus())
+	}
+}
+
+// With -ignoreError a file name whose volume id does not fit uint32 is
+// reported and the run goes on with the other volumes.
+func TestRunFixIgnoreErrorSkipsBadVolumeId(t *testing.T) {
+	dir := t.TempDir()
+	writeFixTestVolume(t, dir, 2)
+	if err := os.WriteFile(filepath.Join(dir, "c_4294967296.dat"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	saved, savedStatus := *fixIgnoreError, commandExitStatus
+	*fixIgnoreError, commandExitStatus = true, 0
+	t.Cleanup(func() { *fixIgnoreError, commandExitStatus = saved, savedStatus })
+	captureStdout(t, func() {
+		if !runFix(cmdFix, []string{dir}) {
+			t.Errorf("runFix stopped the batch at the bad file name")
+		}
+	})
+	if CommandExitStatus() != 1 {
+		t.Fatalf("exit status %d, want 1", CommandExitStatus())
+	}
+	if got := indexedKeys(t, filepath.Join(dir, "fix_7.idx")); len(got) != 2 {
+		t.Fatalf("the other volume was not fixed: keys %v", got)
+	}
+}
+
+// The guards that let a delete record found after damage stand on its own:
+// a time older than the last verified record, or non-zero padding, rejects it.
+func TestVerifyResyncedDeleteRecordGuards(t *testing.T) {
+	cases := map[string]func(t *testing.T, datName string, tomb int64){
+		"older than the last verified record": func(t *testing.T, datName string, tomb int64) {
+			// a believable time, one hour before the record's own, so older than the needles before it
+			at := tomb + types.NeedleHeaderSize + needle.NeedleChecksumSize
+			raw, err := os.ReadFile(datName)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ts := binary.BigEndian.Uint64(raw[at:]) - uint64(time.Hour)
+			b := make([]byte, 8)
+			binary.BigEndian.PutUint64(b, ts)
+			patchDat(t, datName, at, b)
+		},
+		"non-zero padding": func(t *testing.T, datName string, tomb int64) {
+			patchDat(t, datName, tomb+types.NeedleHeaderSize+needle.NeedleChecksumSize+types.TimestampSize, []byte{1})
+		},
+	}
+	for name, corrupt := range cases {
+		t.Run(name, func(t *testing.T) {
+			datName, layout := buildVerifyFixture(t, 5)
+			tomb := layout[5].offset
+			patchDat(t, datName, layout[4].offset, bytes.Repeat([]byte{0xA5}, types.NeedleHeaderSize))
+			corrupt(t, datName, tomb)
+			if _, _, err := verifyDatFile(datName, 1, datVerifyOptions{window: 64 << 10, zeroWindow: 512}, func(n *needle.Needle, offset int64) {
+				if offset == tomb {
+					t.Errorf("the delete record at %d was accepted", offset)
+				}
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
