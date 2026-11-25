@@ -29,6 +29,7 @@ import (
 	azureremote "github.com/seaweedfs/seaweedfs/weed/remote_storage/azure"
 	gcsremote "github.com/seaweedfs/seaweedfs/weed/remote_storage/gcs"
 	s3remote "github.com/seaweedfs/seaweedfs/weed/remote_storage/s3"
+	yandexremote "github.com/seaweedfs/seaweedfs/weed/remote_storage/yandex"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -483,6 +484,14 @@ func guardedRemoteClient(remoteConf *remote_pb.RemoteConf) (endpoint string, mak
 	if remoteConf.Type == "azure" && remoteConf.AzureEndpoint != "" {
 		return remoteConf.AzureEndpoint, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
 			return azureremote.MakeWithHTTPClient(remoteConf, httpClient)
+		}, true
+	}
+	// the yandex endpoint is fixed by default; a configuration that names its
+	// own (a proxy, a test service) is caller-influenced and is guarded like
+	// the s3 and azure endpoints
+	if remoteConf.Type == "yandex" && remoteConf.YandexEndpoint != "" {
+		return remoteConf.YandexEndpoint, func(httpClient *http.Client) (remote_storage.RemoteStorageClient, error) {
+			return yandexremote.MakeWithHTTPClient(remoteConf, httpClient)
 		}, true
 	}
 	// gcs reaches a fixed object host, but the token exchange goes wherever the

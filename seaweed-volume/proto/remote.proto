@@ -65,6 +65,18 @@ message RemoteConf {
   string contabo_secret_key = 69;
   string contabo_endpoint = 70;
   string contabo_region = 71;
+
+  uint32 upload_concurrency = 72; // multipart upload concurrency per file, 0 = client default (1 for S3, 16 for Azure)
+  uint32 download_concurrency = 73; // multipart download concurrency per read, 0 = client default (5 for S3, 16 for Azure)
+
+  // yandex is the Yandex Disk REST API (cloud-api.yandex.net/v1/disk).
+  string yandex_token = 80; // OAuth token JSON (access_token, refresh_token, token_type, expiry) or a bare access token
+  string yandex_client_id = 81;
+  string yandex_client_secret = 82;
+  string yandex_endpoint = 83; // default https://cloud-api.yandex.net/v1/disk
+  string yandex_root = 84; // folder under the disk that holds the buckets, default "/"
+  bool yandex_trash = 85; // move deleted files to the trash instead of deleting them permanently (default: delete permanently)
+  bool yandex_app_folder = 86; // the token only reaches the app folder: address paths under "app:" instead of "disk:"
 }
 
 message RemoteStorageMapping {
