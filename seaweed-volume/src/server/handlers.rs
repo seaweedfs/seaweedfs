@@ -5212,7 +5212,9 @@ fn part_file_name(field: &multer::Field<'_>) -> Option<String> {
         .or_else(|| field.file_name().map(str::to_string))
 }
 
-/// Go's decode2231Enc for `filename*=charset'lang'percent-encoded`.
+/// Go's decode2231Enc for `filename*=charset'lang'percent-encoded`. A name
+/// with control characters is refused, as it would break the replica's part
+/// header.
 fn extended_file_name(disposition: &str) -> Option<String> {
     let mut params = Vec::new();
     let (mut start, mut quoted, mut escaped) = (0, false, false);
@@ -5258,7 +5260,7 @@ fn extended_file_name(disposition: &str) -> Option<String> {
     }
     String::from_utf8(decoded)
         .ok()
-        .filter(|name| !name.is_empty())
+        .filter(|name| !name.is_empty() && !name.chars().any(char::is_control))
 }
 
 fn parse_content_disposition_filename(value: &str) -> Option<String> {
@@ -9745,6 +9747,7 @@ Content-Encoding: gzip\r\n\r\n"
             "form-data; filename*=utf-8''%FF",
             "form-data; filename*=caf%C3%A9.txt",
             "form-data; name=\"note; filename*=utf-8''decoy\"",
+            "form-data; filename*=utf-8''a%0D%0A%0D%0Ab.txt",
         ] {
             assert_eq!(extended_file_name(value), None, "{value}");
         }
