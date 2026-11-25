@@ -50,6 +50,8 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 	if err != nil {
 		errStr := err.Error()
 		switch {
+		case errors.Is(err, ErrReadOnly):
+			writeJsonError(w, r, http.StatusInsufficientStorage, err)
 		case errStr == constants.ErrMsgOperationNotPermitted:
 			writeJsonError(w, r, http.StatusForbidden, err)
 		case strings.HasPrefix(errStr, "read input:") || errStr == io.ErrUnexpectedEOF.Error():
@@ -191,6 +193,9 @@ func (fs *FilerServer) requestChunkSize(query url.Values) int32 {
 
 func (fs *FilerServer) checkPermissions(ctx context.Context, r *http.Request, fileName string) error {
 	fullPath := fs.fixFilePath(ctx, r, fileName)
+	if fs.filer.FilerConf.MatchStorageRule(fullPath).ReadOnly {
+		return fmt.Errorf("%w: %s", ErrReadOnly, fullPath)
+	}
 	enforced, err := fs.wormEnforcedForEntry(ctx, fullPath)
 	if err != nil {
 		return err

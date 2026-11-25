@@ -1,10 +1,13 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -212,6 +215,76 @@ func TestPostHandlerMatchesStorageRuleOnDecodedPath(t *testing.T) {
 	}
 	if _, err := store.FindEntry(context.Background(), readOnlyPrefix+"dst.txt"); err == nil {
 		t.Fatal("copy landed in the read-only path")
+	}
+}
+
+// A write to an existing directory without a trailing slash lands on a child
+// of it, so the read-only rule has to be matched on that child path.
+func TestPostHandlerChecksReadOnlyOnFinalPath(t *testing.T) {
+	const readOnlyPrefix = "/buckets/demo/"
+	multipartBody := func(t *testing.T) (*bytes.Buffer, string) {
+		body := &bytes.Buffer{}
+		mw := multipart.NewWriter(body)
+		part, err := mw.CreateFormFile("file", "marker.txt")
+		if err != nil {
+			t.Fatalf("CreateFormFile: %v", err)
+		}
+		part.Write([]byte("hello"))
+		mw.Close()
+		return body, mw.FormDataContentType()
+	}
+	tests := []struct {
+		name    string
+		request func(t *testing.T) *http.Request
+		child   string
+	}{
+		{
+			name: "multipart POST",
+			request: func(t *testing.T) *http.Request {
+				body, contentType := multipartBody(t)
+				req := httptest.NewRequest(http.MethodPost, "/buckets/demo", body)
+				req.Header.Set("Content-Type", contentType)
+				return req
+			},
+			child: readOnlyPrefix + "marker.txt",
+		},
+		{
+			name: "PUT",
+			request: func(t *testing.T) *http.Request {
+				return httptest.NewRequest(http.MethodPut, "/buckets/demo", strings.NewReader("hello"))
+			},
+			child: readOnlyPrefix + "demo",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newRenameTestStore()
+			source := newFileEntry("/src.txt", 11)
+			source.Content = []byte("hello")
+			store.entries["/src.txt"] = source
+			store.entries["/buckets/demo"] = newDirectoryEntry("/buckets/demo", 10)
+
+			server := &FilerServer{
+				filer:          newRenameTestFiler(t, store),
+				option:         &FilerOption{SaveToFilerLimit: 1024},
+				entryLockTable: util.NewLockTable[util.FullPath](),
+			}
+			if err := server.filer.FilerConf.AddLocationConf(&filer_pb.FilerConf_PathConf{
+				LocationPrefix: readOnlyPrefix,
+				ReadOnly:       true,
+			}); err != nil {
+				t.Fatalf("AddLocationConf: %v", err)
+			}
+
+			rec := httptest.NewRecorder()
+			server.PostHandler(rec, tt.request(t), 0)
+			if rec.Code != http.StatusInsufficientStorage {
+				t.Errorf("status = %d, want %d; body=%q", rec.Code, http.StatusInsufficientStorage, rec.Body.String())
+			}
+			if _, err := store.FindEntry(context.Background(), util.FullPath(tt.child)); err == nil {
+				t.Errorf("%s landed in the read-only path", tt.child)
+			}
+		})
 	}
 }
 
