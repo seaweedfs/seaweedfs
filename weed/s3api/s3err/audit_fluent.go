@@ -111,6 +111,11 @@ func getRemoteIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
+// RemoteIP is the client IP the audit log records for r.
+func RemoteIP(r *http.Request) string {
+	return getRemoteIP(r)
+}
+
 func getREST(httpMetod string, resourceType string) string {
 	return fmt.Sprintf("REST.%s.%s", httpMetod, resourceType)
 }

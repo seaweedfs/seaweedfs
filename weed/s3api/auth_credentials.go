@@ -823,6 +823,7 @@ func (iam *IdentityAccessManagement) loadS3ApiConfigurationWithSource(config *ia
 
 // ReplaceS3ApiConfiguration completely replaces the current configuration (used when no static config)
 func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3ApiConfiguration) error {
+	warnFips140ShortSecrets(config)
 	var identities []*Identity
 	var identityAnonymous *Identity
 	accessKeyIdent := make(map[string]*Identity)
@@ -1025,6 +1026,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 // isFullState marks config as the complete store snapshot, so dynamic identities
 // absent from it are removed; partial merges (a single pushed identity) pass false.
 func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3ApiConfiguration, fromStaticFile bool, isFullState bool) error {
+	warnFips140ShortSecrets(config)
 	// Start with current configuration (which includes static identities)
 	iam.m.RLock()
 	identities := make([]*Identity, len(iam.identities))

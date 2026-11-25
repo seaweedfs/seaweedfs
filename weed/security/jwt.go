@@ -324,6 +324,7 @@ type FilerJwtProvider func(isWrite bool) EncodedJwt
 // environment precedence. A nil provider means the file configures no filer
 // signing keys and the process-wide configuration applies. A file that sets
 // only one access level falls back to the process-wide key for the other.
+// A key too short for GODEBUG=fips140=only is an error.
 func LoadFilerJwtFromFile(configFile string) (FilerJwtProvider, error) {
 	v := viper.New()
 	v.SetConfigFile(configFile)
@@ -351,6 +352,9 @@ func LoadFilerJwtFromFile(configFile string) (FilerJwtProvider, error) {
 			readSigningKey = SigningKey(gv.GetString("jwt.filer_signing.read.key"))
 			readSigningKeyExpires = gv.GetInt("jwt.filer_signing.read.expires_after_seconds")
 		}
+	}
+	if err := util.CheckFips140HmacKeys([]string{"jwt.filer_signing.key", "jwt.filer_signing.read.key"}, []string{string(signingKey), string(readSigningKey)}); err != nil {
+		return nil, fmt.Errorf("security config %s: %v", configFile, err)
 	}
 	if signingKeyExpires < 0 || readSigningKeyExpires < 0 {
 		return nil, fmt.Errorf("jwt.filer_signing lifetimes must not be negative")

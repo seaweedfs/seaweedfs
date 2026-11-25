@@ -38,7 +38,15 @@ func TestValidateCallerSuppliedAccessKeyId(t *testing.T) {
 	}
 }
 
+func setFIPS140Enforced(t *testing.T, enforced bool) {
+	t.Helper()
+	saved := fips140Enforced
+	fips140Enforced = func() bool { return enforced }
+	t.Cleanup(func() { fips140Enforced = saved })
+}
+
 func TestValidateCallerSuppliedSecretAccessKey(t *testing.T) {
+	setFIPS140Enforced(t, false)
 	cases := []struct {
 		name    string
 		input   string
@@ -50,6 +58,31 @@ func TestValidateCallerSuppliedSecretAccessKey(t *testing.T) {
 		{"128 chars ok", strings.Repeat("a", 128), false},
 		{"129 chars too long", strings.Repeat("a", 129), true},
 		{"non-alnum allowed in secret", "sec/ret=1", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateCallerSuppliedSecretAccessKey(tc.input)
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateCallerSuppliedSecretAccessKeyFIPS140(t *testing.T) {
+	setFIPS140Enforced(t, true)
+	cases := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"eight chars", "abcdefgh", true},
+		{"nine chars", "abcdefghi", true},
+		{"ten chars ok", "abcdefghij", false},
+		{"128 chars ok", strings.Repeat("a", 128), false},
+		{"129 chars too long", strings.Repeat("a", 129), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

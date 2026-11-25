@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type Config struct {
@@ -102,6 +104,9 @@ func New(c Config) (*Gateway, error) {
 	salt, saltErr := hex.DecodeString(c.Salt)
 	if keyErr != nil || saltErr != nil || (len(key) == 0) != (len(salt) == 0) {
 		return nil, fmt.Errorf("imgproxy key and salt must both be provided as hexadecimal values")
+	}
+	if err := util.CheckFips140HmacKey("imgproxy key", key); err != nil {
+		return nil, err
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DisableCompression = true

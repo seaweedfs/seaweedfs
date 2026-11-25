@@ -171,7 +171,15 @@ func (g *Guard) IsWhiteListed(host string) bool {
 // operators can rotate keys (e.g. via SIGHUP) without restarting the process.
 // It swaps in a new snapshot carrying the existing whitelist, so a concurrent
 // reader sees either the old keys or the new ones, never a torn slice header.
-func (g *Guard) UpdateSigningKeys(signingKey string, expiresAfterSec int, readSigningKey string, readExpiresAfterSec int, previousSigningKey string, previousReadSigningKey string) {
+// Current keys too short for GODEBUG=fips140=only keep the keys in effect, as
+// signing with them would panic; it then returns false.
+func (g *Guard) UpdateSigningKeys(signingKey string, expiresAfterSec int, readSigningKey string, readExpiresAfterSec int, previousSigningKey string, previousReadSigningKey string) bool {
+	if err := util.CheckFips140HmacKeys([]string{"signing key", "read signing key"}, []string{signingKey, readSigningKey}); err != nil {
+		glog.Errorf("JWT reload: keeping the keys in effect, because %v", err)
+		return false
+	}
+	previousSigningKey = usablePreviousKey("previous signing key", previousSigningKey)
+	previousReadSigningKey = usablePreviousKey("previous read signing key", previousReadSigningKey)
 	g.updateMu.Lock()
 	defer g.updateMu.Unlock()
 	next := *g.state.Load()
@@ -183,21 +191,22 @@ func (g *Guard) UpdateSigningKeys(signingKey string, expiresAfterSec int, readSi
 	next.previousReadSigningKey = SigningKey(previousReadSigningKey)
 	next.isWriteActive = !next.isEmptyWhiteList || len(next.signingKey) != 0
 	g.state.Store(&next)
+	return true
 }
 
 // ReloadSigningKeys applies the [section] keys after util.LoadConfiguration
 // merged security.toml again. The merge keeps a key the file no longer sets,
 // so the keys are read from the file anew: a removed previous key stops
 // verifying, and a swapped pair comes from one read. A file that cannot be
-// read keeps the keys in effect.
-func (g *Guard) ReloadSigningKeys(section string) {
+// read keeps the keys in effect. It reports whether the new keys are in effect.
+func (g *Guard) ReloadSigningKeys(section string) bool {
 	fresh, used := util.ReadConfiguration("security", "")
 	if used == "" {
 		glog.Warningf("reload %s: security.toml cannot be read, keeping the keys in effect", section)
-		return
+		return false
 	}
 	v := util.GetViper()
-	g.UpdateSigningKeys(
+	return g.UpdateSigningKeys(
 		freshKey(fresh, section+".key"),
 		v.GetInt(section+".expires_after_seconds"),
 		freshKey(fresh, section+".read.key"),
@@ -205,6 +214,19 @@ func (g *Guard) ReloadSigningKeys(section string) {
 		fresh.GetString(section+".previous_key"),
 		fresh.GetString(section+".read.previous_key"),
 	)
+}
+
+// usablePreviousKey returns key, or "" with an error log when it is too short
+// for HMAC under GODEBUG=fips140=only. Nothing in that mode can sign with such a
+// key, so dropping it rejects no token; keeping the new current keys keeps a
+// reload's outcome the same on servers that pass previous keys and on those
+// that do not, such as the filer's volume signer.
+func usablePreviousKey(name, key string) string {
+	if err := util.CheckFips140HmacKey(name, []byte(key)); err != nil {
+		glog.Errorf("JWT reload: ignoring the %s, which is shorter than the %d characters FIPS 140 needs for HMAC keys; the new keys are in effect", name, util.Fips140MinHmacKeyBytes)
+		return ""
+	}
+	return key
 }
 
 // freshKey returns name as the fresh read sets it, else its merged value, so
