@@ -221,6 +221,13 @@ func TestAbortRequestRevokedBeforeItIsTracked(t *testing.T) {
 	require.NoError(t, iam.ReplaceS3ApiConfiguration(&iam_pb.S3ApiConfiguration{Identities: []*iam_pb.Identity{
 		revokeIdentity("bob", revokeKeyB, revokeSecretB),
 	}}))
+	// Let the re-check the change scheduled pass before bob is tracked, so only
+	// the generation check can catch him.
+	require.Eventually(t, func() bool {
+		iam.inFlight.mu.Lock()
+		defer iam.inFlight.mu.Unlock()
+		return !iam.inFlight.all
+	}, 5*time.Second, time.Millisecond)
 
 	done := download(t, url, "", "")
 	waitStarted(t, started, 1)
