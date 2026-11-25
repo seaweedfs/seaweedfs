@@ -18,6 +18,7 @@ on:
           - full
           - large_disk_full
           - rocksdb
+          - fips
       release_tag:
         description: 'Release tag to publish (e.g. 3.93)'
         required: true
@@ -163,6 +164,10 @@ jobs:
           # Large disk + full tags - multi-arch
           - { variant: large_disk_full, tag_suffix: _large_disk_full, dockerfile: ./docker/Dockerfile.go_build, build_args: "TAGS=5BytesOffset,elastic,gocdk,rclone,sqlite,tarantool,tikv,ydb", rust_variant: large-disk, platform: linux/amd64, arch: amd64, runner: ubuntu-latest,    qemu: false }
           - { variant: large_disk_full, tag_suffix: _large_disk_full, dockerfile: ./docker/Dockerfile.go_build, build_args: "TAGS=5BytesOffset,elastic,gocdk,rclone,sqlite,tarantool,tikv,ydb", rust_variant: large-disk, platform: linux/arm64, arch: arm64, runner: ubuntu-24.04-arm, qemu: false }
+
+          # FIPS - weed built against the CMVP-validated Go Cryptographic Module v1.0.0; no Rust binaries
+          - { variant: fips, tag_suffix: _fips, dockerfile: ./docker/Dockerfile.go_build, build_args: GOFIPS140=v1.0.0, rust_variant: normal, platform: linux/amd64, arch: amd64, runner: ubuntu-latest,    qemu: false }
+          - { variant: fips, tag_suffix: _fips, dockerfile: ./docker/Dockerfile.go_build, build_args: GOFIPS140=v1.0.0, rust_variant: normal, platform: linux/arm64, arch: arm64, runner: ubuntu-24.04-arm, qemu: false }
 
           # RocksDB large disk - amd64 only
           - { variant: rocksdb, tag_suffix: _large_disk_rocksdb, dockerfile: ./docker/Dockerfile.rocksdb_large, build_args: "", rust_variant: large-disk, platform: linux/amd64, arch: amd64, runner: ubuntu-latest, qemu: false }
@@ -329,6 +334,7 @@ jobs:
           - { variant: large_disk,      tag_suffix: _large_disk }
           - { variant: full,            tag_suffix: _full }
           - { variant: large_disk_full, tag_suffix: _large_disk_full }
+          - { variant: fips,            tag_suffix: _fips }
           - { variant: rocksdb,         tag_suffix: _large_disk_rocksdb }
     steps:
       - name: Checkout the signing action

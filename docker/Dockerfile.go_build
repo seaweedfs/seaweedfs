@@ -18,19 +18,26 @@ RUN cd /go/src/github.com/seaweedfs/seaweedfs && \
 # still needs the directory so the COPY into rust_builder below never fails.
 RUN mkdir -p /go/src/github.com/seaweedfs/seaweedfs/seaweed-common
 ARG TARGETOS TARGETARCH TARGETVARIANT
+# GOFIPS140 selects the Go Cryptographic Module snapshot weed is built against;
+# v1.0.0 is the CMVP-validated one. Empty builds against the toolchain's own
+# crypto, as the other variants do.
+ARG GOFIPS140
 RUN cd /go/src/github.com/seaweedfs/seaweedfs/weed \
   && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=$(git rev-parse --short HEAD)" \
   && export GOOS=$TARGETOS GOARCH=$TARGETARCH \
   && case "$TARGETARCH" in arm) export GOARM="${TARGETVARIANT#v}";; esac \
-  && CGO_ENABLED=0 go build -tags "$TAGS" -ldflags "-extldflags -static ${LDFLAGS}" -o /go/bin/weed .
+  && CGO_ENABLED=0 GOFIPS140="$GOFIPS140" go build -tags "$TAGS" -ldflags "-extldflags -static ${LDFLAGS}" -o /go/bin/weed .
 
 # Rust volume server: use pre-built binary from CI when available (placed in
 # weed-volume-prebuilt/ by the build-rust-binaries job), otherwise compile
 # from source.  Pre-building avoids a multi-hour QEMU-emulated cargo build
 # for non-native architectures.
+# A GOFIPS140 build gets empty placeholders for all three Rust binaries: their
+# JWT, HMAC and TLS crypto comes from Rust crates, not a FIPS-validated module.
 FROM alpine:3.23 as rust_builder
 ARG TARGETARCH
 ARG TAGS
+ARG GOFIPS140
 COPY weed-volume-prebuilt/ /prebuilt/
 COPY weed-worker-prebuilt/ /prebuilt-worker/
 COPY weed-vector-prebuilt/ /prebuilt-vector/
@@ -40,7 +47,10 @@ COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/seaweed-volume /build
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/seaweed-common /build/seaweed-common
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/weed /build/weed
 WORKDIR /build/seaweed-volume
-RUN if [ -f "/prebuilt/weed-volume-${TARGETARCH}" ]; then \
+RUN if [ -n "$GOFIPS140" ]; then \
+      echo "No Rust volume server in a GOFIPS140 build" && \
+      touch /weed-volume; \
+    elif [ -f "/prebuilt/weed-volume-${TARGETARCH}" ]; then \
       echo "Using pre-built Rust binary for ${TARGETARCH}" && \
       cp "/prebuilt/weed-volume-${TARGETARCH}" /weed-volume; \
     elif [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
@@ -59,7 +69,10 @@ RUN if [ -f "/prebuilt/weed-volume-${TARGETARCH}" ]; then \
 # it carries pull in arrow and datafusion, a far larger dependency tree than
 # the image build can carry, so an architecture CI did not build for gets the
 # same empty placeholder the entrypoint refuses to exec.
-RUN if [ -f "/prebuilt-worker/weed-worker-${TARGETARCH}" ]; then \
+RUN if [ -n "$GOFIPS140" ]; then \
+      echo "No Rust worker in a GOFIPS140 build" && \
+      touch /weed-worker; \
+    elif [ -f "/prebuilt-worker/weed-worker-${TARGETARCH}" ]; then \
       echo "Using pre-built Rust worker for ${TARGETARCH}" && \
       cp "/prebuilt-worker/weed-worker-${TARGETARCH}" /weed-worker; \
     else \
@@ -67,7 +80,10 @@ RUN if [ -f "/prebuilt-worker/weed-worker-${TARGETARCH}" ]; then \
       touch /weed-worker; \
     fi
 # The vector engine carries the same lance tree, so it is pre-built or absent too.
-RUN if [ -f "/prebuilt-vector/weed-vector-${TARGETARCH}" ]; then \
+RUN if [ -n "$GOFIPS140" ]; then \
+      echo "No vector engine in a GOFIPS140 build" && \
+      touch /weed-vector; \
+    elif [ -f "/prebuilt-vector/weed-vector-${TARGETARCH}" ]; then \
       echo "Using pre-built vector engine for ${TARGETARCH}" && \
       cp "/prebuilt-vector/weed-vector-${TARGETARCH}" /weed-vector; \
     else \

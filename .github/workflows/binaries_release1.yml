@@ -57,3 +57,19 @@ jobs:
           project_path: weed
           binary_name: weed
           asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}_large_disk"
+      # Built against the CMVP-validated Go Cryptographic Module v1.0.0, which
+      # also makes fips140=on the binary's default; amd64 and arm64 only.
+      - name: Go Release FIPS Binaries
+        if: matrix.goarch == 'amd64' || matrix.goarch == 'arm64'
+        uses: wangyoucao577/go-release-action@279495102627de7960cbc33434ab01a12bae144b # v1.22
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          overwrite: true
+          pre_command: export CGO_ENABLED=0 && export GODEBUG=http2client=0 && export GOFIPS140=v1.0.0
+          ldflags: -s -w -extldflags -static -X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=${{github.sha}}
+          # Where to run `go build .`
+          project_path: weed
+          binary_name: weed
+          asset_name: "${{ matrix.goos }}_${{ matrix.goarch }}_fips"

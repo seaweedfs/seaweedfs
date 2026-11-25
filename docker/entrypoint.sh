@@ -83,7 +83,7 @@ case "$1" in
   	fi
   	shift
   	if [ ! -s /usr/bin/weed-volume ]; then
-  	  echo "Error: Rust volume server is not available on this platform ($(uname -m))." >&2
+  	  echo "Error: Rust volume server is not available in this image (platform $(uname -m); the _fips images ship no Rust binaries)." >&2
   	  echo "Use 'volume' for the Go volume server instead." >&2
   	  exit 1
   	fi
@@ -93,7 +93,7 @@ case "$1" in
   'worker-rust')
   	shift
   	if [ ! -s /usr/bin/weed-worker ]; then
-  	  echo "Error: Rust maintenance worker is not available on this platform ($(uname -m))." >&2
+  	  echo "Error: Rust maintenance worker is not available in this image (platform $(uname -m); the _fips images ship no Rust binaries)." >&2
   	  echo "Use 'worker' for the Go maintenance worker instead." >&2
   	  exit 1
   	fi
@@ -103,7 +103,7 @@ case "$1" in
   'vector')
   	shift
   	if [ ! -s /usr/bin/weed-vector ]; then
-  	  echo "Error: the vector engine is not available on this platform ($(uname -m))." >&2
+  	  echo "Error: the vector engine is not available in this image (platform $(uname -m); the _fips images ship no Rust binaries)." >&2
   	  exit 1
   	fi
   	# The gateway dials the engine from another container, so not loopback.
