@@ -85,3 +85,35 @@ func TestDeleteNonEmptyMarkerDemotesOnTheOwner(t *testing.T) {
 	require.Contains(t, owner.entries, "/buckets/b/album/image.jpg")
 	require.Zero(t, connected.deletes, "the delete went to the connected filer, not the owner")
 }
+
+// While a ring change is in its cooling-off window, the marker the read finds
+// on the prior owner may not have reached the new owner yet.
+func TestDeleteNonEmptyMarkerDemotesOnThePriorOwner(t *testing.T) {
+	bucketEntry := &filer_pb.Entry{Name: "b", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}}
+	next := &markerFiler{anonymousReadFiler: anonymousReadFiler{entries: map[string]*filer_pb.Entry{
+		"/buckets/b": bucketEntry,
+	}}}
+	prior := &markerFiler{anonymousReadFiler: anonymousReadFiler{entries: map[string]*filer_pb.Entry{
+		"/buckets/b":                 bucketEntry,
+		"/buckets/b/album":           {Name: "album", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mime: "application/octet-stream"}},
+		"/buckets/b/album/image.jpg": anonymousReadEntry(nil),
+	}}}
+	nextAddr := startFakeFiler(t, next)
+	priorAddr := startFakeFiler(t, prior)
+	s3a := newPutTestServer(t, nextAddr, priorAddr)
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b"})
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, priorAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{priorAddr}, 1)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{nextAddr}, 2)
+	require.Equal(t, priorAddr, s3a.priorWriteOwner("b", "album"))
+
+	r := httptest.NewRequest(http.MethodDelete, "/b/album/", nil)
+	require.Equal(t, s3err.ErrNone, s3a.deleteDirectoryMarker(r, "b", "album/"))
+
+	prior.mu.Lock()
+	marker := prior.entries["/buckets/b/album"]
+	prior.mu.Unlock()
+	require.NotNil(t, marker, "the prior owner lost the directory its child lives in")
+	require.False(t, marker.IsDirectoryKeyObject(), "the prior owner still holds album/ as an object")
+}

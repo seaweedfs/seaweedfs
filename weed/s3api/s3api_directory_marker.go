@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -104,12 +105,19 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 	}
 
 	// Delete on the owner the marker was read from: a nonempty marker is demoted
-	// by a read and an update that must find it there too.
-	if err := s3a.withWriteOwnerFilerClient(s3a.routableWriteOwner(bucket, trimmedObject), func(client filer_pb.SeaweedFilerClient) error {
-		return s3a.deleteUnversionedObjectWithClient(r.Context(), client, bucket, object, false)
-	}); err != nil {
-		glog.Errorf("deleteDirectoryMarker: failed to delete %s/%s: %v", bucket, object, err)
-		return s3err.ErrInternalError
+	// by a read and an update that must find it there too. During a ring change
+	// the read may have found it on the prior owner instead.
+	owners := []pb.ServerAddress{s3a.routableWriteOwner(bucket, trimmedObject)}
+	if prior := s3a.priorWriteOwner(bucket, trimmedObject); prior != "" && prior != owners[0] {
+		owners = append(owners, prior)
+	}
+	for _, owner := range owners {
+		if err := s3a.withWriteOwnerFilerClient(owner, func(client filer_pb.SeaweedFilerClient) error {
+			return s3a.deleteUnversionedObjectWithClient(r.Context(), client, bucket, object, false)
+		}); err != nil {
+			glog.Errorf("deleteDirectoryMarker: failed to delete %s/%s on %s: %v", bucket, object, owner, err)
+			return s3err.ErrInternalError
+		}
 	}
 	return s3err.ErrNone
 }
