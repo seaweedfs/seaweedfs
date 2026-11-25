@@ -200,8 +200,10 @@ func (iam *IdentityAccessManagement) scheduleRevalidation(bucket string) {
 		}
 		t.buckets[bucket] = struct{}{}
 	}
-	t.mu.Unlock()
+	// Bumped before pending can take this scope, so a request tracked after
+	// that pass sees the change.
 	t.generation.Add(1)
+	t.mu.Unlock()
 	select {
 	case t.kick <- struct{}{}:
 	default:
