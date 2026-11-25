@@ -106,6 +106,9 @@ func (r *Plugin) loadPersistedMonitorState() error {
 		activities = activities[len(activities)-maxActivityRecords:]
 	}
 	if len(activities) > 0 {
+		for i := range activities {
+			redactAdminScriptActivity(&activities[i])
+		}
 		r.activitiesMu.Lock()
 		r.activities = append([]JobActivity(nil), activities...)
 		r.activitiesMu.Unlock()
@@ -1297,7 +1300,7 @@ func (r *Plugin) trackWorkerActivities(jobType, jobID, requestID, workerID strin
 		if event.CreatedAt != nil {
 			timestamp = event.CreatedAt.AsTime().UTC()
 		}
-		r.appendActivity(JobActivity{
+		activity := JobActivity{
 			JobID:      jobID,
 			JobType:    jobType,
 			RequestID:  requestID,
@@ -1307,7 +1310,22 @@ func (r *Plugin) trackWorkerActivities(jobType, jobID, requestID, workerID strin
 			Stage:      event.Stage,
 			Details:    configValueMapToPlain(event.Details),
 			OccurredAt: timeToPtr(timestamp),
-		})
+		}
+		redactAdminScriptActivity(&activity)
+		r.appendActivity(activity)
+	}
+}
+
+// Older admin script workers logged each command with its arguments, which
+// can carry secrets; keep only the command name.
+func redactAdminScriptActivity(activity *JobActivity) {
+	if activity.Stage != "running" ||
+		activity.Source != strings.ToLower(plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR.String()) ||
+		!strings.EqualFold(strings.TrimSpace(activity.JobType), adminScriptJobType) {
+		return
+	}
+	if fields := strings.Fields(activity.Message); len(fields) > 1 {
+		activity.Message = fields[0]
 	}
 }
 

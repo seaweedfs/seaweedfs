@@ -234,6 +234,42 @@ func TestHandleJobProgressUpdateCarriesWorkerIDInActivities(t *testing.T) {
 
 // A worker that leaves the state out of its progress (as seaweed-worker did)
 // must still have its completion applied.
+func TestAdminScriptRunningActivityKeepsOnlyCommandName(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.handleJobProgressUpdate("worker-a", &plugin_pb.JobProgressUpdate{
+		JobId:   "job-admin-script",
+		JobType: "admin_script",
+		State:   plugin_pb.JobState_JOB_STATE_RUNNING,
+		Stage:   "running",
+		Message: "executed 1/1 command(s)",
+		Activities: []*plugin_pb.ActivityEvent{
+			{
+				Source:  plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR,
+				Stage:   "running",
+				Message: "s3.configure -secret_key hidden",
+			},
+		},
+	})
+
+	messages := map[string]string{}
+	for _, activity := range pluginSvc.ListJobActivities("job-admin-script", 0) {
+		messages[activity.Source] = activity.Message
+	}
+	if got := messages["activity_source_executor"]; got != "s3.configure" {
+		t.Fatalf("executor activity message = %q, want %q", got, "s3.configure")
+	}
+	if got := messages["worker_progress"]; got != "executed 1/1 command(s)" {
+		t.Fatalf("progress activity message = %q", got)
+	}
+}
+
 func TestProgressWithoutStateKeepsJobRunningUntilCompleted(t *testing.T) {
 	t.Parallel()
 

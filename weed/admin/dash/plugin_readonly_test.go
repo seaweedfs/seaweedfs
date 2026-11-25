@@ -30,6 +30,15 @@ func TestGetPluginJobDetailAPIStripsRichFieldsForReadOnly(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveJobDetail: %v", err)
 	}
+	if err := store.SaveActivities([]plugin.JobActivity{{
+		JobID:   "job-1",
+		JobType: "admin_script",
+		Source:  "activity_source_executor",
+		Stage:   "running",
+		Message: "s3.configure -secret_key " + marker,
+	}}); err != nil {
+		t.Fatalf("SaveActivities: %v", err)
+	}
 	p, err := plugin.New(plugin.Options{DataDir: dataDir})
 	if err != nil {
 		t.Fatalf("plugin.New: %v", err)
@@ -64,5 +73,8 @@ func TestGetPluginJobDetailAPIStripsRichFieldsForReadOnly(t *testing.T) {
 	}
 	if detail.Job == nil || detail.Job.State != "succeeded" || detail.Job.Summary != "Run admin script" {
 		t.Fatalf("read-only detail lost compact fields: %+v", detail.Job)
+	}
+	if len(detail.Activities) != 1 || detail.Activities[0].Message != "s3.configure" {
+		t.Fatalf("read-only detail activities: %+v", detail.Activities)
 	}
 }
