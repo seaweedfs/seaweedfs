@@ -35,7 +35,8 @@ func (fs *FilerServer) DistributedLock(ctx context.Context, req *filer_pb.LockRe
 	} else if !req.IsMoved && movedTo != "" && movedTo != fs.option.Host {
 		glog.V(3).Infof("FILER LOCK: Forwarding to correct filer - from=%s to=%s", fs.option.Host, movedTo)
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			secondResp, err := client.DistributedLock(ctx, &filer_pb.LockRequest{
+			forwardCtx := withCallerAuthContext(ctx)
+			secondResp, err := client.DistributedLock(forwardCtx, &filer_pb.LockRequest{
 				Name:          req.Name,
 				SecondsToLock: req.SecondsToLock,
 				RenewToken:    req.RenewToken,
@@ -89,7 +90,8 @@ func (fs *FilerServer) DistributedUnlock(ctx context.Context, req *filer_pb.Unlo
 		err = mErr
 	} else if !req.IsMoved && movedTo != "" {
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			secondResp, err := client.DistributedUnlock(ctx, &filer_pb.UnlockRequest{
+			forwardCtx := withCallerAuthContext(ctx)
+			secondResp, err := client.DistributedUnlock(forwardCtx, &filer_pb.UnlockRequest{
 				Name:       req.Name,
 				RenewToken: req.RenewToken,
 				IsMoved:    true,

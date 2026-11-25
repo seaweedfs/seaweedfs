@@ -22,6 +22,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/constants"
@@ -530,7 +531,8 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		routed, dbErr = fs.forwardToWriteOwner(ctx, entryRouteKey(util.FullPath(path)), func(owner pb.ServerAddress) error {
 			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 				dir, _ := entry.FullPath.DirAndName()
-				return filer_pb.CreateEntry(context.WithoutCancel(ctx), client, &filer_pb.CreateEntryRequest{
+				forwardCtx := withHTTPBearerContext(context.WithoutCancel(ctx), security.GetJwt(r))
+				return filer_pb.CreateEntry(forwardCtx, client, &filer_pb.CreateEntryRequest{
 					Directory:                dir,
 					Entry:                    entry.ToProtoEntry(),
 					IsMoved:                  true,
