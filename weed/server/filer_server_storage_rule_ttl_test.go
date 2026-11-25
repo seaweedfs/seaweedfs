@@ -3,6 +3,7 @@ package weed_server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -292,6 +294,38 @@ func TestPostHandlerChecksReadOnlyOnFinalPath(t *testing.T) {
 				t.Errorf("%s landed in the read-only path", tt.child)
 			}
 		})
+	}
+}
+
+// saveMetaData resolves the path it persists on its own, so it has to refuse a
+// read-only path even when the earlier check saw a different one.
+func TestSaveMetaDataChecksReadOnlyOnPersistedPath(t *testing.T) {
+	const readOnlyPrefix = "/buckets/demo/"
+	store := newRenameTestStore()
+	store.entries["/buckets/demo"] = newDirectoryEntry("/buckets/demo", 10)
+	server := &FilerServer{
+		filer:          newRenameTestFiler(t, store),
+		option:         &FilerOption{},
+		entryLockTable: util.NewLockTable[util.FullPath](),
+	}
+	if err := server.filer.FilerConf.AddLocationConf(&filer_pb.FilerConf_PathConf{
+		LocationPrefix: readOnlyPrefix,
+		ReadOnly:       true,
+	}); err != nil {
+		t.Fatalf("AddLocationConf: %v", err)
+	}
+
+	chunks := []*filer_pb.FileChunk{{FileId: "3,01637037d6", Size: 5}}
+	req := httptest.NewRequest(http.MethodPost, "/buckets/demo", http.NoBody)
+	_, err, uncommitted := server.saveMetaData(context.Background(), req, "marker.txt", "", &operation.StorageOption{}, 0, nil, chunks, 5, nil)
+	if !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("saveMetaData err = %v, want ErrReadOnly", err)
+	}
+	if len(uncommitted) != 1 {
+		t.Errorf("uncommitted chunks = %d, want the uploaded chunk back for cleanup", len(uncommitted))
+	}
+	if _, err := store.FindEntry(context.Background(), readOnlyPrefix+"marker.txt"); err == nil {
+		t.Error("entry landed in the read-only path")
 	}
 }
 

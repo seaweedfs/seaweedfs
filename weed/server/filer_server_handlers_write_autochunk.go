@@ -261,6 +261,10 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 	// fix the path
 	path := fs.fixFilePath(ctx, r, fileName)
+	if fs.filer.FilerConf.MatchStorageRule(path).ReadOnly {
+		replyerr = fmt.Errorf("%w: %s", ErrReadOnly, path)
+		return
+	}
 
 	var entry *filer.Entry
 	var newChunks []*filer_pb.FileChunk
