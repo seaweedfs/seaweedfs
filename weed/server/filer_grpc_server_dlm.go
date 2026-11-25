@@ -122,7 +122,7 @@ func (fs *FilerServer) FindLockOwner(ctx context.Context, req *filer_pb.FindLock
 	}
 	if !req.IsMoved && movedTo != "" {
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			secondResp, err := client.FindLockOwner(fs.peerContext(ctx), &filer_pb.FindLockOwnerRequest{
+			secondResp, err := client.FindLockOwner(withCallerAuthContext(ctx), &filer_pb.FindLockOwnerRequest{
 				Name:    req.Name,
 				IsMoved: true,
 			})

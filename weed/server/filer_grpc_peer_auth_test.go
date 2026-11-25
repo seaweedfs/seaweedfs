@@ -147,7 +147,7 @@ func TestPeerAdminTokenReload(t *testing.T) {
 }
 
 func TestPeerAdminTokenLockTransferAndLookup(t *testing.T) {
-	c, _ := newPeerFilers(t)
+	c, key := newPeerFilers(t)
 	setRing(c.fsA, 0, []pb.ServerAddress{c.addrA})
 	c.fsA.filer.Dlm.InsertLock("moved-lock", time.Now().Add(time.Minute).UnixNano(), "test-lease", "", "test-owner", 4, 2)
 	setRing(c.fsA, 0, []pb.ServerAddress{c.addrB})
@@ -159,7 +159,16 @@ func TestPeerAdminTokenLockTransferAndLookup(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	response, err := c.fsA.FindLockOwner(ctx, &filer_pb.FindLockOwnerRequest{Name: "moved-lock"})
+	// The owner trusts the caller's key, not A's newly rotated peer key. A
+	// caller-owned lookup must retain that caller's authority across the hop.
+	c.fsA.grpcScope.cfg.verificationKeys = func() (security.SigningKey, security.SigningKey) { return key, nil }
+	otherKey := make([]byte, 32)
+	if _, err := rand.Read(otherKey); err != nil {
+		t.Fatal(err)
+	}
+	c.fsA.filerGuard.UpdateSigningKeys(string(otherKey), 10, "", 0, "", "")
+	client := peerClient(t, c, c.addrA, peerAdminToken(key))
+	response, err := client.FindLockOwner(ctx, &filer_pb.FindLockOwnerRequest{Name: "moved-lock"})
 	if err != nil || response.GetOwner() != "test-owner" {
 		t.Fatalf("peer owner lookup failed: %v", err)
 	}
