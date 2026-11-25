@@ -278,7 +278,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	// when it is an append
 	if isAppend || isOffsetWrite {
 		if fs.filer.Dlm != nil && len(fs.filer.Dlm.LockRing.GetSnapshot()) > 1 {
-			lockClient := cluster.NewLockClient(fs.grpcDialOption, fs.option.Host)
+			lockClient := fs.newLockClient()
 			distributedLock = lockClient.NewBlockingLongLivedLock(path, string(fs.option.Host), 0)
 			if distributedLock == nil {
 				replyerr = fmt.Errorf("failed to acquire lock for %s; retry the request", path)

@@ -207,7 +207,7 @@ func (fs *FilerServer) posixCoolingOrWarmup(ctx context.Context, key string, lk 
 	var resp *filer_pb.PosixLockResponse
 	err := pb.WithFilerClient(false, 0, prior, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		var e error
-		resp, e = client.PosixLock(probeCtx, &filer_pb.PosixLockRequest{
+		resp, e = client.PosixLock(fs.peerContext(probeCtx), &filer_pb.PosixLockRequest{
 			Key:          key,
 			IsMoved:      true,
 			CoolingProbe: true,

@@ -331,6 +331,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Warningf("filer: guard.white_list is configured but the IP whitelist feature is currently disabled. See https://github.com/seaweedfs/seaweedfs/issues/7094")
 	}
 	fs.filerGuard = security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec, v.GetString("jwt.filer_signing.previous_key"), v.GetString("jwt.filer_signing.read.previous_key"))
+	fs.filer.PeerContext = fs.peerContext
 	basicAuth, basicAuthFile := loadBasicAuth(nil, "")
 	fs.basicAuth.Store(basicAuth)
 	fs.basicAuthFile = basicAuthFile
@@ -338,6 +339,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	fs.loadGrpcScopeConfig(v)
 	fs.grpcScope = newFilerGrpcScope(scopeConfig{
+		adminKeys:         func() (security.SigningKey, security.SigningKey) { return fs.filerGuard.VerificationKeys(true) },
 		verificationKeys:  fs.grpcScopeVerificationKeys,
 		subscriptionScope: fs.metadataSubscriptionScope,
 		requireToken:      func() bool { return fs.grpcScopeSettings.Load().requireToken },

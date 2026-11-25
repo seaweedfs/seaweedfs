@@ -60,6 +60,7 @@ type scopeBackend interface {
 type scopeConfig struct {
 	signingKey        func() security.SigningKey
 	verificationKeys  func() (security.SigningKey, security.SigningKey)
+	adminKeys         func() (security.SigningKey, security.SigningKey)
 	subscriptionScope func(context.Context, string) (*security.MetadataSubscriptionScope, error)
 	requireToken      func() bool
 	leeway            func() time.Duration
@@ -218,6 +219,14 @@ func (s *filerGrpcScope) resolve(ctx context.Context) (*scope, error) {
 	}
 	claims := &security.SeaweedFilerClaims{}
 	token, err := security.DecodeJwtWith(key, previous, security.EncodedJwt(raw), claims, leeway)
+	// Filer-owned RPCs use the shared admin key even when scoped callers have
+	// a dedicated gRPC key. Only an unscoped admin token can cross that boundary.
+	if (err != nil || token == nil || !token.Valid) && s.cfg.adminKeys != nil {
+		adminKey, previousAdminKey := s.cfg.adminKeys()
+		if security.IsFilerAdminToken(adminKey, security.EncodedJwt(raw), previousAdminKey) {
+			return nil, nil
+		}
+	}
 	if errors.Is(err, jwt.ErrTokenExpired) {
 		// The claims are parsed before validation, so the id names the holder.
 		glog.V(1).Infof("filer grpc: token %s (%s) expired", claims.ID, scopePeer(ctx))

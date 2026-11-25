@@ -56,7 +56,7 @@ type twoFilers struct {
 	callsA, callsB *receivedUpdates
 }
 
-func newTwoFilers(t *testing.T) *twoFilers {
+func newTwoFilers(t *testing.T, configure ...func(*FilerServer)) *twoFilers {
 	t.Helper()
 	c := &twoFilers{
 		store:  newRenameTestStore(),
@@ -79,7 +79,14 @@ func newTwoFilers(t *testing.T) *twoFilers {
 			grpcDialOption: c.dial,
 			entryLockTable: util.NewLockTable[util.FullPath](),
 		}
-		srv := grpc.NewServer(grpc.UnaryInterceptor(calls.intercept))
+		for _, config := range configure {
+			config(fs)
+		}
+		options := []grpc.ServerOption{grpc.UnaryInterceptor(calls.intercept)}
+		if fs.grpcScope != nil {
+			options = append(options, fs.grpcScope.ServerOptions()...)
+		}
+		srv := grpc.NewServer(options...)
 		filer_pb.RegisterSeaweedFilerServer(srv, fs)
 		go func() { _ = srv.Serve(lis) }()
 		t.Cleanup(func() {
