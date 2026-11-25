@@ -174,6 +174,8 @@ func (s3a *S3ApiServer) onRoleChange(dir string) {
 	}
 	s3iam.iamManager.InvalidateRoleCache()
 	glog.V(2).Infof("Invalidated cached roles after %s change", dir)
+	// Sessions are authorized against their role's policies.
+	s3a.iam.revalidateInFlight()
 }
 
 // onCircuitBreakerConfigChange handles circuit breaker config file changes (create, update, delete)
@@ -222,6 +224,10 @@ func (s3a *S3ApiServer) onBucketMetadataChange(dir string, oldEntry *filer_pb.En
 			// Remove from bucket configuration cache
 			s3a.invalidateBucketConfigCache(oldEntry.Name)
 		}
+		// A bucket policy change can deny requests already being served.
+		removeName, updateName, _ := bucketPolicyMirrorOps(oldEntry, newEntry)
+		s3a.iam.revalidateBucketInFlight(removeName)
+		s3a.iam.revalidateBucketInFlight(updateName)
 	}
 	return nil
 }

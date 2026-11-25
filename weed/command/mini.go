@@ -574,6 +574,7 @@ func initMiniS3Flags() {
 	miniS3Options.allowUntrustedRemoteEndpoints = cmdMini.Flag.Bool("s3.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 	miniS3Options.allowBackslashInKey = cmdMini.Flag.Bool("s3.allowBackslashInKey", false, allowBackslashInKeyUsage)
 	miniS3Options.iamSelfServiceRequiresGrant = cmdMini.Flag.Bool("s3.iam.selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
+	miniS3Options.abortRevokedRequests = cmdMini.Flag.Bool("s3.abortRevokedRequests", false, s3AbortRevokedRequestsUsage)
 	miniS3Options.routedLookupTimeout = cmdMini.Flag.Duration("s3.routedLookupTimeout", defaultS3RoutedLookupTimeout, s3RoutedLookupTimeoutUsage)
 	miniS3Options.unreachableOwnerTTL = cmdMini.Flag.Duration("s3.unreachableOwnerTTL", defaultS3UnreachableOwnerTTL, s3UnreachableOwnerTTLUsage)
 	miniS3Options.volumeLookupTimeout = cmdMini.Flag.Duration("s3.volumeLookupTimeout", defaultS3VolumeLookupTimeout, s3VolumeLookupTimeoutUsage)
