@@ -34,17 +34,21 @@ func compactedKeys(t *testing.T, base string) (indexed, intact []uint64) {
 	}
 	dat := backend.NewDiskFile(datFile)
 	defer dat.Close()
+	sb, err := super_block.ReadSuperBlock(dat)
+	if err != nil {
+		t.Fatal(err)
+	}
 	idxFile, err := os.Open(base + ".cpx")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer idxFile.Close()
-	listed := int64(super_block.SuperBlockSize)
+	listed := int64(sb.BlockSize())
 	if err := idx.WalkIndexFile(idxFile, 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
 		indexed = append(indexed, uint64(key))
-		listed += needle.GetActualSize(size, needle.GetCurrentVersion())
+		listed += needle.GetActualSize(size, sb.Version)
 		n := new(needle.Needle)
-		if n.ReadData(dat, offset.ToActualOffset(), size, needle.GetCurrentVersion()) == nil && bytes.Equal(n.Data, bytes.Repeat([]byte{byte(key)}, 1000*int(key))) {
+		if n.ReadData(dat, offset.ToActualOffset(), size, sb.Version) == nil && bytes.Equal(n.Data, bytes.Repeat([]byte{byte(key)}, 1000*int(key))) {
 			intact = append(intact, uint64(key))
 		}
 		return nil
