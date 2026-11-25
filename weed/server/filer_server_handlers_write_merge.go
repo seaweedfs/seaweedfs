@@ -45,6 +45,20 @@ func (fs *FilerServer) maybeMergeChunks(ctx context.Context, so *operation.Stora
 		return inputChunks, nil
 	}
 
+	// The merge reads to the end of the stream, which stops at a hole.
+	visibles, err := filer.NonOverlappingVisibleIntervals(ctx, fs.lookupFileId, inputChunks, 0, math.MaxInt64)
+	if err != nil {
+		return nil, err
+	}
+	var stop int64
+	for x := visibles.Front(); x != nil; x = x.Next {
+		if x.StartOffset != stop {
+			glog.V(3).InfofCtx(ctx, "Skipping chunk merge for a sparse file")
+			return inputChunks, nil
+		}
+		stop = x.StopOffset
+	}
+
 	return fs.mergeChunks(ctx, so, inputChunks, minOffset)
 }
 
