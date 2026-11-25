@@ -97,7 +97,7 @@ jobs:
       - name: Upload graph artifact
         uses: actions/upload-artifact@v7
         with:
-          name: graph-${{ env.TAG || github.sha }}
+          name: graph-${{ github.sha }}
           path: graph-bundle.tar.gz
           retention-days: 14
 
@@ -113,11 +113,12 @@ jobs:
       - name: Download graph artifact
         uses: actions/download-artifact@v8
         with:
-          name: graph-${{ env.TAG }}
+          name: graph-${{ github.sha }}
 
       - name: Upload release asset
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mv graph-bundle.tar.gz "graph-${TAG}.tar.gz"
-          gh release upload "${TAG}" "graph-${TAG}.tar.gz" --clobber --repo "${GITHUB_REPOSITORY}"
+          asset="graph-${TAG//\//-}.tar.gz"
+          mv graph-bundle.tar.gz "${asset}"
+          gh release upload "${TAG}" "${asset}" --clobber --repo "${GITHUB_REPOSITORY}"
