@@ -5214,7 +5214,22 @@ fn part_file_name(field: &multer::Field<'_>) -> Option<String> {
 
 /// Go's decode2231Enc for `filename*=charset'lang'percent-encoded`.
 fn extended_file_name(disposition: &str) -> Option<String> {
-    let value = disposition.split(';').skip(1).find_map(|param| {
+    let mut params = Vec::new();
+    let (mut start, mut quoted, mut escaped) = (0, false, false);
+    for (i, c) in disposition.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            ';' if !quoted => {
+                params.push(&disposition[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    params.push(&disposition[start..]);
+    let value = params.into_iter().skip(1).find_map(|param| {
         let (key, value) = param.split_once('=')?;
         key.trim()
             .eq_ignore_ascii_case("filename*")
@@ -9718,6 +9733,10 @@ Content-Encoding: gzip\r\n\r\n"
             extended_file_name("form-data; name=file; FILENAME*=US-ASCII'en'a%20b.txt"),
             Some("a b.txt".to_string())
         );
+        assert_eq!(
+            extended_file_name(r#"form-data; name="a\";b"; filename*=utf-8''x.txt"#),
+            Some("x.txt".to_string())
+        );
         for value in [
             "form-data; filename=\"a.txt\"; name=file",
             "form-data; filename*=iso-8859-1''caf%E9.txt",
@@ -9725,6 +9744,7 @@ Content-Encoding: gzip\r\n\r\n"
             "form-data; filename*=utf-8''cut%C",
             "form-data; filename*=utf-8''%FF",
             "form-data; filename*=caf%C3%A9.txt",
+            "form-data; name=\"note; filename*=utf-8''decoy\"",
         ] {
             assert_eq!(extended_file_name(value), None, "{value}");
         }
