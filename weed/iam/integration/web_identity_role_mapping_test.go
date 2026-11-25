@@ -125,7 +125,9 @@ func TestWebIdentityRoleMappingLimitsNamedRoles(t *testing.T) {
 		})
 		if tc.allowed {
 			require.NoError(t, err, "groups %v assuming %s", tc.groups, tc.role)
-			require.NotNil(t, resp)
+			session, err := iamManager.GetSTSService().ValidateSessionToken(ctx, resp.Credentials.SessionToken)
+			require.NoError(t, err)
+			assert.Equal(t, "arn:aws:iam::role/"+tc.role, session.RoleArn)
 		} else {
 			assert.Error(t, err, "groups %v assuming %s", tc.groups, tc.role)
 			assert.Nil(t, resp, "groups %v assuming %s", tc.groups, tc.role)
