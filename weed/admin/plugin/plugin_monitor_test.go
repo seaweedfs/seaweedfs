@@ -337,6 +337,43 @@ func TestAdminScriptRunningActivityTypedByPendingExecution(t *testing.T) {
 	}
 }
 
+func TestUntypedRunningActivityAfterCancellationKeepsOnlyCommandName(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.handleJobProgressUpdate("worker-a", &plugin_pb.JobProgressUpdate{
+		RequestId: "req-cancelled",
+		State:     plugin_pb.JobState_JOB_STATE_RUNNING,
+		Stage:     "running",
+		Activities: []*plugin_pb.ActivityEvent{
+			{
+				Source:  plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR,
+				Stage:   "running",
+				Message: "s3.configure -secret_key hidden",
+			},
+		},
+	})
+
+	executorActivities := 0
+	for _, activity := range pluginSvc.ListActivities("", 0) {
+		if activity.Source != "activity_source_executor" {
+			continue
+		}
+		executorActivities++
+		if activity.Message != "s3.configure" {
+			t.Fatalf("activity message = %q, want %q", activity.Message, "s3.configure")
+		}
+	}
+	if executorActivities != 1 {
+		t.Fatalf("executor activities = %d, want 1", executorActivities)
+	}
+}
+
 // A worker that leaves the state out of its progress (as seaweed-worker did)
 // must still have its completion applied.
 func TestProgressWithoutStateKeepsJobRunningUntilCompleted(t *testing.T) {

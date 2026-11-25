@@ -1326,11 +1326,13 @@ func (r *Plugin) trackWorkerActivities(jobType, jobID, requestID, workerID strin
 }
 
 // Older admin script workers logged each command with its arguments, which
-// can carry secrets; keep only the command name.
+// can carry secrets; keep only the command name. A report whose job type is
+// unknown may come from one of them.
 func redactAdminScriptActivity(activity *JobActivity) {
+	jobType := strings.TrimSpace(activity.JobType)
 	if activity.Stage != "running" ||
 		activity.Source != strings.ToLower(plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR.String()) ||
-		!strings.EqualFold(strings.TrimSpace(activity.JobType), adminScriptJobType) {
+		(jobType != "" && !strings.EqualFold(jobType, adminScriptJobType)) {
 		return
 	}
 	if fields := strings.Fields(activity.Message); len(fields) > 1 {
