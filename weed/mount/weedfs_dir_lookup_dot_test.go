@@ -173,3 +173,21 @@ func TestMovePathMovesAForgottenInode(t *testing.T) {
 		t.Fatalf("%d paths indexed, want 2", len(table.forgottenInodes))
 	}
 }
+
+func TestLookupHandleRefusesAPathRenamedAway(t *testing.T) {
+	table := NewInodeToPath("/", 0)
+	table.RetainForgotten(nfsExportForgottenInodes)
+	inode := table.Lookup("/a.txt", 1, false, false, 0, true)
+	table.Forget(inode, 1, nil, nil)
+	table.MovePath("/a.txt", "/b.txt")
+
+	if table.LookupHandle("/a.txt", inode, false) {
+		t.Fatal("LookupHandle registered the path the inode was renamed away from")
+	}
+	if path, _ := table.GetForgottenPath(inode); path != "/b.txt" {
+		t.Fatalf("retained path %q, want /b.txt", path)
+	}
+	if !table.LookupHandle("/b.txt", inode, false) {
+		t.Fatal("LookupHandle refused the retained path")
+	}
+}
