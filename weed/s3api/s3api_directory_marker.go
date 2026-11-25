@@ -103,7 +103,9 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 		return s3err.ErrInternalError
 	}
 
-	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	// Delete on the owner the marker was read from: a nonempty marker is demoted
+	// by a read and an update that must find it there too.
+	if err := s3a.withWriteOwnerFilerClient(s3a.routableWriteOwner(bucket, trimmedObject), func(client filer_pb.SeaweedFilerClient) error {
 		return s3a.deleteUnversionedObjectWithClient(r.Context(), client, bucket, object, false)
 	}); err != nil {
 		glog.Errorf("deleteDirectoryMarker: failed to delete %s/%s: %v", bucket, object, err)
