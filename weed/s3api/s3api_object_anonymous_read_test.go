@@ -273,6 +273,13 @@ func TestSignedReadOfVersionFileKey(t *testing.T) {
 	}
 	require.Equal(t, s3err.ErrAccessDenied, s3a.deleteDirectoryMarker(r, "b", "o.versions/v_v1/"))
 	require.Contains(t, f.entries, "/buckets/b/o.versions/v_v1")
+	chunked := anonymousReadEntry(nil)
+	chunked.Name = "v_v2"
+	chunked.Content = nil
+	chunked.Chunks = []*filer_pb.FileChunk{{FileId: "1,02", Size: 11}}
+	chunked.Extended[s3_constants.ExtVersionIdKey] = []byte("v2")
+	f.entries["/buckets/b/o.versions/v_v2"] = chunked
+	require.Equal(t, s3err.ErrAccessDenied, s3a.deleteDirectoryMarker(r, "b", "o.versions/v_v2/"))
 }
 
 func TestWriteToVersionFileKey(t *testing.T) {
