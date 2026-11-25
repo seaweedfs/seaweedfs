@@ -212,9 +212,9 @@ func TestFixIgnoreErrorReportsIncompleteScan(t *testing.T) {
 	})
 }
 
-// A damaged needle, and a damaged newer copy of a key, are indexed unless
-// -verifyCrc reads the data; then both are left out and the older copy of the
-// key does not come back.
+// Damaged needles, and a damaged newer copy of a key, are indexed unless
+// -verifyCrc reads the data; then they are left out and the older copy of the
+// key does not come back. Needle 5's data size is zeroed, which skips the CRC.
 func TestFixVerifyCrcLeavesOutDamagedNeedles(t *testing.T) {
 	savedVerify, savedStatus := *fixVerifyCrc, commandExitStatus
 	defer func() { *fixVerifyCrc, commandExitStatus = savedVerify, savedStatus }()
@@ -235,6 +235,7 @@ func TestFixVerifyCrcLeavesOutDamagedNeedles(t *testing.T) {
 	dataAt := int64(types.NeedleHeaderSize + types.DataSizeSize)
 	overwriteAt(t, base+".dat", offsets[3]+dataAt, []byte{0xee})
 	overwriteAt(t, base+".dat", int64(offset)+dataAt, []byte{0xee})
+	overwriteAt(t, base+".dat", offsets[4]+types.NeedleHeaderSize, make([]byte, types.DataSizeSize))
 
 	for _, tc := range []struct {
 		verify bool
@@ -242,7 +243,7 @@ func TestFixVerifyCrcLeavesOutDamagedNeedles(t *testing.T) {
 		status int
 	}{
 		{false, []uint64{1, 3, 4, 5, 2}, 0},
-		{true, []uint64{1, 3, 5}, 1},
+		{true, []uint64{1, 3}, 1},
 	} {
 		*fixVerifyCrc, commandExitStatus = tc.verify, 0
 		doFixOneVolume(dir, "fix_7", "fix", 7, false)

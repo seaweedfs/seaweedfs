@@ -83,7 +83,7 @@ func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64
 		return io.EOF
 	}
 	if scanner.verifyDat != nil && n.Size.IsValid() {
-		if err := new(needle.Needle).ReadData(scanner.verifyDat, offset, n.Size, scanner.version); err != nil {
+		if err := scanner.verifyNeedle(n, offset); err != nil {
 			if !errors.Is(err, needle.ErrorCorrupted) {
 				return fmt.Errorf("verify needle %v at offset %d: %w", n.Id, offset, err)
 			}
@@ -105,6 +105,19 @@ func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64
 			glog.V(2).Infof("skipping deleted file ...")
 			return scanner.nm.Delete(n.Id)
 		}
+	}
+	return nil
+}
+
+// verifyNeedle reads the record at offset and checks its data against its CRC.
+func (scanner *VolumeFileScanner4Fix) verifyNeedle(n *needle.Needle, offset int64) error {
+	record := new(needle.Needle)
+	if err := record.ReadData(scanner.verifyDat, offset, n.Size, scanner.version); err != nil {
+		return err
+	}
+	if len(record.Data) == 0 {
+		// A needle with no data is written with size 0, and the CRC covers only the data.
+		return fmt.Errorf("needle %v has size %d but no data: %w", n.Id, n.Size, needle.ErrorCorrupted)
 	}
 	return nil
 }
