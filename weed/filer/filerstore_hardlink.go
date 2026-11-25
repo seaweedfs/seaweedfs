@@ -15,8 +15,9 @@ import (
 // handleUpdateToHardLinks saves the shared record of entry, a file a write is
 // about to store, and returns the hard link of the name at entry's path when
 // the write replaces that name with another file. The caller drops that link
-// once the write has gone through (dropLink), not before.
-func (fsw *FilerStoreWrapper) handleUpdateToHardLinks(ctx context.Context, entry *Entry) (replaced HardLinkId, err error) {
+// once the write has gone through (dropLink), not before. The name is looked
+// up with findCtx.
+func (fsw *FilerStoreWrapper) handleUpdateToHardLinks(ctx, findCtx context.Context, entry *Entry) (replaced HardLinkId, err error) {
 
 	if entry.IsDirectory() {
 		return nil, nil
@@ -25,7 +26,7 @@ func (fsw *FilerStoreWrapper) handleUpdateToHardLinks(ctx context.Context, entry
 	// check what is existing entry
 	// glog.V(4).Infof("handleUpdateToHardLinks FindEntry %s", entry.FullPath)
 	actualStore := fsw.getActualStore(entry.FullPath)
-	existingEntry, err := actualStore.FindEntry(ctx, entry.FullPath)
+	existingEntry, err := actualStore.FindEntry(findCtx, entry.FullPath)
 	if err != nil && err != filer_pb.ErrNotFound {
 		return nil, fmt.Errorf("update existing entry %s: %v", entry.FullPath, err)
 	}
@@ -61,12 +62,18 @@ func (fsw *FilerStoreWrapper) writeWithHardLink(ctx context.Context, entry *Entr
 	// change run again would find the name its first run stored and count it
 	// as one the file already had. It is stored once the count is settled.
 	together := fsw.getActualStore(entry.FullPath) == fsw.defaultStore
-	err = fsw.changeLinkRecord(ctx, entry, func(ctx context.Context) error {
+	err = fsw.changeLinkRecord(ctx, entry, func(txCtx context.Context) error {
+		// A store of the same kind would read the name through the
+		// default store's transaction, from the default store.
+		findCtx := txCtx
+		if !together {
+			findCtx = ctx
+		}
 		var err error
-		if replaced, err = fsw.handleUpdateToHardLinks(ctx, entry); err != nil || !together {
+		if replaced, err = fsw.handleUpdateToHardLinks(txCtx, findCtx, entry); err != nil || !together {
 			return err
 		}
-		return write(ctx, entry)
+		return write(txCtx, entry)
 	})
 	if err == nil && !together {
 		err = write(ctx, entry)

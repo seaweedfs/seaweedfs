@@ -300,6 +300,7 @@ type versionedStore struct {
 }
 
 type versionedTxn struct {
+	store *versionedStore
 	start int64
 	rows  map[string]*Entry // nil: deleted
 	keys  map[string][]byte // nil: deleted
@@ -329,7 +330,7 @@ func (s *versionedStore) wrote(what string) {
 func (s *versionedStore) BeginTransaction(ctx context.Context) (context.Context, error) {
 	s.vmu.Lock()
 	defer s.vmu.Unlock()
-	return context.WithValue(ctx, versionedTxnKey{}, &versionedTxn{start: s.clock, rows: map[string]*Entry{}, keys: map[string][]byte{}}), nil
+	return context.WithValue(ctx, versionedTxnKey{}, &versionedTxn{store: s, start: s.clock, rows: map[string]*Entry{}, keys: map[string][]byte{}}), nil
 }
 
 func (s *versionedStore) CommitTransaction(ctx context.Context) error {
@@ -379,7 +380,12 @@ func (s *versionedStore) FindEntry(ctx context.Context, p util.FullPath) (*Entry
 			return row.ShallowClone(), nil
 		}
 	}
-	row, err := s.stubFilerStore.FindEntry(ctx, p)
+	from := s
+	if txn != nil {
+		// reads go through the transaction's store, as TiKV's do
+		from = txn.store
+	}
+	row, err := from.stubFilerStore.FindEntry(ctx, p)
 	if txn != nil && s.afterRead != nil {
 		s.afterRead("r" + string(p))
 	}
@@ -529,6 +535,22 @@ func TestNameInAPathSpecificStoreIsCountedOnce(t *testing.T) {
 
 	require.NoError(t, one.InsertEntryKnownAbsent(context.Background(), linkName(id, "/s/c", 3)))
 	require.Equal(t, int32(5), linkCount(t, store.stubFilerStore, id))
+}
+
+// A name in a path-specific store of the same kind is looked up there, not
+// through the default store's transaction: written again, it keeps the count.
+func TestNameInAPathSpecificStoreOfTheSameKindIsFoundThere(t *testing.T) {
+	store := newVersionedStore()
+	id := linkedFile(t, store.stubFilerStore, "/d/x", "/d/y")
+	elsewhere := newVersionedStore()
+	one := countingWrapper(store)
+	one.AddPathSpecificStore("/s/", "s", elsewhere)
+	ctx := context.Background()
+
+	require.NoError(t, one.InsertEntry(ctx, linkName(id, "/s/a", 3)))
+	require.Equal(t, int32(3), linkCount(t, store.stubFilerStore, id))
+	require.NoError(t, one.UpdateEntry(ctx, linkName(id, "/s/a", 3)))
+	require.Equal(t, int32(3), linkCount(t, store.stubFilerStore, id))
 }
 
 // Inside a transaction the caller opened, the record is changed in that
