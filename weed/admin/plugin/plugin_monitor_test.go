@@ -233,8 +233,6 @@ func TestHandleJobProgressUpdateCarriesWorkerIDInActivities(t *testing.T) {
 	}
 }
 
-// A worker that leaves the state out of its progress (as seaweed-worker did)
-// must still have its completion applied.
 func TestAdminScriptRunningActivityKeepsOnlyCommandName(t *testing.T) {
 	t.Parallel()
 
@@ -289,6 +287,8 @@ func TestAdminScriptRunningActivityKeepsOnlyCommandName(t *testing.T) {
 	}
 }
 
+// A worker that leaves the state out of its progress (as seaweed-worker did)
+// must still have its completion applied.
 func TestProgressWithoutStateKeepsJobRunningUntilCompleted(t *testing.T) {
 	t.Parallel()
 
