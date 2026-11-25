@@ -36,24 +36,25 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 	entry, err := s3a.getObjectEntryRoutedByKey(bucket, trimmedObject)
 	switch {
 	case errors.Is(err, filer_pb.ErrNotFound):
-		return s3err.ErrNone // deleting a key that is not there is a success
 	case err != nil:
 		// The entry may be a file a child write promoted to a directory, whose data
 		// belongs to the key without the trailing slash. Deleting without knowing
 		// would destroy it, so fail and leave the retry to the client.
 		glog.Errorf("deleteDirectoryMarker: cannot read %s/%s: %v", bucket, object, err)
 		return s3err.ErrInternalError
+	default:
+		if remove, code := s3a.checkDirectoryMarker(entry, bucket, object, governanceBypassAllowed); !remove {
+			return code
+		}
 	}
-	if remove, code := s3a.checkDirectoryMarker(entry, bucket, object, governanceBypassAllowed); !remove {
-		return code
-	}
+	found := err == nil
 
 	// During a ring change the key's prior owner may hold an entry the new owner
 	// has not received yet, so it is checked and deleted on that filer as well.
 	owner := s3a.routableWriteOwner(bucket, trimmedObject)
+	dir, name := util.FullPath(markerDir).DirAndName()
 	var priorOwner pb.ServerAddress
 	if prior := s3a.priorWriteOwner(bucket, trimmedObject); prior != "" && prior != owner {
-		dir, name := util.FullPath(markerDir).DirAndName()
 		probeCtx, cancel := s3a.routedProbeContext(prior)
 		priorEntry, priorErr := s3a.lookupEntryOnFiler(probeCtx, prior, dir, name)
 		cancel()
@@ -71,6 +72,9 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 				priorOwner = prior
 			}
 		}
+	}
+	if !found && priorOwner == "" {
+		return s3err.ErrNone // deleting a key that is not there is a success
 	}
 
 	// Drop a history an older build recorded for this key. Nothing writes one now, and
