@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -235,6 +236,112 @@ func TestRefusedWriteOfANameIsCountedOnceWhenSentAgain(t *testing.T) {
 			}
 			require.Equal(t, int32(0), linkCount(t, store, id), "the record outlived the file's last name")
 			require.Equal(t, int32(-1), namesCounted(t, store, id))
+		})
+	}
+}
+
+// namesPutFailingStore refuses the puts of the names key that refuse picks,
+// by their number.
+type namesPutFailingStore struct {
+	*stubFilerStore
+	id     HardLinkId
+	puts   int
+	refuse func(put int) bool
+}
+
+func (s *namesPutFailingStore) KvPut(ctx context.Context, key []byte, value []byte) error {
+	if bytes.Equal(key, linkNamesKey(s.id)) {
+		if s.puts++; s.refuse != nil && s.refuse(s.puts) {
+			return storeRefusal
+		}
+	}
+	return s.stubFilerStore.KvPut(ctx, key, value)
+}
+
+// A store without transactions may fail between a name and the names
+// recorded for it. They are recorded first: a name that cannot be counted is
+// not stored, and sent again it is counted once. Recorded after the name, the
+// failure left the name stored and not counted, and the write sent again
+// found it there and did not count it either.
+func TestNameThatCannotBeCountedIsNotStored(t *testing.T) {
+	for _, where := range []string{"default store", "path-specific store"} {
+		for _, known := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s, known absent=%v", where, known), func(t *testing.T) {
+				inner := newStubFilerStore()
+				id := linkedFile(t, inner, "/d/x", "/d/y")
+				store := &namesPutFailingStore{stubFilerStore: inner, id: id}
+				wrapper := countingWrapper(store)
+				names, name := inner, util.FullPath("/d/a")
+				if where == "path-specific store" {
+					names, name = newStubFilerStore(), "/s/a"
+					wrapper.AddPathSpecificStore("/s/", "s", names)
+				}
+				insert := wrapper.InsertEntry
+				if known {
+					insert = wrapper.InsertEntryKnownAbsent
+				}
+				ctx := context.Background()
+				require.NoError(t, wrapper.UpdateEntry(ctx, linkName(id, "/d/x", 2)))
+				require.Equal(t, int32(2), namesCounted(t, inner, id))
+
+				store.refuse = func(int) bool { return true }
+				require.ErrorIs(t, insert(ctx, linkName(id, name, 3)), storeRefusal)
+				require.Empty(t, names.entries[pathInStore(where, name)], "a name that could not be counted was stored")
+				store.refuse = nil
+				require.NoError(t, insert(ctx, linkName(id, name, 3)))
+				require.Equal(t, int32(3), namesCounted(t, inner, id))
+
+				for _, n := range []util.FullPath{"/d/x", "/d/y", name} {
+					require.NoError(t, wrapper.DeleteEntry(ctx, n))
+				}
+				require.Equal(t, int32(0), linkCount(t, inner, id), "the record outlived the file's last name")
+			})
+		}
+	}
+}
+
+// pathInStore is the path a store holds name under: a path-specific store has
+// its location cut off.
+func pathInStore(where string, name util.FullPath) string {
+	if where == "path-specific store" {
+		return "/" + name.Name()
+	}
+	return string(name)
+}
+
+// A name that was counted and then refused by the store is counted off again.
+// Where that fails as well, the names recorded are above the names stored and
+// the file is leaked. They are never below, which would delete it under a
+// name.
+func TestNameRefusedAfterItWasCountedLeavesTheNamesNoLower(t *testing.T) {
+	for _, where := range []string{"default store", "path-specific store"} {
+		t.Run(where, func(t *testing.T) {
+			inner := newStubFilerStore()
+			id := linkedFile(t, inner, "/d/x", "/d/y")
+			store := &namesPutFailingStore{stubFilerStore: inner, id: id}
+			wrapper := countingWrapper(store)
+			names, name := inner, util.FullPath("/d/a")
+			if where == "path-specific store" {
+				names, name = newStubFilerStore(), "/s/a"
+				wrapper.AddPathSpecificStore("/s/", "s", names)
+			}
+			ctx := context.Background()
+			require.NoError(t, wrapper.UpdateEntry(ctx, linkName(id, "/d/x", 2)))
+			require.Equal(t, int32(2), namesCounted(t, inner, id))
+
+			// the name is counted, refused, and cannot be counted off
+			names.insertErr = storeRefusal
+			counted := store.puts
+			store.refuse = func(put int) bool { return put > counted+1 }
+			require.ErrorIs(t, wrapper.InsertEntry(ctx, linkName(id, name, 3)), storeRefusal)
+			require.Equal(t, int32(3), namesCounted(t, inner, id))
+
+			names.insertErr, store.refuse = nil, nil
+			require.NoError(t, wrapper.InsertEntry(ctx, linkName(id, name, 3)))
+			for _, n := range []util.FullPath{"/d/x", "/d/y", name} {
+				require.NoError(t, wrapper.DeleteEntry(ctx, n))
+			}
+			require.Equal(t, int32(1), linkCount(t, inner, id), "leaked, by the one name counted twice")
 		})
 	}
 }

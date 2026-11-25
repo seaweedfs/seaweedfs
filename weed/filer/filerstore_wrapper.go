@@ -200,13 +200,11 @@ func (fsw *FilerStoreWrapper) InsertEntryKnownAbsent(ctx context.Context, entry 
 		glog.V(4).InfofCtx(ctx, "InsertEntryKnownAbsent %s has HardLinkId %x counter=%d",
 			entry.FullPath, entry.HardLinkId, entry.HardLinkCounter)
 		var names *linkNames
+		storeName := func(ctx context.Context) error { return actualStore.InsertEntry(ctx, entry) }
 		var store func(context.Context) error
 		if actualStore != fsw.defaultStore {
 			store = func(ctx context.Context) error {
-				if err := actualStore.InsertEntry(ctx, entry); err != nil {
-					return err
-				}
-				return fsw.recordLinkNames(ctx, names, false)
+				return fsw.storeCountedName(ctx, names, false, storeName)
 			}
 		}
 		return fsw.changeLinkRecord(ctx, entry, func(ctx context.Context) error {
@@ -214,13 +212,10 @@ func (fsw *FilerStoreWrapper) InsertEntryKnownAbsent(ctx context.Context, entry 
 			if names, err = fsw.saveHardLink(ctx, entry, true); err != nil {
 				return fmt.Errorf("setHardLink %x: %v", entry.HardLinkId, err)
 			}
-			if store != nil {
-				return nil // outside the record's transaction: stored after it
+			if err = fsw.recordLinkNames(ctx, names); err != nil || store != nil {
+				return err // outside the record's transaction: stored after it
 			}
-			if err = actualStore.InsertEntry(ctx, entry); err != nil {
-				return err
-			}
-			return fsw.recordLinkNames(ctx, names, true)
+			return fsw.storeCountedName(ctx, names, true, storeName)
 		}, store)
 	}
 
