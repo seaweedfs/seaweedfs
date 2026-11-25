@@ -69,10 +69,14 @@ func TestToFileInfoETag(t *testing.T) {
 	if etag := toFileInfo("/f", file("XUFAKrxLKna5cZ2REBfFkg==", "XUFAKrxLKna5cZ2REBfFkg==")).etag; etag == "" {
 		t.Error("chunks with digests got no etag")
 	}
-	inline := file()
-	inline.Content = []byte("hello")
-	if etag := toFileInfo("/f", inline).etag; etag != "" {
-		t.Errorf("inline content without md5 got etag %q; every inline file would share it", etag)
+	inline := func(content string) string {
+		entry := file()
+		entry.Content = []byte(content)
+		entry.Attributes.Mtime = 1700000000
+		return toFileInfo("/f", entry).etag
+	}
+	if hello, world := inline("hello"), inline("world"); hello == "" || hello == world {
+		t.Errorf("inline contents of one size and mtime got etags %q and %q; a replace would answer 304", hello, world)
 	}
 	withMd5 := file("")
 	withMd5.Attributes.Md5 = []byte{0xab}
