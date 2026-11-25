@@ -1,0 +1,127 @@
+name: Graph
+
+# Builds a code knowledge graph with the open-source Graphify CLI and uploads
+# it as an artifact; a published release, or a dispatch naming a tag, also
+# gets it as a release asset. Code-only mode parses the repository with
+# tree-sitter and needs no API key or secret. Only the release job holds a
+# write token, and it runs no third-party code.
+#
+# A release created with the default GITHUB_TOKEN does not trigger this
+# workflow; dispatch it with the tag in that case.
+#
+# The graph is not committed: graph.json is ~150 MiB, above GitHub's 100 MiB
+# file limit.
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach the bundle to (empty: artifact only)"
+        required: false
+        type: string
+
+concurrency:
+  group: graph-${{ github.ref }}-${{ inputs.tag }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GRAPHIFY_VERSION: "0.9.112"
+  # Stable community ids across runs.
+  PYTHONHASHSEED: "0"
+  # Never call an LLM, even if a runner image ships an API key or the claude
+  # CLI: cluster-only auto-detects a labeling backend otherwise.
+  GRAPHIFY_BACKEND: "none"
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  graph:
+    name: Build code graph
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG && format('refs/tags/{0}', env.TAG) || '' }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install graphify
+        run: python -m pip install "graphifyy==${GRAPHIFY_VERSION}"
+
+      # Always a full extraction: graphify update re-extracts only changed
+      # files, so callers in unchanged files keep edges to a function's old
+      # id after it moves to another file.
+      - name: Build the graph
+        run: |
+          # Cluster once: extract alone does not write the report or HTML.
+          # cluster-only names communities after their hub nodes
+          # (GRAPHIFY_BACKEND=none keeps it from calling an LLM).
+          graphify extract . --code-only --no-cluster
+          graphify cluster-only .
+
+      - name: Graph health
+        run: |
+          graphify diagnose multigraph --json > graph-health.json
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+
+          summary = json.load(open("graph-health.json")).get("summary", {})
+          print("### Graph health")
+          print(f"- nodes: {summary.get('node_count', 'n/a')}")
+          print(f"- edges: {summary.get('raw_edge_count', 'n/a')}")
+          print(f"- dangling endpoints: {summary.get('dangling_endpoint_edges', 'n/a')}")
+          print(f"- duplicate edges: {summary.get('exact_duplicate_edges', 'n/a')}")
+          PY
+
+      - name: Bundle outputs
+        run: |
+          gzip -9 -c graphify-out/graph.json > graph.json.gz
+          files=(graph.json.gz graphify-out/GRAPH_REPORT.md graph-health.json)
+          # graphify skips graph.html when it cannot aggregate a large graph.
+          if [ -f graphify-out/graph.html ]; then
+            files+=(graphify-out/graph.html)
+          else
+            echo "::warning::graphify-out/graph.html was not generated"
+          fi
+          tar -czf graph-bundle.tar.gz "${files[@]}"
+
+      - name: Upload graph artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: graph-${{ github.sha }}
+          path: graph-bundle.tar.gz
+          retention-days: 14
+
+  release:
+    name: Attach graph bundle
+    needs: graph
+    if: github.event_name == 'release' || inputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download graph artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: graph-${{ github.sha }}
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset="graph-${TAG//\//-}.tar.gz"
+          mv graph-bundle.tar.gz "${asset}"
+          gh release upload "${TAG}" "${asset}" --clobber --repo "${GITHUB_REPOSITORY}"
