@@ -229,7 +229,8 @@ func TestBatchDeleteCancelsAWriteInItsFsyncWindow(t *testing.T) {
 	}
 }
 
-// A replica rejects a Content-MD5 that does not match the bytes it is sent.
+// A replica rejects a Content-MD5 or CRC32C that does not match the bytes it
+// is sent.
 func TestPostHandlerForwardsAContentMd5TheReplicaAccepts(t *testing.T) {
 	var encoded bytes.Buffer
 	require.NoError(t, jpeg.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 3, 2)), nil))
@@ -249,7 +250,9 @@ func TestPostHandlerForwardsAContentMd5TheReplicaAccepts(t *testing.T) {
 	allocate(replicaVs)
 	replicaVs.guard = security.NewGuard(nil, "", 0, "", 0, "", "")
 	replicaResp := make(chan *httptest.ResponseRecorder, 1)
+	replicaCrc32c := make(chan string, 1)
 	replica := newProxyTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		replicaCrc32c <- r.Header.Get(needle.ContentCrc32cHeader)
 		rec := httptest.NewRecorder()
 		replicaVs.PostHandler(rec, r)
 		replicaResp <- rec
@@ -294,6 +297,7 @@ func TestPostHandlerForwardsAContentMd5TheReplicaAccepts(t *testing.T) {
 			fid := needle.NewFileId(vid, uint64(i+1), 0x1234)
 			req := httptest.NewRequest(http.MethodPost, "/"+fid.String(), &body)
 			req.Header.Set("Content-Type", form.FormDataContentType())
+			req.Header.Set(needle.ContentCrc32cHeader, needle.ContentCrc32c(tc.data))
 
 			resp := httptest.NewRecorder()
 			vs.PostHandler(resp, req)
@@ -321,6 +325,7 @@ func TestPostHandlerForwardsAContentMd5TheReplicaAccepts(t *testing.T) {
 			replicaData := stored(replicaVs.store)
 			require.Equal(t, stored(vs.store), replicaData)
 			require.Equal(t, tc.rewritten, !bytes.Equal(replicaData, tc.data))
+			require.Equal(t, needle.ContentCrc32c(replicaData), <-replicaCrc32c)
 		})
 	}
 }

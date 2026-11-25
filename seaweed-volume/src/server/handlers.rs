@@ -3399,13 +3399,20 @@ pub async fn post_handler(
         if let Some(auth) = headers.get(header::AUTHORIZATION) {
             replica_headers.insert(header::AUTHORIZATION, auth.clone());
         }
-        // Go's replicaContentCrc32c: the replica checks the client's CRC32C
-        // unless the orientation fix rewrote the bytes it is sent.
-        if let Some(crc) = headers
-            .get(CONTENT_CRC32C_HEADER)
-            .filter(|_| content_crc32c.is_some() && !body_rewritten)
+        // Go's replicaContentCrc32c: once the orientation fix rewrote the
+        // bytes, the replica checks their CRC32C instead of the client's.
+        let replica_crc32c = content_crc32c.as_ref().and_then(|crc| {
+            if !body_rewritten {
+                Some(crc.clone())
+            } else if n.is_compressed() {
+                None
+            } else {
+                Some(encode_content_crc32c(crc32c::crc32c(&n.data)))
+            }
+        });
+        if let Some(value) = replica_crc32c.and_then(|crc| header::HeaderValue::from_str(&crc).ok())
         {
-            replica_headers.insert(CONTENT_CRC32C_HEADER, crc.clone());
+            replica_headers.insert(CONTENT_CRC32C_HEADER, value);
         }
         if n.has_pairs() {
             for (key, value) in &pair_map {
@@ -9808,6 +9815,79 @@ Content-Encoding: gzip\r\n\r\n"
             assert_eq!(response.status(), StatusCode::CREATED);
         }
         assert_eq!(*forwarded.lock().unwrap(), vec![Some(crc.clone()), None]);
+        peer_server.abort();
+    }
+
+    /// A rotated JPEG goes to the replica with the CRC32C of the rewritten
+    /// bytes, as Go's replicaContentCrc32c sends.
+    #[tokio::test]
+    async fn http_replica_gets_the_crc32c_of_a_rotated_jpeg() {
+        use crate::storage::super_block::ReplicaPlacement;
+        use tower::ServiceExt;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        let s = Arc::get_mut(&mut state).unwrap();
+        s.self_url = "127.0.0.1:8080".to_string();
+        s.fix_jpg_orientation = true;
+        state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1
+            .set_replica_placement(ReplicaPlacement::from_string("001").unwrap())
+            .unwrap();
+        let forwarded = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = forwarded.clone();
+        let peer = axum::Router::new().fallback(move |headers: HeaderMap| {
+            let seen = seen.clone();
+            async move {
+                seen.lock().unwrap().push(
+                    headers
+                        .get(CONTENT_CRC32C_HEADER)
+                        .map(|v| v.to_str().unwrap().to_string()),
+                );
+                (StatusCode::CREATED, "{}")
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = listener.local_addr().unwrap();
+        let peer_server = tokio::spawn(async move { axum::serve(listener, peer).await.unwrap() });
+        *state.current_master_url.write().await = spawn_replica_master(peer_addr).await;
+
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::new(3, 2))
+            .write_to(&mut encoded, image::ImageFormat::Jpeg)
+            .unwrap();
+        let exif: &[u8] =
+            b"Exif\0\0MM\0\x2a\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01\0\x03\0\0\0\0\0\0";
+        let mut tagged = vec![0xFF, 0xD8, 0xFF, 0xE1, 0, exif.len() as u8 + 2];
+        tagged.extend_from_slice(exif);
+        tagged.extend_from_slice(&encoded.into_inner()[2..]);
+        let rotated = crate::images::fix_jpg_orientation(&tagged);
+        assert_ne!(rotated, tagged);
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/1,6e7a0c2a{TEST_COOKIE:08x}"))
+            .header(header::CONTENT_TYPE, "image/jpeg")
+            .header(
+                CONTENT_CRC32C_HEADER,
+                encode_content_crc32c(crc32c::crc32c(&tagged)),
+            )
+            .body(Body::from(tagged))
+            .unwrap();
+        let response = super::super::volume_server::build_admin_router(state)
+            .oneshot(request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(
+            *forwarded.lock().unwrap(),
+            vec![Some(encode_content_crc32c(crc32c::crc32c(&rotated)))]
+        );
         peer_server.abort();
     }
 

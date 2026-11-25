@@ -42,16 +42,14 @@ func (vs *VolumeServer) replicaContentMd5(n *needle.Needle, contentMd5 string) s
 	return contentMd5
 }
 
-// replicaContentCrc32c is replicaContentMd5 for the client's
-// needle.ContentCrc32cHeader.
+// replicaContentCrc32c is the client's needle.ContentCrc32cHeader, or once
+// the orientation fix may have rewritten the JPEG, the checksum of the bytes
+// replicas are sent.
 func (vs *VolumeServer) replicaContentCrc32c(n *needle.Needle, contentCrc32c string) string {
 	if !vs.FixJpgOrientation || contentCrc32c == "" || !bytes.HasPrefix(n.Data, jpegStart) {
 		return contentCrc32c
 	}
-	if want, err := needle.ParseContentCrc32c(contentCrc32c); err != nil || needle.NewCRC(n.Data) != want {
-		return ""
-	}
-	return contentCrc32c
+	return needle.ContentCrc32c(n.Data)
 }
 
 func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
