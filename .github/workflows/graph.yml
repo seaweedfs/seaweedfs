@@ -1,19 +1,31 @@
 name: Graph
 
 # Builds a code knowledge graph with the open-source Graphify CLI and uploads
-# it as an artifact. Code-only mode parses the repository with tree-sitter and
-# needs no API key or secret.
+# it as an artifact; a published release, or a dispatch naming a tag, also
+# gets it as a release asset. Code-only mode parses the repository with
+# tree-sitter and needs no API key or secret. Only the release job holds a
+# write token, and it runs no third-party code.
+#
+# A release created with the default GITHUB_TOKEN does not trigger this
+# workflow; dispatch it with the tag in that case.
 #
 # The graph is not committed: graph.json is ~150 MiB, above GitHub's 100 MiB
-# file limit. Release assets are produced by graph-release.yml.
+# file limit.
 
 on:
   schedule:
     - cron: "23 4 * * *"
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach the bundle to (empty: artifact only)"
+        required: false
+        type: string
 
 concurrency:
-  group: graph-${{ github.ref }}
+  group: graph-${{ github.ref }}-${{ inputs.tag }}
   cancel-in-progress: true
 
 permissions:
@@ -23,6 +35,7 @@ env:
   GRAPHIFY_VERSION: "0.9.112"
   # Stable community ids across runs.
   PYTHONHASHSEED: "0"
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
 jobs:
   graph:
@@ -32,6 +45,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG && format('refs/tags/{0}', env.TAG) || '' }}
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -81,6 +96,27 @@ jobs:
       - name: Upload graph artifact
         uses: actions/upload-artifact@v7
         with:
-          name: graph-${{ github.sha }}
+          name: graph-${{ env.TAG || github.sha }}
           path: graph-bundle.tar.gz
           retention-days: 14
+
+  release:
+    name: Attach graph bundle
+    needs: graph
+    if: github.event_name == 'release' || inputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download graph artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: graph-${{ env.TAG }}
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mv graph-bundle.tar.gz "graph-${TAG}.tar.gz"
+          gh release upload "${TAG}" "graph-${TAG}.tar.gz" --clobber --repo "${GITHUB_REPOSITORY}"
