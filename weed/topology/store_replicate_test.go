@@ -215,7 +215,7 @@ func TestReplicatedWriteForwardsFsyncToReplicas(t *testing.T) {
 				Data: []byte("test data"),
 				Ttl:  needle.EMPTY_TTL,
 			}
-			if _, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, volumeId, n, r, ""); err != nil {
+			if _, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, volumeId, n, r, "", ""); err != nil {
 				t.Fatalf("ReplicatedWrite: %v", err)
 			}
 
@@ -310,7 +310,7 @@ func TestReplicatedWriteOverlapsLocalAndReplicaWrites(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, volumeId, n, r, "")
+		_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, volumeId, n, r, "", "")
 		done <- err
 	}()
 
@@ -399,7 +399,7 @@ func TestReplicatedWriteFailsWhenEitherLegFails(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, tc.volumeId, n, r, "")
+			_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, tc.volumeId, n, r, "", "")
 			if err == nil {
 				t.Fatal("ReplicatedWrite succeeded despite a failed leg")
 			}
@@ -442,7 +442,7 @@ func TestReplicatedWriteRejectsWriteWithNoTarget(t *testing.T) {
 				Data: []byte("test data"),
 				Ttl:  needle.EMPTY_TTL,
 			}
-			_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, volumeId, n, r, "")
+			_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, volumeId, n, r, "", "")
 			if err == nil {
 				t.Fatal("ReplicatedWrite acknowledged a write that no volume stored")
 			}
@@ -483,7 +483,7 @@ func TestReplicatedWriteFailsAtTheBoundWhenAReplicaNeverAnswers(t *testing.T) {
 	timeouts := stats.VolumeServerReplicationFailures.WithLabelValues(stats.ReplicationOpWrite, stats.FailureTimeout)
 	timeoutsBefore := testutil.ToFloat64(timeouts)
 	start := time.Now()
-	_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, &storage.Store{}, volumeId, n, r, "")
+	_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, &storage.Store{}, volumeId, n, r, "", "")
 	elapsed := time.Since(start)
 	select {
 	case <-received:
@@ -540,7 +540,7 @@ func TestReplicatedWriteGivesALargerBodyMoreTime(t *testing.T) {
 	}
 	n := &needle.Needle{Id: 1, Data: data, Ttl: needle.EMPTY_TTL}
 
-	if _, err := ReplicatedWrite(context.Background(), masterFn, dialOption, &storage.Store{}, volumeId, n, r, ""); err != nil {
+	if _, err := ReplicatedWrite(context.Background(), masterFn, dialOption, &storage.Store{}, volumeId, n, r, "", ""); err != nil {
 		t.Fatalf("a replica answering within the %v bound for a %d-byte body failed the write: %v", replicaRequestBound(len(data)), len(data), err)
 	}
 	select {

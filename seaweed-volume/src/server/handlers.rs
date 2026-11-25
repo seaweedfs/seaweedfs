@@ -874,6 +874,9 @@ async fn do_replicated_request(
         if let Some(md5) = headers.get("Content-MD5") {
             req_builder = req_builder.header("Content-MD5", md5);
         }
+        if let Some(crc) = headers.get(CONTENT_CRC32C_HEADER) {
+            req_builder = req_builder.header(CONTENT_CRC32C_HEADER, crc);
+        }
         if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
             req_builder = req_builder.header(axum::http::header::AUTHORIZATION, auth);
         }
@@ -2941,6 +2944,11 @@ pub async fn post_handler(
         .get("Content-MD5")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+    // Go reads it with r.Header.Get, where an empty value means none.
+    let content_crc32c = headers
+        .get(CONTENT_CRC32C_HEADER)
+        .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
+        .filter(|s| !s.is_empty());
 
     // Read body, bounded by the configured file-size limit so a single upload
     // cannot buffer unbounded memory and OOM-kill the server (mirrors Go's
@@ -3146,6 +3154,12 @@ pub async fn post_handler(
             ),
             Some(&query),
         );
+    }
+    // Go checks the CRC32C after Content-MD5, over the same bytes.
+    if let Some(expected_crc32c) = &content_crc32c
+        && let Err(msg) = check_content_crc32c(expected_crc32c, &uncompressed_data)
+    {
+        return json_error_with_query(StatusCode::BAD_REQUEST, msg, Some(&query));
     }
 
     let now = std::time::SystemTime::now()
@@ -3376,6 +3390,14 @@ pub async fn post_handler(
         let mut replica_headers = HeaderMap::new();
         if let Some(auth) = headers.get(header::AUTHORIZATION) {
             replica_headers.insert(header::AUTHORIZATION, auth.clone());
+        }
+        // Go's replicaContentCrc32c: the replica checks the client's CRC32C
+        // unless the orientation fix rewrote the bytes it is sent.
+        if let Some(crc) = headers
+            .get(CONTENT_CRC32C_HEADER)
+            .filter(|_| content_crc32c.is_some() && !body_rewritten)
+        {
+            replica_headers.insert(CONTENT_CRC32C_HEADER, crc.clone());
         }
         if n.has_pairs() {
             for (key, value) in &pair_map {
@@ -5110,6 +5132,44 @@ fn maybe_decompress_gzip(data: &[u8]) -> Result<Vec<u8>, GunzipError> {
         return Err(GunzipError::TooLarge);
     }
     Ok(decompressed)
+}
+
+/// Go's needle.ContentCrc32cHeader: the CRC32C of the file data an upload
+/// carries, over the bytes Content-MD5 covers (after undoing gzip), as the
+/// standard base64 of the big-endian checksum.
+const CONTENT_CRC32C_HEADER: &str = "X-Seaweed-Content-Crc32c";
+
+fn encode_content_crc32c(crc: u32) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(crc.to_be_bytes())
+}
+
+/// Go's checkContentCrc32c (weed/storage/needle/content_crc32c.go): refuse a
+/// value that is not a base64 CRC32C or that differs from the data's.
+fn check_content_crc32c(expected: &str, data: &[u8]) -> Result<(), String> {
+    use base64::Engine;
+    let want = base64::engine::general_purpose::STANDARD
+        .decode(expected)
+        .ok()
+        .and_then(|b| <[u8; 4]>::try_from(b.as_slice()).ok())
+        .map(u32::from_be_bytes)
+        .ok_or_else(|| {
+            format!(
+                "{} [{}] is not the base64 of a 4-byte crc32c",
+                CONTENT_CRC32C_HEADER, expected
+            )
+        })?;
+    let actual = crc32c::crc32c(data);
+    if want != actual {
+        return Err(format!(
+            "{} did not match crc32c of file data expected [{}] received [{}] size {}",
+            CONTENT_CRC32C_HEADER,
+            expected,
+            encode_content_crc32c(actual),
+            data.len()
+        ));
+    }
+    Ok(())
 }
 
 fn compute_md5_base64(data: &[u8]) -> String {
@@ -9504,6 +9564,112 @@ mod tests {
             volume.read_needle(&mut stored).unwrap();
             assert_eq!(stored.is_compressed(), compressed, "query {query:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn http_upload_checks_content_crc32c() {
+        use tower::ServiceExt;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let payload = "chunk bytes from the uploader ".repeat(64);
+        let gzipped = try_gzip_data(payload.as_bytes()).unwrap();
+        let right = encode_content_crc32c(crc32c::crc32c(payload.as_bytes()));
+        let wrong = encode_content_crc32c(crc32c::crc32c(b"other bytes"));
+        let (right, wrong) = (right.as_str(), wrong.as_str());
+        for (id, crc, gzip, want) in [
+            (0x6e7a_0c20u64, None, false, StatusCode::CREATED),
+            (0x6e7a_0c21, Some(right), false, StatusCode::CREATED),
+            (0x6e7a_0c22, Some(wrong), false, StatusCode::BAD_REQUEST),
+            (0x6e7a_0c23, Some("AAAA"), false, StatusCode::BAD_REQUEST),
+            (0x6e7a_0c24, Some(right), true, StatusCode::CREATED),
+            (0x6e7a_0c25, Some(wrong), true, StatusCode::BAD_REQUEST),
+        ] {
+            let mut request = Request::builder()
+                .method(Method::POST)
+                .uri(format!("/1,{id:x}{TEST_COOKIE:08x}"))
+                .header(header::CONTENT_TYPE, "application/octet-stream");
+            if gzip {
+                request = request.header(header::CONTENT_ENCODING, "gzip");
+            }
+            if let Some(crc) = crc {
+                request = request.header(CONTENT_CRC32C_HEADER, crc);
+            }
+            let body = if gzip {
+                gzipped.clone()
+            } else {
+                payload.as_bytes().to_vec()
+            };
+            let response = super::super::volume_server::build_admin_router(state.clone())
+                .oneshot(request.body(Body::from(body)).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), want, "{crc:?} gzip {gzip}");
+            if want == StatusCode::BAD_REQUEST {
+                let text = axum::body::to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                assert!(
+                    String::from_utf8_lossy(&text).contains(CONTENT_CRC32C_HEADER),
+                    "{text:?}"
+                );
+            }
+        }
+    }
+
+    /// The primary forwards the client's CRC32C so the replica checks it too.
+    #[tokio::test]
+    async fn http_replica_gets_the_content_crc32c() {
+        use crate::storage::super_block::ReplicaPlacement;
+        use tower::ServiceExt;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        Arc::get_mut(&mut state).unwrap().self_url = "127.0.0.1:8080".to_string();
+        state
+            .store
+            .read()
+            .unwrap()
+            .find_volume(VolumeId(1))
+            .unwrap()
+            .1
+            .set_replica_placement(ReplicaPlacement::from_string("001").unwrap())
+            .unwrap();
+        let forwarded = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = forwarded.clone();
+        let peer = axum::Router::new().fallback(move |headers: HeaderMap| {
+            let seen = seen.clone();
+            async move {
+                seen.lock().unwrap().push(
+                    headers
+                        .get(CONTENT_CRC32C_HEADER)
+                        .map(|v| v.to_str().unwrap().to_string()),
+                );
+                (StatusCode::CREATED, "{}")
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = listener.local_addr().unwrap();
+        let peer_server = tokio::spawn(async move { axum::serve(listener, peer).await.unwrap() });
+        *state.current_master_url.write().await = spawn_replica_master(peer_addr).await;
+
+        let payload = "compressible replica text ".repeat(64);
+        let crc = encode_content_crc32c(crc32c::crc32c(payload.as_bytes()));
+        for (id, sent) in [(0x6e7a_0c26u64, Some(crc.as_str())), (0x6e7a_0c27, None)] {
+            let mut request = Request::builder()
+                .method(Method::POST)
+                .uri(format!("/1,{id:x}{TEST_COOKIE:08x}"))
+                .header(header::CONTENT_TYPE, "text/plain");
+            if let Some(crc) = sent {
+                request = request.header(CONTENT_CRC32C_HEADER, crc);
+            }
+            let response = super::super::volume_server::build_admin_router(state.clone())
+                .oneshot(request.body(Body::from(payload.clone())).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::CREATED);
+        }
+        assert_eq!(*forwarded.lock().unwrap(), vec![Some(crc.clone()), None]);
+        peer_server.abort();
     }
 
     #[tokio::test]

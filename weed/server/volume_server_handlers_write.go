@@ -42,6 +42,18 @@ func (vs *VolumeServer) replicaContentMd5(n *needle.Needle, contentMd5 string) s
 	return contentMd5
 }
 
+// replicaContentCrc32c is replicaContentMd5 for the client's
+// needle.ContentCrc32cHeader.
+func (vs *VolumeServer) replicaContentCrc32c(n *needle.Needle, contentCrc32c string) string {
+	if !vs.FixJpgOrientation || contentCrc32c == "" || !bytes.HasPrefix(n.Data, jpegStart) {
+		return contentCrc32c
+	}
+	if want, err := needle.ParseContentCrc32c(contentCrc32c); err != nil || needle.NewCRC(n.Data) != want {
+		return ""
+	}
+	return contentCrc32c
+}
+
 func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if e := r.ParseForm(); e != nil {
@@ -91,7 +103,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 
 	ret := operation.UploadResult{}
 	// use context.WithoutCancel to avoid context cancellation when the client connection is closed
-	isUnchanged, writeError := topology.ReplicatedWrite(context.WithoutCancel(ctx), vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, reqNeedle, r, vs.replicaContentMd5(reqNeedle, contentMd5))
+	isUnchanged, writeError := topology.ReplicatedWrite(context.WithoutCancel(ctx), vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, reqNeedle, r, vs.replicaContentMd5(reqNeedle, contentMd5), vs.replicaContentCrc32c(reqNeedle, r.Header.Get(needle.ContentCrc32cHeader)))
 	if writeError != nil {
 		stats.VolumeServerFileWriteFailures.Inc()
 		status := http.StatusInternalServerError

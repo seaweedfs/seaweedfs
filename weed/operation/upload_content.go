@@ -26,6 +26,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
@@ -59,6 +60,7 @@ type UploadOption struct {
 	Md5               string
 	WantMd5           bool   // compute Content-MD5 from the data when Md5 is unset and the upload is not ciphered
 	Digest            string // the target filer's digest, which Md5 is in; empty means this process's mode
+	ContentCrc32c     string // needle.ContentCrc32cHeader a replica forward carries; other uploads compute their own
 	BytesBuffer       *bytes.Buffer
 	SourceUrl         string                           // optional: for logging when reading from a remote source
 	MaxAttempts       int                              // <=0 uses the default
@@ -452,11 +454,12 @@ func isGenericBinaryMimeType(mimeType string) bool {
 // preparedUpload owns the transformed bytes for one buffered chunk. Reusing it
 // across attempts keeps compression and encryption outside assigned JWT lifetimes.
 type preparedUpload struct {
-	mimeType  string
-	data      []byte
-	clearSize int
-	gzip      bool
-	cipherKey []byte
+	mimeType      string
+	data          []byte
+	clearSize     int
+	gzip          bool
+	cipherKey     []byte
+	contentCrc32c string
 }
 
 func prepareUploadData(data []byte, option *UploadOption) (prepared *preparedUpload, err error) {
@@ -504,6 +507,9 @@ func prepareUploadData(data []byte, option *UploadOption) (prepared *preparedUpl
 		clearData, err = util.DecompressData(data)
 		if err == nil {
 			clearDataLen = len(clearData)
+		} else {
+			// The volume server falls back to the raw bytes as well.
+			clearData = data
 		}
 	}
 
@@ -515,7 +521,23 @@ func prepareUploadData(data []byte, option *UploadOption) (prepared *preparedUpl
 			return nil, fmt.Errorf("encrypt input: %w", err)
 		}
 	}
+	prepared.contentCrc32c = uploadContentCrc32c(option, prepared, clearData)
 	return prepared, nil
+}
+
+// uploadContentCrc32c is the needle.ContentCrc32cHeader for a prepared upload:
+// the checksum of the bytes the volume server checks, which are the clear data
+// it gunzips the body to, or the ciphertext, which it never sees as gzip. A
+// replica forward has no clear data and carries the primary's checked value.
+func uploadContentCrc32c(option *UploadOption, prepared *preparedUpload, clearData []byte) string {
+	switch {
+	case option.IsReplication:
+		return option.ContentCrc32c
+	case prepared.cipherKey != nil:
+		return needle.ContentCrc32c(prepared.data)
+	default:
+		return needle.ContentCrc32c(clearData)
+	}
 }
 
 func (uploader *Uploader) prepareUploadData(data []byte, option *UploadOption) (*preparedUpload, error) {
@@ -544,6 +566,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, prepared *preparedUp
 			PairMap:               nil,
 			Jwt:                   option.Jwt,
 			Digest:                option.Digest,
+			ContentCrc32c:         prepared.contentCrc32c,
 			BytesBuffer:           option.BytesBuffer,
 			stallWatchdogDisarmed: option.stallWatchdogDisarmed,
 		})
@@ -576,6 +599,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, prepared *preparedUp
 			Jwt:                   option.Jwt,
 			Md5:                   option.Md5,
 			Digest:                option.Digest,
+			ContentCrc32c:         prepared.contentCrc32c,
 			BytesBuffer:           option.BytesBuffer,
 			stallWatchdogDisarmed: option.stallWatchdogDisarmed,
 		})
@@ -655,6 +679,9 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	req.Header.Set("Content-Type", content_type)
 	for k, v := range option.PairMap {
 		req.Header.Set(k, v)
+	}
+	if option.ContentCrc32c != "" {
+		req.Header.Set(needle.ContentCrc32cHeader, option.ContentCrc32c)
 	}
 	if option.Jwt != "" {
 		req.Header.Set("Authorization", security.BearerPrefix+string(option.Jwt))
