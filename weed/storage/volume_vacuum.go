@@ -44,6 +44,17 @@ func exceedsExpectedCompactedSize(expectedLiveBytes uint64, dstDatSize int64) bo
 	return expectedLiveBytes > uint64(dstDatSize)
 }
 
+// expiredByVolumeTtl reports whether vacuum should drop n as expired. Only a
+// volume with a TTL expires needles here: on a volume without TTL a needle
+// that carries its own TTL is kept, which matches seaweed-volume
+// (ttl_minutes > 0); the read path still hides needles whose own TTL ran out.
+func expiredByVolumeTtl(n *needle.Needle, volumeTtlMinutes uint32, nowSec uint64) bool {
+	if !n.HasTtl() || volumeTtlMinutes == 0 {
+		return false
+	}
+	return nowSec >= n.LastModified+uint64(volumeTtlMinutes)*60
+}
+
 type ProgressFunc func(processed int64) bool
 
 func (v *Volume) garbageLevel() float64 {
@@ -659,7 +670,7 @@ func (scanner *VolumeFileScanner4Vacuum) ReadNeedleBody() bool {
 }
 
 func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
-	if n.HasTtl() && scanner.now >= n.LastModified+uint64(scanner.v.Ttl.Minutes()*60) {
+	if expiredByVolumeTtl(n, scanner.v.Ttl.Minutes(), scanner.now) {
 		return nil
 	}
 	nv, ok := scanner.v.nm.Get(n.Id)
@@ -790,7 +801,7 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 			return nil
 		}
 
-		if n.HasTtl() && now >= n.LastModified+uint64(opts.superBlock.Ttl.Minutes()*60) {
+		if expiredByVolumeTtl(n, opts.superBlock.Ttl.Minutes(), now) {
 			return nil
 		}
 

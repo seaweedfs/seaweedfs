@@ -838,6 +838,145 @@ func countLiveIndexRows(t *testing.T, indexFileName string) int {
 	return count
 }
 
+// writeOwnTtlNeedle writes a needle that carries its own TTL, as an upload
+// with ?ttl= does, regardless of the volume's TTL.
+func writeOwnTtlNeedle(t *testing.T, v *Volume, id uint64, size int, ttl string, lastModified time.Time) {
+	t.Helper()
+	n := newRandomNeedle(id)
+	n.Data = make([]byte, size)
+	rand.Read(n.Data)
+	n.Checksum = needle.NewCRC(n.Data)
+	needleTtl, err := needle.ReadTTL(ttl)
+	if err != nil {
+		t.Fatalf("parse ttl %q: %v", ttl, err)
+	}
+	n.Ttl = needleTtl
+	n.SetHasTtl()
+	n.LastModified = uint64(lastModified.Unix())
+	n.SetHasLastModifiedDate()
+	if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
+		t.Fatalf("write needle %d with ttl %s: %v", id, ttl, err)
+	}
+}
+
+func newVolumeWithPlainNeedles(t *testing.T, ttl *needle.TTL, count int) *Volume {
+	t.Helper()
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, ttl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	for i := 1; i <= count; i++ {
+		if _, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false); err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+	}
+	return v
+}
+
+// TestCompactByIndex_KeepsUnexpiredOwnTtlNeedleOnVolumeWithoutTtl covers
+// #12983: on a volume without TTL, vacuum dropped every needle that carried
+// its own TTL on the first run, even one whose TTL had not run out.
+func TestCompactByIndex_KeepsUnexpiredOwnTtlNeedleOnVolumeWithoutTtl(t *testing.T) {
+	for _, size := range []int{200, 900000} {
+		t.Run(fmt.Sprintf("size=%d", size), func(t *testing.T) {
+			v := newVolumeWithPlainNeedles(t, &needle.TTL{}, 40)
+			defer v.Close()
+			writeOwnTtlNeedle(t, v, 100, size, "7d", time.Now())
+
+			if err := v.CompactByIndex(nil); err != nil {
+				t.Fatalf("CompactByIndex: %v", err)
+			}
+			if err := v.CommitCompact(); err != nil {
+				t.Fatalf("CommitCompact: %v", err)
+			}
+			n := &needle.Needle{Id: types.Uint64ToNeedleId(100)}
+			if _, err := v.readNeedle(n, nil, nil); err != nil {
+				t.Fatalf("needle with an unexpired 7d TTL was removed by vacuum: %v", err)
+			}
+			if len(n.Data) != size {
+				t.Fatalf("needle data length = %d, want %d", len(n.Data), size)
+			}
+		})
+	}
+}
+
+// TestCompactByIndex_KeepsExpiredOwnTtlNeedleOnVolumeWithoutTtl is the shape
+// of the volume in #12983: a 1h-TTL needle written long ago on a volume
+// without TTL. Vacuum keeps it, as seaweed-volume does; reads still hide it
+// once its own TTL has run out.
+func TestCompactByIndex_KeepsExpiredOwnTtlNeedleOnVolumeWithoutTtl(t *testing.T) {
+	v := newVolumeWithPlainNeedles(t, &needle.TTL{}, 40)
+	defer v.Close()
+	writeOwnTtlNeedle(t, v, 100, 909987, "1h", time.Date(2025, 7, 18, 14, 39, 23, 0, time.UTC))
+
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("CompactByIndex: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("CommitCompact: %v", err)
+	}
+	if _, ok := v.nm.Get(types.Uint64ToNeedleId(100)); !ok {
+		t.Fatalf("needle with its own TTL was dropped from the index")
+	}
+	if got := v.FileCount(); got != 41 {
+		t.Fatalf("FileCount = %d, want 41", got)
+	}
+}
+
+func TestCompactByVolumeData_KeepsUnexpiredOwnTtlNeedleOnVolumeWithoutTtl(t *testing.T) {
+	v := newVolumeWithPlainNeedles(t, &needle.TTL{}, 40)
+	defer v.Close()
+	writeOwnTtlNeedle(t, v, 100, 200, "7d", time.Now())
+
+	if err := v.CompactByVolumeData(&CompactOptions{}); err != nil {
+		t.Fatalf("CompactByVolumeData: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("CommitCompact: %v", err)
+	}
+	n := &needle.Needle{Id: types.Uint64ToNeedleId(100)}
+	if _, err := v.readNeedle(n, nil, nil); err != nil {
+		t.Fatalf("needle with an unexpired 7d TTL was removed by vacuum: %v", err)
+	}
+}
+
+// TestCompactByIndex_ExpiresNeedlesOnTtlVolume pins the unchanged behavior on
+// a volume with a TTL: needles older than the volume TTL are dropped.
+func TestCompactByIndex_ExpiresNeedlesOnTtlVolume(t *testing.T) {
+	volumeTtl, err := needle.ReadTTL("1m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, volumeTtl, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+	for i := uint64(1); i <= 5; i++ {
+		n := newRandomNeedle(i)
+		// An upload without ?ttl= carries EMPTY_TTL, which writeNeedle2
+		// replaces with the volume TTL.
+		n.Ttl = needle.EMPTY_TTL
+		n.LastModified = uint64(time.Date(2023, 11, 14, 0, 0, 0, 0, time.UTC).Unix())
+		n.SetHasLastModifiedDate()
+		if _, _, _, err := v.writeNeedle2(n, true, false, false); err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+	}
+
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("CompactByIndex: %v", err)
+	}
+	if err := v.CommitCompact(); err != nil {
+		t.Fatalf("CommitCompact: %v", err)
+	}
+	if got := v.FileCount(); got != 0 {
+		t.Fatalf("FileCount = %d, want 0: needles past the volume TTL must still expire", got)
+	}
+}
+
 func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	n := newRandomNeedle(uint64(i))
 	_, size, _, err := v.writeNeedle2(n, true, false, false)
