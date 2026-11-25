@@ -3,9 +3,11 @@ package mount
 import (
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -90,5 +92,25 @@ func TestOutputRootEntryTakesARootLookup(t *testing.T) {
 	wfs.inodeToPath.Forget(1, 1, nil, nil)
 	if !wfs.inodeToPath.HasInode(1) {
 		t.Fatal("root dropped after forgetting the lookup outputRootEntry took")
+	}
+}
+
+func TestSameFileRejectsAReplacement(t *testing.T) {
+	file := util.FullPath("/a.txt")
+	pathInode := file.AsInode(1)
+	for _, tc := range []struct {
+		name  string
+		inode uint64
+		entry *filer.Entry
+		want  bool
+	}{
+		{"same filer inode", 7, &filer.Entry{Attr: filer.Attr{Inode: 7}}, true},
+		{"replaced, new filer inode", 7, &filer.Entry{Attr: filer.Attr{Inode: 8}}, false},
+		{"path inode, same crtime", pathInode, &filer.Entry{Attr: filer.Attr{Crtime: time.Unix(1, 0)}}, true},
+		{"path inode, recreated", pathInode, &filer.Entry{Attr: filer.Attr{Crtime: time.Unix(2, 0)}}, false},
+	} {
+		if got := sameFile(tc.inode, file, tc.entry); got != tc.want {
+			t.Errorf("%s: sameFile = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

@@ -54,6 +54,9 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		}
 		return status
 	}
+	if name == "." && !sameFile(possibleInode, fullFilePath, localEntry) {
+		return fuse.Status(syscall.ESTALE)
+	}
 	if possibleInode == 0 {
 		possibleInode = localEntry.Inode
 	}
@@ -118,4 +121,13 @@ func (wfs *WFS) outputRootEntry(out *fuse.EntryOut) {
 	out.EntryValid = wfs.entryValidSec
 	out.AttrValid = attr.AttrValid
 	out.Attr = attr.Attr
+}
+
+// sameFile reports whether entry, found at path, is the file inode names, and
+// not one created at that path since.
+func sameFile(inode uint64, path util.FullPath, entry *filer.Entry) bool {
+	if entry.Inode != 0 {
+		return entry.Inode == inode
+	}
+	return path.AsInode(entry.Crtime.Unix()) == inode
 }
