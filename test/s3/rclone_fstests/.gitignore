@@ -1,0 +1,8 @@
+rclone/
+rclone-s3.test
+test-volume-data/
+results.jsonl
+weed-test.log
+weed-server.pid
+weed-server.started
+__pycache__/

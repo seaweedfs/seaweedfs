@@ -1,0 +1,27 @@
+# rclone fstests (TestIntegration, S3 backend) that SeaweedFS is expected to fail.
+# check_results.py fails CI on any other failure, and on any test listed here
+# that passes, is skipped or does not run, so remove an entry together with the
+# fix that makes it pass.
+# Format: <full subtest name>  # reason
+
+# seaweedfs/seaweedfs#5442: deleting the last key under a prefix leaves its filer
+# directory behind, and the empty directory is listed as a CommonPrefix until
+# EmptyFolderCleaner removes it (s3.empty_folder_cleanup_delay, 2m by default,
+# drained by a 30s tick). These tests list right after earlier tests deleted
+# their files, so the leftover directories show up.
+TestIntegration/FsMkdir/FsPutFiles/FsListDirFile2  # empty directories listed until cleanup (#5442)
+TestIntegration/FsMkdir/FsPutFiles/FsListRDirFile2  # empty directories listed until cleanup (#5442)
+TestIntegration/FsMkdir/FsPutFiles/FsListLevel2  # empty directories listed until cleanup (#5442)
+TestIntegration/FsMkdir/FsPutFiles/FromRoot/ListEntries  # empty directories listed until cleanup (#5442)
+
+# An object whose name has control characters, a backslash or a vertical tab is
+# listed under a different name than the one it was written with.
+TestIntegration/FsMkdir/FsEncoding/control_chars  # name listed differently from how it was written
+TestIntegration/FsMkdir/FsEncoding/punctuation  # name with a backslash listed differently
+TestIntegration/FsMkdir/FsEncoding/leading_VT  # name with a vertical tab listed differently
+TestIntegration/FsMkdir/FsEncoding/trailing_VT  # name with a vertical tab listed differently
+
+# SeaweedFS answers CreateBucket on a bucket the caller owns with
+# BucketAlreadyOwnedByYou, which rclone expects only with use_already_exists set;
+# the SeaweedFS provider defaults it to false and rclone.conf keeps that (see there).
+TestIntegration/FsMkdir/FsPutFiles/Internal/Versions/Mkdir  # rclone provider quirk use_already_exists=false
