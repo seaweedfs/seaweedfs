@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -145,7 +147,35 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	// apply changes to the filer, and also apply to local metaCache
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	updateResp, err := wfs.streamUpdateEntry(context.Background(), updateOldEntryRequest)
+	var updateResp *filer_pb.UpdateEntryResponse
+	var err error
+	if len(origHardLinkId) > 0 {
+		updateResp, err = wfs.streamUpdateEntry(context.Background(), updateOldEntryRequest)
+	} else {
+		// The file's first link, under a link id made up here. Another client
+		// may have linked the file since the entry was read, and the filer
+		// refuses the file a second id. The stream reduces that refusal to
+		// EIO; the unary RPC keeps it apart from an I/O failure.
+		update := func() error {
+			return wfs.withFilerClient(context.Background(), false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+				var updateErr error
+				updateResp, updateErr = client.UpdateEntry(ctx, updateOldEntryRequest)
+				return updateErr
+			})
+		}
+		if err = update(); grpcstatus.Code(err) == codes.FailedPrecondition {
+			// link under the id the file has by now
+			stored, _, _, getErr := filer_pb.GetEntry(ctx, wfs, oldEntryPath)
+			if getErr == nil && stored != nil && len(stored.HardLinkId) > 0 {
+				glog.V(1).Infof("Link: %s is hard link %x already, not %x", oldEntryPath, stored.HardLinkId, oldEntry.HardLinkId)
+				// a rollback puts back what the file has now
+				origHardLinkId, origHardLinkCounter = stored.HardLinkId, stored.HardLinkCounter
+				oldEntry.HardLinkId, oldEntry.HardLinkCounter = stored.HardLinkId, stored.HardLinkCounter+1
+				request.Entry.HardLinkId, request.Entry.HardLinkCounter = oldEntry.HardLinkId, oldEntry.HardLinkCounter
+				err = update()
+			}
+		}
+	}
 	if err == nil {
 		updateEvent := updateResp.GetMetadataEvent()
 		if updateEvent == nil {

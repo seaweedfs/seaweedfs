@@ -1,7 +1,9 @@
 package mount
 
 import (
+	"bytes"
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,6 +12,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // linkTestSource seeds the meta cache with an entry and registers it with
@@ -327,5 +332,97 @@ func TestSyncHardLinkSiblingFetchFailureKeepsVersion(t *testing.T) {
 	}
 	if sib := cachedLink(t, wfs, sibPath); sib.FileSize != 99 {
 		t.Errorf("pending event was fenced by the patched version: FileSize = %d, want 99", sib.FileSize)
+	}
+}
+
+// Two mounts link a file that has one name at the same moment. Each gives the
+// file a link id of its own, and the filer refuses the second: the file has
+// the first one's by then. The mount reads the entry again and makes its name
+// under the id the file has, instead of failing the link or, as before the
+// filer refused, moving the file to an id of its own and splitting its names
+// over two.
+func TestFirstLinkTakesTheLinkIdAnotherClientGaveTheFile(t *testing.T) {
+	wfs, server := newCreateTestWFS(t)
+	sourcePath, sourceInode := linkTestSource(t, wfs, "shared.txt", 0)
+
+	theirs := filer.NewHardLinkId()
+	var mu sync.Mutex
+	var updates []*filer_pb.Entry
+	server.updateEntry = func(req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		updates = append(updates, proto.Clone(req.GetEntry()).(*filer_pb.Entry))
+		if !bytes.Equal(req.GetEntry().GetHardLinkId(), theirs) {
+			return nil, status.Errorf(codes.FailedPrecondition, "already a hard link: %s", sourcePath)
+		}
+		return &filer_pb.UpdateEntryResponse{}, nil
+	}
+	server.lookupEntry = func(req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{
+			Name:            req.GetName(),
+			Attributes:      &filer_pb.FuseAttributes{FileMode: 0o644, FileSize: 12, Crtime: 1, Mtime: 1, Uid: 99, Gid: 100},
+			HardLinkId:      theirs,
+			HardLinkCounter: 2,
+		}}, nil
+	}
+
+	out := doLink(t, wfs, sourceInode, "mine.txt")
+	if out.NodeId != sourceInode {
+		t.Fatalf("Link NodeId = %d, want the source node id %d", out.NodeId, sourceInode)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(updates) != 2 {
+		t.Fatalf("the source was updated %d times, want the refused update and one more", len(updates))
+	}
+	if len(updates[0].GetHardLinkId()) == 0 || bytes.Equal(updates[0].GetHardLinkId(), theirs) {
+		t.Fatalf("first update carried link id %x, want one made by this mount", updates[0].GetHardLinkId())
+	}
+	if !bytes.Equal(updates[1].GetHardLinkId(), theirs) || updates[1].GetHardLinkCounter() != 3 {
+		t.Fatalf("second update carried link id %x count %d, want the file's %x and 3", updates[1].GetHardLinkId(), updates[1].GetHardLinkCounter(), theirs)
+	}
+	server.mu.Lock()
+	created := server.lastEntry
+	server.mu.Unlock()
+	if created.GetName() != "mine.txt" || !bytes.Equal(created.GetHardLinkId(), theirs) {
+		t.Fatalf("new name %q was made under link id %x, want %x", created.GetName(), created.GetHardLinkId(), theirs)
+	}
+	linked, _, st := wfs.maybeLoadEntry(context.Background(), sourcePath)
+	if st != fuse.OK {
+		t.Fatalf("reload source: %v", st)
+	}
+	if !bytes.Equal(linked.HardLinkId, theirs) {
+		t.Fatalf("the mount has the source under link id %x, want %x", linked.HardLinkId, theirs)
+	}
+}
+
+// A refusal with nothing behind it (the entry read again has no link id)
+// fails the link: nothing is made under an id the filer did not take.
+func TestFirstLinkRefusedWithoutALinkToTakeFails(t *testing.T) {
+	wfs, server := newCreateTestWFS(t)
+	_, sourceInode := linkTestSource(t, wfs, "shared.txt", 0)
+
+	server.updateEntry = func(req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+		return nil, status.Errorf(codes.FailedPrecondition, "precondition failed")
+	}
+	server.lookupEntry = func(req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{
+			Name:       req.GetName(),
+			Attributes: &filer_pb.FuseAttributes{FileMode: 0o644, FileSize: 12, Crtime: 1, Mtime: 1, Uid: 99, Gid: 100},
+		}}, nil
+	}
+
+	st := wfs.Link(make(chan struct{}), &fuse.LinkIn{
+		InHeader:  fuse.InHeader{NodeId: 1, Caller: fuse.Caller{Owner: fuse.Owner{Uid: 99, Gid: 100}}},
+		Oldnodeid: sourceInode,
+	}, "mine.txt", &fuse.EntryOut{})
+	if st == fuse.OK {
+		t.Fatal("Link reported success after the filer refused the source's update")
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if server.lastEntry != nil {
+		t.Fatalf("name %q was made after the refusal", server.lastEntry.GetName())
 	}
 }

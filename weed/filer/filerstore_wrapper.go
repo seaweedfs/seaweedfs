@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -40,6 +41,13 @@ type FilerStoreWrapper struct {
 	pathToStore          ptrie.Trie[string]
 	storeIdToStore       map[string]FilerStore
 	hasPathSpecificStore bool // fast check to skip MatchPrefix when no path-specific stores
+
+	// countsLinks is set on a filer's own store (Filer.SetStore): it holds
+	// every name of a hard-linked file, so it keeps the file's count of them
+	// itself (countLink). A wrapper around a copy of some entries, such as a
+	// mount's metadata cache, stores the count it is given.
+	countsLinks bool
+	linkLocks   [64]sync.Mutex
 }
 
 func NewFilerStoreWrapper(store FilerStore) *FilerStoreWrapper {
@@ -161,12 +169,8 @@ func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) err
 			entry.FullPath, entry.HardLinkId, entry.HardLinkCounter)
 	}
 
-	replacedLink, err := fsw.handleUpdateToHardLinks(ctx, entry)
+	replacedLink, err := fsw.writeWithHardLink(ctx, entry, actualStore.InsertEntry)
 	if err != nil {
-		return err
-	}
-
-	if err := actualStore.InsertEntry(ctx, entry); err != nil {
 		return err
 	}
 	fsw.dropLink(ctx, entry.FullPath, replacedLink)
@@ -194,8 +198,16 @@ func (fsw *FilerStoreWrapper) InsertEntryKnownAbsent(ctx context.Context, entry 
 	if len(entry.HardLinkId) > 0 {
 		glog.V(4).InfofCtx(ctx, "InsertEntryKnownAbsent %s has HardLinkId %x counter=%d",
 			entry.FullPath, entry.HardLinkId, entry.HardLinkCounter)
-		if err := fsw.setHardLink(ctx, entry); err != nil {
-			return fmt.Errorf("setHardLink %x: %v", entry.HardLinkId, err)
+		if err := fsw.changeLinkRecord(ctx, entry, func(ctx context.Context) error {
+			if err := fsw.saveHardLink(ctx, entry, true); err != nil {
+				return fmt.Errorf("setHardLink %x: %v", entry.HardLinkId, err)
+			}
+			if actualStore != fsw.defaultStore {
+				return nil // outside the record's transaction: stored below
+			}
+			return actualStore.InsertEntry(ctx, entry)
+		}); err != nil || actualStore == fsw.defaultStore {
+			return err
 		}
 	}
 
@@ -223,12 +235,8 @@ func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) err
 			entry.FullPath, entry.HardLinkId, entry.HardLinkCounter)
 	}
 
-	replacedLink, err := fsw.handleUpdateToHardLinks(ctx, entry)
+	replacedLink, err := fsw.writeWithHardLink(ctx, entry, actualStore.UpdateEntry)
 	if err != nil {
-		return err
-	}
-
-	if err := actualStore.UpdateEntry(ctx, entry); err != nil {
 		return err
 	}
 	fsw.dropLink(ctx, entry.FullPath, replacedLink)
