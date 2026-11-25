@@ -132,6 +132,7 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 	var metricsAddress string
 	var metricsIntervalSec int
 	var filerGroup string
+	var digest string
 
 	// Connect to the filer service and try to retrieve basic configuration.
 	for {
@@ -142,6 +143,7 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 			}
 			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
 			filerGroup = resp.FilerGroup
+			digest = resp.Digest
 			glog.V(0).Infof("SFTP read filer configuration, using filer at: %s", filerAddress)
 			return nil
 		})
@@ -153,6 +155,7 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 			break
 		}
 	}
+	adoptFilerDigest(*sftpOpt.filer, digest)
 
 	go stats_collect.LoopPushingMetric("sftp", stats_collect.SourceName(uint32(*sftpOpt.port)), metricsAddress, metricsIntervalSec)
 

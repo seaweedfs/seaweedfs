@@ -205,16 +205,19 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	go statsCollect.StartMetricsServer(*syncOptions.metricsHttpIp, *syncOptions.metricsHttpPort)
 
 	// read a filer signature
-	aFilerSignature, aFilerErr := replication.ReadFilerSignature(grpcDialOptionA, filerA)
+	aFilerSignature, aFilerDigest, aFilerErr := replication.ReadFilerSignature(grpcDialOptionA, filerA)
 	if aFilerErr != nil {
 		glog.Errorf("get filer 'a' signature %d error from %s to %s: %v", aFilerSignature, *syncOptions.filerA, *syncOptions.filerB, aFilerErr)
 		return true
 	}
 	// read b filer signature
-	bFilerSignature, bFilerErr := replication.ReadFilerSignature(grpcDialOptionB, filerB)
+	bFilerSignature, bFilerDigest, bFilerErr := replication.ReadFilerSignature(grpcDialOptionB, filerB)
 	if bFilerErr != nil {
 		glog.Errorf("get filer 'b' signature %d error from %s to %s: %v", bFilerSignature, *syncOptions.filerA, *syncOptions.filerB, bFilerErr)
 		return true
+	}
+	if err := replication.CheckDigestsMatch(*syncOptions.filerA, aFilerDigest, *syncOptions.filerB, bFilerDigest); err != nil {
+		glog.Exitf("%v", err)
 	}
 
 	// register graceful shutdown hook to save checkpoints

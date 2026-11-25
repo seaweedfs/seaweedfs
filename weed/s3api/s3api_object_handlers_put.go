@@ -247,7 +247,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		// ETag of the marker content, empty or not
 		dirMd5 := util.Md5(dirContent)
-		if expectedMd5, _ := validateContentMd5(r.Header); len(expectedMd5) > 0 && !contentMd5Matches(dirMd5, expectedMd5) {
+		if expectedMd5, _ := validateContentMd5(r.Header); len(expectedMd5) > 0 && !contentMd5Matches(util.BodyMd5Of(dirMd5, dirContent), expectedMd5) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrBadDigest)
 			return
 		}
@@ -626,6 +626,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	plaintextHash := util.NewMd5()
 	dataReader = io.TeeReader(dataReader, plaintextHash)
+	var contentMd5Hash hash.Hash
+	if r.Header.Get("Content-Md5") != "" {
+		if contentMd5Hash = util.NewContentMd5(); contentMd5Hash != nil {
+			dataReader = io.TeeReader(dataReader, contentMd5Hash)
+		}
+	}
 
 	// Parse the request's query string once. AWS SDK presigners hoist signed
 	// headers such as x-amz-sdk-checksum-algorithm into the URL's query string,
@@ -813,7 +819,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
 			return "", s3err.ErrInvalidDigest, SSEResponseMetadata{}
 		}
-		if !contentMd5Matches(md5Sum, expectedMd5) {
+		if !contentMd5Matches(util.BodyMd5(md5Sum, contentMd5Hash), expectedMd5) {
 			glog.Warningf("putToFiler: Checksum verification failed, attempting to cleanup %d orphaned chunks", len(chunkResult.FileChunks))
 			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
 			return "", s3err.ErrBadDigest, SSEResponseMetadata{}

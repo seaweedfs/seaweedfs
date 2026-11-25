@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // Admin upload chunk size, matching s3api so files split into the same fid-sized pieces.
@@ -149,10 +150,23 @@ func (h *FileBrowserHandlers) uploadFileGrpc(ctx context.Context, filePath strin
 		}, nil
 	}
 
+	var digest string
+	if err := h.adminServer.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		var readErr error
+		digest, readErr = filer_pb.ReadFilerDigest(ctx, client)
+		return readErr
+	}); err != nil {
+		return fmt.Errorf("read filer digest: %w", err)
+	}
+	if err := util.CheckDigest(digest); err != nil {
+		return fmt.Errorf("filer digest: %w", err)
+	}
+
 	chunkResult, err := operation.UploadReaderInChunks(ctx, reader, &operation.ChunkedUploadOption{
 		ChunkSize:  adminUploadChunkSize,
 		MimeType:   mimeType,
 		AssignFunc: assignFunc,
+		Digest:     digest,
 		LookupJwtFunc: func(lookupCtx context.Context, fileId string) security.EncodedJwt {
 			return operation.LookupJwt(lookupCtx, h.adminServer.GetMasterClient().GetMaster(lookupCtx), h.adminServer.GetGrpcDialOption(), fileId)
 		},

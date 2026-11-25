@@ -560,10 +560,19 @@ func uploadFilerChunks(ctx context.Context, client filer_pb.SeaweedFilerClient, 
 		}, nil
 	}
 
+	digest, err := filer_pb.ReadFilerDigest(ctx, client)
+	if err != nil {
+		return nil, fmt.Errorf("read filer digest: %w", err)
+	}
+	if err := util.CheckDigest(digest); err != nil {
+		return nil, fmt.Errorf("filer digest: %w", err)
+	}
+
 	initGlobalHTTPClientOnce.Do(util_http.InitGlobalHttpClient)
 	result, err := operation.UploadReaderInChunks(ctx, util.NewBytesReader(content), &operation.ChunkedUploadOption{
 		ChunkSize:  filerFileChunkSize,
 		AssignFunc: assignFn,
+		Digest:     digest,
 	})
 	if err != nil {
 		// Chunks uploaded before the failure are orphaned: nothing references

@@ -3,9 +3,9 @@ package weed_server
 import (
 	"bytes"
 	"context"
-	"crypto/fips140"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"math"
 	"net/http"
@@ -67,7 +67,7 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 			writeJsonError(w, r, http.StatusInternalServerError, err)
 		}
 	} else if reply != nil {
-		if len(md5bytes) > 0 && !fips140.Enforced() {
+		if len(md5bytes) > 0 && !util.DigestIsSha256() {
 			md5InBase64 := util.Base64Encode(md5bytes)
 			w.Header().Set("Content-MD5", md5InBase64)
 		}
@@ -107,7 +107,7 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 			return nil, nil, fmt.Errorf("read input: %w", err)
 		}
 		md5bytes = util.Md5(buf.Bytes())
-		if contentMd5Mismatch(md5bytes, r.Header.Get("Content-Md5")) {
+		if contentMd5Mismatch(util.BodyMd5Of(md5bytes, buf.Bytes()), r.Header.Get("Content-Md5")) {
 			bufPool.Put(buf)
 			return nil, nil, errors.New(constants.ErrMsgBadDigest)
 		}
@@ -122,7 +122,7 @@ func (fs *FilerServer) doPostAutoChunk(ctx context.Context, w http.ResponseWrite
 	}
 
 	md5bytes = md5Hash.Sum(nil)
-	if contentMd5Mismatch(md5bytes, r.Header.Get("Content-Md5")) {
+	if contentMd5Mismatch(uploadBodyMd5(md5bytes, md5Hash), r.Header.Get("Content-Md5")) {
 		fs.filer.DeleteUncommittedChunks(ctx, fileChunks)
 		return nil, nil, errors.New(constants.ErrMsgBadDigest)
 	}
@@ -154,7 +154,7 @@ func (fs *FilerServer) doPutAutoChunk(ctx context.Context, w http.ResponseWriter
 	}
 
 	md5bytes = md5Hash.Sum(nil)
-	if contentMd5Mismatch(md5bytes, r.Header.Get("Content-Md5")) {
+	if contentMd5Mismatch(uploadBodyMd5(md5bytes, md5Hash), r.Header.Get("Content-Md5")) {
 		fs.filer.DeleteUncommittedChunks(ctx, fileChunks)
 		return nil, nil, errors.New(constants.ErrMsgBadDigest)
 	}
@@ -706,12 +706,57 @@ func (fs *FilerServer) mkdir(ctx context.Context, w http.ResponseWriter, r *http
 	return filerResult, replyerr
 }
 
-// contentMd5Mismatch compares the body digest with the client's Content-MD5,
-// base64 or hex. Under fips140=only the digest is not an MD5, so Content-MD5
-// goes unchecked.
-func contentMd5Mismatch(md5bytes []byte, headerMd5 string) bool {
-	if headerMd5 == "" || fips140.Enforced() {
+// contentMd5Mismatch compares the body's MD5, from util.BodyMd5, with the
+// client's Content-MD5, base64 or hex. bodyMd5 is nil only under fips140=only
+// with digest sha256, where no MD5 can be computed, and Content-MD5 then goes
+// unchecked.
+func contentMd5Mismatch(bodyMd5 []byte, headerMd5 string) bool {
+	if headerMd5 == "" || bodyMd5 == nil {
 		return false
 	}
-	return util.Base64Encode(md5bytes) != headerMd5 && fmt.Sprintf("%x", md5bytes) != headerMd5
+	return util.Base64Encode(bodyMd5) != headerMd5 && fmt.Sprintf("%x", bodyMd5) != headerMd5
+}
+
+// uploadHash is the content digest of an upload, which also feeds a separate
+// MD5 of the body for the client's Content-MD5.
+type uploadHash struct {
+	hash.Hash
+	contentMd5 hash.Hash
+}
+
+// newUploadHash returns the content digest hash for an upload of r's body. It
+// is an uploadHash when r carries Content-MD5 and the content digest is not
+// itself an MD5 (see util.NewContentMd5), else the plain digest; r may be nil.
+// The MD5 rides on the digest hash rather than on the body reader, so the
+// body's path through the upload stays as it is in every digest mode.
+func newUploadHash(r *http.Request) hash.Hash {
+	digest := util.NewMd5()
+	if r == nil || r.Header.Get("Content-Md5") == "" {
+		return digest
+	}
+	contentMd5 := util.NewContentMd5()
+	if contentMd5 == nil {
+		return digest
+	}
+	return &uploadHash{Hash: digest, contentMd5: contentMd5}
+}
+
+func (h *uploadHash) Write(p []byte) (int, error) {
+	h.contentMd5.Write(p)
+	return h.Hash.Write(p)
+}
+
+func (h *uploadHash) Reset() {
+	h.Hash.Reset()
+	h.contentMd5.Reset()
+}
+
+// uploadBodyMd5 returns the body's MD5 for a Content-MD5 check, as
+// util.BodyMd5 does, given the content digest and the hash from newUploadHash.
+func uploadBodyMd5(contentDigest []byte, md5Hash hash.Hash) []byte {
+	var contentMd5 hash.Hash
+	if h, ok := md5Hash.(*uploadHash); ok {
+		contentMd5 = h.contentMd5
+	}
+	return util.BodyMd5(contentDigest, contentMd5)
 }

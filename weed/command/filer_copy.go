@@ -103,9 +103,13 @@ func runCopy(cmd *Command, args []string) bool {
 
 	copyOptions.grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 
-	masters, collection, replication, dirBuckets, maxMB, cipher, err := readFilerConfiguration(copyOptions.grpcDialOption, filerAddress)
+	masters, collection, replication, dirBuckets, maxMB, cipher, digest, err := readFilerConfiguration(copyOptions.grpcDialOption, filerAddress)
 	if err != nil {
 		fmt.Printf("read from filer %s: %v\n", filerAddress, err)
+		return false
+	}
+	if err := util.AdoptFilerDigest(string(filerAddress), digest); err != nil {
+		fmt.Printf("%v\n", err)
 		return false
 	}
 	if strings.HasPrefix(urlPath, dirBuckets+"/") {
@@ -181,7 +185,7 @@ func runCopy(cmd *Command, args []string) bool {
 	return true
 }
 
-func readFilerConfiguration(grpcDialOption grpc.DialOption, filerGrpcAddress pb.ServerAddress) (masters []string, collection, replication string, dirBuckets string, maxMB uint32, cipher bool, err error) {
+func readFilerConfiguration(grpcDialOption grpc.DialOption, filerGrpcAddress pb.ServerAddress) (masters []string, collection, replication string, dirBuckets string, maxMB uint32, cipher bool, digest string, err error) {
 	err = pb.WithGrpcFilerClient(false, 0, filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
@@ -190,6 +194,7 @@ func readFilerConfiguration(grpcDialOption grpc.DialOption, filerGrpcAddress pb.
 		masters, collection, replication, maxMB = resp.Masters, resp.Collection, resp.Replication, resp.MaxMb
 		dirBuckets = resp.DirBuckets
 		cipher = resp.Cipher
+		digest = resp.Digest
 		return nil
 	})
 	return

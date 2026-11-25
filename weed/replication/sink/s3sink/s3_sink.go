@@ -1,7 +1,6 @@
 package S3Sink
 
 import (
-	"crypto/fips140"
 	"encoding/base64"
 	"fmt"
 	"mime"
@@ -33,6 +32,7 @@ const maxMetadataSize = 2 * 1024
 type S3Sink struct {
 	conn                          s3iface.S3API
 	filerSource                   *source.FilerSource
+	sourceDigestIsMd5             func() bool
 	isIncremental                 bool
 	keepPartSize                  bool
 	s3DisableContentMD5Validation bool
@@ -116,6 +116,7 @@ func (s3sink *S3Sink) Initialize(configuration util.Configuration, prefix string
 
 func (s3sink *S3Sink) SetSourceFiler(s *source.FilerSource) {
 	s3sink.filerSource = s
+	s3sink.sourceDigestIsMd5 = s.DigestIsMd5
 }
 
 func (s3sink *S3Sink) initialize(awsAccessKeyId, awsSecretAccessKey string) error {
@@ -222,7 +223,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 	if entry.Attributes.Mime != "" {
 		uploadInput.ContentType = aws.String(entry.Attributes.Mime)
 	}
-	if len(entry.Attributes.Md5) > 0 && !fips140.Enforced() {
+	if len(entry.Attributes.Md5) > 0 && s3sink.sourceDigestIsMd5() {
 		uploadInput.ContentMD5 = aws.String(base64.StdEncoding.EncodeToString([]byte(entry.Attributes.Md5)))
 	}
 	_, err = uploader.Upload(&uploadInput)

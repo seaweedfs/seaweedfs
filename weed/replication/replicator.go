@@ -40,6 +40,12 @@ func NewReplicator(sourceConfig util.Configuration, configPrefix string, dataSin
 	}
 }
 
+// CheckSinkDigest refuses a filer sink whose filer uses a different digest
+// from the source filer's; see CheckSinkDigest.
+func (r *Replicator) CheckSinkDigest() error {
+	return CheckSinkDigest(r.source.GrpcAddress(), r.source.Digest, r.sink)
+}
+
 func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_pb.EventNotification) error {
 	if message.IsFromOtherCluster && r.sink.GetName() == "filer" {
 		return nil
@@ -172,16 +178,19 @@ func metadataEventTarget(key string, newEntry *filer_pb.Entry, newParentPath str
 	return util.Join(targetParent, newEntry.Name), targetParent
 }
 
-func ReadFilerSignature(grpcDialOption grpc.DialOption, filer pb.ServerAddress) (filerSignature int32, readErr error) {
+// ReadFilerSignature returns the filer's signature and the digest it reports,
+// empty for a filer that predates the setting.
+func ReadFilerSignature(grpcDialOption grpc.DialOption, filer pb.ServerAddress) (filerSignature int32, digest string, readErr error) {
 	if readErr = pb.WithFilerClient(false, 0, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		if resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{}); err != nil {
 			return fmt.Errorf("GetFilerConfiguration %s: %v", filer, err)
 		} else {
 			filerSignature = resp.Signature
+			digest = resp.Digest
 		}
 		return nil
 	}); readErr != nil {
-		return 0, readErr
+		return 0, "", readErr
 	}
-	return filerSignature, nil
+	return filerSignature, digest, nil
 }
