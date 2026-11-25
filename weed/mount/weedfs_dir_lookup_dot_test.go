@@ -151,3 +151,25 @@ func TestLookupHandleLeavesAnotherInodesPath(t *testing.T) {
 		t.Fatal("live inode lost the reference LookupHandle took")
 	}
 }
+
+func TestMovePathMovesAForgottenInode(t *testing.T) {
+	table := NewInodeToPath("/", 0)
+	table.RetainForgotten(2)
+	inode := table.Lookup("/a.txt", 1, false, false, 0, true)
+	table.Forget(inode, 1, nil, nil)
+
+	table.MovePath("/a.txt", "/b.txt")
+	if path, _ := table.GetForgottenPath(inode); path != "/b.txt" {
+		t.Fatalf("retained path %q, want /b.txt", path)
+	}
+
+	for _, p := range []util.FullPath{"/c.txt", "/d.txt"} {
+		table.Forget(table.Lookup(p, 1, false, false, 0, true), 1, nil, nil)
+	}
+	if _, found := table.GetForgottenPath(inode); found {
+		t.Fatal("inode still retained past the bound")
+	}
+	if len(table.forgottenInodes) != 2 {
+		t.Fatalf("%d paths indexed, want 2", len(table.forgottenInodes))
+	}
+}

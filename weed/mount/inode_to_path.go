@@ -16,6 +16,7 @@ type InodeToPath struct {
 	sync.RWMutex
 	nextInodeId     uint64
 	forgotten       *lru.Cache[uint64, util.FullPath]
+	forgottenInodes map[util.FullPath]uint64
 	cacheMetaTtlSec time.Duration
 	inode2path      map[uint64]*InodeEntry
 	path2inode      map[util.FullPath]uint64
@@ -177,7 +178,27 @@ func NewInodeToPath(root util.FullPath, ttlSec int) *InodeToPath {
 // RetainForgotten keeps the paths of the last n inodes the kernel forgot, so a
 // file handle it decodes after evicting the inode can still be resolved.
 func (i *InodeToPath) RetainForgotten(n int) {
-	i.forgotten, _ = lru.New[uint64, util.FullPath](n)
+	i.forgottenInodes = make(map[util.FullPath]uint64)
+	i.forgotten, _ = lru.NewWithEvict(n, func(inode uint64, path util.FullPath) {
+		if i.forgottenInodes[path] == inode {
+			delete(i.forgottenInodes, path)
+		}
+	})
+}
+
+// moveForgotten keeps a forgotten inode's retained path current across a
+// rename. Requires the table lock.
+func (i *InodeToPath) moveForgotten(sourcePath, targetPath util.FullPath) {
+	inode, found := i.forgottenInodes[sourcePath]
+	if !found {
+		return
+	}
+	delete(i.forgottenInodes, sourcePath)
+	if path, retained := i.forgotten.Peek(inode); !retained || path != sourcePath {
+		return
+	}
+	i.forgotten.Add(inode, targetPath)
+	i.forgottenInodes[targetPath] = inode
 }
 
 // GetForgottenPath returns the path of an inode the kernel forgot, if retained.
@@ -747,6 +768,7 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 	defer i.Unlock()
 	sourceInode, sourceFound := i.path2inode[sourcePath]
 	if !sourceFound {
+		i.moveForgotten(sourcePath, targetPath)
 		// Nothing of ours to move: the source was never visited here, or a
 		// redelivery already moved it. Whatever sits at the target is not ours
 		// to take apart on the strength of an absent source, and deciding that
@@ -807,6 +829,7 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onRelease func(inode uint64)
 			}
 			if i.forgotten != nil {
 				i.forgotten.Add(inode, path.path)
+				i.forgottenInodes[path.path] = inode
 			}
 			if _, isDir := i.dirStates[inode]; isDir && onForgetDir != nil {
 				dirPaths = path.appendPaths(nil)
