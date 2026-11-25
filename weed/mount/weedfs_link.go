@@ -135,6 +135,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 			Attributes:      oldEntry.Attributes,
 			Chunks:          oldEntry.GetChunks(),
 			Content:         oldEntry.Content,
+			RemoteEntry:     oldEntry.RemoteEntry,
 			Extended:        oldEntry.Extended,
 			HardLinkId:      oldEntry.HardLinkId,
 			HardLinkCounter: oldEntry.HardLinkCounter,

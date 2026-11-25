@@ -5,6 +5,8 @@ import (
 	"context"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -45,6 +47,40 @@ func TestLinkCarriesInlineContentToTheNewName(t *testing.T) {
 	for _, path := range []util.FullPath{sourcePath, "/hardlink.txt"} {
 		if got := cachedLink(t, wfs, path).Content; !bytes.Equal(got, content) {
 			t.Fatalf("%s has content %q after the link, want %q", path, got, content)
+		}
+	}
+}
+
+// A file under a remote mount that is not cached yet has no chunks and no
+// content: its RemoteEntry is what tells a read to fetch the object. Left out
+// of the create, the shared record lost it and both names read zeros.
+func TestLinkCarriesRemoteEntryToTheNewName(t *testing.T) {
+	wfs, _ := newCreateTestWFS(t)
+
+	remote := &filer_pb.RemoteEntry{StorageName: "cloud1", RemoteMtime: 1, RemoteSize: 4096, RemoteETag: "etag"}
+	source := &filer_pb.Entry{
+		Name:        "remote.bin",
+		RemoteEntry: remote,
+		Attributes: &filer_pb.FuseAttributes{
+			FileMode: 0o644,
+			FileSize: uint64(remote.RemoteSize),
+			Crtime:   1,
+			Mtime:    1,
+			Uid:      99,
+			Gid:      100,
+		},
+	}
+	if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry("/", source), 0); err != nil {
+		t.Fatalf("InsertEntry: %v", err)
+	}
+	sourcePath := util.FullPath("/remote.bin")
+	sourceInode := wfs.inodeToPath.Lookup(sourcePath, source.Attributes.Crtime, false, false, 0, true)
+
+	doLink(t, wfs, sourceInode, "hardlink.bin")
+
+	for _, path := range []util.FullPath{sourcePath, "/hardlink.bin"} {
+		if got := cachedLink(t, wfs, path).Remote; !proto.Equal(got, remote) {
+			t.Fatalf("%s has remote entry %v after the link, want %v", path, got, remote)
 		}
 	}
 }
