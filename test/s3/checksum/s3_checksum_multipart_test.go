@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -17,6 +18,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/require"
 )
+
+// skipIfRefusedUnderFIPS140Only skips a case for a checksum algorithm the
+// server refuses when S3_FIPS140_ONLY=1 says it runs under GODEBUG=fips140=only:
+// SHA-1 is not an approved algorithm there, so SHA-1 checksums get NotImplemented.
+func skipIfRefusedUnderFIPS140Only(t *testing.T, algorithm types.ChecksumAlgorithm) {
+	if os.Getenv("S3_FIPS140_ONLY") == "1" && algorithm == types.ChecksumAlgorithmSha1 {
+		t.Skip("SHA-1 checksums are refused under fips140=only")
+	}
+}
 
 // newTrailerChecksumClient returns a client that can send flexible checksums.
 // aws-sdk-go-v2 sends them as unsigned streaming trailers, which it refuses over
@@ -91,6 +101,7 @@ func TestMultipartCopyPreservesChecksum(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(string(tc.algorithm), func(t *testing.T) {
+			skipIfRefusedUnderFIPS140Only(t, tc.algorithm)
 			sourceKey := "source-" + string(tc.algorithm)
 			source, err := client.PutObject(context.Background(), &s3.PutObjectInput{
 				Bucket:            aws.String(bucket),
@@ -196,6 +207,7 @@ func TestMultipartUploadReturnsObjectChecksum(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(string(tc.algorithm), func(t *testing.T) {
+			skipIfRefusedUnderFIPS140Only(t, tc.algorithm)
 			key := "multipart-" + string(tc.algorithm)
 			create, err := client.CreateMultipartUpload(context.Background(), &s3.CreateMultipartUploadInput{
 				Bucket:            aws.String(bucket),

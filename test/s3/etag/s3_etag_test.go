@@ -19,7 +19,6 @@ package etag_test
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -38,6 +37,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // S3TestConfig holds configuration for S3 tests
@@ -131,10 +132,18 @@ func generateRandomData(size int) []byte {
 	return data
 }
 
-// calculateMD5 calculates the MD5 hash of data and returns hex string
-func calculateMD5(data []byte) string {
-	hash := md5.Sum(data)
-	return hex.EncodeToString(hash[:])
+// digestOf returns the digest the server stores and puts in ETags for data:
+// MD5, or SHA-256 cut to MD5's size when S3_DIGEST=sha256 names the digest of
+// the cluster under test (a filer run with -digest=sha256 or fips140=only).
+func digestOf(data []byte) []byte {
+	h := util.NewMd5For(os.Getenv("S3_DIGEST"))
+	h.Write(data)
+	return h.Sum(nil)
+}
+
+// digestHex is digestOf as the hex string a single-part ETag carries.
+func digestHex(data []byte) string {
+	return hex.EncodeToString(digestOf(data))
 }
 
 // cleanETag removes quotes from ETag
@@ -215,7 +224,7 @@ func TestPutObjectETagFormat_SmallFile(t *testing.T) {
 	defer cleanupTestBucket(ctx, client, bucketName)
 
 	testData := generateRandomData(smallFileSize)
-	expectedMD5 := calculateMD5(testData)
+	expectedMD5 := digestHex(testData)
 	objectKey := "small-file.bin"
 
 	// Upload small file
@@ -250,7 +259,7 @@ func TestPutObjectETagFormat_LargeFile(t *testing.T) {
 	defer cleanupTestBucket(ctx, client, bucketName)
 
 	testData := generateRandomData(largeFileSize)
-	expectedMD5 := calculateMD5(testData)
+	expectedMD5 := digestHex(testData)
 	objectKey := "large-file.bin"
 
 	t.Logf("Uploading large file (%d bytes, > %d byte auto-chunk threshold)...",
@@ -302,7 +311,7 @@ func TestPutObjectETagFormat_ExtraLargeFile(t *testing.T) {
 	defer cleanupTestBucket(ctx, client, bucketName)
 
 	testData := generateRandomData(xlFileSize)
-	expectedMD5 := calculateMD5(testData)
+	expectedMD5 := digestHex(testData)
 	objectKey := "xl-file.bin"
 
 	expectedChunks := (xlFileSize / autoChunkSize) + 1
@@ -429,11 +438,8 @@ func TestMultipartUploadETagVerification(t *testing.T) {
 	objectKey := "verify-etag-multipart.bin"
 
 	// Pre-calculate expected ETag
-	md1 := md5.Sum(data1)
-	md2 := md5.Sum(data2)
-	concatenatedMD5s := append(md1[:], md2[:]...)
-	finalMD5 := md5.Sum(concatenatedMD5s)
-	expectedETagValue := fmt.Sprintf("%x-2", finalMD5)
+	concatenatedMD5s := append(digestOf(data1), digestOf(data2)...)
+	expectedETagValue := fmt.Sprintf("%x-2", digestOf(concatenatedMD5s))
 
 	t.Logf("Expected multipart ETag: %s", expectedETagValue)
 
@@ -454,7 +460,7 @@ func TestMultipartUploadETagVerification(t *testing.T) {
 		Body:       bytes.NewReader(data1),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "\""+calculateMD5(data1)+"\"", aws.ToString(putPart1.ETag))
+	assert.Equal(t, "\""+digestHex(data1)+"\"", aws.ToString(putPart1.ETag))
 
 	// 3. UploadPart 2
 	putPart2, err := client.UploadPart(ctx, &s3.UploadPartInput{
@@ -465,7 +471,7 @@ func TestMultipartUploadETagVerification(t *testing.T) {
 		Body:       bytes.NewReader(data2),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "\""+calculateMD5(data2)+"\"", aws.ToString(putPart2.ETag))
+	assert.Equal(t, "\""+digestHex(data2)+"\"", aws.ToString(putPart2.ETag))
 
 	// 4. CompleteMultipartUpload
 	completeResp, err := client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
@@ -619,7 +625,7 @@ func TestMultipleLargeFileUploads(t *testing.T) {
 	numFiles := 5
 	for i := 0; i < numFiles; i++ {
 		testData := generateRandomData(largeFileSize)
-		expectedMD5 := calculateMD5(testData)
+		expectedMD5 := digestHex(testData)
 		objectKey := fmt.Sprintf("large-file-%d.bin", i)
 
 		putResp, err := client.PutObject(ctx, &s3.PutObjectInput{
