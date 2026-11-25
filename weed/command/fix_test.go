@@ -2,12 +2,15 @@ package command
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
+	"syscall"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -249,6 +252,37 @@ func TestFixVerifyCrcLeavesOutDamagedNeedles(t *testing.T) {
 		if CommandExitStatus() != tc.status {
 			t.Errorf("verifyCrc=%v: exit status %d, want %d", tc.verify, CommandExitStatus(), tc.status)
 		}
+	}
+}
+
+type failingReadAt struct {
+	backend.BackendStorageFile
+	at int64
+}
+
+func (f failingReadAt) ReadAt(p []byte, off int64) (int, error) {
+	if off == f.at {
+		return 0, syscall.EIO
+	}
+	return f.BackendStorageFile.ReadAt(p, off)
+}
+
+// A needle -verifyCrc cannot read fails the scan instead of being dropped.
+func TestFixVerifyCrcFailsOnReadError(t *testing.T) {
+	dir := t.TempDir()
+	base, offsets := writeFixTestVolume(t, dir, 3)
+	f, err := os.Open(base + ".dat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dat := backend.NewDiskFile(f)
+	defer dat.Close()
+	nm, nmDeleted := needle_map.NewMemDb(), needle_map.NewMemDb()
+	defer nm.Close()
+	defer nmDeleted.Close()
+	scanner := &VolumeFileScanner4Fix{nm: nm, nmDeleted: nmDeleted, verifyDat: failingReadAt{dat, offsets[1]}}
+	if err := storage.ScanVolumeFile(dir, "fix", 7, storage.NeedleMapInMemory, scanner); !errors.Is(err, syscall.EIO) {
+		t.Fatalf("scan error %v, want EIO", err)
 	}
 }
 

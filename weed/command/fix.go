@@ -1,6 +1,7 @@
 package command
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -55,7 +56,7 @@ var (
 type VolumeFileScanner4Fix struct {
 	version        needle.Version
 	datSize        int64
-	verifyCrc      bool
+	verifyDat      backend.BackendStorageFile
 	nm             *needle_map.MemDb
 	nmDeleted      *needle_map.MemDb
 	includeDeleted bool
@@ -67,7 +68,7 @@ func (scanner *VolumeFileScanner4Fix) VisitSuperBlock(superBlock super_block.Sup
 }
 
 func (scanner *VolumeFileScanner4Fix) ReadNeedleBody() bool {
-	return scanner.verifyCrc
+	return false
 }
 
 func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
@@ -81,8 +82,11 @@ func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64
 		}
 		return io.EOF
 	}
-	if scanner.verifyCrc && n.Size.IsValid() {
-		if err := n.ReadNeedleBodyBytes(needleBody, scanner.version); err != nil {
+	if scanner.verifyDat != nil && n.Size.IsValid() {
+		if err := new(needle.Needle).ReadData(scanner.verifyDat, offset, n.Size, scanner.version); err != nil {
+			if !errors.Is(err, needle.ErrorCorrupted) {
+				return fmt.Errorf("verify needle %v at offset %d: %w", n.Id, offset, err)
+			}
 			glog.Errorf("needle %v at offset %d: %v; not indexing it", n.Id, offset, err)
 			SetCommandExitStatus(1)
 			return scanner.nm.Delete(n.Id)
@@ -261,6 +265,18 @@ func localDatSize(basepath, baseFileName string) int64 {
 	return 0
 }
 
+// openDatToVerify opens the local .dat that -verifyCrc reads each record from.
+func openDatToVerify(datPath string, datSize int64) (backend.BackendStorageFile, error) {
+	if datSize == 0 {
+		return nil, fmt.Errorf("-verifyCrc needs the local .dat, %s is empty or on a remote tier", datPath)
+	}
+	f, err := os.Open(datPath)
+	if err != nil {
+		return nil, fmt.Errorf("open %s to verify: %w", datPath, err)
+	}
+	return backend.NewDiskFile(f), nil
+}
+
 func doFixOneVolume(basepath string, baseFileName string, collection string, volumeId int64, fixIncludeDeleted bool) {
 	indexFileName := path.Join(basepath, baseFileName+".idx")
 
@@ -287,9 +303,21 @@ func doFixOneVolume(basepath string, baseFileName string, collection string, vol
 		nm:             nm,
 		nmDeleted:      nmDeleted,
 		includeDeleted: fixIncludeDeleted,
-		verifyCrc:      *fixVerifyCrc,
 	}
 	scanner.datSize = localDatSize(basepath, baseFileName)
+	if *fixVerifyCrc {
+		dat, err := openDatToVerify(path.Join(basepath, baseFileName+".dat"), scanner.datSize)
+		if err != nil {
+			if *fixIgnoreError {
+				glog.Error(err)
+				SetCommandExitStatus(1)
+				return
+			}
+			glog.Fatal(err)
+		}
+		defer dat.Close()
+		scanner.verifyDat = dat
+	}
 
 	if err := storage.ScanVolumeFile(basepath, collection, vid, storage.NeedleMapInMemory, scanner); err != nil {
 		err := fmt.Errorf("scan .dat File: %w", err)
