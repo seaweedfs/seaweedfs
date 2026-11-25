@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -38,11 +39,25 @@ func newPingFilers(t *testing.T, requireToken bool) (*twoFilers, security.Signin
 
 func TestFilerPingForwardsCallerBearerToRequireModePeer(t *testing.T) {
 	c, key := newPingFilers(t, true)
-	client := peerClient(t, c, c.addrA, peerAdminToken(key))
+	caller := peerAdminToken(key)
+	client := peerClient(t, c, c.addrA, caller)
 
 	_, err := client.Ping(context.Background(), &filer_pb.PingRequest{Target: string(c.addrB), TargetType: cluster.FilerType})
 	if err != nil {
 		t.Fatalf("target filer Ping: %v", err)
+	}
+	assertForwardedPingBearer(t, c.callsB, caller)
+}
+
+func assertForwardedPingBearer(t *testing.T, calls *receivedUpdates, caller string) {
+	t.Helper()
+	calls.mu.Lock()
+	defer calls.mu.Unlock()
+	if len(calls.pingAuthorizations) != 1 {
+		t.Fatalf("receiving filer saw %d Ping calls, want one", len(calls.pingAuthorizations))
+	}
+	if !slices.Equal(calls.pingAuthorizations[0], []string{"Bearer " + caller}) {
+		t.Fatal("receiving filer did not get exactly the caller's bearer")
 	}
 }
 
@@ -86,4 +101,5 @@ func TestFilerPingReplacesStaleOutgoingAuthorization(t *testing.T) {
 	if _, err := c.fsA.Ping(ctx, &filer_pb.PingRequest{Target: string(c.addrB), TargetType: cluster.FilerType}); err != nil {
 		t.Fatalf("target filer Ping with stale outgoing authorization: %v", err)
 	}
+	assertForwardedPingBearer(t, c.callsB, caller)
 }

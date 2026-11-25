@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
@@ -24,11 +25,18 @@ import (
 // receivedUpdates counts the UpdateEntry requests a filer receives over gRPC,
 // and how many of them another filer forwarded (is_moved).
 type receivedUpdates struct {
-	mu             sync.Mutex
-	updates, moved int
+	mu                 sync.Mutex
+	updates, moved     int
+	pingAuthorizations [][]string
 }
 
 func (c *receivedUpdates) intercept(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	if _, ok := req.(*filer_pb.PingRequest); ok {
+		md, _ := metadata.FromIncomingContext(ctx)
+		c.mu.Lock()
+		c.pingAuthorizations = append(c.pingAuthorizations, slices.Clone(md.Get("authorization")))
+		c.mu.Unlock()
+	}
 	if r, ok := req.(*filer_pb.UpdateEntryRequest); ok {
 		c.mu.Lock()
 		c.updates++
