@@ -3005,7 +3005,8 @@ pub async fn post_handler(
         );
 
         let mut file_data: Option<Vec<u8>> = None;
-        let mut first_part_data: Option<Vec<u8>> = None;
+        let mut first_part: Option<(Vec<u8>, Option<String>, Option<String>, Option<String>)> =
+            None;
         let mut file_name: Option<String> = None;
         let mut file_content_type: Option<String> = None;
         let mut file_content_encoding: Option<String> = None;
@@ -3033,9 +3034,9 @@ pub async fn post_handler(
             if let Ok(data) = field.bytes().await {
                 // Go reads the first part's data unconditionally, then looks for
                 // a part with a filename. If no part has a filename, Go uses the
-                // first part's data (with empty filename).
-                if first_part_data.is_none() {
-                    first_part_data = Some(data.to_vec());
+                // first part's data (with empty filename) and headers.
+                if first_part.is_none() {
+                    first_part = Some((data.to_vec(), fct.clone(), fce.clone(), fmd5.clone()));
                 }
                 if file_data.is_none() && fname.is_some() {
                     // Found a file field — use this part's data
@@ -3061,9 +3062,16 @@ pub async fn post_handler(
                 file_content_md5,
                 form_fields,
             )
-        } else if let Some(data) = first_part_data {
+        } else if let Some((data, content_type, content_encoding, content_md5)) = first_part {
             // No file field found, use first part's data (matching Go behavior)
-            (data, String::new(), None, None, None, form_fields)
+            (
+                data,
+                String::new(),
+                content_type,
+                content_encoding,
+                content_md5,
+                form_fields,
+            )
         } else {
             // No parts at all
             (Vec::new(), String::new(), None, None, None, form_fields)
@@ -9614,6 +9622,37 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A multipart upload whose parts carry no filename uses the first part
+    /// with its headers, as Go does, so its gzip body is checked unzipped.
+    #[tokio::test]
+    async fn http_multipart_without_filename_keeps_the_part_headers() {
+        use tower::ServiceExt;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let payload = "first part bytes ".repeat(64);
+        let gzipped = try_gzip_data(payload.as_bytes()).unwrap();
+        let mut body = b"--b\r\nContent-Disposition: form-data; name=\"file\"\r\n\
+Content-Encoding: gzip\r\n\r\n"
+            .to_vec();
+        body.extend_from_slice(&gzipped);
+        body.extend_from_slice(b"\r\n--b--\r\n");
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/1,6e7a0c28{TEST_COOKIE:08x}"))
+            .header(header::CONTENT_TYPE, "multipart/form-data; boundary=b")
+            .header(
+                CONTENT_CRC32C_HEADER,
+                encode_content_crc32c(crc32c::crc32c(payload.as_bytes())),
+            )
+            .body(Body::from(body))
+            .unwrap();
+        let response = super::super::volume_server::build_admin_router(state)
+            .oneshot(request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
     }
 
     /// The primary forwards the client's CRC32C so the replica checks it too.
