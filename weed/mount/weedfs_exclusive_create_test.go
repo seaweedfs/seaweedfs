@@ -121,3 +121,30 @@ func TestCreateAtFilerKeepsPeerFile(t *testing.T) {
 		t.Fatalf("stored size = %d, want the peer's file kept", got.GetAttributes().GetFileSize())
 	}
 }
+
+// Two mounts open the same new name with O_CREAT|O_EXCL before either closes:
+// the first one stores the file at open, so the second is refused there.
+func TestExclusiveCreateFailsOnNameAnotherMountCreated(t *testing.T) {
+	fake := newExclusiveCreateFiler()
+	a, b := peerMount(t, fake), peerMount(t, fake)
+	excl := uint32(syscall.O_WRONLY | syscall.O_CREAT | syscall.O_EXCL)
+
+	outA := &fuse.CreateOut{}
+	if st := a.Create(make(chan struct{}), createIn(excl), "lock", outA); st != fuse.OK {
+		t.Fatalf("first Create = %v, want OK", st)
+	}
+	if fake.stored("/lock") == nil {
+		t.Fatal("an exclusive create should be stored at open")
+	}
+	if fh := a.GetHandle(FileHandleId(outA.Fh)); fh == nil || fh.dirtyMetadata || fh.baseEntry.Load() == nil {
+		t.Fatal("the stored create should leave a clean handle over the stored entry")
+	}
+	if st := b.Create(make(chan struct{}), createIn(excl), "lock", &fuse.CreateOut{}); st != fuse.Status(syscall.EEXIST) {
+		t.Fatalf("second Create = %v, want EEXIST", st)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.creates != 2 {
+		t.Fatalf("CreateEntry calls = %d, want 2", fake.creates)
+	}
+}
