@@ -961,6 +961,8 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 
 		if isVacuumTtlExpired(n, opts.superBlock.Ttl, now) {
 			expired.add(size)
+			glog.V(1).Infof("vacuum volume %d: dropping TTL-expired needle key=%d offset=%d size=%d",
+				v.Id, value.Key, offset.ToActualOffset(), size)
 			return nil
 		}
 		copied.add(size)
