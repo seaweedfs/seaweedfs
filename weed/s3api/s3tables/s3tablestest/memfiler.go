@@ -250,7 +250,7 @@ func (f *MemFiler) Ping(_ context.Context, _ *filer_pb.PingRequest) (*filer_pb.P
 	return &filer_pb.PingResponse{StartTimeNs: now, RemoteTimeNs: now, StopTimeNs: now}, nil
 }
 
-func Start(t *testing.T) *MemFiler {
+func Start(t testing.TB) *MemFiler {
 	t.Helper()
 	fs := newMemFiler()
 
