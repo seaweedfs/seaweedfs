@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -627,6 +629,54 @@ func TestNameInAPathSpecificStoreIsCountedOnce(t *testing.T) {
 
 	require.NoError(t, one.InsertEntryKnownAbsent(context.Background(), linkName(id, "/s/c", 3)))
 	require.Equal(t, int32(5), linkCount(t, store.stubFilerStore, id))
+}
+
+// insertHookStore runs onInsert before it stores an entry.
+type insertHookStore struct {
+	*stubFilerStore
+	onInsert func(*Entry)
+	inserts  atomic.Int32
+}
+
+func (s *insertHookStore) InsertEntry(ctx context.Context, entry *Entry) error {
+	if s.onInsert != nil {
+		s.onInsert(entry)
+	}
+	defer s.inserts.Add(1)
+	return s.stubFilerStore.InsertEntry(ctx, entry)
+}
+
+// Two creates of one new name in a path-specific store on this filer: the
+// second waits for the first one's name, finds it, and does not count it
+// again. Counted twice, the file outlived its last name.
+func TestNameInAPathSpecificStoreCreatedTwiceIsCountedOnce(t *testing.T) {
+	store := newStubFilerStore()
+	id := linkedFile(t, store, "/d/x", "/d/y")
+	elsewhere := &insertHookStore{stubFilerStore: newStubFilerStore()}
+	one := countingWrapper(store)
+	one.AddPathSpecificStore("/s/", "s", elsewhere)
+	ctx := context.Background()
+
+	var second sync.Once
+	elsewhere.onInsert = func(*Entry) {
+		second.Do(func() {
+			done := make(chan error, 1)
+			go func() { done <- one.InsertEntry(ctx, linkName(id, "/s/a", 3)) }()
+			select {
+			case err := <-done:
+				require.NoError(t, err)
+			case <-time.After(100 * time.Millisecond):
+			}
+		})
+	}
+	require.NoError(t, one.InsertEntry(ctx, linkName(id, "/s/a", 3)))
+	require.Eventually(t, func() bool { return elsewhere.inserts.Load() == 2 }, time.Second, 10*time.Millisecond)
+	checkNames(t, one, 3, "/d/x", "/d/y", "/s/a")
+
+	for _, name := range []util.FullPath{"/d/x", "/d/y", "/s/a"} {
+		require.NoError(t, one.DeleteEntry(ctx, name))
+	}
+	require.Equal(t, int32(0), linkCount(t, store, id))
 }
 
 // A name in a path-specific store of the same kind is looked up there, not

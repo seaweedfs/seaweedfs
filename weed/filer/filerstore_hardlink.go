@@ -68,6 +68,15 @@ func (fsw *FilerStoreWrapper) writeWithHardLink(ctx context.Context, entry *Entr
 	// and the file's record and chunks outlive its last name.
 	together := fsw.getActualStore(entry.FullPath) == fsw.defaultStore
 	var names *linkNames
+	var store func(context.Context) error
+	if !together {
+		store = func(ctx context.Context) error {
+			if err := write(ctx, entry); err != nil {
+				return err
+			}
+			return fsw.recordLinkNames(ctx, names, false)
+		}
+	}
 	err = fsw.changeLinkRecord(ctx, entry, func(txCtx context.Context) error {
 		// A store of the same kind would read the name through the
 		// default store's transaction, from the default store.
@@ -83,12 +92,7 @@ func (fsw *FilerStoreWrapper) writeWithHardLink(ctx context.Context, entry *Entr
 			return err
 		}
 		return fsw.recordLinkNames(txCtx, names, true)
-	})
-	if err == nil && !together {
-		if err = write(ctx, entry); err == nil {
-			err = fsw.recordLinkNames(ctx, names, false)
-		}
-	}
+	}, store)
 	return replaced, err
 }
 
@@ -207,16 +211,16 @@ func (fsw *FilerStoreWrapper) countLink(ctx context.Context, entry *Entry, joins
 // recordLinkNames records the names counted for a hard link once the name
 // that was counted is stored: a write the store refused leaves them as they
 // were, and sent again it counts the name once. A caller no longer inside
-// the change of the record that counted (locked false) adds its name to
-// whatever is recorded by now.
-func (fsw *FilerStoreWrapper) recordLinkNames(ctx context.Context, names *linkNames, locked bool) error {
+// the change of the record that counted (inChange false, under the record's
+// lock) adds its name to whatever is recorded by now.
+func (fsw *FilerStoreWrapper) recordLinkNames(ctx context.Context, names *linkNames, inChange bool) error {
 	if names == nil || names.recorded == names.count {
 		return nil
 	}
-	if locked {
+	if inChange {
 		return fsw.writeLinkNames(ctx, names.id, names.count)
 	}
-	return fsw.lockLinkRecord(ctx, names.id, func(ctx context.Context) error {
+	return fsw.commitLinkRecord(ctx, names.id, func(ctx context.Context) error {
 		count, known, err := fsw.readLinkNames(ctx, names.id)
 		if err != nil {
 			return err
@@ -238,7 +242,9 @@ func (fsw *FilerStoreWrapper) recordLinkNames(ctx context.Context, names *linkNa
 // changeLinkRecord runs change, which reads the shared record of entry's hard
 // link and writes it back, so that no other change of the record comes
 // between the two. Entries without a hard link, and stores that take the
-// count as it is sent, just run it.
+// count as it is sent, just run it. store, if any, stores a name the record's
+// transaction does not hold once change is saved, before this filer changes
+// the record again: the next change finds the name.
 //
 // On this filer the record's lock sees to that. Another filer on the same
 // store is kept out by a transaction, where the store refuses to commit one
@@ -247,18 +253,21 @@ func (fsw *FilerStoreWrapper) recordLinkNames(ctx context.Context, names *linkNa
 // already leaves the refusal to it. Other stores shared by several filers have
 // no such guard, nor has a change inside a transaction of a store that does
 // not refuse such commits (the SQL stores).
-func (fsw *FilerStoreWrapper) changeLinkRecord(ctx context.Context, entry *Entry, change func(ctx context.Context) error) error {
+func (fsw *FilerStoreWrapper) changeLinkRecord(ctx context.Context, entry *Entry, change, store func(ctx context.Context) error) error {
 	if !fsw.countsLinks || len(entry.HardLinkId) == 0 || entry.IsDirectory() {
-		return change(ctx)
+		if err := change(ctx); err != nil || store == nil {
+			return err
+		}
+		return store(ctx)
 	}
 	sent := entry.HardLinkCounter
 	return fsw.lockLinkRecord(ctx, entry.HardLinkId, func(ctx context.Context) error {
 		entry.HardLinkCounter = sent
 		return change(ctx)
-	})
+	}, store)
 }
 
-func (fsw *FilerStoreWrapper) lockLinkRecord(ctx context.Context, hardLinkId HardLinkId, change func(ctx context.Context) error) error {
+func (fsw *FilerStoreWrapper) lockLinkRecord(ctx context.Context, hardLinkId HardLinkId, change, store func(ctx context.Context) error) error {
 	inTransaction := ctx.Value(storeTransactionKey{}) != nil
 	// A real transaction keeps its connection until it commits, and the
 	// holder of the lock may be waiting for one (as for lockDirectoryCreate):
@@ -274,9 +283,18 @@ func (fsw *FilerStoreWrapper) lockLinkRecord(ctx context.Context, hardLinkId Har
 		lock.Lock()
 		defer lock.Unlock()
 	}
+	if err := fsw.commitLinkRecord(ctx, hardLinkId, change); err != nil || store == nil {
+		return err
+	}
+	return store(ctx)
+}
 
+// commitLinkRecord runs change in a transaction of its own where the store
+// refuses conflicting commits, and again while it does; the caller holds the
+// record's lock.
+func (fsw *FilerStoreWrapper) commitLinkRecord(ctx context.Context, hardLinkId HardLinkId, change func(ctx context.Context) error) error {
 	refusing, ok := fsw.defaultStore.(ConflictRefusingStore)
-	if !ok || !refusing.RefusesConflictingCommits() || inTransaction {
+	if !ok || !refusing.RefusesConflictingCommits() || ctx.Value(storeTransactionKey{}) != nil {
 		return change(ctx)
 	}
 	for attempt := 1; ; attempt++ {
@@ -377,7 +395,7 @@ func (fsw *FilerStoreWrapper) DeleteHardLink(ctx context.Context, hardLinkId Har
 	}
 	return fsw.lockLinkRecord(ctx, hardLinkId, func(ctx context.Context) error {
 		return fsw.deleteHardLink(ctx, hardLinkId)
-	})
+	}, nil)
 }
 
 func (fsw *FilerStoreWrapper) deleteHardLink(ctx context.Context, hardLinkId HardLinkId) error {
