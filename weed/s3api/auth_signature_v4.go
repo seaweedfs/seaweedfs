@@ -297,6 +297,7 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 			authInfo.AccessKey, keyCount, iam.isAuthEnabled)
 		return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
 	}
+
 	// 3. Perform permission check
 	if shouldCheckPermissions {
 		bucket, object := s3_constants.GetBucketAndObject(r)
