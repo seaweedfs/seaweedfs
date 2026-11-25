@@ -116,7 +116,7 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 	if index < lenBytes {
 		n.DataSize = util.BytesToUint32(bytes[index : index+4])
 		index = index + 4
-		if int(n.DataSize)+index > lenBytes {
+		if uint64(n.DataSize)+uint64(index) > uint64(lenBytes) {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
 			return fmt.Errorf("index out of range %d: %w", 1, ErrorCorrupted)
 		}

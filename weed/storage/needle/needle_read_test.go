@@ -121,3 +121,11 @@ func TestReadNeedleBlobRejectsSizePastInt(t *testing.T) {
 		t.Fatalf("ReadNeedleBlob: %v, want ErrorSizeInvalid", err)
 	}
 }
+
+func TestReadNeedleDataRejectsDataSizePastBody(t *testing.T) {
+	n := new(Needle)
+	body := []byte{0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0}
+	if err := n.readNeedleDataVersion2(body); !errors.Is(err, ErrorCorrupted) {
+		t.Fatalf("readNeedleDataVersion2: %v, want ErrorCorrupted", err)
+	}
+}
