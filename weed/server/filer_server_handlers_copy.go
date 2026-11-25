@@ -106,6 +106,10 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 		newName = util.Nvl(newName, oldName)
 		finalDstPath = util.FullPath(newDir).Child(newName)
 	}
+	if fs.filer.FilerConf.MatchStorageRule(string(finalDstPath)).ReadOnly {
+		writeJsonError(w, r, http.StatusInsufficientStorage, fmt.Errorf("%w: %s", ErrReadOnly, finalDstPath))
+		return
+	}
 
 	if srcPath == finalDstPath {
 		glog.V(2).InfofCtx(ctx, "FilerServer.copy rejected self-copy for %s", finalDstPath)

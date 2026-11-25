@@ -255,6 +255,13 @@ func TestPostHandlerChecksReadOnlyOnFinalPath(t *testing.T) {
 			},
 			child: readOnlyPrefix + "demo",
 		},
+		{
+			name: "copy",
+			request: func(t *testing.T) *http.Request {
+				return httptest.NewRequest(http.MethodPost, "/buckets/demo?cp.from=/src.txt", http.NoBody)
+			},
+			child: readOnlyPrefix + "src.txt",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
