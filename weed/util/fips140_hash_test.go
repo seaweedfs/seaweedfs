@@ -179,3 +179,19 @@ func TestNewContentMd5(t *testing.T) {
 		t.Error("fips140=only: BodyMd5 must be nil so Content-MD5 goes unchecked")
 	}
 }
+
+func TestHashToInt32IgnoresDigestMode(t *testing.T) {
+	if fips140.Enforced() {
+		t.Skip("GODEBUG=fips140=only refuses MD5")
+	}
+	setFIPS140Enforced(t, false)
+	t.Cleanup(func() { SetDigest("") })
+	data := []byte("/mnt/weed")
+	want := HashToInt32(data)
+	if err := SetDigest(DigestSha256); err != nil {
+		t.Fatal(err)
+	}
+	if got := HashToInt32(data); got != want {
+		t.Fatalf("HashToInt32 = %d under digest sha256, want %d as under md5", got, want)
+	}
+}

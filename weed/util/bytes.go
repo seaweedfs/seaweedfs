@@ -2,9 +2,11 @@ package util
 
 import (
 	"bytes"
+	"crypto/md5"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"hash"
 	"io"
 	"math"
 	"strconv"
@@ -112,8 +114,15 @@ func HashStringToLong(dir string) (v int64) {
 	return
 }
 
+// HashToInt32 follows GODEBUG only, not the digest mode: processes that never
+// adopt a filer's digest derive the same names, such as a mount's socket path.
 func HashToInt32(data []byte) (v int32) {
-	h := NewMd5()
+	var h hash.Hash
+	if fips140Enforced() {
+		h = NewTruncatedSha256(md5.Size)
+	} else {
+		h = md5.New()
+	}
 	h.Write(data)
 
 	b := h.Sum(nil)
