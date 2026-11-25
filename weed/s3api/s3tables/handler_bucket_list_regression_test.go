@@ -10,10 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// These pin what ListTableBuckets answers on master, so reading each bucket's
-// policy from the listing instead of a lookup of its own changes nothing a
-// caller sees. They pass with and without that change.
-
 func listedBucketNames(resp ListTableBucketsResponse) []string {
 	names := make([]string, 0, len(resp.TableBuckets))
 	for _, b := range resp.TableBuckets {
