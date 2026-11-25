@@ -78,9 +78,7 @@ func (b *ReaderCacheBudget) reserve(s *SingleChunkCacher) error {
 			b.idle.Remove(entry)
 			delete(b.idleEntries, victim)
 			b.Unlock()
-			if pinnedVictim {
-				victim.parent.remove(victim)
-			} else if !victim.parent.removeUnpinned(victim) {
+			if !victim.parent.evictForBudget(victim, pinnedVictim) {
 				// The victim was pinned between selection and removal: keep it
 				// evictable so a pin abandoned in that gap cannot wedge the
 				// budget, then retry the selection.
@@ -144,7 +142,7 @@ func (b *ReaderCacheBudget) TryReserveScratch(size int) bool {
 		b.idle.Remove(entry)
 		delete(b.idleEntries, victim)
 		b.Unlock()
-		if !victim.parent.removeUnpinned(victim) {
+		if !victim.parent.evictForBudget(victim, false) {
 			// pinned meanwhile: keep it evictable, as reserve does, and give up
 			b.Lock()
 			if _, ok := b.reservations[victim]; ok && b.idleEntries[victim] == nil {
