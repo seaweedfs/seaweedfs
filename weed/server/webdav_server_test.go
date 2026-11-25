@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -63,8 +64,14 @@ func TestToFileInfoETag(t *testing.T) {
 		return entry
 	}
 
-	if etag := toFileInfo("/f", file("", "")).etag; etag != "" {
-		t.Errorf("chunks without digests got etag %q; every 2-chunk file would share it", etag)
+	digestless := toFileInfo("/f", file("", "")).etag
+	if digestless == "" || digestless == filer.ETagChunks(file("", "").Chunks) {
+		t.Errorf("chunks without digests got etag %q; every 2-chunk file would share it", digestless)
+	}
+	moved := file("", "")
+	moved.Chunks[1].FileId = "2,03"
+	if etag := toFileInfo("/f", moved).etag; etag == digestless {
+		t.Errorf("chunks without digests in other needles got the same etag %q", etag)
 	}
 	if etag := toFileInfo("/f", file("XUFAKrxLKna5cZ2REBfFkg==", "XUFAKrxLKna5cZ2REBfFkg==")).etag; etag == "" {
 		t.Error("chunks with digests got no etag")
