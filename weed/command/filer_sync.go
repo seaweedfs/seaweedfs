@@ -205,13 +205,13 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	go statsCollect.StartMetricsServer(*syncOptions.metricsHttpIp, *syncOptions.metricsHttpPort)
 
 	// read a filer signature
-	aFilerSignature, aFilerDigest, aFilerErr := replication.ReadFilerSignatureAndDigest(grpcDialOptionA, filerA)
+	aFilerSignature, aFilerDigest, aFilerErr := replication.ReadFilerSignature(grpcDialOptionA, filerA)
 	if aFilerErr != nil {
 		glog.Errorf("get filer 'a' signature %d error from %s to %s: %v", aFilerSignature, *syncOptions.filerA, *syncOptions.filerB, aFilerErr)
 		return true
 	}
 	// read b filer signature
-	bFilerSignature, bFilerDigest, bFilerErr := replication.ReadFilerSignatureAndDigest(grpcDialOptionB, filerB)
+	bFilerSignature, bFilerDigest, bFilerErr := replication.ReadFilerSignature(grpcDialOptionB, filerB)
 	if bFilerErr != nil {
 		glog.Errorf("get filer 'b' signature %d error from %s to %s: %v", bFilerSignature, *syncOptions.filerA, *syncOptions.filerB, bFilerErr)
 		return true
