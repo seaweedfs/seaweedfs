@@ -60,7 +60,7 @@ const iamSelfServiceRequiresGrantUsage = "if true, an identity needs an explicit
 
 // s3AbortRevokedRequestsUsage documents the flag shared by every command that
 // serves S3.
-const s3AbortRevokedRequestsUsage = "if true, a change to identities, policies or a bucket policy that denies an S3 request in flight aborts it, closing its HTTP/1.x connection. Covers the access the S3 auth middleware grants configured identities; STS and JWT sessions keep theirs until they expire. Default checks access only when a request starts, so a download or upload that started before the change runs to its end."
+const s3AbortRevokedRequestsUsage = "if true, a change to identities, policies or a bucket policy that denies an S3 request in flight aborts it, closing its HTTP/1.x connection. Covers the access the S3 auth middleware grants configured identities, judged as of when the request started, so expiry alone never aborts it; requests of STS and JWT sessions run to their end. Default checks access only when a request starts, so a download or upload that started before the change runs to its end."
 
 const s3PreStopSecondsUsage = "seconds to keep serving after SIGTERM, with /status, /healthz and /readyz returning 503, before the S3 gateway shuts down. Gives load balancers and Kubernetes Services time to stop routing to it. 0 shuts down at once"
 

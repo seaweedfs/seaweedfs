@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -51,15 +52,13 @@ func newRevokeIAM(t *testing.T, identities ...*iam_pb.Identity) *IdentityAccessM
 	return iam
 }
 
-// serveRevokeS3 serves GET /{bucket}/{object} through auth on a listener like
-// the gateway's, streaming each body for two seconds. Every request reports on
+// streamBody answers with a body streamed for three seconds, and reports on
 // started once it streams.
-func serveRevokeS3(t *testing.T, started chan<- struct{}, auth func(http.HandlerFunc) http.HandlerFunc) string {
-	t.Helper()
-	stream := func(w http.ResponseWriter, r *http.Request) {
+func streamBody(started chan<- struct{}) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		started <- struct{}{}
 		chunk := make([]byte, 1024)
-		for i := 0; i < 200; i++ {
+		for i := 0; i < 300; i++ {
 			if _, err := w.Write(chunk); err != nil {
 				return
 			}
@@ -71,6 +70,13 @@ func serveRevokeS3(t *testing.T, started chan<- struct{}, auth func(http.Handler
 			}
 		}
 	}
+}
+
+// serveRevokeS3 serves GET /{bucket}/{object} through auth on a listener like
+// the gateway's, answering with streamBody.
+func serveRevokeS3(t *testing.T, started chan<- struct{}, auth func(http.HandlerFunc) http.HandlerFunc) string {
+	t.Helper()
+	stream := streamBody(started)
 	router := mux.NewRouter()
 	router.Methods(http.MethodGet).Path("/{bucket}/{object:.+}").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth(stream)(w, s3_constants.EnsureIdentityHolder(r))
@@ -101,9 +107,13 @@ func download(t *testing.T, url, key, secret string) <-chan error {
 
 // fetch reads the response to req to its end, and reports how the read ended.
 func fetch(req *http.Request) <-chan error {
+	return fetchWith(&http.Transport{}, req)
+}
+
+func fetchWith(transport http.RoundTripper, req *http.Request) <-chan error {
 	done := make(chan error, 1)
 	go func() {
-		resp, err := (&http.Transport{}).RoundTrip(req)
+		resp, err := transport.RoundTrip(req)
 		if err != nil {
 			done <- err
 			return
@@ -250,4 +260,89 @@ func TestAbortRequestsDeniedByBucketPolicy(t *testing.T) {
 
 	assert.Error(t, downloadResult(t, denied, time.Second), "the bucket policy denies bkt")
 	assert.NoError(t, downloadResult(t, other, 5*time.Second), "no policy covers other")
+}
+
+// A re-check judges time conditions as of when the request was admitted, so a
+// grant that expires while the request runs does not abort it.
+func TestAbortRevokedRequestsJudgesTimeAsOfAdmission(t *testing.T) {
+	iam := newRevokeIAM(t, revokeIdentity("dave", revokeKeyB, revokeSecretB))
+	iam.policyEngine = NewBucketPolicyEngine()
+	until := time.Now().Add(time.Second).Truncate(time.Second).Add(time.Second)
+	require.NoError(t, iam.policyEngine.engine.SetBucketPolicy("bkt", fmt.Sprintf(
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::bkt/*","Condition":{"DateLessThan":{"aws:CurrentTime":%q}}}]}`,
+		until.UTC().Format(time.RFC3339))))
+	started := make(chan struct{}, 1)
+	done := download(t, serveRevokeS3(t, started, authRead(iam))+"/bkt/object", revokeKeyB, revokeSecretB)
+	waitStarted(t, started, 1)
+
+	time.Sleep(time.Until(until) + 100*time.Millisecond)
+	iam.revalidateInFlight()
+
+	assert.NoError(t, downloadResult(t, done, 5*time.Second), "the grant held when the download was admitted")
+}
+
+// A revoked HTTP/2 upload is released from its blocked body read, while a
+// download on another stream of the same connection runs to its end.
+func TestAbortRevokedHTTP2Upload(t *testing.T) {
+	iam := newRevokeIAM(t,
+		revokeIdentity("alice", revokeKeyA, revokeSecretA, "Read:bkt"),
+		revokeIdentity("bob", revokeKeyB, revokeSecretB, "Write:bkt"),
+	)
+	started := make(chan struct{}, 2)
+	connections := make(chan string, 2)
+	uploadRead := make(chan error, 1)
+	upload := func(w http.ResponseWriter, r *http.Request) {
+		started <- struct{}{}
+		_, err := io.Copy(io.Discard, r.Body)
+		uploadRead <- err
+	}
+	route := func(f http.HandlerFunc, action Action) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			connections <- r.Proto + " " + r.RemoteAddr
+			iam.Auth(f, action)(w, s3_constants.EnsureIdentityHolder(r))
+		}
+	}
+	router := mux.NewRouter()
+	router.Methods(http.MethodGet).Path("/{bucket}/{object:.+}").HandlerFunc(route(streamBody(started), s3_constants.ACTION_READ))
+	router.Methods(http.MethodPut).Path("/{bucket}/{object:.+}").HandlerFunc(route(upload, s3_constants.ACTION_WRITE))
+	server := httptest.NewUnstartedServer(router)
+	server.EnableHTTP2 = true
+	server.Config.ConnContext = util.ConnContext
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	transport := server.Client().Transport
+
+	body, bodyWriter := io.Pipe()
+	t.Cleanup(func() { _ = bodyWriter.Close() })
+	put, err := http.NewRequest(http.MethodPut, server.URL+"/bkt/upload", body)
+	require.NoError(t, err)
+	put.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
+	require.NoError(t, signRequestV4(put, revokeKeyB, revokeSecretB))
+	go func() {
+		if resp, err := transport.RoundTrip(put); err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	go func() { _, _ = bodyWriter.Write(make([]byte, 1024)) }()
+	get, err := newTestRequest(http.MethodGet, server.URL+"/bkt/object", 0, nil)
+	require.NoError(t, err)
+	require.NoError(t, signRequestV4(get, revokeKeyA, revokeSecretA))
+	alice := fetchWith(transport, get)
+	waitStarted(t, started, 2)
+	first, second := <-connections, <-connections
+	require.Equal(t, first, second, "both streams share one connection")
+	require.Contains(t, first, "HTTP/2")
+
+	require.NoError(t, iam.ReplaceS3ApiConfiguration(&iam_pb.S3ApiConfiguration{Identities: []*iam_pb.Identity{
+		revokeIdentity("alice", revokeKeyA, revokeSecretA, "Read:bkt"),
+		revokeIdentity("bob", revokeKeyB, revokeSecretB),
+	}}))
+
+	select {
+	case err := <-uploadRead:
+		assert.Error(t, err, "bob lost Write")
+	case <-time.After(time.Second):
+		t.Fatal("bob's upload is still reading its body")
+	}
+	assert.NoError(t, downloadResult(t, alice, 5*time.Second), "alice's stream on the same connection")
 }

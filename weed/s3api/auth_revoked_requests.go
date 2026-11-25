@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -20,11 +22,14 @@ import (
 // starts, and a download or upload that started before an identity, policy or
 // bucket policy change runs to its end.
 //
-// Only the middleware's decision is checked again. STS and JWT sessions are not
-// tracked: they keep the access they started with until they expire, and
-// checking them again would treat expiry as a revocation. Nor is what a handler
-// authorizes itself: anonymous reads a public ACL or bucket policy allows,
-// browser form uploads, the source of a copy, and conditions on object tags.
+// Only the middleware's decision is checked again, and as of when the request
+// was admitted: time conditions such as aws:CurrentTime, and a key's
+// expiration, are evaluated at that time, so expiry alone never aborts a
+// request. STS and JWT sessions are not tracked, so their requests run to
+// their end as without this flag: re-validating a session token also checks
+// its expiry. Nor is what a handler authorizes itself: anonymous reads a
+// public ACL or bucket policy allows, browser form uploads, the source of a
+// copy, and conditions on object tags.
 type inFlightRequests struct {
 	mu       sync.Mutex
 	requests map[*inFlightRequest]struct{}
@@ -54,8 +59,9 @@ const (
 
 type inFlightRequest struct {
 	// req is a copy taken before the handler ran, which may change the
-	// original. Only revalidateLoop uses it.
+	// original, and judged as of admitted. Only revalidateLoop uses it.
 	req      *http.Request
+	admitted time.Time
 	identity *Identity
 	action   Action
 	bucket   string
@@ -106,7 +112,8 @@ func (iam *IdentityAccessManagement) abortWhenRevoked(f http.HandlerFunc, identi
 		defer cancel()
 		r = r.WithContext(ctx)
 		bucket, _ := s3_constants.GetBucketAndObject(r)
-		req := &inFlightRequest{req: r.Clone(ctx), identity: identity, action: action, bucket: bucket, source: source, cancel: cancel}
+		admitted := time.Now()
+		req := &inFlightRequest{req: r.Clone(policy_engine.WithRequestTime(ctx, admitted)), admitted: admitted, identity: identity, action: action, bucket: bucket, source: source, cancel: cancel}
 		if cred != nil {
 			req.accessKey, req.secretKey = cred.AccessKey, cred.SecretKey
 		}
@@ -158,7 +165,7 @@ func (iam *IdentityAccessManagement) currentIdentity(req *inFlightRequest) *Iden
 	case fromAccessKey:
 		var cred *Credential
 		var found bool
-		if identity, cred, found = iam.lookupByAccessKey(req.accessKey); !found || cred.SecretKey != req.secretKey || cred.isCredentialExpired() {
+		if identity, cred, found = iam.lookupByAccessKey(req.accessKey); !found || cred.SecretKey != req.secretKey || cred.Expiration > 0 && cred.Expiration < req.admitted.Unix() {
 			return nil
 		}
 	case fromUnsigned:
