@@ -43,6 +43,9 @@ func ReadNeedleBlob(r backend.BackendStorageFile, offset int64, size Size, versi
 		return nil, fmt.Errorf("invalid needle size %d: %w", size, ErrorSizeInvalid)
 	}
 	dataSize := GetActualSize(size, version)
+	if int64(int(dataSize)) != dataSize {
+		return nil, fmt.Errorf("needle size %d does not fit in memory: %w", size, ErrorSizeInvalid)
+	}
 	dataSlice = make([]byte, int(dataSize))
 
 	var n int
