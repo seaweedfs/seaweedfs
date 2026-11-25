@@ -647,6 +647,7 @@ type VolumeFileScanner4Vacuum struct {
 	now            uint64
 	writeThrottler *util.WriteThrottler
 	dropped        map[int64]bool
+	resumed        map[int64]bool
 }
 
 func (scanner *VolumeFileScanner4Vacuum) VisitSuperBlock(superBlock super_block.SuperBlock) error {
@@ -669,6 +670,12 @@ func (scanner *VolumeFileScanner4Vacuum) reached(key NeedleId, offset int64) boo
 }
 
 func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
+	if scanner.resumed != nil {
+		if scanner.resumed[offset] {
+			return io.EOF
+		}
+		scanner.resumed[offset] = true
+	}
 	nv, ok := scanner.v.nm.Get(n.Id)
 	glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
 	if !ok || nv.Offset.ToActualOffset() != offset {
@@ -752,9 +759,10 @@ func (v *Volume) copyPastUnreadableRecords(scanner *VolumeFileScanner4Vacuum, sc
 	if err != nil {
 		return err
 	}
+	scanner.resumed = make(map[int64]bool)
 	for _, record := range missed {
 		offset := record.Offset.ToActualOffset()
-		if scanner.reached(record.Key, offset) {
+		if scanner.reached(record.Key, offset) || scanner.resumed[offset] {
 			continue
 		}
 		glog.Warningf("compact volume %d: scan did not reach live record %d at offset %d, resuming there", v.Id, record.Key, offset)

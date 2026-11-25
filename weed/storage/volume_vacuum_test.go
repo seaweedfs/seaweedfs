@@ -897,3 +897,49 @@ func newEmptyNeedle(id uint64) *needle.Needle {
 	n.Id = types.Uint64ToNeedleId(id)
 	return n
 }
+
+// A run of records whose header ids are damaged but whose sizes are intact:
+// data compaction keeps the records around it, and resuming at each damaged
+// record does not walk the rest of the run again.
+func TestCompactByVolumeData_SkipsRunOfDamagedIds(t *testing.T) {
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+	defer v.Close()
+	var offsets []int64
+	for i := 1; i <= 6; i++ {
+		offset, _, _, err := v.writeNeedle2(newRandomNeedle(uint64(i)), true, false, false)
+		if err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+		offsets = append(offsets, int64(offset))
+	}
+	damagedId := bytes.Repeat([]byte{0xa5}, types.NeedleIdSize)
+	for _, offset := range offsets[1:5] {
+		if _, err := v.DataBackend.WriteAt(damagedId, offset+types.CookieSize); err != nil {
+			t.Fatalf("damage id at %d: %v", offset, err)
+		}
+	}
+
+	if err := v.CompactByVolumeData(nil); err != nil {
+		t.Fatalf("CompactByVolumeData: %v", err)
+	}
+
+	cpx, err := os.Open(v.FileName(".cpx"))
+	if err != nil {
+		t.Fatalf("open .cpx: %v", err)
+	}
+	defer cpx.Close()
+	var kept []types.NeedleId
+	if err := idx.WalkIndexFile(cpx, 0, func(key types.NeedleId, _ types.Offset, _ types.Size) error {
+		kept = append(kept, key)
+		return nil
+	}); err != nil {
+		t.Fatalf("walk .cpx: %v", err)
+	}
+	if want := []types.NeedleId{1, 6}; !slices.Equal(kept, want) {
+		t.Errorf("compacted index holds %v, want %v", kept, want)
+	}
+}
