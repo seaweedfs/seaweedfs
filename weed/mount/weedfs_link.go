@@ -166,11 +166,17 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		if err = update(); grpcstatus.Code(err) == codes.FailedPrecondition {
 			// link under the id the file has by now
 			stored, _, _, getErr := filer_pb.GetEntry(ctx, wfs, oldEntryPath)
-			if getErr == nil && stored != nil && len(stored.HardLinkId) > 0 {
+			if getErr == nil && stored != nil && len(stored.HardLinkId) > 0 && stored.Attributes != nil {
 				glog.V(1).Infof("Link: %s is hard link %x already, not %x", oldEntryPath, stored.HardLinkId, oldEntry.HardLinkId)
 				// a rollback puts back what the file has now
 				origHardLinkId, origHardLinkCounter = stored.HardLinkId, stored.HardLinkCounter
-				oldEntry.HardLinkId, oldEntry.HardLinkCounter = stored.HardLinkId, stored.HardLinkCounter+1
+				// both writes carry the file as stored now, not as first read
+				oldEntry = stored
+				oldEntry.HardLinkCounter++
+				oldEntry.Attributes.Mtime, oldEntry.Attributes.MtimeNs = linkNow.Unix(), int32(linkNow.Nanosecond())
+				oldEntry.Attributes.Ctime, oldEntry.Attributes.CtimeNs = linkNow.Unix(), int32(linkNow.Nanosecond())
+				updateOldEntryRequest.Entry = oldEntry
+				request.Entry.Attributes, request.Entry.Chunks, request.Entry.Extended = oldEntry.Attributes, oldEntry.GetChunks(), oldEntry.Extended
 				request.Entry.HardLinkId, request.Entry.HardLinkCounter = oldEntry.HardLinkId, oldEntry.HardLinkCounter
 				err = update()
 			}

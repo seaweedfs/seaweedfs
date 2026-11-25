@@ -360,7 +360,8 @@ func TestFirstLinkTakesTheLinkIdAnotherClientGaveTheFile(t *testing.T) {
 	server.lookupEntry = func(req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 		return &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{
 			Name:            req.GetName(),
-			Attributes:      &filer_pb.FuseAttributes{FileMode: 0o644, FileSize: 12, Crtime: 1, Mtime: 1, Uid: 99, Gid: 100},
+			Attributes:      &filer_pb.FuseAttributes{FileMode: 0o600, FileSize: 12, Crtime: 1, Mtime: 1, Uid: 99, Gid: 100},
+			Chunks:          []*filer_pb.FileChunk{{FileId: "3,0c03", Size: 12}},
 			HardLinkId:      theirs,
 			HardLinkCounter: 2,
 		}}, nil
@@ -382,11 +383,17 @@ func TestFirstLinkTakesTheLinkIdAnotherClientGaveTheFile(t *testing.T) {
 	if !bytes.Equal(updates[1].GetHardLinkId(), theirs) || updates[1].GetHardLinkCounter() != 3 {
 		t.Fatalf("second update carried link id %x count %d, want the file's %x and 3", updates[1].GetHardLinkId(), updates[1].GetHardLinkCounter(), theirs)
 	}
+	if updates[1].GetAttributes().GetFileMode() != 0o600 || len(updates[1].GetChunks()) != 1 {
+		t.Fatalf("second update carried mode %o and %d chunks, want the stored 600 and 1", updates[1].GetAttributes().GetFileMode(), len(updates[1].GetChunks()))
+	}
 	server.mu.Lock()
 	created := server.lastEntry
 	server.mu.Unlock()
 	if created.GetName() != "mine.txt" || !bytes.Equal(created.GetHardLinkId(), theirs) {
 		t.Fatalf("new name %q was made under link id %x, want %x", created.GetName(), created.GetHardLinkId(), theirs)
+	}
+	if created.GetAttributes().GetFileMode() != 0o600 || len(created.GetChunks()) != 1 {
+		t.Fatalf("new name has mode %o and %d chunks, want the stored 600 and 1", created.GetAttributes().GetFileMode(), len(created.GetChunks()))
 	}
 	linked, _, st := wfs.maybeLoadEntry(context.Background(), sourcePath)
 	if st != fuse.OK {
