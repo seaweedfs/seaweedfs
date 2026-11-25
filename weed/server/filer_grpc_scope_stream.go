@@ -31,8 +31,13 @@ func (s *filerGrpcScope) stream(srv any, ss grpc.ServerStream, info *grpc.Stream
 		// caller when no subscription key is set, whatever the bearer.
 		method := strings.TrimPrefix(info.FullMethod, scopeFilerMethodPrefix)
 		if s.cfg.subscriptionScope != nil && (method == "SubscribeMetadata" || method == "SubscribeLocalMetadata") {
-			if _, authErr := bearerFromMetadata(ss.Context()); authErr == nil {
-				if _, subErr := s.cfg.subscriptionScope(ss.Context(), method); subErr == nil {
+			requireToken := s.cfg.requireToken != nil && s.cfg.requireToken()
+			// Require-mode must not let a tokenless mTLS peer, an invalid bearer,
+			// or a permissive no-subscribe-key verifier bypass the gate. A dedicated
+			// subscription token returns a non-nil scope; general/admin tokens that
+			// this filer accepts already passed resolve above.
+			if raw, authErr := bearerFromMetadata(ss.Context()); authErr == nil && raw != "" {
+				if subScope, subErr := s.cfg.subscriptionScope(ss.Context(), method); subErr == nil && (!requireToken || subScope != nil) {
 					return handler(srv, ss)
 				}
 			}

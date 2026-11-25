@@ -61,6 +61,7 @@ type scopeConfig struct {
 	signingKey        func() security.SigningKey
 	verificationKeys  func() (security.SigningKey, security.SigningKey)
 	subscriptionScope func(context.Context, string) (*security.MetadataSubscriptionScope, error)
+	requireToken      func() bool
 	leeway            func() time.Duration
 	assignLifetime    func() time.Duration
 }
@@ -190,8 +191,12 @@ func (s *filerGrpcScope) proofVerifier(ctx context.Context, sc *scope, chunkAuth
 // resolve authenticates the call. It returns (nil, nil) for an unscoped call,
 // a *scope for a scoped token, and an error that refuses the call.
 func (s *filerGrpcScope) resolve(ctx context.Context) (*scope, error) {
+	requireToken := s.cfg.requireToken != nil && s.cfg.requireToken()
 	key, previous := s.verificationKeys()
 	if len(key) == 0 {
+		if requireToken {
+			return nil, status.Error(codes.Unauthenticated, "filer: gRPC token authentication is required")
+		}
 		return nil, nil
 	}
 	raw, authErr := bearerFromMetadata(ctx)
@@ -199,6 +204,9 @@ func (s *filerGrpcScope) resolve(ctx context.Context) (*scope, error) {
 		return nil, authErr
 	}
 	if raw == "" {
+		if requireToken {
+			return nil, status.Error(codes.Unauthenticated, "filer: gRPC token authentication is required")
+		}
 		return nil, nil
 	}
 	leeway := time.Duration(0)
