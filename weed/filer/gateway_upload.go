@@ -117,6 +117,7 @@ func SaveGatewayDataAsChunk(req GatewayChunkUploadRequest) (*filer_pb.FileChunk,
 		IsInputCompressed: false,
 		MimeType:          req.MimeType,
 		PairMap:           req.PairMap,
+		WantMd5:           true,
 	}
 
 	if req.VolumeServerAccess == "filerProxy" && req.FilerHTTPAddress != "" {

@@ -11,15 +11,18 @@ import (
 	"path"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/net/webdav"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/buffered_writer"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/stretchr/testify/assert"
 )
@@ -52,14 +55,90 @@ func TestToFileInfoRootIsDirectory(t *testing.T) {
 	}
 }
 
+func TestToFileInfoETag(t *testing.T) {
+	file := func(etags ...string) *filer_pb.Entry {
+		entry := &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{}}
+		for i, etag := range etags {
+			entry.Chunks = append(entry.Chunks, &filer_pb.FileChunk{FileId: fmt.Sprintf("1,%x", i+1), ETag: etag})
+		}
+		return entry
+	}
+
+	digestless := toFileInfo("/f", file("", "")).etag
+	if digestless == "" || digestless == filer.ETagChunks(file("", "").Chunks) {
+		t.Errorf("chunks without digests got etag %q; every 2-chunk file would share it", digestless)
+	}
+	moved := file("", "")
+	moved.Chunks[1].FileId = "2,03"
+	if etag := toFileInfo("/f", moved).etag; etag == digestless {
+		t.Errorf("chunks without digests in other needles got the same etag %q", etag)
+	}
+	if etag := toFileInfo("/f", file("XUFAKrxLKna5cZ2REBfFkg==", "XUFAKrxLKna5cZ2REBfFkg==")).etag; etag == "" {
+		t.Error("chunks with digests got no etag")
+	}
+	inline := func(content string) string {
+		entry := file()
+		entry.Content = []byte(content)
+		entry.Attributes.Mtime = 1700000000
+		return toFileInfo("/f", entry).etag
+	}
+	if hello, world := inline("hello"), inline("world"); hello == "" || hello == world {
+		t.Errorf("inline contents of one size and mtime got etags %q and %q; a replace would answer 304", hello, world)
+	}
+	withMd5 := file("")
+	withMd5.Attributes.Md5 = []byte{0xab}
+	if etag := toFileInfo("/f", withMd5).etag; etag != "ab" {
+		t.Errorf("entry md5 etag = %q, want ab", etag)
+	}
+}
+
+func TestPutAnswersCommittedETag(t *testing.T) {
+	outcome := &putOutcome{}
+	f := &WebDavFile{
+		bufWriter: buffered_writer.NewBufferedWriteCloser(1024),
+		entry:     &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{}},
+		ctx:       context.WithValue(context.Background(), putOutcomeKey{}, outcome),
+	}
+	// the last chunk is only uploaded by Close
+	f.bufWriter.FlushFunc = func(data []byte, offset int64) error {
+		f.entry.Chunks = append(f.entry.Chunks, &filer_pb.FileChunk{FileId: "1,01", ETag: "XUFAKrxLKna5cZ2REBfFkg=="})
+		return nil
+	}
+	if _, err := f.bufWriter.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	// webdav.Handler sets the ETag from a Stat made before Close committed
+	rec.Header().Set("ETag", `"d41d8cd98f00b204e9800998ecf8427e-0"`)
+	(&putOutcomeWriter{ResponseWriter: rec, outcome: outcome}).WriteHeader(http.StatusCreated)
+	if got, want := rec.Header().Get("ETag"), `"5d41402abc4b2a76b9719d911017c592"`; got != want {
+		t.Errorf("PUT ETag = %s, want the committed %s", got, want)
+	}
+}
+
 func TestFileInfoETag(t *testing.T) {
 	ctx := context.Background()
 
 	if _, err := (&FileInfo{}).ETag(ctx); err != webdav.ErrNotImplemented {
 		t.Errorf("empty etag returned %v, want ErrNotImplemented so webdav derives one", err)
 	}
-	if etag, err := (&FileInfo{etag: "abc"}).ETag(ctx); err != nil || etag != "abc" {
-		t.Errorf("ETag() = %q, %v, want \"abc\", nil", etag, err)
+	etag, err := (&FileInfo{etag: "abc"}).ETag(ctx)
+	if err != nil || etag != `"abc"` {
+		t.Fatalf("ETag() = %q, %v, want %q, nil", etag, err, `"abc"`)
+	}
+
+	// webdav hands the tag to http.ServeContent, which only matches quoted tags.
+	req := httptest.NewRequest(http.MethodGet, "/f", nil)
+	req.Header.Set("If-None-Match", etag)
+	rec := httptest.NewRecorder()
+	rec.Header().Set("ETag", etag)
+	http.ServeContent(rec, req, "f", time.Time{}, strings.NewReader("hello"))
+	if rec.Code != http.StatusNotModified {
+		t.Errorf("If-None-Match with the served ETag got %d, want 304", rec.Code)
 	}
 }
 
@@ -880,8 +959,8 @@ type putOutcomeFS struct {
 func (f putOutcomeFS) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
 	if flag&os.O_CREATE != 0 {
 		if _, err := f.FileSystem.Stat(ctx, name); err == nil {
-			if replaced, ok := ctx.Value(putOutcomeKey{}).(*bool); ok {
-				*replaced = true
+			if outcome, ok := ctx.Value(putOutcomeKey{}).(*putOutcome); ok {
+				outcome.replaced = true
 			}
 		}
 	}
@@ -917,14 +996,14 @@ func TestWebDavFileSystem_OpenFile_PutOutcomeFlag(t *testing.T) {
 	}}
 
 	open := func(name string) bool {
-		replaced := new(bool)
-		ctx := context.WithValue(context.Background(), putOutcomeKey{}, replaced)
+		outcome := &putOutcome{}
+		ctx := context.WithValue(context.Background(), putOutcomeKey{}, outcome)
 		f, err := fs.OpenFile(ctx, name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 		assert.NoError(t, err)
 		if f != nil {
 			assert.NoError(t, f.Close())
 		}
-		return *replaced
+		return outcome.replaced
 	}
 
 	assert.True(t, open("/old.txt"))
