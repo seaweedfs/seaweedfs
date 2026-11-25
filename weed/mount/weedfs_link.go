@@ -108,6 +108,31 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	// A new name resolves the remote object from its own path, so the names
 	// have to share local chunks before the link.
 	if oldEntry.IsInRemoteOnly() {
+		// An open handle publishes its buffered writes, then caches as a read
+		// does, so its base moves with the stored entry.
+		if fh, ok := wfs.fhMap.FindFileHandle(sourceInode); ok {
+			if fh.dirtyMetadata || fh.dirtyPages.HasWrites() {
+				if flushStatus := wfs.doFlush(context.Background(), fh, in.Uid, in.Gid, false, metadataFlushTimeout); flushStatus != fuse.OK {
+					return flushStatus
+				}
+			}
+			fhLock := wfs.fhLockTable.AcquireLock("Link", fh.fh, util.SharedLock)
+			fh.entryLock.RLock()
+			entry := fh.GetEntry()
+			entry.RLock()
+			remoteOnly := entry.Entry.IsInRemoteOnly()
+			entry.RUnlock()
+			var err error
+			if remoteOnly {
+				err = fh.downloadRemoteEntry(ctx, entry)
+			}
+			fh.entryLock.RUnlock()
+			wfs.fhLockTable.ReleaseLock(fh.fh, fhLock)
+			if err != nil {
+				glog.V(0).Infof("Link %v: cache remote object: %v", oldEntryPath, err)
+				return fuse.EIO
+			}
+		}
 		cached, err := wfs.cacheRemoteOnlyEntry(ctx, oldEntryPath)
 		if err != nil {
 			glog.V(0).Infof("Link %v: cache remote object: %v", oldEntryPath, err)
