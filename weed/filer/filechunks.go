@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
@@ -138,15 +140,34 @@ func DoMinusChunks(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {
 
 	fileIds := make(map[string]bool)
 	for _, interval := range bs {
-		fileIds[interval.GetFileIdString()] = true
+		fileIds[chunkIdentity(interval.GetFileIdString())] = true
 	}
 	for _, chunk := range as {
-		if _, found := fileIds[chunk.GetFileIdString()]; !found {
+		if _, found := fileIds[chunkIdentity(chunk.GetFileIdString())]; !found {
 			delta = append(delta, chunk)
 		}
 	}
 
 	return
+}
+
+// chunkIdentity returns the physical needle identity represented by a chunk
+// file ID. Volume-server paths may carry a decimal needle delta suffix, while
+// filer entries can carry the equivalent structured FileId.
+func chunkIdentity(fileID string) string {
+	volume, path, ok := strings.Cut(fileID, ",")
+	if !ok {
+		return fileID
+	}
+	volumeID, err := needle.NewVolumeId(volume)
+	if err != nil {
+		return fileID
+	}
+	var n needle.Needle
+	if err := n.ParsePath(path); err != nil {
+		return fileID
+	}
+	return (&needle.FileId{VolumeId: volumeID, Key: n.Id, Cookie: n.Cookie}).String()
 }
 
 func DoMinusChunksBySourceFileId(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {

@@ -57,8 +57,8 @@ func scopeRetainsData(stored, requested *filer_pb.Entry, proven func(string) boo
 		if old, exists := identities[identity]; exists && old != fid {
 			return fmt.Errorf("chunk identity aliases are not allowed: %s", fid)
 		}
-		// Garbage comparisons use literal IDs. A proof must not admit a
-		// second spelling of the same needle, even within a new chunk list.
+		// Keep scoped alias refusal conservative even though unscoped garbage
+		// comparisons normalize equivalent needle spellings.
 		identities[identity] = fid
 		if !known[fid] && (proven == nil || !proven(fid)) {
 			return fmt.Errorf("%s %s", filer_pb.ChunkProofRefused, fid)
