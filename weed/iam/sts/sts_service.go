@@ -1110,9 +1110,9 @@ func roleMappingRefuses(provider providers.IdentityProvider, roleArn string, ide
 	if mapping == nil || roleName == "" {
 		return false
 	}
-	named := utils.ExtractRoleNameFromArn(mapping.DefaultRole) == roleName
+	named := utils.ExtractRoleNameFromArn(strings.TrimSpace(mapping.DefaultRole)) == roleName
 	for _, rule := range mapping.Rules {
-		named = named || utils.ExtractRoleNameFromArn(rule.Role) == roleName
+		named = named || utils.ExtractRoleNameFromArn(strings.TrimSpace(rule.Role)) == roleName
 	}
 	if !named {
 		return false
