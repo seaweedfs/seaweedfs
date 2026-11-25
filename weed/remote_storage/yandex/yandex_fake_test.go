@@ -48,6 +48,10 @@ type fakeDisk struct {
 	lastUploadLength int64  // Content-Length of the last upload
 	lastUploadBody   []byte // body of the last upload
 	lastUploadAuth   string // Authorization header of the last upload
+	// missingParentNotFound answers a missing parent folder with 404
+	// DiskNotFoundError instead of the API's 409 DiskPathDoesntExistsError
+	missingParentNotFound bool
+	unauthorizedOps       bool // operation polls answer 401
 }
 
 type recordedRequest struct {
@@ -194,6 +198,16 @@ func writeAPIError(w http.ResponseWriter, status int, name, description string) 
 	writeJSON(w, status, map[string]any{"error": name, "description": description, "message": description})
 }
 
+// writeMissingParent answers a request whose parent folder does not exist the
+// way the Disk API does: 409 DiskPathDoesntExistsError.
+func (d *fakeDisk) writeMissingParent(w http.ResponseWriter) {
+	if d.missingParentNotFound {
+		writeAPIError(w, http.StatusNotFound, "DiskNotFoundError", "Parent not found.")
+		return
+	}
+	writeAPIError(w, http.StatusConflict, "DiskPathDoesntExistsError", "Specified path does not exist.")
+}
+
 func (d *fakeDisk) handleResources(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -257,7 +271,7 @@ func (d *fakeDisk) handleResources(w http.ResponseWriter, r *http.Request) {
 		}
 		parent := parentPath(path)
 		if parentNode, found := d.nodes[parent]; !found || !parentNode.isDir {
-			writeAPIError(w, http.StatusNotFound, "DiskNotFoundError", "Parent not found.")
+			d.writeMissingParent(w)
 			return
 		}
 		d.put(path, &fakeNode{isDir: true, modified: time.Now()})
@@ -309,7 +323,7 @@ func (d *fakeDisk) handleUploadLink(w http.ResponseWriter, r *http.Request) {
 	defer d.mu.Unlock()
 	path := cleanPath(r.URL.Query().Get("path"))
 	if _, found := d.nodes[parentPath(path)]; !found {
-		writeAPIError(w, http.StatusNotFound, "DiskNotFoundError", "Parent not found.")
+		d.writeMissingParent(w)
 		return
 	}
 	id := fmt.Sprintf("up%d", len(d.uploads)+1)
@@ -431,6 +445,10 @@ func (d *fakeDisk) handleCopy(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "DiskNotFoundError", "Source not found.")
 		return
 	}
+	if parentNode, found := d.nodes[parentPath(to)]; !found || !parentNode.isDir {
+		d.writeMissingParent(w)
+		return
+	}
 	if _, exists := d.nodes[to]; exists && r.URL.Query().Get("overwrite") != "true" {
 		writeAPIError(w, http.StatusConflict, "DiskPathPointsToExistentFileError", "Destination exists.")
 		return
@@ -447,6 +465,10 @@ func (d *fakeDisk) handleCopy(w http.ResponseWriter, r *http.Request) {
 func (d *fakeDisk) handleOperation(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.unauthorizedOps {
+		writeAPIError(w, http.StatusUnauthorized, "UnauthorizedError", "Invalid token.")
+		return
+	}
 	id := strings.TrimPrefix(r.URL.Path, "/v1/disk/operations/")
 	if remaining, found := d.ops[id]; found && remaining > 0 {
 		d.ops[id] = remaining - 1

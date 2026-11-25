@@ -213,18 +213,40 @@ func TestWriteFileUploadsAndStamps(t *testing.T) {
 }
 
 func TestWriteFileCreatesParentFolders(t *testing.T) {
+	// the Disk API answers a missing parent with 409 DiskPathDoesntExistsError;
+	// a 404 is accepted too
+	for _, notFound := range []bool{false, true} {
+		disk := newFakeDisk(t)
+		disk.missingParentNotFound = notFound
+		disk.mkdirAll("/root/bucket")
+		client, _ := newTestClient(t, disk)
+
+		entry := &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{FileSize: 3, Mtime: 1700000000}}
+		if _, err := client.WriteFile(testLocation("bucket", "/a/b/c.txt"), entry, strings.NewReader("abc")); err != nil {
+			t.Fatalf("write (404=%v): %v", notFound, err)
+		}
+		for _, path := range []string{"/root/bucket/a", "/root/bucket/a/b", "/root/bucket/a/b/c.txt"} {
+			if disk.nodes[path] == nil {
+				t.Errorf("%s was not created (404=%v)", path, notFound)
+			}
+		}
+	}
+}
+
+// TestStatFileInAMissingSubfolder: a key whose subfolder is gone is a missing
+// object while the bucket folder exists. The sync stats a rename destination
+// in a folder the remote does not have yet and only proceeds on
+// ErrRemoteObjectNotFound.
+func TestStatFileInAMissingSubfolder(t *testing.T) {
 	disk := newFakeDisk(t)
 	disk.mkdirAll("/root/bucket")
 	client, _ := newTestClient(t, disk)
 
-	entry := &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{FileSize: 3, Mtime: 1700000000}}
-	if _, err := client.WriteFile(testLocation("bucket", "/a/b/c.txt"), entry, strings.NewReader("abc")); err != nil {
-		t.Fatalf("write: %v", err)
+	if _, err := client.StatFile(testLocation("bucket", "/newdir/a.txt")); !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		t.Fatalf("err = %v, want ErrRemoteObjectNotFound", err)
 	}
-	for _, path := range []string{"/root/bucket/a", "/root/bucket/a/b", "/root/bucket/a/b/c.txt"} {
-		if disk.nodes[path] == nil {
-			t.Errorf("%s was not created", path)
-		}
+	if _, err := client.ReadFile(testLocation("bucket", "/newdir/a.txt"), 0, 0); !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		t.Fatalf("read err = %v, want ErrRemoteObjectNotFound", err)
 	}
 }
 
@@ -383,6 +405,29 @@ func TestCopyFileKeepsTheSourceStamp(t *testing.T) {
 	}
 	if node.props[propModified] != mtime || node.props[propContentEncoding] != "gzip" {
 		t.Errorf("destination properties = %v", node.props)
+	}
+}
+
+// TestCopyFileCreatesDestinationFolders: a remote-only rename into a folder
+// the remote does not have yet (the sync has not created it, or does not run)
+// must not fail.
+func TestCopyFileCreatesDestinationFolders(t *testing.T) {
+	for _, notFound := range []bool{false, true} {
+		disk := newFakeDisk(t)
+		disk.missingParentNotFound = notFound
+		disk.put("/root/bucket/a.txt", &fakeNode{data: []byte("hello"), props: map[string]string{propModified: "2024-01-02T03:04:05Z"}})
+		client, _ := newTestClient(t, disk)
+
+		stamp, err := client.CopyFile(testLocation("bucket", "/a.txt"), testLocation("bucket", "/x/y/a.txt"))
+		if err != nil {
+			t.Fatalf("copy (404=%v): %v", notFound, err)
+		}
+		if stamp.RemoteMtime != 1704164645 {
+			t.Errorf("mtime = %d, want the source mtime", stamp.RemoteMtime)
+		}
+		if node := disk.nodes["/root/bucket/x/y/a.txt"]; node == nil || string(node.data) != "hello" {
+			t.Fatalf("destination = %+v (404=%v)", node, notFound)
+		}
 	}
 }
 
@@ -612,4 +657,39 @@ type countingTransport struct {
 func (t *countingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	atomic.AddInt64(t.counted, 1)
 	return t.next.RoundTrip(request)
+}
+
+// TestOperationPollStopsOnRepeatedUnauthorized: a token the API keeps
+// rejecting while an operation is polled ends the wait with the 401 instead of
+// polling in a tight loop until the operation deadline.
+func TestOperationPollStopsOnRepeatedUnauthorized(t *testing.T) {
+	disk := newFakeDisk(t)
+	disk.put("/root/bucket/a.txt", &fakeNode{data: []byte("hello")})
+	disk.deleteAccepted = true
+	disk.unauthorizedOps = true
+	client, _ := newTestClient(t, disk)
+
+	done := make(chan error, 1)
+	go func() { done <- client.DeleteFile(testLocation("bucket", "/a.txt")) }()
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("DeleteFile kept polling an operation the API answers 401")
+	}
+	var apiErr *apiError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusUnauthorized {
+		t.Fatalf("err = %v, want the 401", err)
+	}
+	polls := 0
+	disk.mu.Lock()
+	for _, request := range disk.requests {
+		if strings.HasPrefix(request.path, "/v1/disk/operations/") {
+			polls++
+		}
+	}
+	disk.mu.Unlock()
+	if polls != 2 {
+		t.Fatalf("operation polls = %d, want 2 (one retry after the refresh)", polls)
+	}
 }

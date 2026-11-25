@@ -174,6 +174,17 @@ func isNotFound(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound
 }
 
+// isMissingParent reports a request refused because a parent folder of the
+// path does not exist. The Disk API answers that with 409
+// DiskPathDoesntExistsError; a 404 is accepted too.
+func isMissingParent(err error) bool {
+	var apiErr *apiError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.Status == http.StatusNotFound || apiErr.Name == "DiskPathDoesntExistsError"
+}
+
 func isExistingDirectory(err error) bool {
 	var apiErr *apiError
 	return errors.As(err, &apiErr) && apiErr.Name == "DiskPathPointsToExistentDirectoryError"
@@ -544,6 +555,7 @@ func (c *apiClient) waitOperation(ctx context.Context, href string) error {
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, operationWait)
 	defer cancel()
+	refreshed := false
 	for {
 		req, err := http.NewRequestWithContext(waitCtx, http.MethodGet, href, nil)
 		if err != nil {
@@ -559,14 +571,18 @@ func (c *apiClient) waitOperation(ctx context.Context, href string) error {
 		if err != nil {
 			return fmt.Errorf("poll yandex operation: %w", err)
 		}
-		if resp.StatusCode == http.StatusUnauthorized {
+		// a 401 refreshes the token once, as doJSON does; a token the API
+		// keeps rejecting ends the wait instead of polling without a pause
+		if resp.StatusCode == http.StatusUnauthorized && !refreshed {
 			resp.Body.Close()
 			c.tokens.Invalidate()
+			refreshed = true
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return decodeAPIError(resp)
 		}
+		refreshed = false
 		status := &operationStatus{}
 		err = json.NewDecoder(resp.Body).Decode(status)
 		resp.Body.Close()

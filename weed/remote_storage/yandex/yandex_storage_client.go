@@ -242,7 +242,7 @@ func (y *yandexRemoteStorageClient) statFile(ctx context.Context, loc *remote_pb
 	res, err := y.api.stat(ctx, path)
 	if err != nil {
 		if isNotFound(err) {
-			return nil, y.missingObjectError(ctx, path)
+			return nil, y.missingObjectError(ctx, loc, path)
 		}
 		return nil, fmt.Errorf("stat yandex %s: %w", path, err)
 	}
@@ -252,19 +252,19 @@ func (y *yandexRemoteStorageClient) statFile(ctx context.Context, loc *remote_pb
 	return y.stampOf(res), nil
 }
 
-// missingObjectError confirms that the folder holding the object still exists
-// before reporting the object gone: a vanished mount folder must not read as
-// every object under it having been deleted.
-func (y *yandexRemoteStorageClient) missingObjectError(ctx context.Context, path string) error {
-	parent := parentPath(path)
-	if parent == "" {
-		return remote_storage.ErrRemoteObjectNotFound
-	}
-	if _, err := y.api.stat(ctx, parent); err != nil {
+// missingObjectError confirms that the bucket folder still exists before
+// reporting the object gone: a vanished bucket must not read as every object
+// under it having been deleted. Only the bucket is checked, as the gcs client
+// does: a subfolder is part of the key, and a key whose subfolder is missing
+// (a rename destination the remote has no folder for yet, a folder removed on
+// the disk) is simply a missing object.
+func (y *yandexRemoteStorageClient) missingObjectError(ctx context.Context, loc *remote_pb.RemoteStorageLocation, path string) error {
+	bucket := y.bucketPath(loc.GetBucket())
+	if _, err := y.api.stat(ctx, bucket); err != nil {
 		if isNotFound(err) {
 			return fmt.Errorf("yandex %s: %w", path, ErrObjectMissingWithParent)
 		}
-		return fmt.Errorf("yandex %s: object not found and folder unconfirmed: %w", path, err)
+		return fmt.Errorf("yandex %s: object not found and bucket folder unconfirmed: %w", path, err)
 	}
 	return remote_storage.ErrRemoteObjectNotFound
 }
@@ -293,7 +293,7 @@ func (y *yandexRemoteStorageClient) readFile(ctx context.Context, loc *remote_pb
 	resp, err := y.api.openRange(ctx, path, offset, size)
 	if err != nil {
 		if isNotFound(err) {
-			return nil, y.missingObjectError(ctx, path)
+			return nil, y.missingObjectError(ctx, loc, path)
 		}
 		return nil, fmt.Errorf("read yandex %s: %w", path, err)
 	}
@@ -323,7 +323,7 @@ func (y *yandexRemoteStorageClient) ReadFileAsStream(ctx context.Context, loc *r
 	resp, err := y.api.openRange(ctx, path, offset, size)
 	if err != nil {
 		if isNotFound(err) {
-			return nil, y.missingObjectError(ctx, path)
+			return nil, y.missingObjectError(ctx, loc, path)
 		}
 		return nil, fmt.Errorf("open yandex %s: %w", path, err)
 	}
@@ -360,7 +360,7 @@ func (y *yandexRemoteStorageClient) writeFile(ctx context.Context, loc *remote_p
 	// extra requests
 	upload, err := y.api.uploadHref(ctx, path, true)
 	if err != nil {
-		if !isNotFound(err) {
+		if !isMissingParent(err) {
 			return nil, fmt.Errorf("yandex upload link for %s: %w", path, err)
 		}
 		if mkErr := y.mkdirAll(ctx, parentPath(path)); mkErr != nil {
@@ -482,7 +482,7 @@ func (y *yandexRemoteStorageClient) CopyFile(src *remote_pb.RemoteStorageLocatio
 	source, err := y.api.stat(ctx, srcPath)
 	if err != nil {
 		if isNotFound(err) {
-			return nil, y.missingObjectError(ctx, srcPath)
+			return nil, y.missingObjectError(ctx, src, srcPath)
 		}
 		return nil, fmt.Errorf("stat yandex %s: %w", srcPath, err)
 	}
@@ -496,7 +496,16 @@ func (y *yandexRemoteStorageClient) CopyFile(src *remote_pb.RemoteStorageLocatio
 	if err = y.api.remove(ctx, dstPath, false); err != nil && !isNotFound(err) {
 		return nil, fmt.Errorf("clear yandex copy destination %s: %w", dstPath, err)
 	}
-	if err = y.api.copyResource(ctx, srcPath, dstPath, true); err != nil {
+	err = y.api.copyResource(ctx, srcPath, dstPath, true)
+	if isMissingParent(err) {
+		// a rename into a folder the remote does not have yet: the sync may
+		// not have created it, or may not run at all
+		if mkErr := y.mkdirAll(ctx, parentPath(dstPath)); mkErr != nil {
+			return nil, mkErr
+		}
+		err = y.api.copyResource(ctx, srcPath, dstPath, true)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("copy yandex %s to %s: %w", srcPath, dstPath, err)
 	}
 	if len(properties) > 0 {
