@@ -203,6 +203,84 @@ func TestAppendToEntryStillReadsOrdinaryChunkAppends(t *testing.T) {
 	require.Equal(t, []byte("old-new-"), got.Bytes(), "the normal chunk reader must see both the existing and appended data")
 }
 
+func TestAppendToEntryInvalidatesCachedRemoteBeforeEviction(t *testing.T) {
+	chunkData := map[string][]byte{
+		"1,01637037d6": []byte("old-"),
+		"1,01637037d7": []byte("new-"),
+	}
+	volume := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, ok := chunkData[strings.TrimPrefix(r.URL.Path, "/")]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	t.Cleanup(volume.Close)
+
+	fs, store := newAppendLockServer(t)
+	close(store.release)
+	syncStamp := time.Now().Add(-time.Hour).UnixNano()
+	mtime := time.Unix(0, syncStamp)
+	entry := &filer.Entry{
+		FullPath: util.FullPath(appendRepresentationPath),
+		Attr: filer.Attr{
+			Mtime:    mtime,
+			Crtime:   mtime,
+			Mode:     0644,
+			FileSize: 4,
+		},
+		// Exercise a cached slice with spare capacity as well as persistence.
+		Chunks: make([]*filer_pb.FileChunk, 1, 4),
+		Remote: &filer_pb.RemoteEntry{
+			StorageName:       "remote",
+			RemoteSize:        4,
+			LastLocalSyncTsNs: syncStamp,
+		},
+	}
+	entry.Chunks[0] = &filer_pb.FileChunk{FileId: "1,01637037d6", Offset: 0, Size: 4}
+	store.entries[appendRepresentationPath] = entry
+
+	before, err := fs.filer.FindEntry(context.Background(), appendRepresentationPath)
+	require.NoError(t, err)
+	require.True(t, filer.IsEvictableRemoteEntry(before), "the seeded remote cache should be evictable")
+
+	_, err = fs.AppendToEntry(context.Background(), &filer_pb.AppendToEntryRequest{Directory: "/data", EntryName: "append.txt"})
+	require.NoError(t, err)
+	unchanged, err := fs.filer.FindEntry(context.Background(), appendRepresentationPath)
+	require.NoError(t, err)
+	require.Equal(t, syncStamp, unchanged.Remote.LastLocalSyncTsNs, "an empty append must preserve the remote sync stamp")
+	require.True(t, filer.IsEvictableRemoteEntry(unchanged))
+
+	_, err = fs.AppendToEntry(context.Background(), appendRepresentationRequest("/data", "append.txt"))
+	require.NoError(t, err)
+
+	stored, err := fs.filer.FindEntry(context.Background(), appendRepresentationPath)
+	require.NoError(t, err)
+	require.Zero(t, stored.Remote.LastLocalSyncTsNs, "appending local chunks makes the cached remote copy stale")
+	require.False(t, filer.IsEvictableRemoteEntry(stored), "a dirty cached entry must not be evictable")
+	require.Len(t, stored.GetChunks(), 2)
+
+	freed, err := fs.uncacheRemoteEntry(context.Background(), appendRepresentationPath, 0, nil)
+	require.NoError(t, err)
+	require.Zero(t, freed, "the eviction consumer must refuse the dirty cached entry")
+
+	stored, err = fs.filer.FindEntry(context.Background(), appendRepresentationPath)
+	require.NoError(t, err)
+	require.Len(t, stored.GetChunks(), 2, "a refused eviction must keep both chunks persisted")
+	fs.filer.FileIdDeletionQueue.Consume(func(ids []string) {
+		t.Fatalf("dirty remote append queued chunks for deletion: %v", ids)
+	})
+	stream, err := filer.PrepareStreamContent(appendReadLookup{urls: map[string]string{
+		"1,01637037d6": volume.URL + "/1,01637037d6",
+		"1,01637037d7": volume.URL + "/1,01637037d7",
+	}}, func(string) string { return "" }, stored.GetChunks(), 0, int64(filer.FileSize(stored.ToProtoEntry())))
+	require.NoError(t, err)
+	var got bytes.Buffer
+	require.NoError(t, stream(&got))
+	require.Equal(t, []byte("old-new-"), got.Bytes(), "the real reader must retain the original and appended chunks")
+}
+
 func TestAppendToEntryEmptyRequestKeepsInlineEntry(t *testing.T) {
 	fs, store := newAppendLockServer(t)
 	close(store.release)
