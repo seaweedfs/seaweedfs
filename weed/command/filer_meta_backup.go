@@ -144,16 +144,16 @@ func runFilerMetaBackup(cmd *Command, args []string) bool {
 // store.
 func (metaBackup *FilerMetaBackupOptions) adoptSourceDigest() error {
 	var digest string
-	err := metaBackup.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
-		if err != nil {
+	for {
+		err := metaBackup.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) (err error) {
+			digest, err = filer_pb.ReadFilerDigest(context.Background(), client)
 			return err
+		})
+		if err == nil {
+			break
 		}
-		digest = resp.Digest
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("read digest of filer %s: %w", *metaBackup.filerAddress, err)
+		glog.Warningf("read digest of filer %s: %v; retrying", *metaBackup.filerAddress, err)
+		time.Sleep(1747 * time.Millisecond)
 	}
 	return util.AdoptFilerDigest(*metaBackup.filerAddress, digest)
 }
