@@ -121,6 +121,10 @@ type Option struct {
 	// When true, Flush() returns immediately and data upload + metadata flush happen in background.
 	WritebackCache bool
 
+	// NfsExport keeps the paths of recently forgotten inodes so the kernel
+	// can decode file handles after evicting them.
+	NfsExport bool
+
 	// EagerFilerCreate persists a created file's entry at create time instead
 	// of deferring it to flush. Deferring is only safe when the flush runs
 	// before the application's close returns; a platform that cannot
@@ -308,6 +312,10 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	if option.WritebackCache {
 		wfs.entryValidSec = 10
 		wfs.attrValidSec = 10
+	}
+
+	if option.NfsExport {
+		wfs.inodeToPath.RetainForgotten(nfsExportForgottenInodes)
 	}
 
 	if option.EnableDistributedLock && !option.WritebackCache && len(option.FilerAddresses) > 0 {

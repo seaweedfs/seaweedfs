@@ -10,6 +10,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+const nfsExportForgottenInodes = 1 << 16
+
 type InodeToPath struct {
 	sync.RWMutex
 	nextInodeId     uint64

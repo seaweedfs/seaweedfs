@@ -77,6 +77,7 @@ type MountOptions struct {
 	// FUSE performance options
 	writebackCache          *bool
 	asyncDio                *bool
+	nfsExport               *bool
 	cacheSymlink            *bool
 	fuseMaxBackground       *int
 	fuseCongestionThreshold *int
@@ -172,6 +173,7 @@ func init() {
 	// FUSE performance options
 	mountOptions.writebackCache = cmdMount.Flag.Bool("writebackCache", false, "enable FUSE writeback cache for improved write performance (at risk of data loss on crash)")
 	mountOptions.asyncDio = cmdMount.Flag.Bool("asyncDio", false, "enable async direct I/O for better concurrency")
+	mountOptions.nfsExport = cmdMount.Flag.Bool("nfsExport", false, "support file handles that outlive the kernel's inode cache, for re-exporting the mount over NFS")
 	mountOptions.cacheSymlink = cmdMount.Flag.Bool("cacheSymlink", false, "enable symlink caching to reduce metadata lookups")
 	mountOptions.fuseMaxBackground = cmdMount.Flag.Int("fuse.maxBackground", 128, "FUSE max_background: maximum in-flight asynchronous requests the kernel will queue. Heavy upload workloads may benefit from higher values (e.g. 2048). Equivalent to writing /sys/fs/fuse/connections/<id>/max_background. If -fuse.congestionThreshold is 0, the kernel derives it as 3/4 of this value.")
 	mountOptions.fuseCongestionThreshold = cmdMount.Flag.Int("fuse.congestionThreshold", 0, "FUSE congestion_threshold: in-flight async request count at which the kernel marks the FUSE bdi as congested and throttles new submissions. 0 means use the default (3/4 of -fuse.maxBackground). Equivalent to writing /sys/fs/fuse/connections/<id>/congestion_threshold. The kernel silently clamps this to -fuse.maxBackground when set higher.")
