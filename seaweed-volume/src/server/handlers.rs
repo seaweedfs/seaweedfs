@@ -9728,8 +9728,8 @@ Content-Encoding: gzip\r\n\r\n"
     #[test]
     fn test_extended_file_name() {
         assert_eq!(
-            extended_file_name("form-data; filename*=utf-8''caf%C3%A9.txt; name=file"),
-            Some("café.txt".to_string())
+            extended_file_name("form-data; filename*=utf-8''na%C3%AFve.txt; name=file"),
+            Some("naïve.txt".to_string())
         );
         assert_eq!(
             extended_file_name("form-data; name=file; FILENAME*=US-ASCII'en'a%20b.txt"),
@@ -9741,11 +9741,11 @@ Content-Encoding: gzip\r\n\r\n"
         );
         for value in [
             "form-data; filename=\"a.txt\"; name=file",
-            "form-data; filename*=iso-8859-1''caf%E9.txt",
+            "form-data; filename*=iso-8859-1''na%EFve.txt",
             "form-data; filename*=utf-8''bad%G1",
             "form-data; filename*=utf-8''cut%C",
             "form-data; filename*=utf-8''%FF",
-            "form-data; filename*=caf%C3%A9.txt",
+            "form-data; filename*=na%C3%AFve.txt",
             "form-data; name=\"note; filename*=utf-8''decoy\"",
             "form-data; filename*=utf-8''a%0D%0A%0D%0Ab.txt",
         ] {
@@ -9760,10 +9760,10 @@ Content-Encoding: gzip\r\n\r\n"
         use tower::ServiceExt;
         let tmp = tempfile::TempDir::new().unwrap();
         let state = volume_test_state(&tmp);
-        let payload = "caf\u{e9} chunk bytes ".repeat(64);
+        let payload = "na\u{ef}ve chunk bytes ".repeat(64);
         let gzipped = try_gzip_data(payload.as_bytes()).unwrap();
         let mut body = b"--b\r\nContent-Disposition: form-data; name=\"note\"\r\n\r\nx\r\n\
---b\r\nContent-Disposition: form-data; filename*=utf-8''caf%C3%A9.txt; name=file\r\n\
+--b\r\nContent-Disposition: form-data; filename*=utf-8''na%C3%AFve.txt; name=file\r\n\
 Content-Encoding: gzip\r\n\r\n"
             .to_vec();
         body.extend_from_slice(&gzipped);
