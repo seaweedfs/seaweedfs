@@ -35,6 +35,7 @@ var cmdFix = &Command{
   Use -ecx to rebuild a lost EC index (.ecx) — and the .vif when missing — from the local .ec## shards.
   On a damaged .dat, fix indexes only the needles before the first unreadable header or a record cut off by the end of the file, and exits non-zero; repair from a replica, or run fix on a copy, before compacting or loading the volume.
   With -ignoreError, fix keeps going and writes what it could index, but still exits non-zero if any volume failed.
+  With -verifyCrc, fix also reads every needle and leaves out of the index the ones whose data fails its CRC check, and exits non-zero if it left any out.
 `,
 }
 
@@ -43,6 +44,7 @@ var (
 	fixVolumeId              = cmdFix.Flag.Int64("volumeId", 0, "an optional volume id, if not 0 (default) only it will be processed")
 	fixIncludeDeleted        = cmdFix.Flag.Bool("includeDeleted", true, "include deleted entries in the index file")
 	fixIgnoreError           = cmdFix.Flag.Bool("ignoreError", false, "an optional, if true will be processed despite errors")
+	fixVerifyCrc             = cmdFix.Flag.Bool("verifyCrc", false, "read every needle and leave out of the index the ones whose data fails its CRC check")
 	fixRemoteFile            = cmdFix.Flag.Bool("remoteFile", false, "an optional, if true will not try to load the local .dat file, but only the remote file")
 	fixGenerateEcx           = cmdFix.Flag.Bool("ecx", false, "regenerate a lost EC index (.ecx) — and the .vif when missing — from the local .ec## shards (missing shards are reconstructed from parity when enough survive). Run with the volume server stopped.")
 	fixEcDataShards          = cmdFix.Flag.Int("ecDataShards", 0, "EC data shard count for -ecx (0 = read from .vif, otherwise default 10)")
@@ -53,6 +55,7 @@ var (
 type VolumeFileScanner4Fix struct {
 	version        needle.Version
 	datSize        int64
+	verifyCrc      bool
 	nm             *needle_map.MemDb
 	nmDeleted      *needle_map.MemDb
 	includeDeleted bool
@@ -64,7 +67,7 @@ func (scanner *VolumeFileScanner4Fix) VisitSuperBlock(superBlock super_block.Sup
 }
 
 func (scanner *VolumeFileScanner4Fix) ReadNeedleBody() bool {
-	return false
+	return scanner.verifyCrc
 }
 
 func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
@@ -77,6 +80,13 @@ func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64
 			return fmt.Errorf("delete %v with error %v", n.Id, pe)
 		}
 		return io.EOF
+	}
+	if scanner.verifyCrc && n.Size.IsValid() {
+		if err := n.ReadNeedleBodyBytes(needleBody, scanner.version); err != nil {
+			glog.Errorf("needle %v at offset %d: %v; not indexing it", n.Id, offset, err)
+			SetCommandExitStatus(1)
+			return scanner.nm.Delete(n.Id)
+		}
 	}
 	if n.Size.IsValid() {
 		if pe := scanner.nm.Set(n.Id, types.ToOffset(offset), n.Size); pe != nil {
@@ -277,6 +287,7 @@ func doFixOneVolume(basepath string, baseFileName string, collection string, vol
 		nm:             nm,
 		nmDeleted:      nmDeleted,
 		includeDeleted: fixIncludeDeleted,
+		verifyCrc:      *fixVerifyCrc,
 	}
 	scanner.datSize = localDatSize(basepath, baseFileName)
 

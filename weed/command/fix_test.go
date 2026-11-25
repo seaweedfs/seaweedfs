@@ -209,6 +209,49 @@ func TestFixIgnoreErrorReportsIncompleteScan(t *testing.T) {
 	})
 }
 
+// A damaged needle, and a damaged newer copy of a key, are indexed unless
+// -verifyCrc reads the data; then both are left out and the older copy of the
+// key does not come back.
+func TestFixVerifyCrcLeavesOutDamagedNeedles(t *testing.T) {
+	savedVerify, savedStatus := *fixVerifyCrc, commandExitStatus
+	defer func() { *fixVerifyCrc, commandExitStatus = savedVerify, savedStatus }()
+	dir := t.TempDir()
+	base, offsets := writeFixTestVolume(t, dir, 5)
+	f, err := os.OpenFile(base+".dat", os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	datBackend := backend.NewDiskFile(f)
+	rewrite := &needle.Needle{Id: types.Uint64ToNeedleId(2), Data: bytes.Repeat([]byte{0x22}, 500)}
+	rewrite.Checksum = needle.NewCRC(rewrite.Data)
+	offset, _, _, err := rewrite.Append(datBackend, needle.GetCurrentVersion())
+	datBackend.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataAt := int64(types.NeedleHeaderSize + types.DataSizeSize)
+	overwriteAt(t, base+".dat", offsets[3]+dataAt, []byte{0xee})
+	overwriteAt(t, base+".dat", int64(offset)+dataAt, []byte{0xee})
+
+	for _, tc := range []struct {
+		verify bool
+		want   []uint64
+		status int
+	}{
+		{false, []uint64{1, 3, 4, 5, 2}, 0},
+		{true, []uint64{1, 3, 5}, 1},
+	} {
+		*fixVerifyCrc, commandExitStatus = tc.verify, 0
+		doFixOneVolume(dir, "fix_7", "fix", 7, false)
+		if got := indexedKeys(t, base+".idx"); !slices.Equal(got, tc.want) {
+			t.Errorf("verifyCrc=%v: indexed keys %v, want %v", tc.verify, got, tc.want)
+		}
+		if CommandExitStatus() != tc.status {
+			t.Errorf("verifyCrc=%v: exit status %d, want %d", tc.verify, CommandExitStatus(), tc.status)
+		}
+	}
+}
+
 func TestLocalDatSizeIgnoresRemoteTier(t *testing.T) {
 	dir := t.TempDir()
 	base, _ := writeFixTestVolume(t, dir, 2)
