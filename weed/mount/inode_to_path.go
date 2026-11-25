@@ -4,14 +4,19 @@ import (
 	"sync"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+const nfsExportForgottenInodes = 1 << 16
+
 type InodeToPath struct {
 	sync.RWMutex
 	nextInodeId     uint64
+	forgotten       *lru.Cache[uint64, util.FullPath]
+	forgottenInodes map[util.FullPath]uint64
 	cacheMetaTtlSec time.Duration
 	inode2path      map[uint64]*InodeEntry
 	path2inode      map[util.FullPath]uint64
@@ -170,6 +175,41 @@ func NewInodeToPath(root util.FullPath, ttlSec int) *InodeToPath {
 	return t
 }
 
+// RetainForgotten keeps the paths of the last n inodes the kernel forgot, so a
+// file handle it decodes after evicting the inode can still be resolved.
+func (i *InodeToPath) RetainForgotten(n int) {
+	i.forgottenInodes = make(map[util.FullPath]uint64)
+	i.forgotten, _ = lru.NewWithEvict(n, func(inode uint64, path util.FullPath) {
+		if i.forgottenInodes[path] == inode {
+			delete(i.forgottenInodes, path)
+		}
+	})
+}
+
+// moveForgotten keeps a forgotten inode's retained path current across a
+// rename, reporting whether it moved one. Requires the table lock.
+func (i *InodeToPath) moveForgotten(sourcePath, targetPath util.FullPath) bool {
+	inode, found := i.forgottenInodes[sourcePath]
+	if !found {
+		return false
+	}
+	delete(i.forgottenInodes, sourcePath)
+	if path, retained := i.forgotten.Peek(inode); !retained || path != sourcePath {
+		return false
+	}
+	i.forgotten.Add(inode, targetPath)
+	i.forgottenInodes[targetPath] = inode
+	return true
+}
+
+// GetForgottenPath returns the path of an inode the kernel forgot, if retained.
+func (i *InodeToPath) GetForgottenPath(inode uint64) (util.FullPath, bool) {
+	if i.forgotten == nil {
+		return "", false
+	}
+	return i.forgotten.Get(inode)
+}
+
 // EnsurePath make sure the full path is tracked, used by symlink.
 func (i *InodeToPath) EnsurePath(path util.FullPath, isDirectory bool) bool {
 	dir, _ := path.DirAndName()
@@ -221,9 +261,42 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 		if isDirectory {
 			i.setDirState(inode, &dirState{path: path})
 		}
+		if i.forgotten != nil {
+			i.forgotten.Remove(inode)
+		}
 	}
 
 	return inode
+}
+
+// LookupHandle takes a lookup reference on inode, the node id of a file handle
+// being decoded, entering it at path when it was forgotten. It reports false,
+// changing nothing, when the inode is forgotten and path is no longer its
+// retained path or now names another inode.
+func (i *InodeToPath) LookupHandle(path util.FullPath, inode uint64, isDirectory bool) bool {
+	i.Lock()
+	defer i.Unlock()
+	if ie, known := i.inode2path[inode]; known {
+		ie.nlookup++
+		return true
+	}
+	if i.forgotten != nil {
+		if retained, found := i.forgotten.Peek(inode); !found || retained != path {
+			return false
+		}
+	}
+	if current, taken := i.path2inode[path]; taken && current != inode {
+		return false
+	}
+	i.path2inode[path] = inode
+	i.inode2path[inode] = &InodeEntry{path: path, nlookup: 1}
+	if isDirectory {
+		i.setDirState(inode, &dirState{path: path})
+	}
+	if i.forgotten != nil {
+		i.forgotten.Remove(inode)
+	}
+	return true
 }
 
 // IncrementNlookup takes one more reference on an inode already in the table,
@@ -701,7 +774,7 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 	i.Lock()
 	defer i.Unlock()
 	sourceInode, sourceFound := i.path2inode[sourcePath]
-	if !sourceFound {
+	if !sourceFound && !i.moveForgotten(sourcePath, targetPath) {
 		// Nothing of ours to move: the source was never visited here, or a
 		// redelivery already moved it. Whatever sits at the target is not ours
 		// to take apart on the strength of an absent source, and deciding that
@@ -713,6 +786,9 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 		i.removePathFromInode2Path(targetInode, targetPath)
 		delete(i.path2inode, targetPath)
 		i.dropDirPath(targetInode)
+	}
+	if !sourceFound {
+		return 0, targetInode
 	}
 	// The rebuild eligibility travels with the directory: the target keeps it
 	// when the source earned it, and an overwritten target loses its own.
@@ -759,6 +835,10 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onRelease func(inode uint64)
 		if path.nlookup == 0 {
 			if onRelease != nil {
 				onRelease(inode)
+			}
+			if i.forgotten != nil {
+				i.forgotten.Add(inode, path.path)
+				i.forgottenInodes[path.path] = inode
 			}
 			if _, isDir := i.dirStates[inode]; isDir && onForgetDir != nil {
 				dirPaths = path.appendPaths(nil)

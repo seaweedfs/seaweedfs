@@ -238,6 +238,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	if option.asyncDio != nil {
 		fuseMountOptions.EnableAsyncDio = *option.asyncDio
 	}
+	if option.nfsExport != nil {
+		fuseMountOptions.EnableExportSupport = *option.nfsExport
+	}
 	if option.cacheSymlink != nil && *option.cacheSymlink {
 		fuseMountOptions.EnableSymlinkCaching = true
 	}

@@ -254,6 +254,7 @@ func buildSeaweedFileSystem(option *MountOptions, p fileSystemParams) *mount.WFS
 		DirIdleEvictSec:             *option.dirIdleEvictSec,
 		EnableDistributedLock:       option.distributedLock != nil && *option.distributedLock,
 		WritebackCache:              option.writebackCache != nil && *option.writebackCache,
+		NfsExport:                   option.nfsExport != nil && *option.nfsExport,
 		EagerFilerCreate:            p.eagerFilerCreate,
 		PosixDirNlink:               option.posixDirNlink != nil && *option.posixDirNlink,
 		AccessReport:                option.accessReport != nil && *option.accessReport,
