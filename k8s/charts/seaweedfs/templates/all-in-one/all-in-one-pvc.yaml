@@ -23,7 +23,7 @@ spec:
   storageClassName: {{ .Values.allInOne.data.storageClass }}
   {{- end }}
   {{- with .Values.allInOne.data.volumeAttributesClassName }}
-  volumeAttributesClassName: {{ . }}
+  volumeAttributesClassName: {{ . | quote }}
   {{- end }}
   resources:
     requests:

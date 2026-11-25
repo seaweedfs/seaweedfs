@@ -360,7 +360,7 @@ spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ .Values.admin.data.storageClass }}
         {{- with .Values.admin.data.volumeAttributesClassName }}
-        volumeAttributesClassName: {{ . }}
+        volumeAttributesClassName: {{ . | quote }}
         {{- end }}
         resources:
           requests:
@@ -377,7 +377,7 @@ spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ .Values.admin.logs.storageClass }}
         {{- with .Values.admin.logs.volumeAttributesClassName }}
-        volumeAttributesClassName: {{ . }}
+        volumeAttributesClassName: {{ . | quote }}
         {{- end }}
         resources:
           requests:

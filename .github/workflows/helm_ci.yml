@@ -176,7 +176,10 @@ jobs:
             pvc_args+=(--set "$claim.volumeAttributesClassName=fast")
           done
           helm template test $CHART_DIR "${pvc_args[@]}" > /tmp/vac.yaml
-          test "$(grep -c '^ *volumeAttributesClassName: fast$' /tmp/vac.yaml)" -eq 10
+          test "$(grep -c '^ *volumeAttributesClassName: "fast"$' /tmp/vac.yaml)" -eq 10
+          helm template test $CHART_DIR --set master.data.type=persistentVolumeClaim \
+            --set-string master.data.volumeAttributesClassName=null > /tmp/vac-null.yaml
+          grep -q '^ *volumeAttributesClassName: "null"$' /tmp/vac-null.yaml
           echo "volumeAttributesClassName renders correctly"
 
           echo "=== Testing the S3 config reloader ==="

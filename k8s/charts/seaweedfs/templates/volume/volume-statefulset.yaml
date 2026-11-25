@@ -413,7 +413,7 @@ spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ $dir.storageClass }}
         {{- with $dir.volumeAttributesClassName }}
-        volumeAttributesClassName: {{ . }}
+        volumeAttributesClassName: {{ . | quote }}
         {{- end }}
         resources:
           requests:
@@ -434,7 +434,7 @@ spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ $volume.idx.storageClass }}
         {{- with $volume.idx.volumeAttributesClassName }}
-        volumeAttributesClassName: {{ . }}
+        volumeAttributesClassName: {{ . | quote }}
         {{- end }}
         resources:
           requests:
@@ -453,7 +453,7 @@ spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ $volume.logs.storageClass }}
         {{- with $volume.logs.volumeAttributesClassName }}
-        volumeAttributesClassName: {{ . }}
+        volumeAttributesClassName: {{ . | quote }}
         {{- end }}
         resources:
           requests:

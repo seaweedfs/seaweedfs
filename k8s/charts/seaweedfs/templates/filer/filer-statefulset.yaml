@@ -511,7 +511,7 @@ spec:
       storageClassName: {{ .Values.filer.storageClass }}
       {{- end }}
       {{- with .Values.filer.volumeAttributesClassName }}
-      volumeAttributesClassName: {{ . }}
+      volumeAttributesClassName: {{ . | quote }}
       {{- end }}
   {{- end }}
   {{- $pvc_exists := include "seaweedfs.filer.pvc_exists" . -}}
@@ -530,7 +530,7 @@ spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ .Values.filer.data.storageClass }}
         {{- with .Values.filer.data.volumeAttributesClassName }}
-        volumeAttributesClassName: {{ . }}
+        volumeAttributesClassName: {{ . | quote }}
         {{- end }}
         resources:
           requests:
@@ -549,7 +549,7 @@ spec:
         accessModes: [ "ReadWriteOnce" ]
         storageClassName: {{ .Values.filer.logs.storageClass }}
         {{- with .Values.filer.logs.volumeAttributesClassName }}
-        volumeAttributesClassName: {{ . }}
+        volumeAttributesClassName: {{ . | quote }}
         {{- end }}
         resources:
           requests:
