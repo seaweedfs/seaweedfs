@@ -94,9 +94,6 @@ type S3ApiServerOption struct {
 	// GetUser) need an explicit iam: grant instead of being allowed to every
 	// authenticated identity.
 	IamSelfServiceRequiresGrant bool
-	// AbortRevokedRequests aborts a request in flight once a change to
-	// identities, policies or its bucket's policy denies it.
-	AbortRevokedRequests bool
 	// RoutedLookupTimeout bounds a route-by-key entry lookup at a key owner
 	// that is not the current filer; past it the read fails over to the next
 	// filer. 0 leaves the lookup unbounded.

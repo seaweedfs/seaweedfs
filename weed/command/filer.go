@@ -58,10 +58,6 @@ const filerDigestUsage = "[md5|sha256] hash behind ETags, chunk digests and hash
 // that runs the embedded IAM API.
 const iamSelfServiceRequiresGrantUsage = "if true, an identity needs an explicit iam: grant to manage its own access keys (CreateAccessKey, DeleteAccessKey, UpdateAccessKey, ListAccessKeys, GetUser), as on AWS. Default allows it to every authenticated identity."
 
-// s3AbortRevokedRequestsUsage documents the flag shared by every command that
-// serves S3.
-const s3AbortRevokedRequestsUsage = "if true, a change to identities, policies or a bucket policy that denies an S3 request in flight aborts it, closing its HTTP/1.x connection. Covers the access the S3 auth middleware grants configured identities, judged as of when the request started, so expiry alone never aborts it; requests of STS and JWT sessions run to their end. Default checks access only when a request starts, so a download or upload that started before the change runs to its end."
-
 const s3PreStopSecondsUsage = "seconds to keep serving after SIGTERM, with /status, /healthz and /readyz returning 503, before the S3 gateway shuts down. Gives load balancers and Kubernetes Services time to stop routing to it. 0 shuts down at once"
 
 // allowBackslashInKeyUsage documents the S3 flag keeping '\' a literal
@@ -225,7 +221,6 @@ func init() {
 	filerS3Options.allowUntrustedRemoteEndpoints = cmdFiler.Flag.Bool("s3.allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 	filerS3Options.allowBackslashInKey = cmdFiler.Flag.Bool("s3.allowBackslashInKey", false, allowBackslashInKeyUsage)
 	filerS3Options.iamSelfServiceRequiresGrant = cmdFiler.Flag.Bool("s3.iam.selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
-	filerS3Options.abortRevokedRequests = cmdFiler.Flag.Bool("s3.abortRevokedRequests", false, s3AbortRevokedRequestsUsage)
 	filerS3Options.routedLookupTimeout = cmdFiler.Flag.Duration("s3.routedLookupTimeout", defaultS3RoutedLookupTimeout, s3RoutedLookupTimeoutUsage)
 	filerS3Options.unreachableOwnerTTL = cmdFiler.Flag.Duration("s3.unreachableOwnerTTL", defaultS3UnreachableOwnerTTL, s3UnreachableOwnerTTLUsage)
 	filerS3Options.volumeLookupTimeout = cmdFiler.Flag.Duration("s3.volumeLookupTimeout", defaultS3VolumeLookupTimeout, s3VolumeLookupTimeoutUsage)

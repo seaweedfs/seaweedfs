@@ -126,7 +126,7 @@ type IdentityAccessManagement struct {
 	reloadMu sync.Mutex
 
 	// inFlight tracks the authorized requests being served, so a change that
-	// revokes their access aborts them. Nil unless -s3.abortRevokedRequests.
+	// revokes their access aborts them.
 	inFlight *inFlightRequests
 }
 
@@ -381,10 +381,8 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 	iam.stopChan = make(chan struct{})
 	iam.reloadCh = make(chan struct{}, 1)
 	go iam.reloadRetryLoop()
-	if option.AbortRevokedRequests {
-		iam.inFlight = newInFlightRequests()
-		go iam.revalidateLoop()
-	}
+	iam.inFlight = newInFlightRequests()
+	go iam.revalidateLoop()
 	iam.grpcDialOption = option.GrpcDialOption
 
 	// First, try to load configurations from file or filer
@@ -2063,7 +2061,7 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 
 // authorizeRequest decides whether an authenticated identity may perform action
 // on the request's bucket and object. A request in flight is checked with it
-// again when its access changes (-s3.abortRevokedRequests).
+// again when its access changes.
 func (iam *IdentityAccessManagement) authorizeRequest(r *http.Request, identity *Identity, action Action) s3err.ErrorCode {
 	bucket, object := s3_constants.GetBucketAndObject(r)
 	// The signature was verified on the original request; evaluate policies

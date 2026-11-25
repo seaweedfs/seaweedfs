@@ -17,17 +17,15 @@ import (
 )
 
 // inFlightRequests holds the requests the S3 auth middleware admitted for a
-// configured identity, so a change that revokes their access aborts them
-// (-s3.abortRevokedRequests). Otherwise access is only checked when a request
-// starts, and a download or upload that started before an identity, policy or
-// bucket policy change runs to its end.
+// configured identity, so a change to identities, policies or a bucket policy
+// that revokes their access aborts them, rather than letting a download or
+// upload that started before the change run to its end.
 //
 // Only the middleware's decision is checked again, and as of when the request
 // was admitted: time conditions such as aws:CurrentTime, and a key's
 // expiration, are evaluated at that time, so expiry alone never aborts a
 // request. STS and JWT sessions are not tracked, so their requests run to
-// their end as without this flag: re-validating a session token also checks
-// its expiry. Nor is what a handler authorizes itself: anonymous reads a
+// their end: re-validating a session token also checks its expiry. Nor is what a handler authorizes itself: anonymous reads a
 // public ACL or bucket policy allows, browser form uploads, the source of a
 // copy, and conditions on object tags.
 type inFlightRequests struct {

@@ -91,7 +91,6 @@ type S3Options struct {
 	allowUntrustedRemoteEndpoints *bool
 	allowBackslashInKey           *bool
 	iamSelfServiceRequiresGrant   *bool
-	abortRevokedRequests          *bool
 	preStopSeconds                *int
 	routedLookupTimeout           *time.Duration
 	unreachableOwnerTTL           *time.Duration
@@ -156,7 +155,6 @@ func init() {
 	s3StandaloneOptions.allowUntrustedRemoteEndpoints = cmdS3.Flag.Bool("allowUntrustedRemoteEndpoints", false, allowUntrustedRemoteEndpointsUsage)
 	s3StandaloneOptions.allowBackslashInKey = cmdS3.Flag.Bool("allowBackslashInKey", false, allowBackslashInKeyUsage)
 	s3StandaloneOptions.iamSelfServiceRequiresGrant = cmdS3.Flag.Bool("iam.selfServiceRequiresGrant", false, iamSelfServiceRequiresGrantUsage)
-	s3StandaloneOptions.abortRevokedRequests = cmdS3.Flag.Bool("abortRevokedRequests", false, s3AbortRevokedRequestsUsage)
 	s3StandaloneOptions.preStopSeconds = cmdS3.Flag.Int("preStopSeconds", 0, s3PreStopSecondsUsage)
 	s3StandaloneOptions.routedLookupTimeout = cmdS3.Flag.Duration("routedLookupTimeout", defaultS3RoutedLookupTimeout, s3RoutedLookupTimeoutUsage)
 	s3StandaloneOptions.unreachableOwnerTTL = cmdS3.Flag.Duration("unreachableOwnerTTL", defaultS3UnreachableOwnerTTL, s3UnreachableOwnerTTLUsage)
@@ -441,7 +439,6 @@ func (s3opt *S3Options) startS3Server() bool {
 		LancePort:                     s3opt.lancePort(),
 		S3Endpoint:                    s3opt.s3Endpoint(),
 		IamSelfServiceRequiresGrant:   *s3opt.iamSelfServiceRequiresGrant,
-		AbortRevokedRequests:          *s3opt.abortRevokedRequests,
 		RoutedLookupTimeout:           *s3opt.routedLookupTimeout,
 		UnreachableOwnerTTL:           *s3opt.unreachableOwnerTTL,
 		VolumeLookupTimeout:           *s3opt.volumeLookupTimeout,
