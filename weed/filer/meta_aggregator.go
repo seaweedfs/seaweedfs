@@ -56,6 +56,9 @@ type MetaAggregator struct {
 	// started failing to connect; see notePeerUnreachable. Guarded by
 	// peerChansLock, so a removed peer's exiting loop cannot recreate it.
 	peerUnreachableSinceNs map[pb.ServerAddress]int64
+	// peerSharesStore marks followed peers whose store signature matched this
+	// filer's when their subscription last connected. Guarded by peerChansLock.
+	peerSharesStore map[pb.ServerAddress]bool
 	// lowWatermarkTsNs and lowFlushWatermarkTsNs are the last minima signalled
 	// on deliveryAdvanced and flushAdvanced, each closed and replaced when its
 	// own minimum rises. Held readers park on the one that bounds them:
@@ -102,6 +105,7 @@ func NewMetaAggregator(filer *Filer, self pb.ServerAddress, grpcDialOption grpc.
 		peerResumeTsNs:      make(map[pb.ServerAddress]int64),
 
 		peerUnreachableSinceNs: make(map[pb.ServerAddress]int64),
+		peerSharesStore:        make(map[pb.ServerAddress]bool),
 	}
 	t.peerSubscribeLoop = t.loopSubscribeToOneFiler
 	// nil notifyFn: aggregated subscribers wake through the buffer's
@@ -148,6 +152,7 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 			delete(ma.peerChans, address)
 		}
 		delete(ma.peerUnreachableSinceNs, address)
+		delete(ma.peerSharesStore, address)
 		// Only mark: dropping the watermarks at once would let subscribers
 		// advance past a flapping peer's unflushed events (see peerRemovedAtNs).
 		ma.markPeerWatermarkRemoved(address)
@@ -202,6 +207,25 @@ func (ma *MetaAggregator) notePeerReachable(peer pb.ServerAddress, stopChan <-ch
 	}
 	delete(ma.peerUnreachableSinceNs, peer)
 	ma.initPeerWatermark(peer)
+}
+
+// notePeerStore records whether peer runs on this filer's store. A subscription
+// the master has removed meanwhile must not record it.
+func (ma *MetaAggregator) notePeerStore(peer pb.ServerAddress, stopChan <-chan struct{}, sharesStore bool) {
+	ma.peerChansLock.Lock()
+	defer ma.peerChansLock.Unlock()
+	if ma.peerChans[peer] == stopChan {
+		ma.peerSharesStore[peer] = sharesStore
+	}
+}
+
+// SharesStore reports whether peer is followed and runs on this filer's
+// store, so an entry missing here is missing there too. A peer not yet
+// connected reports false.
+func (ma *MetaAggregator) SharesStore(peer pb.ServerAddress) bool {
+	ma.peerChansLock.Lock()
+	defer ma.peerChansLock.Unlock()
+	return ma.peerSharesStore[peer]
 }
 
 // initPeerWatermark adds the peer with a zero (unknown) watermark; a re-added
@@ -616,6 +640,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		return lastTsNs, fmt.Errorf("%w %s: %v", errPeerUnreachable, peer, err)
 	}
 	ma.notePeerReachable(peer, stopChan)
+	ma.notePeerStore(peer, stopChan, peerSignature == f.Signature)
 
 	// when filer store is not shared by multiple filers
 	if peerSignature != f.Signature {

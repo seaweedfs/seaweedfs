@@ -6,9 +6,11 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // An explicit directory marker - the key "dir/" created by PutObject on a
@@ -34,28 +36,45 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 	entry, err := s3a.getObjectEntryRoutedByKey(bucket, trimmedObject)
 	switch {
 	case errors.Is(err, filer_pb.ErrNotFound):
-		return s3err.ErrNone // deleting a key that is not there is a success
 	case err != nil:
 		// The entry may be a file a child write promoted to a directory, whose data
 		// belongs to the key without the trailing slash. Deleting without knowing
 		// would destroy it, so fail and leave the retry to the client.
 		glog.Errorf("deleteDirectoryMarker: cannot read %s/%s: %v", bucket, object, err)
 		return s3err.ErrInternalError
-	case len(entry.GetChunks()) > 0 || entry.IsInRemoteOnly():
-		// A promoted file, not a marker: "dir/" does not name its data.
-		glog.V(2).Infof("deleteDirectoryMarker: %s/%s holds uploaded data, leaving it alone", bucket, object)
-		return s3err.ErrNone
-	case s3a.isVersionFileKey(trimmedObject, entry.Extended):
-		return s3err.ErrAccessDenied
+	default:
+		if remove, code := s3a.checkDirectoryMarker(entry, bucket, object, governanceBypassAllowed); !remove {
+			return code
+		}
 	}
+	found := err == nil
 
-	// The key is deleted the unversioned way, but Object Lock still covers it: the
-	// gateway lists it as an object and serves retention set on it. The lock that
-	// matters is the one on this entry, since that is what is removed -- looking the
-	// key up instead would answer with a version once the key has a history.
-	if err := s3a.enforceObjectLockOnEntry(entry, bucket, object, "", governanceBypassAllowed); err != nil {
-		glog.V(2).Infof("deleteDirectoryMarker: %s/%s is locked: %v", bucket, object, err)
-		return s3err.ErrAccessDenied
+	// During a ring change the key's prior owner may hold an entry the new owner
+	// has not received yet, so it is checked and deleted on that filer as well.
+	owner := s3a.routableWriteOwner(bucket, trimmedObject)
+	dir, name := util.FullPath(markerDir).DirAndName()
+	var priorOwner pb.ServerAddress
+	if prior := s3a.priorWriteOwner(bucket, trimmedObject); prior != "" && prior != owner {
+		probeCtx, cancel := s3a.routedProbeContext(prior)
+		priorEntry, priorErr := s3a.lookupEntryOnFiler(probeCtx, prior, dir, name)
+		cancel()
+		switch {
+		case errors.Is(priorErr, filer_pb.ErrNotFound):
+		case priorErr != nil:
+			glog.Errorf("deleteDirectoryMarker: cannot read %s/%s on prior owner %s: %v", bucket, object, prior, priorErr)
+			return s3err.ErrInternalError
+		default:
+			remove, code := s3a.checkDirectoryMarker(priorEntry, bucket, object, governanceBypassAllowed)
+			if code != s3err.ErrNone {
+				return code
+			}
+			if remove {
+				priorOwner = prior
+			}
+		}
+	}
+	if !found && priorOwner == "" {
+		return s3err.ErrNone // deleting a key that is not there is a success
 	}
 
 	// Drop a history an older build recorded for this key. Nothing writes one now, and
@@ -103,11 +122,69 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 		return s3err.ErrInternalError
 	}
 
-	if err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	// Each delete checks the entry of the filer it runs on, which a failover can
+	// make another filer than the one read above. A nonempty marker is demoted by
+	// a read and an update that must find it there too. A filer that misses is
+	// not sent the delete: it would pass it on to the key's write owner, which
+	// applies it without these checks.
+	refused := s3err.ErrNone
+	missed := false
+	deleteMarker := func(client filer_pb.SeaweedFilerClient) error {
+		resp, lookupErr := filer_pb.LookupEntry(r.Context(), client, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: name})
+		switch {
+		case errors.Is(lookupErr, filer_pb.ErrNotFound):
+			missed = true
+			return nil
+		case lookupErr != nil:
+			return lookupErr
+		}
+		if remove, code := s3a.checkDirectoryMarker(resp.Entry, bucket, object, governanceBypassAllowed); !remove {
+			refused = code
+			return nil
+		}
 		return s3a.deleteUnversionedObjectWithClient(r.Context(), client, bucket, object, false)
-	}); err != nil {
+	}
+	if err := s3a.withWriteOwnerFilerClient(owner, deleteMarker); err != nil {
 		glog.Errorf("deleteDirectoryMarker: failed to delete %s/%s: %v", bucket, object, err)
 		return s3err.ErrInternalError
 	}
-	return s3err.ErrNone
+	if refused != s3err.ErrNone {
+		return refused
+	}
+	if priorOwner == "" {
+		if missed {
+			// The entry read above is on a filer this delete did not reach.
+			glog.Errorf("deleteDirectoryMarker: %s/%s is not on the filer the delete reached", bucket, object)
+			return s3err.ErrInternalError
+		}
+		return s3err.ErrNone
+	}
+	if err := pb.WithFilerClient(false, 0, priorOwner, s3a.option.GrpcDialOption, deleteMarker); err != nil {
+		glog.Errorf("deleteDirectoryMarker: failed to delete %s/%s on prior owner %s: %v", bucket, object, priorOwner, err)
+		return s3err.ErrInternalError
+	}
+	return refused
+}
+
+// checkDirectoryMarker reports whether entry is a "<dir>/" marker the delete may
+// remove, and otherwise the code the delete answers with.
+func (s3a *S3ApiServer) checkDirectoryMarker(entry *filer_pb.Entry, bucket, object string, governanceBypassAllowed bool) (bool, s3err.ErrorCode) {
+	switch {
+	case !entry.IsDirectory || entry.IsPrefixObject() || len(entry.GetChunks()) > 0 || entry.IsInRemoteOnly():
+		// The object "dir", or a file promoted to a directory: "dir/" does not name its data.
+		glog.V(2).Infof("deleteDirectoryMarker: %s/%s holds uploaded data, leaving it alone", bucket, object)
+		return false, s3err.ErrNone
+	case s3a.isVersionFileKey(strings.TrimSuffix(strings.TrimPrefix(object, "/"), "/"), entry.Extended):
+		return false, s3err.ErrAccessDenied
+	}
+
+	// The key is deleted the unversioned way, but Object Lock still covers it: the
+	// gateway lists it as an object and serves retention set on it. The lock that
+	// matters is the one on this entry, since that is what is removed -- looking the
+	// key up instead would answer with a version once the key has a history.
+	if err := s3a.enforceObjectLockOnEntry(entry, bucket, object, "", governanceBypassAllowed); err != nil {
+		glog.V(2).Infof("deleteDirectoryMarker: %s/%s is locked: %v", bucket, object, err)
+		return false, s3err.ErrAccessDenied
+	}
+	return true, s3err.ErrNone
 }

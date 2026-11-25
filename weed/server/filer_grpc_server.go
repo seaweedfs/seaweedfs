@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -1347,34 +1348,13 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 	// that the per-path lock below only makes atomic on this filer. Route it
 	// to the entry's ring owner so one filer's lock arbitrates every writer
 	// cluster-wide; is_moved bounds this to one hop.
-	if len(req.ExpectedExtended) > 0 {
-		if !req.IsMoved {
-			var ownerResp *filer_pb.DeleteEntryResponse
-			handled, forwardErr := fs.forwardToWriteOwner(ctx, entryRouteKey(fullpath), func(owner pb.ServerAddress) error {
-				if scopeKeepOnly(ctx) {
-					return status.Error(codes.PermissionDenied, "filer: scoped DeleteEntry cannot be forwarded to the write owner")
-				}
-				glog.V(2).InfofCtx(ctx, "DeleteEntry %s: forwarding to owner %s", fullpath, owner)
-				req.IsMoved = true
-				return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-					forwarded, e := client.DeleteEntry(ctx, req)
-					if e != nil {
-						return e
-					}
-					ownerResp = forwarded
-					return nil
-				})
-			})
-			if handled {
-				if forwardErr != nil {
-					return &filer_pb.DeleteEntryResponse{}, forwardErr
-				}
-				return ownerResp, nil
-			}
-		} else {
-			if err := fs.checkForwardedWrite(ctx, entryRouteKey(fullpath)); err != nil {
-				return &filer_pb.DeleteEntryResponse{}, err
-			}
+	if req.IsMoved {
+		if err := fs.checkForwardedWrite(ctx, entryRouteKey(fullpath)); err != nil {
+			return &filer_pb.DeleteEntryResponse{}, err
+		}
+	} else if len(req.ExpectedExtended) > 0 {
+		if ownerResp, handled, forwardErr := fs.forwardDeleteEntry(ctx, req, fullpath); handled {
+			return ownerResp, forwardErr
 		}
 	}
 
@@ -1383,7 +1363,8 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 	// path: the update would pass its precondition and then resurrect fids
 	// that are already on the deletion queue.
 	pathLock := fs.entryLockTable.AcquireLock("DeleteEntry", fullpath, util.ExclusiveLock)
-	defer fs.entryLockTable.ReleaseLock(fullpath, pathLock)
+	unlockPath := sync.OnceFunc(func() { fs.entryLockTable.ReleaseLock(fullpath, pathLock) })
+	defer unlockPath()
 	if err := fs.checkScopeWorm(ctx, string(fullpath)); err != nil {
 		return &filer_pb.DeleteEntryResponse{}, err
 	}
@@ -1417,6 +1398,16 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 	}
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	err = fs.filer.DeleteEntryMetaAndData(ctx, fullpath, req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures, deleteCutoff(req.IfNotModifiedAfter, req.IfNotModifiedAfterNs))
+	// Exclusive and conditional creates land on the write owner, and a store of
+	// its own reaches this one only through replication: a miss here is not
+	// authoritative until the owner misses too. A scoped delete stays local,
+	// since the owner would apply it without the scope's checks.
+	if err == filer_pb.ErrNotFound && !req.IsMoved && !scopeKeepOnly(ctx) && fs.ownerKeepsOwnStore(entryRouteKey(fullpath)) {
+		unlockPath()
+		if ownerResp, handled, forwardErr := fs.forwardDeleteEntry(ctx, req, fullpath); handled {
+			return ownerResp, forwardErr
+		}
+	}
 	resp = &filer_pb.DeleteEntryResponse{}
 	if err != nil && err != filer_pb.ErrNotFound {
 		resp.Error = err.Error()
