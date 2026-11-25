@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -644,6 +645,8 @@ type VolumeFileScanner4Vacuum struct {
 	newOffset      int64
 	now            uint64
 	writeThrottler *util.WriteThrottler
+	visited        int64
+	visitErr       error
 }
 
 func (scanner *VolumeFileScanner4Vacuum) VisitSuperBlock(superBlock super_block.SuperBlock) error {
@@ -658,7 +661,9 @@ func (scanner *VolumeFileScanner4Vacuum) ReadNeedleBody() bool {
 	return true
 }
 
-func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
+func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) (err error) {
+	scanner.visited = offset
+	defer func() { scanner.visitErr = err }()
 	if n.HasTtl() && scanner.now >= n.LastModified+uint64(scanner.v.Ttl.Minutes()*60) {
 		return nil
 	}
@@ -697,6 +702,9 @@ func (v *Volume) copyDataAndGenerateIndexFile(opts *CompactOptions) (err error) 
 		writeThrottler: util.NewWriteThrottler(opts.MaxBytesPerSecond),
 	}
 	err = ScanVolumeFile(v.dir, v.Collection, v.Id, v.needleMapKind, scanner)
+	if scanner.newOffset > 0 && scanner.visitErr == nil {
+		err = v.copyPastUnreadableRecords(scanner, err)
+	}
 	if err != nil {
 		v.checkReadWriteError(err)
 		return err
@@ -706,6 +714,55 @@ func (v *Volume) copyDataAndGenerateIndexFile(opts *CompactOptions) (err error) 
 		return err
 	}
 	return v.loadTmpNeedleMap(opts.destIdxPath)
+}
+
+// copyPastUnreadableRecords resumes the scan at each live record the index
+// places past where it stopped. The scan follows record headers, so a corrupt
+// one, or one whose size jumps over the records after it, ends it early;
+// compacting by index copies past such a record, and so does this. A read
+// error still fails the compaction.
+func (v *Volume) copyPastUnreadableRecords(scanner *VolumeFileScanner4Vacuum, scanErr error) error {
+	if scanErr != nil && !errors.Is(scanErr, needle.ErrorCorrupted) {
+		return scanErr
+	}
+	pending, err := v.liveRecordsAfter(scanner.visited)
+	if err != nil {
+		return err
+	}
+	for _, offset := range pending {
+		if offset <= scanner.visited {
+			continue
+		}
+		glog.Warningf("compact volume %d: scan stopped after offset %d (%v), resuming at live record %d", v.Id, scanner.visited, scanErr, offset)
+		scanErr = ScanVolumeFileFrom(v.Version(), v.DataBackend, offset, scanner)
+		if scanErr != nil && (scanner.visitErr != nil || !errors.Is(scanErr, needle.ErrorCorrupted)) {
+			return scanErr
+		}
+	}
+	return nil
+}
+
+// liveRecordsAfter returns the .dat offsets, in order, of the live records the
+// index places past offset.
+func (v *Volume) liveRecordsAfter(offset int64) ([]int64, error) {
+	indexFile, err := os.Open(v.FileName(".idx"))
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", v.FileName(".idx"), err)
+	}
+	defer indexFile.Close()
+	var offsets []int64
+	err = idx2.WalkIndexFile(indexFile, 0, func(key NeedleId, recordOffset Offset, size Size) error {
+		actual := recordOffset.ToActualOffset()
+		if actual <= offset {
+			return nil
+		}
+		if nv, ok := v.nm.Get(key); ok && nv.Offset == recordOffset && nv.Size > 0 && nv.Size.IsValid() {
+			offsets = append(offsets, actual)
+		}
+		return nil
+	})
+	slices.Sort(offsets)
+	return offsets, err
 }
 
 func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
