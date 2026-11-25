@@ -170,8 +170,8 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 // remove, and otherwise the code the delete answers with.
 func (s3a *S3ApiServer) checkDirectoryMarker(entry *filer_pb.Entry, bucket, object string, governanceBypassAllowed bool) (bool, s3err.ErrorCode) {
 	switch {
-	case len(entry.GetChunks()) > 0 || entry.IsInRemoteOnly():
-		// A promoted file, not a marker: "dir/" does not name its data.
+	case !entry.IsDirectory || entry.IsPrefixObject() || len(entry.GetChunks()) > 0 || entry.IsInRemoteOnly():
+		// The object "dir", or a file promoted to a directory: "dir/" does not name its data.
 		glog.V(2).Infof("deleteDirectoryMarker: %s/%s holds uploaded data, leaving it alone", bucket, object)
 		return false, s3err.ErrNone
 	case s3a.isVersionFileKey(strings.TrimSuffix(strings.TrimPrefix(object, "/"), "/"), entry.Extended):

@@ -245,3 +245,39 @@ func TestDeleteMarkerSendsNoDeleteToAFilerThatMisses(t *testing.T) {
 	require.Equal(t, s3err.ErrInternalError, s3a.deleteDirectoryMarker(r, "b", "album/"))
 	require.Zero(t, connected.deletes, "a filer that missed the marker was sent the delete")
 }
+
+// "album/" does not name the object "album", whose data may be inline rather
+// than in chunks, or which may be empty and known only by the promotion mark.
+func TestDeleteMarkerLeavesTheObjectWithoutTheSlash(t *testing.T) {
+	promoted := func(content []byte) *filer_pb.Entry {
+		e := &filer_pb.Entry{Name: "album", Attributes: &filer_pb.FuseAttributes{FileSize: uint64(len(content))}, Content: content}
+		e.MarkPrefixObject()
+		return e
+	}
+	for name, entry := range map[string]*filer_pb.Entry{
+		"inline file":          {Name: "album", Attributes: &filer_pb.FuseAttributes{FileSize: 5}, Content: []byte("hello")},
+		"empty file":           {Name: "album", Attributes: &filer_pb.FuseAttributes{}},
+		"inline prefix object": promoted([]byte("hello")),
+		"empty prefix object":  promoted(nil),
+	} {
+		t.Run(name, func(t *testing.T) {
+			owner := &markerFiler{anonymousReadFiler: anonymousReadFiler{entries: map[string]*filer_pb.Entry{
+				"/buckets/b":       {Name: "b", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				"/buckets/b/album": entry,
+			}}}
+			ownerAddr := startFakeFiler(t, owner)
+			s3a := newPutTestServer(t, ownerAddr)
+			s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+			s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b"})
+			s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, ownerAddr)
+			s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{ownerAddr}, 1)
+
+			r := httptest.NewRequest(http.MethodDelete, "/b/album/", nil)
+			require.Equal(t, s3err.ErrNone, s3a.deleteDirectoryMarker(r, "b", "album/"))
+			owner.mu.Lock()
+			defer owner.mu.Unlock()
+			require.Contains(t, owner.entries, "/buckets/b/album", "album/ removed the object album")
+			require.Zero(t, owner.deletes)
+		})
+	}
+}
