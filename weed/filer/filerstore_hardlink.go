@@ -72,7 +72,7 @@ func (fsw *FilerStoreWrapper) writeWithHardLink(ctx context.Context, entry *Entr
 	var store func(context.Context) error
 	if !together {
 		store = func(ctx context.Context) error {
-			return fsw.storeCountedName(ctx, names, false, storeName)
+			return fsw.storeCountedName(ctx, entry, names, false, storeName)
 		}
 	}
 	err = fsw.changeLinkRecord(ctx, entry, func(txCtx context.Context) error {
@@ -89,7 +89,7 @@ func (fsw *FilerStoreWrapper) writeWithHardLink(ctx context.Context, entry *Entr
 		if err = fsw.recordLinkNames(txCtx, names); err != nil || !together {
 			return err
 		}
-		return fsw.storeCountedName(txCtx, names, true, storeName)
+		return fsw.storeCountedName(txCtx, entry, names, true, storeName)
 	}, store)
 	return replaced, err
 }
@@ -228,13 +228,13 @@ func (fsw *FilerStoreWrapper) recordLinkNames(ctx context.Context, names *linkNa
 	return fsw.writeLinkNames(ctx, names.id, names.count)
 }
 
-// storeCountedName stores, with write, a name recordLinkNames has counted. A
-// name the store does not take is counted off again, from what is recorded by
-// then: a caller past the change that counted (inChange false, under the
-// record's lock still) may find another filer has changed it.
-func (fsw *FilerStoreWrapper) storeCountedName(ctx context.Context, names *linkNames, inChange bool, write func(context.Context) error) error {
+// storeCountedName stores, with write, entry's name, which recordLinkNames
+// has counted. A name the store does not take is counted off again, from what
+// is recorded by then: a caller past the change that counted (inChange false,
+// under the record's lock still) may find another filer has changed it.
+func (fsw *FilerStoreWrapper) storeCountedName(ctx context.Context, entry *Entry, names *linkNames, inChange bool, write func(context.Context) error) error {
 	err := write(ctx)
-	if err == nil || names == nil || names.recorded == names.count {
+	if err == nil || names == nil || names.recorded == names.count || fsw.nameStoredAnyway(ctx, entry) {
 		return err
 	}
 	unrecord := func(ctx context.Context) error {
@@ -264,6 +264,17 @@ func (fsw *FilerStoreWrapper) storeCountedName(ctx context.Context, names *linkN
 		glog.ErrorfCtx(ctx, "hard link %x counts a name that was not stored: %v", names.id, unrecordErr)
 	}
 	return err
+}
+
+// nameStoredAnyway tells whether a write that returned an error stored
+// entry's name all the same, as one whose deadline passed after the store
+// took it does. Where that cannot be told, the name stays counted.
+func (fsw *FilerStoreWrapper) nameStoredAnyway(ctx context.Context, entry *Entry) bool {
+	stored, err := fsw.getActualStore(entry.FullPath).FindEntry(ctx, entry.FullPath)
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return false
+	}
+	return err != nil || bytes.Equal(stored.HardLinkId, entry.HardLinkId)
 }
 
 // changeLinkRecord runs change, which reads the shared record of entry's hard

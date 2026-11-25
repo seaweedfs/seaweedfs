@@ -204,7 +204,7 @@ func (fsw *FilerStoreWrapper) InsertEntryKnownAbsent(ctx context.Context, entry 
 		var store func(context.Context) error
 		if actualStore != fsw.defaultStore {
 			store = func(ctx context.Context) error {
-				return fsw.storeCountedName(ctx, names, false, storeName)
+				return fsw.storeCountedName(ctx, entry, names, false, storeName)
 			}
 		}
 		return fsw.changeLinkRecord(ctx, entry, func(ctx context.Context) error {
@@ -215,7 +215,7 @@ func (fsw *FilerStoreWrapper) InsertEntryKnownAbsent(ctx context.Context, entry 
 			if err = fsw.recordLinkNames(ctx, names); err != nil || store != nil {
 				return err // outside the record's transaction: stored after it
 			}
-			return fsw.storeCountedName(ctx, names, true, storeName)
+			return fsw.storeCountedName(ctx, entry, names, true, storeName)
 		}, store)
 	}
 

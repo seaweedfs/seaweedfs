@@ -346,6 +346,50 @@ func TestNameRefusedAfterItWasCountedLeavesTheNamesNoLower(t *testing.T) {
 	}
 }
 
+// storedThenFailingStore stores an entry and then fails the insert, as a
+// store whose write deadline passes after it took the entry does.
+type storedThenFailingStore struct {
+	*stubFilerStore
+}
+
+func (s *storedThenFailingStore) InsertEntry(ctx context.Context, entry *Entry) error {
+	if err := s.stubFilerStore.InsertEntry(ctx, entry); err != nil {
+		return err
+	}
+	return context.DeadlineExceeded
+}
+
+// A write that fails after the store took the name leaves the name counted,
+// so a later write with the count from before the link cannot bring the
+// count below the names.
+func TestNameStoredByAFailedWriteStaysCounted(t *testing.T) {
+	for _, where := range []string{"default store", "path-specific store"} {
+		t.Run(where, func(t *testing.T) {
+			inner := newStubFilerStore()
+			id := linkedFile(t, inner, "/d/x", "/d/y")
+			var store FilerStore = inner
+			if where == "default store" {
+				store = &storedThenFailingStore{inner}
+			}
+			wrapper := countingWrapper(store)
+			name := util.FullPath("/d/a")
+			if where == "path-specific store" {
+				name = "/s/a"
+				wrapper.AddPathSpecificStore("/s/", "s", &storedThenFailingStore{newStubFilerStore()})
+			}
+			ctx := context.Background()
+			require.NoError(t, wrapper.UpdateEntry(ctx, linkName(id, "/d/x", 2)))
+			require.ErrorIs(t, wrapper.InsertEntry(ctx, linkName(id, name, 3)), context.DeadlineExceeded)
+			require.Equal(t, int32(3), namesCounted(t, inner, id))
+
+			require.NoError(t, wrapper.UpdateEntry(ctx, linkName(id, "/d/x", 2)))
+			require.NoError(t, wrapper.DeleteEntry(ctx, "/d/x"))
+			require.NoError(t, wrapper.DeleteEntry(ctx, "/d/y"))
+			require.Equal(t, int32(1), linkCount(t, inner, id), "the file was deleted under a name it has")
+		})
+	}
+}
+
 // A rename stores the file under the new name (WithMovedLink) and deletes the
 // old one (OP "MV"): the name moves, link and all, and neither the count nor
 // the names counted change at any step.
