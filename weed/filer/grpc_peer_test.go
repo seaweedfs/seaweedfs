@@ -94,14 +94,17 @@ func TestPeerMetadataAuthenticationOnEachAttempt(t *testing.T) {
 	defer cancel()
 	for round := 0; round < 2; round++ {
 		rotate()
+		if err := f.CheckPeerDigests(ctx, "127.0.0.1:1", []*master_pb.ClusterNodeUpdate{{Address: string(address)}}); err != nil {
+			t.Fatal(err)
+		}
 		if err := f.MaybeBootstrapFromOnePeer(ctx, "127.0.0.1:1", []*master_pb.ClusterNodeUpdate{{Address: string(address)}}, time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		if err := ma.traversePeerMetadata(ctx, f, address); err != nil {
 			t.Fatal(err)
 		}
-		if sig, err := ma.readFilerStoreSignature(ctx, address); err != nil || sig != 7 {
-			t.Fatalf("configuration lookup: signature=%d err=%v", sig, err)
+		if sig, digest, err := ma.readFilerStoreSignature(ctx, address); err != nil || sig != 7 || digest != "" {
+			t.Fatalf("configuration lookup: signature=%d digest=%q err=%v", sig, digest, err)
 		}
 		stop := make(chan struct{})
 		_, err := ma.doSubscribeToOneFiler(f, "127.0.0.1:1", address, 1, stop)
@@ -118,13 +121,13 @@ func TestPeerMetadataAuthenticationOnEachAttempt(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := resolved.Load(); got != 12 {
-		t.Fatalf("resolved authentication %d times, want once for each of 12 RPC attempts", got)
+	if got := resolved.Load(); got != 16 {
+		t.Fatalf("resolved authentication %d times, want once for each of 16 RPC attempts", got)
 	}
 	peer.mu.Lock()
 	defer peer.mu.Unlock()
 	for method, want := range map[string]int{
-		filer_pb.SeaweedFiler_GetFilerConfiguration_FullMethodName:  4,
+		filer_pb.SeaweedFiler_GetFilerConfiguration_FullMethodName:  8,
 		filer_pb.SeaweedFiler_TraverseBfsMetadata_FullMethodName:    4,
 		filer_pb.SeaweedFiler_SubscribeLocalMetadata_FullMethodName: 2,
 		filer_pb.SeaweedFiler_LookupVolume_FullMethodName:           2,

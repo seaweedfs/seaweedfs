@@ -284,7 +284,7 @@ func (f *Filer) readPeerDigest(ctx context.Context, peer pb.ServerAddress) (sign
 	ctx, cancel := context.WithTimeout(ctx, peerDigestReadTimeout)
 	defer cancel()
 	err = pb.WithFilerClient(false, f.UniqueFilerId, peer, f.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
+		resp, err := client.GetFilerConfiguration(f.peerCallContext(ctx), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return err
 		}
