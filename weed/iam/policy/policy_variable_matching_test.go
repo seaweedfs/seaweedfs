@@ -131,8 +131,8 @@ func TestPolicyVariableMatchingInActionsAndResources(t *testing.T) {
 	}
 }
 
-// TestActionResourceConsistencyWithStringConditions verifies that Actions, Resources,
-// and string conditions all use the same AWS IAM-compliant matching logic
+// TestActionResourceConsistencyWithStringConditions verifies that Actions and
+// IgnoreCase string conditions match case-insensitively while Resources do not
 func TestActionResourceConsistencyWithStringConditions(t *testing.T) {
 	engine := NewPolicyEngine()
 	config := &PolicyEngineConfig{
@@ -146,15 +146,15 @@ func TestActionResourceConsistencyWithStringConditions(t *testing.T) {
 	ctx := context.Background()
 	filerAddress := ""
 
-	// Policy that uses case-insensitive matching in all three areas
+	// Policy that uses case-insensitive action and condition patterns
 	policyDoc := &PolicyDocument{
 		Version: "2012-10-17",
 		Statement: []Statement{
 			{
 				Sid:      "CaseInsensitiveMatching",
 				Effect:   "Allow",
-				Action:   []string{"S3:GET*"},                    // Uppercase action pattern
-				Resource: []string{"arn:aws:s3:::TEST-BUCKET/*"}, // Uppercase resource pattern
+				Action:   []string{"S3:GET*"}, // Uppercase action pattern
+				Resource: []string{"arn:aws:s3:::test-bucket/*"},
 				Condition: map[string]map[string]interface{}{
 					"StringLikeIgnoreCase": {
 						"s3:RequestedRegion": "US-*", // Uppercase condition pattern
@@ -179,9 +179,8 @@ func TestActionResourceConsistencyWithStringConditions(t *testing.T) {
 	result, err := engine.Evaluate(ctx, filerAddress, evalCtx, []string{"case-insensitive-policy"})
 	require.NoError(t, err)
 
-	// All should match due to case-insensitive AWS IAM-compliant matching
 	assert.Equal(t, EffectAllow, result.Effect,
-		"Actions, Resources, and Conditions should all use case-insensitive AWS IAM matching")
+		"Actions and IgnoreCase conditions should match case-insensitively")
 
 	// Verify that matching statements were found
 	require.Len(t, result.MatchingStatements, 1,
