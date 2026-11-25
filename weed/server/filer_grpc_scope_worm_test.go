@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
@@ -317,5 +318,62 @@ func TestScopeWormRefusesAppend(t *testing.T) {
 	got, err := fs.filer.FindEntry(context.Background(), appendLockTestPath)
 	if err != nil || len(got.GetChunks()) != 1 {
 		t.Fatalf("append changed WORM data: entry=%v error=%v", got, err)
+	}
+}
+
+func TestScopedWormUpdateRechecksAfterPreparation(t *testing.T) {
+	for _, transactional := range []bool{false, true} {
+		t.Run(map[bool]string{false: "plain store", true: "transactional store"}[transactional], func(t *testing.T) {
+			fs, scope, store := newScopedWormServer(t)
+			if transactional {
+				conf := fs.filer.FilerConf
+				fs.filer = newRenameTestFiler(t, conflictRefusingStore{&txnRenameStore{renameTestStore: store}})
+				fs.filer.FilerConf = conf
+			}
+			queue := &captureQueue{}
+			swapNotificationQueue(t, queue)
+			path := insertScopedWormEntry(t, store, "update", time.Now())
+			stored := store.entries[string(path)]
+			stored.Content = nil
+			stored.Chunks = []*filer_pb.FileChunk{written(storedChunk, 1)}
+			before := proto.Clone(stored.ToProtoEntry()).(*filer_pb.Entry)
+			replacement := proto.Clone(before).(*filer_pb.Entry)
+			replacement.Attributes.Mtime++
+			setRule := func(enabled bool) {
+				t.Helper()
+				if err := fs.filer.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{
+					LocationPrefix: aliceWS,
+					Worm:           proto.Bool(enabled),
+				}); err != nil {
+					t.Fatalf("set WORM rule: %v", err)
+				}
+			}
+			setRule(false)
+			const manifestID = "4,0d04"
+			preparations := 0
+			err := scopedWormUnary(t, scope, "UpdateEntry", &filer_pb.UpdateEntryRequest{
+				Directory: aliceWS, Entry: replacement,
+			}, func(ctx context.Context, request any) (any, error) {
+				return fs.updateEntry(ctx, request.(*filer_pb.UpdateEntryRequest), string(path),
+					func(context.Context, string, *filer.Entry, *filer_pb.Entry) ([]*filer_pb.FileChunk, []*filer_pb.FileChunk, error) {
+						preparations++
+						setRule(true)
+						manifest := written(manifestID, 2)
+						manifest.IsChunkManifest = true
+						return []*filer_pb.FileChunk{manifest}, nil, nil
+					})
+			})
+			if status.Code(err) != codes.PermissionDenied || preparations != 1 {
+				t.Fatalf("update = %v, preparations = %d, want PermissionDenied after one preparation", err, preparations)
+			}
+			got, err := store.FindEntry(context.Background(), path)
+			if err != nil || !proto.Equal(got.ToProtoEntry(), before) {
+				t.Fatalf("refused update changed stored entry: got=%v err=%v", got, err)
+			}
+			if events := queue.snapshot(); len(events) != 0 {
+				t.Fatalf("refused update emitted %d events", len(events))
+			}
+			checkDeletions(t, fs.filer, manifestID)
+		})
 	}
 }

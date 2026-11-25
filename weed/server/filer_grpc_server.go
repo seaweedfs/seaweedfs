@@ -1044,10 +1044,6 @@ func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	if refusal != nil {
 		return &filer_pb.UpdateEntryResponse{}, refusal
 	}
-	chunks, garbage, err := prepareChunks(ctx, fullpath, entry, req.Entry)
-	if err != nil {
-		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("UpdateEntry cleanupChunks %s: %w", fullpath, err)
-	}
 	if err := fs.checkScopeWorm(ctx, string(lockPath)); err != nil {
 		return &filer_pb.UpdateEntryResponse{}, err
 	}
@@ -1057,6 +1053,11 @@ func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	}
 	if err := checkScopeRetainedData(ctx, string(lockPath), entry, req.Entry, req.GetChunkAuth(), false); err != nil {
 		return &filer_pb.UpdateEntryResponse{}, err
+	}
+
+	chunks, garbage, err := prepareChunks(ctx, fullpath, entry, req.Entry)
+	if err != nil {
+		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("UpdateEntry cleanupChunks %s: %w", fullpath, err)
 	}
 
 	var newEntry *filer.Entry
@@ -1071,6 +1072,12 @@ func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 			if err := read(ctx); err != nil || refusal != nil {
 				return err
 			}
+		}
+		if err := fs.checkScopeWorm(ctx, string(lockPath)); err != nil {
+			return err
+		}
+		if err := checkScopeRetainedData(ctx, string(lockPath), entry, req.Entry, req.GetChunkAuth(), false); err != nil {
+			return err
 		}
 		newEntry = filer.FromPbEntry(req.Directory, req.Entry)
 		newEntry.Chunks = chunks
