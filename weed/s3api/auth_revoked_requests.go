@@ -132,9 +132,12 @@ func (iam *IdentityAccessManagement) identitySource(r *http.Request, identity *I
 		return fromUnsigned, nil
 	case "Jwt":
 		return fromSession, nil
-	}
-	if extractSessionToken(r) != "" {
-		return fromSession, nil
+	case "SigV4":
+		// SigV4 marks a token it tolerated for a configured key ignored; SigV2
+		// never reads one, so a token there does not make a session.
+		if extractSessionToken(r) != "" {
+			return fromSession, nil
+		}
 	}
 	key := s3_constants.GetAccessKeyIdFromContext(r)
 	iam.m.RLock()

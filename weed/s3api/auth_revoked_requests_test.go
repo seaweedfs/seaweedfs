@@ -15,6 +15,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -95,6 +96,11 @@ func download(t *testing.T, url, key, secret string) <-chan error {
 	if key != "" {
 		require.NoError(t, signRequestV4(req, key, secret))
 	}
+	return fetch(req)
+}
+
+// fetch reads the response to req to its end, and reports how the read ended.
+func fetch(req *http.Request) <-chan error {
 	done := make(chan error, 1)
 	go func() {
 		resp, err := (&http.Transport{}).RoundTrip(req)
@@ -164,6 +170,37 @@ func TestAbortRevokedRequests(t *testing.T) {
 	assert.Error(t, downloadResult(t, carol, time.Second), "carol's secret was rotated")
 	assert.Error(t, downloadResult(t, anonymous, time.Second), "anonymous lost Read")
 	assert.NoError(t, downloadResult(t, alice, 5*time.Second), "alice kept Read")
+}
+
+// A session token sent with a configured key does not keep the request from
+// being checked again: SigV4 ignores it for such a key, SigV2 never reads one.
+func TestAbortRevokedRequestsCarryingSessionToken(t *testing.T) {
+	iam := newRevokeIAM(t, revokeIdentity("bob", revokeKeyB, revokeSecretB, "Read:bkt"))
+	started := make(chan struct{}, 2)
+	url := serveRevokeS3(t, started, authRead(iam)) + "/bkt/object"
+
+	v4, err := newTestRequest(http.MethodGet, url, 0, nil)
+	require.NoError(t, err)
+	v4.Header.Set("X-Amz-Security-Token", "not-a-session-token")
+	require.NoError(t, signRequestV4(v4, revokeKeyB, revokeSecretB))
+
+	v2, err := http.NewRequest(http.MethodGet, url, nil)
+	require.NoError(t, err)
+	v2.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+	v2.Header.Set("X-Amz-Security-Token", "not-a-session-token")
+	resource, code := iam.encodedResourceV2(v2)
+	require.Equal(t, s3err.ErrNone, code)
+	v2.Header.Set("Authorization", signatureV2(&Credential{AccessKey: revokeKeyB, SecretKey: revokeSecretB}, v2.Method, resource, v2.URL.Query().Encode(), v2.Header))
+
+	sigV4, sigV2 := fetch(v4), fetch(v2)
+	waitStarted(t, started, 2)
+
+	require.NoError(t, iam.ReplaceS3ApiConfiguration(&iam_pb.S3ApiConfiguration{Identities: []*iam_pb.Identity{
+		revokeIdentity("bob", revokeKeyB, revokeSecretB),
+	}}))
+
+	assert.Error(t, downloadResult(t, sigV4, time.Second), "SigV4: bob lost Read")
+	assert.Error(t, downloadResult(t, sigV2, time.Second), "SigV2: bob lost Read")
 }
 
 // A request whose access is revoked after it authenticated, but before it is
