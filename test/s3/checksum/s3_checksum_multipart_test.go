@@ -19,9 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newTrailerChecksumClient returns a client that can send flexible checksums.
-// aws-sdk-go-v2 sends them as unsigned streaming trailers, which it refuses over
-// plain HTTP, so front the HTTP endpoint with a TLS proxy.
 // skipIfRefusedUnderFIPS140Only skips a case for a checksum algorithm the
 // server refuses when S3_FIPS140_ONLY=1 says it runs under GODEBUG=fips140=only:
 // SHA-1 is not an approved algorithm there, so SHA-1 checksums get NotImplemented.
@@ -31,6 +28,9 @@ func skipIfRefusedUnderFIPS140Only(t *testing.T, algorithm types.ChecksumAlgorit
 	}
 }
 
+// newTrailerChecksumClient returns a client that can send flexible checksums.
+// aws-sdk-go-v2 sends them as unsigned streaming trailers, which it refuses over
+// plain HTTP, so front the HTTP endpoint with a TLS proxy.
 func newTrailerChecksumClient(t *testing.T) *s3.Client {
 	t.Helper()
 
