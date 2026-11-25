@@ -66,10 +66,9 @@ type inFlightRequest struct {
 	action   Action
 	bucket   string
 	source   identitySource
-	// The key the request was signed with, and its secret, so rotating the
-	// secret revokes the request too.
+	// The key the request was signed with. Removing or deactivating it revokes
+	// the request; giving it a new secret is a rotation, which does not.
 	accessKey string
-	secretKey string
 	cancel    context.CancelFunc
 	// An HTTP/1.x request is aborted by closing its connection. An HTTP/2
 	// connection carries other streams, so such a request has its context
@@ -116,7 +115,7 @@ func (iam *IdentityAccessManagement) abortWhenRevoked(f http.HandlerFunc, identi
 		admitted := time.Now()
 		req := &inFlightRequest{req: r.Clone(policy_engine.WithRequestTime(ctx, admitted)), admitted: admitted, identity: identity, action: action, bucket: bucket, source: source, cancel: cancel}
 		if cred != nil {
-			req.accessKey, req.secretKey = cred.AccessKey, cred.SecretKey
+			req.accessKey = cred.AccessKey
 		}
 		if r.ProtoMajor == 1 {
 			req.conn = util.ConnFromContext(ctx)
@@ -167,7 +166,7 @@ func (iam *IdentityAccessManagement) currentIdentity(req *inFlightRequest) *Iden
 	case fromAccessKey:
 		var cred *Credential
 		var found bool
-		if identity, cred, found = iam.lookupByAccessKey(req.accessKey); !found || cred.SecretKey != req.secretKey || cred.Expiration > 0 && cred.Expiration < req.admitted.Unix() {
+		if identity, cred, found = iam.lookupByAccessKey(req.accessKey); !found || cred.Expiration > 0 && cred.Expiration < req.admitted.Unix() {
 			return nil
 		}
 	case fromUnsigned:

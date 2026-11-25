@@ -152,34 +152,41 @@ func downloadResult(t *testing.T, done <-chan error, within time.Duration) error
 }
 
 // Revoking access aborts the downloads it denies: signed with an access key
-// that lost its grant or whose secret was rotated, or anonymous. A download
-// whose access stays runs to its end.
+// that lost its grant or was deactivated, or anonymous. A download whose
+// access stays runs to its end, also when its key's secret is rotated.
 func TestAbortRevokedRequests(t *testing.T) {
+	const revokeKeyD, revokeSecretD = "AKIAREVOKEDAVE000000", "dave-secret-for-loopback-tests-only0"
 	iam := newRevokeIAM(t,
 		revokeIdentity("alice", revokeKeyA, revokeSecretA, "Read:bkt"),
 		revokeIdentity("bob", revokeKeyB, revokeSecretB, "Read:bkt"),
 		revokeIdentity("carol", revokeKeyC, revokeSecretC, "Read:bkt"),
+		revokeIdentity("dave", revokeKeyD, revokeSecretD, "Read:bkt"),
 		revokeIdentity(s3_constants.AccountAnonymousId, "", "", "Read:bkt"),
 	)
-	started := make(chan struct{}, 4)
+	started := make(chan struct{}, 5)
 	url := serveRevokeS3(t, started, authRead(iam)) + "/bkt/object"
 	alice := download(t, url, revokeKeyA, revokeSecretA)
 	bob := download(t, url, revokeKeyB, revokeSecretB)
 	carol := download(t, url, revokeKeyC, revokeSecretC)
+	dave := download(t, url, revokeKeyD, revokeSecretD)
 	anonymous := download(t, url, "", "")
-	waitStarted(t, started, 4)
+	waitStarted(t, started, 5)
 
+	deactivated := revokeIdentity("dave", revokeKeyD, revokeSecretD, "Read:bkt")
+	deactivated.Credentials[0].Status = iamAccessKeyStatusInactive
 	require.NoError(t, iam.ReplaceS3ApiConfiguration(&iam_pb.S3ApiConfiguration{Identities: []*iam_pb.Identity{
 		revokeIdentity("alice", revokeKeyA, revokeSecretA, "Read:bkt", "Write:bkt"),
 		revokeIdentity("bob", revokeKeyB, revokeSecretB),
 		revokeIdentity("carol", revokeKeyC, "carol-rotated-secret-for-loopback-only", "Read:bkt"),
+		deactivated,
 		revokeIdentity(s3_constants.AccountAnonymousId, "", ""),
 	}}))
 
 	assert.Error(t, downloadResult(t, bob, time.Second), "bob lost Read")
-	assert.Error(t, downloadResult(t, carol, time.Second), "carol's secret was rotated")
+	assert.Error(t, downloadResult(t, dave, time.Second), "dave's key was deactivated")
 	assert.Error(t, downloadResult(t, anonymous, time.Second), "anonymous lost Read")
 	assert.NoError(t, downloadResult(t, alice, 5*time.Second), "alice kept Read")
+	assert.NoError(t, downloadResult(t, carol, 5*time.Second), "carol's secret was rotated")
 }
 
 // A session token sent with a configured key does not keep the request from
