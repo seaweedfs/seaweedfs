@@ -353,7 +353,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			err := streamFn(writer)
 			if err != nil {
 				stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()
-				glog.ErrorfCtx(ctx, "failed to stream content %s: %v", r.URL, err)
+				logStreamError(ctx, "failed to stream content %s: %v", r.URL, err)
 			}
 			return err
 		}, nil

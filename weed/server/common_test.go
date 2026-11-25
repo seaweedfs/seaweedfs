@@ -10,11 +10,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 )
 
@@ -245,6 +247,7 @@ func TestProcessRangeRequestWriteErrorAfterBodyStarted(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	errorsBefore := glog.Stats.Error.Lines()
 	resp, err := srv.Client().Get(srv.URL)
 	if err != nil {
 		t.Fatalf("request: %v", err)
@@ -256,6 +259,9 @@ func TestProcessRangeRequestWriteErrorAfterBodyStarted(t *testing.T) {
 	body, readErr := io.ReadAll(resp.Body)
 	if readErr == nil {
 		t.Fatalf("body completed with %d bytes; the erroring tail must abort it", len(body))
+	}
+	if glog.Stats.Error.Lines() == errorsBefore {
+		t.Fatal("a read failure under a connected client was not logged as an error")
 	}
 }
 
@@ -458,5 +464,73 @@ func TestRedactedURLDropsTheJwt(t *testing.T) {
 	r = httptest.NewRequest(http.MethodGet, "/1,abc?size=5", nil)
 	if got := redactedURL(r); got != "/1,abc?size=5" {
 		t.Errorf("got %q, want the URL unchanged without a jwt", got)
+	}
+}
+
+// A client that hangs up mid-download (a player seeking, a browser closing a
+// download) fails the response write with a broken pipe or a connection reset.
+// That is not a server fault, so it must stay out of the error log.
+func TestProcessRangeRequestClientHangupIsNotAnError(t *testing.T) {
+	chunk := bytes.Repeat([]byte("v"), 64*1024)
+	const totalSize = int64(1) << 40
+	for _, tt := range []struct {
+		name, rangeHeader string
+		http2             bool
+	}{
+		{"full body", "", false},
+		{"single range", "bytes=0-", false},
+		{"multiple ranges", "bytes=0-1,4-", false},
+		{"HTTP/2 stream reset", "", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			done := make(chan struct{})
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				defer close(done)
+				_ = ProcessRangeRequest(r, w, totalSize, "application/octet-stream", func(offset int64, size int64) (filer.DoStreamContent, error) {
+					return func(writer io.Writer) error {
+						for {
+							if _, err := writer.Write(chunk); err != nil {
+								return err
+							}
+						}
+					}, nil
+				})
+			}))
+			if tt.http2 {
+				srv.EnableHTTP2 = true
+				srv.StartTLS()
+			} else {
+				srv.Start()
+			}
+			defer srv.Close()
+
+			errorsBefore := glog.Stats.Error.Lines()
+			req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.rangeHeader != "" {
+				req.Header.Set("Range", tt.rangeHeader)
+			}
+			resp, err := srv.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.http2 && resp.ProtoMajor != 2 {
+				t.Fatalf("served over %s, want HTTP/2", resp.Proto)
+			}
+			if _, err := io.ReadFull(resp.Body, make([]byte, len(chunk))); err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the handler kept streaming after the client hung up")
+			}
+			if n := glog.Stats.Error.Lines() - errorsBefore; n != 0 {
+				t.Fatalf("a client hang-up logged %d ERROR lines", n)
+			}
+		})
 	}
 }
