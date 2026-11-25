@@ -1,0 +1,48 @@
+name: Graph release asset
+
+# Attaches a code knowledge graph bundle to a published GitHub release.
+# Code-only mode needs no API key; see graph.yml for the scheduled build.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  graph:
+    name: Attach graph bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install graphify
+        run: |
+          uv tool install --python 3.12 "graphifyy==0.9.112"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build the code graph
+        env:
+          PYTHONHASHSEED: "0"
+        run: |
+          graphify extract . --code-only
+          graphify cluster-only . --no-label
+          gzip -9 -c graphify-out/graph.json > graph.json.gz
+          tar -czf "graph-${GITHUB_REF_NAME}.tar.gz" \
+            graph.json.gz \
+            graphify-out/graph.html \
+            graphify-out/GRAPH_REPORT.md
+
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" "graph-${GITHUB_REF_NAME}.tar.gz" --clobber

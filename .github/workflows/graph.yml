@@ -1,0 +1,91 @@
+name: Graph
+
+# Builds a code knowledge graph with the open-source Graphify CLI and uploads
+# it as an artifact. Code-only mode parses the repository with tree-sitter and
+# needs no API key or secret.
+#
+# The graph is not committed: graph.json is ~150 MiB, above GitHub's 100 MiB
+# file limit. Release assets are produced by graph-release.yml.
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: graph-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  graph:
+    name: Build code graph
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install graphify
+        run: |
+          uv tool install --python 3.12 "graphifyy==0.9.112"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Restore graph state
+        uses: actions/cache@v4
+        with:
+          path: graphify-out
+          key: graphify-${{ runner.os }}-${{ github.ref_name }}-${{ github.sha }}
+          restore-keys: |
+            graphify-${{ runner.os }}-${{ github.ref_name }}-
+            graphify-${{ runner.os }}-
+
+      - name: Build or update the graph
+        env:
+          PYTHONHASHSEED: "0"
+        run: |
+          if [ -f graphify-out/graph.json ]; then
+            graphify update .
+          else
+            graphify extract . --code-only
+            graphify cluster-only .
+          fi
+
+      - name: Graph health
+        run: |
+          graphify diagnose multigraph --json > graph-health.json
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+
+          summary = json.load(open("graph-health.json")).get("summary", {})
+          print("### Graph health")
+          print(f"- nodes: {summary.get('node_count', 'n/a')}")
+          print(f"- edges: {summary.get('raw_edge_count', 'n/a')}")
+          print(f"- dangling endpoints: {summary.get('dangling_endpoint_edges', 'n/a')}")
+          print(f"- duplicate edges: {summary.get('exact_duplicate_edges', 'n/a')}")
+          PY
+
+      - name: Bundle outputs
+        run: |
+          gzip -9 -c graphify-out/graph.json > graph.json.gz
+          tar -czf graph-bundle.tar.gz \
+            graph.json.gz \
+            graphify-out/graph.html \
+            graphify-out/GRAPH_REPORT.md \
+            graph-health.json
+
+      - name: Upload graph artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: graph-${{ github.sha }}
+          path: graph-bundle.tar.gz
+          retention-days: 14
