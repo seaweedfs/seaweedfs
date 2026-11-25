@@ -247,6 +247,30 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 	return inode
 }
 
+// LookupHandle takes a lookup reference on inode, the node id of a file handle
+// being decoded, entering it at path when it was forgotten. It reports false,
+// changing nothing, when the inode is forgotten and path now names another.
+func (i *InodeToPath) LookupHandle(path util.FullPath, inode uint64, isDirectory bool) bool {
+	i.Lock()
+	defer i.Unlock()
+	if ie, known := i.inode2path[inode]; known {
+		ie.nlookup++
+		return true
+	}
+	if current, taken := i.path2inode[path]; taken && current != inode {
+		return false
+	}
+	i.path2inode[path] = inode
+	i.inode2path[inode] = &InodeEntry{path: path, nlookup: 1}
+	if isDirectory {
+		i.setDirState(inode, &dirState{path: path})
+	}
+	if i.forgotten != nil {
+		i.forgotten.Remove(inode)
+	}
+	return true
+}
+
 // IncrementNlookup takes one more reference on an inode already in the table,
 // reporting false if it is not there.
 func (i *InodeToPath) IncrementNlookup(inode uint64) bool {

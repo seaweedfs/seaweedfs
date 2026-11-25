@@ -114,3 +114,40 @@ func TestSameFileRejectsAReplacement(t *testing.T) {
 		}
 	}
 }
+
+func TestLookupHandleLeavesAnotherInodesPath(t *testing.T) {
+	table := NewInodeToPath("/", 0)
+	table.RetainForgotten(nfsExportForgottenInodes)
+	file := util.FullPath("/a.txt")
+	inode := table.Lookup(file, 1, false, false, 0, true)
+	table.Forget(inode, 1, nil, nil)
+	other := table.Lookup(file, 2, false, false, inode+100, true)
+
+	if table.LookupHandle(file, inode, false) {
+		t.Fatal("LookupHandle took a path that names another inode")
+	}
+	if got, _ := table.GetInode(file); got != other {
+		t.Fatalf("path maps to %d, want %d", got, other)
+	}
+	table.Forget(other, 1, nil, nil)
+	if table.HasInode(other) {
+		t.Fatal("LookupHandle took a reference on the other inode")
+	}
+
+	if !table.LookupHandle(file, inode, false) {
+		t.Fatal("LookupHandle refused a free path")
+	}
+	if got, _ := table.GetInode(file); got != inode {
+		t.Fatalf("path maps to %d, want the handle's %d", got, inode)
+	}
+	if _, found := table.GetForgottenPath(inode); found {
+		t.Fatal("inode still retained after LookupHandle")
+	}
+	if !table.LookupHandle("/renamed.txt", inode, false) {
+		t.Fatal("LookupHandle refused a live inode")
+	}
+	table.Forget(inode, 1, nil, nil)
+	if !table.HasInode(inode) {
+		t.Fatal("live inode lost the reference LookupHandle took")
+	}
+}

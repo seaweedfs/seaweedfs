@@ -54,14 +54,14 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		}
 		return status
 	}
-	if name == "." && !sameFile(possibleInode, fullFilePath, localEntry) {
-		return fuse.Status(syscall.ESTALE)
+	inode := possibleInode
+	if name == "." {
+		if !sameFile(inode, fullFilePath, localEntry) || !wfs.inodeToPath.LookupHandle(fullFilePath, inode, localEntry.IsDirectory()) {
+			return fuse.Status(syscall.ESTALE)
+		}
+	} else {
+		inode = wfs.inodeToPath.Lookup(fullFilePath, localEntry.Crtime.Unix(), localEntry.IsDirectory(), len(localEntry.HardLinkId) > 0, localEntry.Inode, true)
 	}
-	if possibleInode == 0 {
-		possibleInode = localEntry.Inode
-	}
-
-	inode := wfs.inodeToPath.Lookup(fullFilePath, localEntry.Crtime.Unix(), localEntry.IsDirectory(), len(localEntry.HardLinkId) > 0, possibleInode, true)
 
 	if fh, found := wfs.fhMap.FindFileHandle(inode); found {
 		fh.entryLock.RLock()
