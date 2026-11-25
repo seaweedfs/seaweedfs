@@ -187,18 +187,19 @@ func (i *InodeToPath) RetainForgotten(n int) {
 }
 
 // moveForgotten keeps a forgotten inode's retained path current across a
-// rename. Requires the table lock.
-func (i *InodeToPath) moveForgotten(sourcePath, targetPath util.FullPath) {
+// rename, reporting whether it moved one. Requires the table lock.
+func (i *InodeToPath) moveForgotten(sourcePath, targetPath util.FullPath) bool {
 	inode, found := i.forgottenInodes[sourcePath]
 	if !found {
-		return
+		return false
 	}
 	delete(i.forgottenInodes, sourcePath)
 	if path, retained := i.forgotten.Peek(inode); !retained || path != sourcePath {
-		return
+		return false
 	}
 	i.forgotten.Add(inode, targetPath)
 	i.forgottenInodes[targetPath] = inode
+	return true
 }
 
 // GetForgottenPath returns the path of an inode the kernel forgot, if retained.
@@ -773,8 +774,7 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 	i.Lock()
 	defer i.Unlock()
 	sourceInode, sourceFound := i.path2inode[sourcePath]
-	if !sourceFound {
-		i.moveForgotten(sourcePath, targetPath)
+	if !sourceFound && !i.moveForgotten(sourcePath, targetPath) {
 		// Nothing of ours to move: the source was never visited here, or a
 		// redelivery already moved it. Whatever sits at the target is not ours
 		// to take apart on the strength of an absent source, and deciding that
@@ -786,6 +786,9 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 		i.removePathFromInode2Path(targetInode, targetPath)
 		delete(i.path2inode, targetPath)
 		i.dropDirPath(targetInode)
+	}
+	if !sourceFound {
+		return 0, targetInode
 	}
 	// The rebuild eligibility travels with the directory: the target keeps it
 	// when the source earned it, and an overwritten target loses its own.
