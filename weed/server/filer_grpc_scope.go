@@ -164,6 +164,22 @@ func (s *filerGrpcScope) verificationKeys() (security.SigningKey, security.Signi
 	return nil, nil
 }
 
+// isFilerAdminTokenWithLeeway applies the scope verifier's clock policy to the
+// shared filer-admin fallback. Keep the claim-shape checks here instead of
+// changing security.IsFilerAdminToken, whose callers intentionally use strict
+// JWT time validation.
+func isFilerAdminTokenWithLeeway(signingKey, previousKey security.SigningKey, token security.EncodedJwt, leeway time.Duration) bool {
+	if len(signingKey) == 0 || token == "" {
+		return false
+	}
+	claims := &security.SeaweedFilerAdminClaims{}
+	parsed, err := security.DecodeJwtWith(signingKey, previousKey, token, claims, leeway)
+	if err != nil || parsed == nil || !parsed.Valid {
+		return false
+	}
+	return claims.SessionId == "" && len(claims.AllowedPrefixes) == 0 && len(claims.AllowedMethods) == 0 && len(claims.ReadPrefixes) == 0
+}
+
 func (s *filerGrpcScope) proven(sc *scope, chunkAuth map[string]string, fid, collection string) bool {
 	raw := chunkAuth[fid]
 	if raw == "" {
@@ -223,7 +239,7 @@ func (s *filerGrpcScope) resolve(ctx context.Context) (*scope, error) {
 	// a dedicated gRPC key. Only an unscoped admin token can cross that boundary.
 	if (err != nil || token == nil || !token.Valid) && s.cfg.adminKeys != nil {
 		adminKey, previousAdminKey := s.cfg.adminKeys()
-		if security.IsFilerAdminToken(adminKey, security.EncodedJwt(raw), previousAdminKey) {
+		if isFilerAdminTokenWithLeeway(adminKey, previousAdminKey, security.EncodedJwt(raw), leeway) {
 			return nil, nil
 		}
 	}
