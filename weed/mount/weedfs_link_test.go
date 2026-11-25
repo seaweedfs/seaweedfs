@@ -382,6 +382,7 @@ func testFirstLinkTakesTheLinkId(t *testing.T, wfs *WFS, server *createEntryTest
 			Name:            req.GetName(),
 			Attributes:      &filer_pb.FuseAttributes{FileMode: 0o600, FileSize: 12, Crtime: 1, Mtime: 1, Uid: 99, Gid: 100},
 			Chunks:          []*filer_pb.FileChunk{{FileId: "3,0c03", Size: 12}},
+			Content:         []byte("inline"),
 			HardLinkId:      theirs,
 			HardLinkCounter: 2,
 		}}, nil
@@ -403,8 +404,8 @@ func testFirstLinkTakesTheLinkId(t *testing.T, wfs *WFS, server *createEntryTest
 	if !bytes.Equal(updates[1].GetHardLinkId(), theirs) || updates[1].GetHardLinkCounter() != 3 {
 		t.Fatalf("second update carried link id %x count %d, want the file's %x and 3", updates[1].GetHardLinkId(), updates[1].GetHardLinkCounter(), theirs)
 	}
-	if updates[1].GetAttributes().GetFileMode() != 0o600 || len(updates[1].GetChunks()) != 1 {
-		t.Fatalf("second update carried mode %o and %d chunks, want the stored 600 and 1", updates[1].GetAttributes().GetFileMode(), len(updates[1].GetChunks()))
+	if updates[1].GetAttributes().GetFileMode() != 0o600 || len(updates[1].GetChunks()) != 1 || string(updates[1].GetContent()) != "inline" {
+		t.Fatalf("second update carried mode %o, %d chunks and content %q, want the stored 600, 1 and \"inline\"", updates[1].GetAttributes().GetFileMode(), len(updates[1].GetChunks()), updates[1].GetContent())
 	}
 	server.mu.Lock()
 	created := server.lastEntry
@@ -412,8 +413,8 @@ func testFirstLinkTakesTheLinkId(t *testing.T, wfs *WFS, server *createEntryTest
 	if created.GetName() != "mine.txt" || !bytes.Equal(created.GetHardLinkId(), theirs) {
 		t.Fatalf("new name %q was made under link id %x, want %x", created.GetName(), created.GetHardLinkId(), theirs)
 	}
-	if created.GetAttributes().GetFileMode() != 0o600 || len(created.GetChunks()) != 1 {
-		t.Fatalf("new name has mode %o and %d chunks, want the stored 600 and 1", created.GetAttributes().GetFileMode(), len(created.GetChunks()))
+	if created.GetAttributes().GetFileMode() != 0o600 || len(created.GetChunks()) != 1 || string(created.GetContent()) != "inline" {
+		t.Fatalf("new name has mode %o, %d chunks and content %q, want the stored 600, 1 and \"inline\"", created.GetAttributes().GetFileMode(), len(created.GetChunks()), created.GetContent())
 	}
 	linked, _, st := wfs.maybeLoadEntry(context.Background(), sourcePath)
 	if st != fuse.OK {

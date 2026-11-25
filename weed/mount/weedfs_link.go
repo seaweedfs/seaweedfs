@@ -181,6 +181,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 				oldEntry.Attributes.Ctime, oldEntry.Attributes.CtimeNs = linkNow.Unix(), int32(linkNow.Nanosecond())
 				updateOldEntryRequest.Entry = oldEntry
 				request.Entry.Attributes, request.Entry.Chunks, request.Entry.Extended = oldEntry.Attributes, oldEntry.GetChunks(), oldEntry.Extended
+				request.Entry.Content = oldEntry.Content
 				request.Entry.HardLinkId, request.Entry.HardLinkCounter = oldEntry.HardLinkId, oldEntry.HardLinkCounter
 				err = update()
 			}
