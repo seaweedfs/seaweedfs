@@ -3015,7 +3015,7 @@ pub async fn post_handler(
 
         while let Ok(Some(field)) = multipart.next_field().await {
             let field_name = field.name().map(|s| s.to_string());
-            let fname = field.file_name().map(clean_windows_path_base);
+            let fname = part_file_name(&field).map(|name| clean_windows_path_base(&name));
             let field_headers = field.headers().clone();
             let fct = field_headers
                 .get(header::CONTENT_TYPE)
@@ -5191,6 +5191,52 @@ fn compute_md5_base64(data: &[u8]) -> String {
 fn clean_windows_path_base(value: &str) -> String {
     let cleaned = value.replace('\\', "/");
     cleaned.rsplit('/').next().unwrap_or(&cleaned).to_string()
+}
+
+/// Go's multipart Part.FileName(): the RFC 2231 `filename*` that
+/// mime.FormatMediaType writes for a non-ASCII name wins over `filename`,
+/// which is the only one multer reads.
+fn part_file_name(field: &multer::Field<'_>) -> Option<String> {
+    field
+        .headers()
+        .get(header::CONTENT_DISPOSITION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(extended_file_name)
+        .or_else(|| field.file_name().map(str::to_string))
+}
+
+/// Go's decode2231Enc for `filename*=charset'lang'percent-encoded`.
+fn extended_file_name(disposition: &str) -> Option<String> {
+    let value = disposition.split(';').skip(1).find_map(|param| {
+        let (key, value) = param.split_once('=')?;
+        key.trim()
+            .eq_ignore_ascii_case("filename*")
+            .then(|| value.trim())
+    })?;
+    let mut fields = value.splitn(3, '\'');
+    let (charset, _language, encoded) = (fields.next()?, fields.next()?, fields.next()?);
+    if !charset.eq_ignore_ascii_case("utf-8") && !charset.eq_ignore_ascii_case("us-ascii") {
+        return None;
+    }
+    let bytes = encoded.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'%' {
+            decoded.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        let hex = bytes.get(i + 1..i + 3)?;
+        if !hex.iter().all(u8::is_ascii_hexdigit) {
+            return None;
+        }
+        decoded.push(u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()?);
+        i += 3;
+    }
+    String::from_utf8(decoded)
+        .ok()
+        .filter(|name| !name.is_empty())
 }
 
 fn parse_content_disposition_filename(value: &str) -> Option<String> {
@@ -9641,6 +9687,60 @@ Content-Encoding: gzip\r\n\r\n"
         let request = Request::builder()
             .method(Method::POST)
             .uri(format!("/1,6e7a0c28{TEST_COOKIE:08x}"))
+            .header(header::CONTENT_TYPE, "multipart/form-data; boundary=b")
+            .header(
+                CONTENT_CRC32C_HEADER,
+                encode_content_crc32c(crc32c::crc32c(payload.as_bytes())),
+            )
+            .body(Body::from(body))
+            .unwrap();
+        let response = super::super::volume_server::build_admin_router(state)
+            .oneshot(request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+    }
+
+    #[test]
+    fn test_extended_file_name() {
+        assert_eq!(
+            extended_file_name("form-data; filename*=utf-8''caf%C3%A9.txt; name=file"),
+            Some("café.txt".to_string())
+        );
+        assert_eq!(
+            extended_file_name("form-data; name=file; FILENAME*=US-ASCII'en'a%20b.txt"),
+            Some("a b.txt".to_string())
+        );
+        for value in [
+            "form-data; filename=\"a.txt\"; name=file",
+            "form-data; filename*=iso-8859-1''caf%E9.txt",
+            "form-data; filename*=utf-8''bad%G1",
+            "form-data; filename*=utf-8''cut%C",
+            "form-data; filename*=utf-8''%FF",
+            "form-data; filename*=caf%C3%A9.txt",
+        ] {
+            assert_eq!(extended_file_name(value), None, "{value}");
+        }
+    }
+
+    /// Go's uploader names a non-ASCII file with `filename*`; the part is
+    /// still found as the file, after a part without a filename.
+    #[tokio::test]
+    async fn http_multipart_reads_the_extended_filename() {
+        use tower::ServiceExt;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let state = volume_test_state(&tmp);
+        let payload = "caf\u{e9} chunk bytes ".repeat(64);
+        let gzipped = try_gzip_data(payload.as_bytes()).unwrap();
+        let mut body = b"--b\r\nContent-Disposition: form-data; name=\"note\"\r\n\r\nx\r\n\
+--b\r\nContent-Disposition: form-data; filename*=utf-8''caf%C3%A9.txt; name=file\r\n\
+Content-Encoding: gzip\r\n\r\n"
+            .to_vec();
+        body.extend_from_slice(&gzipped);
+        body.extend_from_slice(b"\r\n--b--\r\n");
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/1,6e7a0c29{TEST_COOKIE:08x}"))
             .header(header::CONTENT_TYPE, "multipart/form-data; boundary=b")
             .header(
                 CONTENT_CRC32C_HEADER,
