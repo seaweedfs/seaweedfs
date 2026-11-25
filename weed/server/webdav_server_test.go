@@ -69,6 +69,11 @@ func TestToFileInfoETag(t *testing.T) {
 	if etag := toFileInfo("/f", file("XUFAKrxLKna5cZ2REBfFkg==", "XUFAKrxLKna5cZ2REBfFkg==")).etag; etag == "" {
 		t.Error("chunks with digests got no etag")
 	}
+	inline := file()
+	inline.Content = []byte("hello")
+	if etag := toFileInfo("/f", inline).etag; etag != "" {
+		t.Errorf("inline content without md5 got etag %q; every inline file would share it", etag)
+	}
 	withMd5 := file("")
 	withMd5.Attributes.Md5 = []byte{0xab}
 	if etag := toFileInfo("/f", withMd5).etag; etag != "ab" {

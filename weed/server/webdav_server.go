@@ -753,9 +753,13 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 }
 
 // contentETag is the filer ETag when it tells contents apart: one built from
-// chunks stored without a digest is shared by every file with as many chunks.
+// chunks stored without a digest is shared by every file with as many chunks,
+// and one for inline content by every inline file.
 func contentETag(entry *filer_pb.Entry) string {
 	if entry.Attributes == nil || entry.Attributes.Md5 == nil {
+		if len(entry.Content) > 0 {
+			return ""
+		}
 		for _, chunk := range entry.GetChunks() {
 			if chunk.ETag == "" {
 				return ""
