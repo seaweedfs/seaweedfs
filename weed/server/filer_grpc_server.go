@@ -1334,10 +1334,10 @@ func checkAppendStoredRepresentation(entry *filer.Entry, chunks []*filer_pb.File
 		return nil
 	}
 	if len(entry.Content) > 0 {
-		return errors.New("filer: cannot append chunks to an inline entry")
+		return status.Error(codes.FailedPrecondition, "filer: cannot append chunks to an inline entry")
 	}
 	if entry.IsInRemoteOnly() {
-		return errors.New("filer: cannot append chunks to a remote-only entry")
+		return status.Error(codes.FailedPrecondition, "filer: cannot append chunks to a remote-only entry")
 	}
 	return nil
 }

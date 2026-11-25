@@ -17,6 +17,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -53,9 +55,8 @@ func TestAppendToEntryRefusesInlineContentBeforeChangingReadData(t *testing.T) {
 	store.afterOp = func(op string, _ util.FullPath) { operations = append(operations, op) }
 
 	_, err := fs.AppendToEntry(context.Background(), appendRepresentationRequest("/data", "append.txt"))
-	if err == nil || !strings.Contains(err.Error(), "cannot append chunks to an inline entry") {
-		t.Fatalf("AppendToEntry inline error = %v, want a clear representation refusal", err)
-	}
+	require.Equal(t, "filer: cannot append chunks to an inline entry", status.Convert(err).Message())
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	stored, findErr := fs.filer.FindEntry(context.Background(), appendRepresentationPath)
 	require.NoError(t, findErr)
@@ -121,9 +122,8 @@ func TestAppendToEntryRemoteRefusalKeepsTheRealRemoteReadPath(t *testing.T) {
 	store.afterOp = func(op string, _ util.FullPath) { operations = append(operations, op) }
 
 	_, err := fs.AppendToEntry(context.Background(), appendRepresentationRequest("/buckets/b", "append.txt"))
-	if err == nil || !strings.Contains(err.Error(), "cannot append chunks to a remote-only entry") {
-		t.Fatalf("AppendToEntry remote-only error = %v, want a clear representation refusal", err)
-	}
+	require.Equal(t, "filer: cannot append chunks to a remote-only entry", status.Convert(err).Message())
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	stored, findErr := fs.filer.FindEntry(context.Background(), path)
 	require.NoError(t, findErr)
