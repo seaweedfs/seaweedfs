@@ -9,7 +9,9 @@ import (
 
 func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles *IntervalList[*VisibleInterval]) {
 
-	var points []*Point
+	// Allocate all points at once. pointStore is never grown, so the pointers stay valid.
+	pointStore := make([]Point, 0, 2*len(chunks))
+	points := make([]*Point, 0, 2*len(chunks))
 	for i, chunk := range chunks {
 		if chunk.IsChunkManifest {
 			println("This should not happen! A manifest chunk found:", chunk.GetFileIdString())
@@ -18,20 +20,20 @@ func readResolvedChunks(chunks []*filer_pb.FileChunk, startOffset int64, stopOff
 		if start >= stop {
 			continue
 		}
-		points = append(points, &Point{
+		pointStore = append(pointStore, Point{
 			x:       chunk.Offset,
 			ts:      chunk.ModifiedTsNs,
 			order:   i,
 			chunk:   chunk,
 			isStart: true,
-		})
-		points = append(points, &Point{
+		}, Point{
 			x:       chunk.Offset + int64(chunk.Size),
 			ts:      chunk.ModifiedTsNs,
 			order:   i,
 			chunk:   chunk,
 			isStart: false,
 		})
+		points = append(points, &pointStore[len(pointStore)-2], &pointStore[len(pointStore)-1])
 	}
 	slices.SortFunc(points, func(a, b *Point) int {
 		if a.x != b.x {
