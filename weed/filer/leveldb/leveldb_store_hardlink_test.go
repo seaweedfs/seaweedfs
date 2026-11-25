@@ -103,3 +103,33 @@ func TestTwoClientsLinkingOneFileAreBothCounted(t *testing.T) {
 		t.Fatalf("the file's record after its last name went: %v", err)
 	}
 }
+
+// A link id is random bytes and can start as the keys of the root's entries
+// do here: the root still lists.
+func TestRootListsWithALinkIdLikeItsKeys(t *testing.T) {
+	testFiler := filer.NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", 255, nil)
+	store := &LevelDBStore{}
+	if err := store.initialize(t.TempDir()); err != nil {
+		t.Fatalf("initialize leveldb: %v", err)
+	}
+	t.Cleanup(store.Shutdown)
+	testFiler.SetStore(store)
+	ctx := context.Background()
+
+	id := filer.HardLinkId("/\x00abcdefghijklmn\x01")
+	for _, p := range []util.FullPath{"/d/x", "/d/y"} {
+		entry := &filer.Entry{
+			FullPath:        p,
+			Attr:            filer.Attr{Mode: 0644, Mtime: time.Unix(1700000000, 0)},
+			Chunks:          []*filer_pb.FileChunk{{FileId: "3,0c03", Size: 4}},
+			HardLinkId:      id,
+			HardLinkCounter: 2,
+		}
+		if err := testFiler.CreateEntry(ctx, entry, nil, false, false, nil, false, testFiler.MaxFilenameLength); err != nil {
+			t.Fatalf("create %s: %v", p, err)
+		}
+	}
+	if _, err := store.ListDirectoryEntries(ctx, "/", "", true, 100, func(*filer.Entry) (bool, error) { return true, nil }); err != nil {
+		t.Fatalf("list /: %v", err)
+	}
+}

@@ -144,8 +144,12 @@ type linkNames struct {
 	recorded int32 // the names recorded now; -1: none
 }
 
+// linkNamesKey does not start with the random link id, which may start as a
+// directory's entry keys do in a store keyed by path (etcd, leveldb) and be
+// listed there. The prefix is short: the id stays in the first 8 bytes that
+// SQL and Cassandra split off as the key's directory.
 func linkNamesKey(hardLinkId HardLinkId) []byte {
-	return append(append(make([]byte, 0, len(hardLinkId)+6), hardLinkId...), "/names"...)
+	return append([]byte("names."), hardLinkId...)
 }
 
 // readLinkNames reads the names counted for hardLinkId; known is false where
