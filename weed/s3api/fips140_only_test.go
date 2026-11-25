@@ -216,6 +216,9 @@ func policyV4Form(cred *Credential) http.Header {
 }
 
 func TestFIPS140OnlyShortSecret(t *testing.T) {
+	if fips140.Enforced() {
+		t.Skip("GODEBUG=fips140=only panics signing the fixtures with a 9-character secret")
+	}
 	short := &Credential{AccessKey: "AKIASHORTSECRET0001", SecretKey: "abcd12345"}
 	ten := &Credential{AccessKey: "AKIATENSECRET000001", SecretKey: "abcd123456"}
 	iam := &IdentityAccessManagement{accessKeyIdent: map[string]*Identity{}}
