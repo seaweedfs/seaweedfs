@@ -44,6 +44,7 @@ func buildVerifyFixture(t *testing.T, count int) (string, []verifyFixtureNeedle)
 	}
 
 	var layout []verifyFixtureNeedle
+	var lastAppendAtNs uint64
 	for i := 1; i <= count; i++ {
 		n := new(needle.Needle)
 		n.Id = types.Uint64ToNeedleId(uint64(i))
@@ -53,6 +54,9 @@ func buildVerifyFixture(t *testing.T, count int) (string, []verifyFixtureNeedle)
 			t.Fatal(err)
 		}
 		n.Checksum = needle.NewCRC(n.Data)
+		// stamp every record the way the volume server does
+		n.UpdateAppendAtNs(lastAppendAtNs)
+		lastAppendAtNs = n.AppendAtNs
 		offset, _, actual, err := n.Append(datBackend, version)
 		if err != nil {
 			t.Fatal(err)
@@ -61,6 +65,7 @@ func buildVerifyFixture(t *testing.T, count int) (string, []verifyFixtureNeedle)
 	}
 	del := new(needle.Needle)
 	del.Id = types.Uint64ToNeedleId(1)
+	del.UpdateAppendAtNs(lastAppendAtNs)
 	offset, _, actual, err := del.Append(datBackend, version)
 	if err != nil {
 		t.Fatal(err)

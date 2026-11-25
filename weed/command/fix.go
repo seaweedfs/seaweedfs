@@ -159,7 +159,8 @@ func runFix(cmd *Command, args []string) bool {
 				collection = baseFileName[:sepIndex]
 				volumeIdStr = baseFileName[sepIndex+1:]
 			}
-			volumeId, parseErr := strconv.ParseInt(volumeIdStr, 10, 64)
+			parsedId, parseErr := strconv.ParseUint(volumeIdStr, 10, 32)
+			volumeId := int64(parsedId)
 			if parseErr != nil {
 				fmt.Printf("Failed to parse volume id from %s: %v\n", baseFileName, parseErr)
 				return false
@@ -297,7 +298,14 @@ func doFixOneVolume(basepath string, baseFileName string, collection string, vol
 	indexFileName := path.Join(basepath, baseFileName+".idx")
 
 	if *fixVerify {
-		doFixOneVolumeVerified(basepath, baseFileName, volumeId, indexFileName)
+		if err := doFixOneVolumeVerified(basepath, baseFileName, volumeId, indexFileName); err != nil {
+			if *fixIgnoreError {
+				glog.Error(err)
+				SetCommandExitStatus(1)
+				return
+			}
+			glog.Fatal(err)
+		}
 		return
 	}
 

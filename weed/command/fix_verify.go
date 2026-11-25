@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -99,11 +100,34 @@ type datVerifySummary struct {
 	ZeroBytes   int64
 	TailGarbage bool
 	Warnings    int
+	// DamagedRecords are the records whose header still parsed inside a damaged region.
+	DamagedRecords []damagedRecord
+}
+
+// damagedRecord is a key whose record at Offset could not be verified.
+type damagedRecord struct {
+	Key    types.NeedleId
+	Offset int64
+}
+
+// staleVersionWarnings reports keys whose newest record was damaged while an
+// older copy of the same key made it into the rebuilt index.
+func staleVersionWarnings(nm *needle_map.MemDb, damaged []damagedRecord) []datAnomaly {
+	var warnings []datAnomaly
+	for _, d := range damaged {
+		v, ok := nm.Get(d.Key)
+		if !ok || v.Offset.ToActualOffset() >= d.Offset {
+			continue
+		}
+		warnings = append(warnings, datAnomaly{Offset: d.Offset, Kind: "stale-version",
+			Detail: fmt.Sprintf("key=%s: the record at %d is damaged, the rebuilt index points at the older copy at %d", d.Key, d.Offset, v.Offset.ToActualOffset())})
+	}
+	return warnings
 }
 
 // datWindow serves small reads out of a large sequential window.
 type datWindow struct {
-	f    *os.File
+	f    io.ReaderAt
 	size int64
 	buf  []byte
 	off  int64
@@ -133,7 +157,7 @@ func (w *datWindow) readAt(p []byte, off int64) error {
 }
 
 type datVerifier struct {
-	f              *os.File
+	f              io.ReaderAt
 	vid            needle.VolumeId
 	version        needle.Version
 	base           int64
@@ -149,8 +173,10 @@ type datVerifier struct {
 
 // readNeedleAt reads and fully verifies the needle at off. When the header
 // parsed but the rest did not, the partially filled needle is returned with the
-// error so callers can report which file id was hit.
-func (s *datVerifier) readNeedleAt(off int64) (n *needle.Needle, disk int64, err error) {
+// error so callers can report which file id was hit. bounded applies
+// -maxNeedleSizeMB, which only limits guesses made while resynchronising: a
+// record reached at a known boundary may be as large as the file allows.
+func (s *datVerifier) readNeedleAt(off int64, bounded bool) (n *needle.Needle, disk int64, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			disk, err = 0, fmt.Errorf("needle parse panic: %v", r)
@@ -165,7 +191,7 @@ func (s *datVerifier) readNeedleAt(off int64) (n *needle.Needle, disk int64, err
 	if n.Id == 0 {
 		return nil, 0, errZeroNeedleId
 	}
-	if n.Size < 0 || int64(n.Size) > s.opts.maxNeedleSize {
+	if n.Size < 0 || (bounded && int64(n.Size) > s.opts.maxNeedleSize) {
 		return n, 0, fmt.Errorf("implausible size %d", n.Size)
 	}
 	disk = needle.GetActualSize(n.Size, s.version)
@@ -183,7 +209,44 @@ func (s *datVerifier) readNeedleAt(off int64) (n *needle.Needle, disk int64, err
 	if err = n.ReadNeedleBodyBytes(body, s.version); err != nil {
 		return n, 0, err
 	}
+	if err = checkRecordFields(n, s.version); err != nil {
+		return n, 0, err
+	}
 	return n, disk, nil
+}
+
+// checkRecordFields rejects a v2/v3 record whose parsed fields do not add up
+// to its size. The writer only stores the data length and the fields after it
+// when there is data, so a live record always has data, and the CRC check
+// only runs when it does: a zero fill over the data length would otherwise
+// pass as an empty file.
+func checkRecordFields(n *needle.Needle, version needle.Version) error {
+	if version == needle.Version1 || n.Size <= 0 {
+		return nil
+	}
+	if n.DataSize == 0 {
+		return fmt.Errorf("record of size %d carries no data", n.Size)
+	}
+	fields := 4 + int64(n.DataSize) + 1
+	if n.HasName() {
+		fields += 1 + int64(n.NameSize)
+	}
+	if n.HasMime() {
+		fields += 1 + int64(n.MimeSize)
+	}
+	if n.HasLastModifiedDate() {
+		fields += needle.LastModifiedBytesLength
+	}
+	if n.HasTtl() {
+		fields += needle.TtlBytesLength
+	}
+	if n.HasPairs() {
+		fields += 2 + int64(n.PairsSize)
+	}
+	if fields != int64(n.Size) {
+		return fmt.Errorf("record size %d does not match its fields (%d bytes)", n.Size, fields)
+	}
+	return nil
 }
 
 // candidateOK decides whether the bytes at off look like the start of a real
@@ -219,29 +282,45 @@ func (s *datVerifier) candidateOK(h *needle.Needle, chunk []byte, i int, off int
 			return false
 		}
 	}
-	n, _, err := s.readNeedleAt(off)
+	n, disk, err := s.readNeedleAt(off, true)
 	if err != nil {
 		return false
 	}
 	if len(n.Data) > 0 {
 		return true // the payload CRC matched; a false positive is not realistic
 	}
-	// No payload to checksum. Only a tombstone as the volume server writes it (size 0) may be
-	// accepted without a verifiable successor, and then only at the very end of the file; a
-	// timestamp that is set but not believable rejects it. Any other payload-less needle needs
-	// the next needle to verify.
+	// No payload to checksum: only a delete record (size 0) gets here, since a
+	// live record without data fails checkRecordFields. A v3 delete record
+	// carries its append time: one that is believable, not older than the last
+	// verified record and followed by zero padding stands on its own, so a
+	// delete is not lost when the bytes after it are damaged too. Otherwise the
+	// record needs the end of the file or a verifiable successor.
 	end := off + disk
 	if h.Size == 0 {
 		stamped := s.version != needle.Version3 || n.AppendAtNs != 0
-		if s.version == needle.Version3 && stamped && !plausibleAppendAtNs(n.AppendAtNs) {
-			return false
+		if s.version == needle.Version3 && n.AppendAtNs != 0 {
+			if !plausibleAppendAtNs(n.AppendAtNs) {
+				return false
+			}
+			if n.AppendAtNs >= s.lastAppendAtNs && allZero(s.body[needle.NeedleChecksumSize+types.TimestampSize:disk-types.NeedleHeaderSize]) {
+				return true
+			}
 		}
 		if end == s.size || (stamped && s.size-end < types.NeedleHeaderSize) {
 			return true
 		}
 	}
-	_, _, err = s.readNeedleAt(end)
+	_, _, err = s.readNeedleAt(end, false)
 	return err == nil
+}
+
+func allZero(b []byte) bool {
+	for _, c := range b {
+		if c != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // plausibleAppendAtNs tells a real append timestamp (v3 needles) from garbage.
@@ -252,7 +331,7 @@ func plausibleAppendAtNs(ns uint64) bool {
 
 // findNext scans from the given offset at needle alignment for the next
 // offset where a needle verifies. It returns -1 when none is left.
-func (s *datVerifier) findNext(from int64) int64 {
+func (s *datVerifier) findNext(from int64) (int64, error) {
 	p := from
 	if r := (p - s.base) % types.NeedlePaddingSize; r != 0 {
 		p += types.NeedlePaddingSize - r
@@ -262,7 +341,7 @@ func (s *datVerifier) findNext(from int64) int64 {
 	for p+types.NeedleHeaderSize <= s.size {
 		n, err := s.f.ReadAt(chunk, p)
 		if err != nil && err != io.EOF {
-			return -1
+			return -1, fmt.Errorf("read at %d while searching for the next needle: %w", p, err)
 		}
 		i := 0
 		for ; i+types.NeedleHeaderSize <= n; i += types.NeedlePaddingSize {
@@ -271,7 +350,7 @@ func (s *datVerifier) findNext(from int64) int64 {
 				continue
 			}
 			if off := p + int64(i); s.candidateOK(&probe, chunk[:n], i, off) {
-				return off
+				return off, nil
 			}
 		}
 		if n < len(chunk) || i == 0 {
@@ -279,7 +358,7 @@ func (s *datVerifier) findNext(from int64) int64 {
 		}
 		p += int64(i)
 	}
-	return -1
+	return -1, nil
 }
 
 type regionStats struct {
@@ -362,6 +441,7 @@ func (s *datVerifier) recordBad(start, end int64, tail bool, cause error, hit *n
 		cause, st.zeroBytes, st.zeroWindows, st.windows, s.opts.zeroWindow, st.longestZeroRun, st.head)
 	if hit != nil && hit.Id != 0 {
 		detail += fmt.Sprintf(" header=fid:%s,size:%d", needle.NewFileIdFromNeedle(s.vid, hit).String(), hit.Size)
+		s.sum.DamagedRecords = append(s.sum.DamagedRecords, damagedRecord{Key: hit.Id, Offset: start})
 	}
 	s.anomalies = append(s.anomalies, datAnomaly{Offset: start, Length: length, Kind: kind, Detail: detail})
 	s.sum.BadRegions++
@@ -433,7 +513,7 @@ func verifyDatFileWith(datName string, vid needle.VolumeId, opts datVerifyOption
 			}
 			break
 		}
-		n, disk, err := s.readNeedleAt(pos)
+		n, disk, err := s.readNeedleAt(pos, false)
 		if err == nil {
 			if n.Size.IsValid() {
 				s.sum.Needles++
@@ -456,7 +536,10 @@ func verifyDatFileWith(datName string, vid needle.VolumeId, opts datVerifyOption
 			pos += disk
 			continue
 		}
-		next := s.findNext(pos + types.NeedlePaddingSize)
+		next, ferr := s.findNext(pos + types.NeedlePaddingSize)
+		if ferr != nil {
+			return nil, nil, ferr
+		}
 		if next < 0 {
 			s.recordBad(pos, s.size, true, err, n)
 			s.sum.TailGarbage = true
@@ -500,8 +583,12 @@ func truncateDatTail(datName string, cleanEnd int64) error {
 			}
 		}
 		off += int64(n)
-		if rerr != nil {
+		if rerr == io.EOF {
 			break
+		}
+		if rerr != nil {
+			// a tail that cannot be read cannot be shown to be zeros, so it is not cut
+			return fmt.Errorf("read the tail at %d: %w", off, rerr)
 		}
 	}
 	if nonZero {
@@ -515,6 +602,7 @@ func truncateDatTail(datName string, cleanEnd int64) error {
 			err = cerr
 		}
 		if err != nil {
+			os.Remove(bak)
 			return fmt.Errorf("write tail backup %s: %w", bak, err)
 		}
 		fmt.Printf("saved %d bytes cut from the tail to %s\n", st.Size()-cleanEnd, bak)
@@ -522,14 +610,17 @@ func truncateDatTail(datName string, cleanEnd int64) error {
 	return f.Truncate(cleanEnd)
 }
 
-func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64, indexFileName string) {
+// doFixOneVolumeVerified rebuilds the .idx of one volume from the needles that
+// verify, resynchronising past damaged regions. Errors are returned so the
+// caller can honour -ignoreError and move on to the next volume.
+func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64, indexFileName string) error {
 	if *fixRemoteFile {
-		glog.Fatalf("-verify reads the local .dat and cannot be combined with -remoteFile")
+		return fmt.Errorf("-verify reads the local .dat and cannot be combined with -remoteFile")
 	}
-	if volumeId < 0 || volumeId > 0xFFFFFFFF {
-		glog.Fatalf("volume ID out of range: %d", volumeId)
+	vid, err := needle.NewVolumeId(strconv.FormatInt(volumeId, 10))
+	if err != nil {
+		return fmt.Errorf("volume ID out of range: %d", volumeId)
 	}
-	vid := needle.VolumeId(volumeId)
 	datName := path.Join(basepath, baseFileName+".dat")
 
 	// A .cpc marker means an interrupted vacuum commit is pending: the volume
@@ -537,13 +628,7 @@ func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64
 	// back orphan .cpd/.cpx without it). Writing a rebuilt .idx here would race
 	// that decision, so make the operator settle it first.
 	if cpcPath := strings.TrimSuffix(datName, ".dat") + ".cpc"; util.FileExists(cpcPath) {
-		err := fmt.Errorf("volume %d: a compaction commit is pending (%s); start the volume server once so it reconciles the interrupted vacuum, then re-run", volumeId, cpcPath)
-		if *fixIgnoreError {
-			glog.Error(err)
-			SetCommandExitStatus(1)
-			return
-		}
-		glog.Fatal(err)
+		return fmt.Errorf("volume %d: a compaction commit is pending (%s); start the volume server once so it reconciles the interrupted vacuum, then re-run", volumeId, cpcPath)
 	}
 
 	nm := needle_map.NewMemDb()
@@ -560,19 +645,22 @@ func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64
 	started := time.Now()
 	sum, anomalies, err := verifyDatFileWith(datName, vid, opts, visitor)
 	if err != nil {
-		glog.Fatalf("verify %s: %v", datName, err)
+		return fmt.Errorf("verify %s: %w", datName, err)
 	}
+	stale := staleVersionWarnings(nm, sum.DamagedRecords)
+	sum.Warnings += len(stale)
+	anomalies = append(anomalies, stale...)
 
 	printAnomalies(volumeId, anomalies)
 	printVerifySummary(volumeId, sum, time.Since(started))
 
 	if *fixDryRun {
-		return
+		return nil
 	}
 	if sum.TailGarbage {
 		if *fixTruncateTail {
 			if err := truncateDatTail(datName, sum.CleanEnd); err != nil {
-				glog.Fatalf("truncate %s: %v", datName, err)
+				return fmt.Errorf("truncate %s: %w", datName, err)
 			}
 			fmt.Printf("volume %d: truncated %s to %d bytes\n", volumeId, datName, sum.CleanEnd)
 		} else {
@@ -580,19 +668,45 @@ func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64
 				volumeId, sum.FileSize-sum.CleanEnd)
 		}
 	}
+	if err := installRebuiltIndex(scanner, indexFileName, volumeId); err != nil {
+		return err
+	}
+	printIdxDirHint(volumeId)
+	return nil
+}
 
-	// keep the old index around: a rebuilt index only knows what survived in .dat
+// installRebuiltIndex writes the rebuilt index to a staging file first and
+// swaps it in only once it is complete, keeping the previous index as .bak (a
+// rebuilt index only knows what survived in .dat). A .ldb cache next to the
+// index describes the old index, so it is dropped and the volume server
+// rebuilds it from the new one.
+func installRebuiltIndex(scanner *VolumeFileScanner4Fix, indexFileName string, volumeId int64) error {
+	staged := indexFileName + ".tmp"
+	if err := SaveToIdx(scanner, staged); err != nil {
+		os.Remove(staged)
+		return fmt.Errorf("save to .idx File: %v", strings.TrimSpace(err.Error()))
+	}
 	if _, statErr := os.Stat(indexFileName); statErr == nil {
 		bak := backupName(indexFileName)
 		if err := os.Rename(indexFileName, bak); err != nil {
-			glog.Fatalf("back up %s: %v", indexFileName, err)
+			os.Remove(staged)
+			return fmt.Errorf("back up %s: %w", indexFileName, err)
 		}
 		fmt.Printf("volume %d: previous index saved as %s\n", volumeId, bak)
 	}
-	if err := SaveToIdx(scanner, indexFileName); err != nil {
-		glog.Fatalf("save to .idx File: %v", strings.TrimSpace(err.Error()))
+	if err := os.Rename(staged, indexFileName); err != nil {
+		return fmt.Errorf("install %s as %s (the previous index is in its .bak): %w", staged, indexFileName, err)
 	}
-	printIdxDirHint(volumeId)
+	if err := util.FsyncDir(path.Dir(indexFileName)); err != nil {
+		glog.Warningf("sync directory of %s: %v", indexFileName, err)
+	}
+	if ldb := strings.TrimSuffix(indexFileName, ".idx") + ".ldb"; util.FileExists(ldb) || util.FolderExists(ldb) {
+		if err := os.RemoveAll(ldb); err != nil {
+			return fmt.Errorf("remove the stale %s (delete it before starting the volume server): %w", ldb, err)
+		}
+		fmt.Printf("volume %d: removed the stale %s; the volume server rebuilds it from the new index\n", volumeId, ldb)
+	}
+	return nil
 }
 
 // printIdxDirHint reminds the operator that a volume server started with a
