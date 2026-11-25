@@ -217,3 +217,31 @@ func TestDeleteMarkerRechecksTheEntryItDeletes(t *testing.T) {
 	require.Contains(t, owner.entries, "/buckets/b/album", "album/ removed the object album")
 	require.Zero(t, owner.deletes)
 }
+
+// A delete the failover sends to a filer without the marker the read found
+// would be passed on to the key's write owner, which applies it unchecked and
+// may hold "album" with uploaded data.
+func TestDeleteMarkerSendsNoDeleteToAFilerThatMisses(t *testing.T) {
+	bucketEntry := &filer_pb.Entry{Name: "b", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}}
+	connected := &markerFiler{anonymousReadFiler: anonymousReadFiler{entries: map[string]*filer_pb.Entry{
+		"/buckets/b":       bucketEntry,
+		"/buckets/b/album": {Name: "album", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mime: "application/octet-stream"}},
+	}}}
+	lookups := 0
+	connected.onLookup = func() {
+		if lookups++; lookups > 1 {
+			delete(connected.entries, "/buckets/b/album")
+		}
+	}
+	connectedAddr := startFakeFiler(t, connected)
+	ownerAddr := closedFilerAddress(t)
+	s3a := newPutTestServer(t, connectedAddr, ownerAddr)
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b"})
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, connectedAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{ownerAddr}, 1)
+
+	r := httptest.NewRequest(http.MethodDelete, "/b/album/", nil)
+	require.Equal(t, s3err.ErrInternalError, s3a.deleteDirectoryMarker(r, "b", "album/"))
+	require.Zero(t, connected.deletes, "a filer that missed the marker was sent the delete")
+}

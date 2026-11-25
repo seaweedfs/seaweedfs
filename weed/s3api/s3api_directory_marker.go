@@ -124,20 +124,23 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 
 	// Each delete checks the entry of the filer it runs on, which a failover can
 	// make another filer than the one read above. A nonempty marker is demoted by
-	// a read and an update that must find it there too.
+	// a read and an update that must find it there too. A filer that misses is
+	// not sent the delete: it would pass it on to the key's write owner, which
+	// applies it without these checks.
 	refused := s3err.ErrNone
+	missed := false
 	deleteMarker := func(client filer_pb.SeaweedFilerClient) error {
 		resp, lookupErr := filer_pb.LookupEntry(r.Context(), client, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: name})
 		switch {
 		case errors.Is(lookupErr, filer_pb.ErrNotFound):
-			// The filer sends a delete it misses on to the key's write owner.
+			missed = true
+			return nil
 		case lookupErr != nil:
 			return lookupErr
-		default:
-			if remove, code := s3a.checkDirectoryMarker(resp.Entry, bucket, object, governanceBypassAllowed); !remove {
-				refused = code
-				return nil
-			}
+		}
+		if remove, code := s3a.checkDirectoryMarker(resp.Entry, bucket, object, governanceBypassAllowed); !remove {
+			refused = code
+			return nil
 		}
 		return s3a.deleteUnversionedObjectWithClient(r.Context(), client, bucket, object, false)
 	}
@@ -145,8 +148,16 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 		glog.Errorf("deleteDirectoryMarker: failed to delete %s/%s: %v", bucket, object, err)
 		return s3err.ErrInternalError
 	}
-	if refused != s3err.ErrNone || priorOwner == "" {
+	if refused != s3err.ErrNone {
 		return refused
+	}
+	if priorOwner == "" {
+		if missed {
+			// The entry read above is on a filer this delete did not reach.
+			glog.Errorf("deleteDirectoryMarker: %s/%s is not on the filer the delete reached", bucket, object)
+			return s3err.ErrInternalError
+		}
+		return s3err.ErrNone
 	}
 	if err := pb.WithFilerClient(false, 0, priorOwner, s3a.option.GrpcDialOption, deleteMarker); err != nil {
 		glog.Errorf("deleteDirectoryMarker: failed to delete %s/%s on prior owner %s: %v", bucket, object, priorOwner, err)
