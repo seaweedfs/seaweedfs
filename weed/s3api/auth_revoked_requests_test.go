@@ -346,3 +346,53 @@ func TestAbortRevokedHTTP2Upload(t *testing.T) {
 	}
 	assert.NoError(t, downloadResult(t, alice, 5*time.Second), "alice's stream on the same connection")
 }
+
+// A revoked HTTP/2 download blocked writing to a client that stopped reading
+// has its stream reset, also behind the gateway's request tracking.
+func TestAbortRevokedHTTP2DownloadBlockedWriting(t *testing.T) {
+	iam := newRevokeIAM(t, revokeIdentity("bob", revokeKeyB, revokeSecretB, "Read:bkt"))
+	started := make(chan struct{}, 1)
+	written := make(chan error, 1)
+	writeUntilError := func(w http.ResponseWriter, r *http.Request) {
+		started <- struct{}{}
+		chunk := make([]byte, 64*1024)
+		for {
+			if _, err := w.Write(chunk); err != nil {
+				written <- err
+				return
+			}
+		}
+	}
+	router := mux.NewRouter()
+	router.Methods(http.MethodGet).Path("/{bucket}/{object:.+}").HandlerFunc(track(iam.Auth(writeUntilError, s3_constants.ACTION_READ), "GET"))
+	server := httptest.NewUnstartedServer(router)
+	server.EnableHTTP2 = true
+	server.Config.ConnContext = util.ConnContext
+	server.StartTLS()
+	t.Cleanup(server.Close)
+
+	get, err := newTestRequest(http.MethodGet, server.URL+"/bkt/object", 0, nil)
+	require.NoError(t, err)
+	require.NoError(t, signRequestV4(get, revokeKeyB, revokeSecretB))
+	resp, err := server.Client().Transport.RoundTrip(get)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	require.Equal(t, "HTTP/2.0", resp.Proto)
+	waitStarted(t, started, 1)
+	select {
+	case err := <-written:
+		t.Fatalf("the download stopped writing before the revoke: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	require.NoError(t, iam.ReplaceS3ApiConfiguration(&iam_pb.S3ApiConfiguration{Identities: []*iam_pb.Identity{
+		revokeIdentity("bob", revokeKeyB, revokeSecretB),
+	}}))
+
+	select {
+	case err := <-written:
+		assert.Error(t, err, "bob lost Read")
+	case <-time.After(time.Second):
+		t.Fatal("bob's download is still blocked writing")
+	}
+}

@@ -73,9 +73,10 @@ type inFlightRequest struct {
 	cancel    context.CancelFunc
 	// An HTTP/1.x request is aborted by closing its connection. An HTTP/2
 	// connection carries other streams, so such a request has its context
-	// canceled and its body closed instead.
-	conn net.Conn
-	body io.Closer
+	// canceled, its body closed and its stream reset instead.
+	conn   net.Conn
+	body   io.Closer
+	stream *http.ResponseController
 }
 
 func newInFlightRequests() *inFlightRequests {
@@ -121,6 +122,7 @@ func (iam *IdentityAccessManagement) abortWhenRevoked(f http.HandlerFunc, identi
 			req.conn = util.ConnFromContext(ctx)
 		} else {
 			req.body = r.Body
+			req.stream = http.NewResponseController(w)
 		}
 		tracked.add(req)
 		defer tracked.remove(req)
@@ -280,8 +282,15 @@ func (t *inFlightRequests) abort(req *inFlightRequest) bool {
 	req.cancel()
 	if req.conn != nil {
 		_ = req.conn.Close()
-	} else if req.body != nil {
+		return true
+	}
+	if req.body != nil {
 		_ = req.body.Close()
+	}
+	if req.stream != nil {
+		// A deadline in the past resets the stream, releasing a write blocked
+		// on a client that stopped reading.
+		_ = req.stream.SetWriteDeadline(time.Now())
 	}
 	return true
 }
