@@ -106,6 +106,9 @@ func (r *Plugin) loadPersistedMonitorState() error {
 		activities = activities[len(activities)-maxActivityRecords:]
 	}
 	if len(activities) > 0 {
+		for i := range activities {
+			redactAdminScriptActivity(&activities[i])
+		}
 		r.activitiesMu.Lock()
 		r.activities = append([]JobActivity(nil), activities...)
 		r.activitiesMu.Unlock()
@@ -771,6 +774,13 @@ func stripTrackedJobDetailFields(job *TrackedJob) {
 	job.ResultOutputValues = nil
 }
 
+// StripJobDetailFields reduces a built detail to what job listings return.
+func StripJobDetailFields(detail *JobDetail) {
+	if detail != nil {
+		stripTrackedJobDetailFields(detail.Job)
+	}
+}
+
 func hasTrackedJobRichDetails(job TrackedJob) bool {
 	return strings.TrimSpace(job.Detail) != "" ||
 		len(job.Parameters) > 0 ||
@@ -837,6 +847,7 @@ func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobP
 
 	now := time.Now().UTC()
 	resolvedWorkerID := strings.TrimSpace(workerID)
+	jobType := update.JobType
 
 	if strings.TrimSpace(update.JobId) != "" {
 		r.jobsMu.Lock()
@@ -859,6 +870,7 @@ func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobP
 		if update.JobType != "" {
 			job.JobType = update.JobType
 		}
+		jobType = job.JobType
 		if update.RequestId != "" {
 			job.RequestID = update.RequestId
 		}
@@ -882,8 +894,15 @@ func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobP
 		r.dirtyJobs = true
 		r.jobsMu.Unlock()
 	}
+	if jobType == "" && update.RequestId != "" {
+		r.pendingExecutionMu.Lock()
+		if pending := r.pendingExecution[update.RequestId]; pending != nil {
+			jobType = pending.jobType
+		}
+		r.pendingExecutionMu.Unlock()
+	}
 
-	r.trackWorkerActivities(update.JobType, update.JobId, update.RequestId, resolvedWorkerID, update.Activities)
+	r.trackWorkerActivities(jobType, update.JobId, update.RequestId, resolvedWorkerID, update.Activities)
 	if update.Message != "" || update.Stage != "" {
 		source := "worker_progress"
 		if strings.TrimSpace(update.JobId) == "" {
@@ -891,7 +910,7 @@ func (r *Plugin) handleJobProgressUpdate(workerID string, update *plugin_pb.JobP
 		}
 		r.appendActivity(JobActivity{
 			JobID:      update.JobId,
-			JobType:    update.JobType,
+			JobType:    jobType,
 			RequestID:  update.RequestId,
 			WorkerID:   resolvedWorkerID,
 			Source:     source,
@@ -1290,7 +1309,7 @@ func (r *Plugin) trackWorkerActivities(jobType, jobID, requestID, workerID strin
 		if event.CreatedAt != nil {
 			timestamp = event.CreatedAt.AsTime().UTC()
 		}
-		r.appendActivity(JobActivity{
+		activity := JobActivity{
 			JobID:      jobID,
 			JobType:    jobType,
 			RequestID:  requestID,
@@ -1300,7 +1319,24 @@ func (r *Plugin) trackWorkerActivities(jobType, jobID, requestID, workerID strin
 			Stage:      event.Stage,
 			Details:    configValueMapToPlain(event.Details),
 			OccurredAt: timeToPtr(timestamp),
-		})
+		}
+		redactAdminScriptActivity(&activity)
+		r.appendActivity(activity)
+	}
+}
+
+// Older admin script workers logged each command with its arguments, which
+// can carry secrets; keep only the command name. A report whose job type is
+// unknown may come from one of them.
+func redactAdminScriptActivity(activity *JobActivity) {
+	jobType := strings.TrimSpace(activity.JobType)
+	if activity.Stage != "running" ||
+		activity.Source != strings.ToLower(plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR.String()) ||
+		(jobType != "" && !strings.EqualFold(jobType, adminScriptJobType)) {
+		return
+	}
+	if fields := strings.Fields(activity.Message); len(fields) > 1 {
+		activity.Message = fields[0]
 	}
 }
 

@@ -302,7 +302,7 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	pluginApi.HandleFunc("/scheduler-status", h.adminServer.GetPluginSchedulerStatusAPI).Methods(http.MethodGet)
 	pluginApi.HandleFunc("/job-types/{jobType}/descriptor", h.adminServer.GetPluginJobTypeDescriptorAPI).Methods(http.MethodGet)
 	pluginApi.HandleFunc("/job-types/{jobType}/schema", h.adminServer.RequestPluginJobTypeSchemaAPI).Methods(http.MethodPost)
-	pluginApi.HandleFunc("/job-types/{jobType}/config", h.adminServer.GetPluginJobTypeConfigAPI).Methods(http.MethodGet)
+	pluginApi.Handle("/job-types/{jobType}/config", wrapWrite(h.adminServer.GetPluginJobTypeConfigAPI)).Methods(http.MethodGet)
 	pluginApi.Handle("/job-types/{jobType}/config", wrapWrite(h.adminServer.UpdatePluginJobTypeConfigAPI)).Methods(http.MethodPut)
 	pluginApi.HandleFunc("/job-types/{jobType}/runs", h.adminServer.GetPluginRunHistoryAPI).Methods(http.MethodGet)
 	pluginApi.Handle("/job-types/{jobType}/detect", wrapWrite(h.adminServer.TriggerPluginDetectionAPI)).Methods(http.MethodPost)
