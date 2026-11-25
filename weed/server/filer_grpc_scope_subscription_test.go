@@ -27,10 +27,18 @@ const (
 
 type scopeSubscriptionGRPCHarness struct {
 	*subscribeHarness
-	client filer_pb.SeaweedFilerClient
+	client  filer_pb.SeaweedFilerClient
+	address string
 }
 
 func newScopeSubscriptionGRPCHarness(t *testing.T, token string) *scopeSubscriptionGRPCHarness {
+	t.Helper()
+	h := newScopeSubscriptionGRPCServer(t)
+	h.client = h.clientForToken(t, token)
+	return h
+}
+
+func newScopeSubscriptionGRPCServer(t *testing.T) *scopeSubscriptionGRPCHarness {
 	t.Helper()
 	h := newSubscribeHarness(t)
 	h.fs.filerGuard = security.NewGuard(nil, scopeSubscriptionFilerKey, 0, scopeSubscriptionFilerKey, 0, "", "")
@@ -58,7 +66,12 @@ func newScopeSubscriptionGRPCHarness(t *testing.T, token string) *scopeSubscript
 		_ = listener.Close()
 	})
 
-	conn, err := grpc.NewClient("passthrough:///"+listener.Addr().String(),
+	return &scopeSubscriptionGRPCHarness{subscribeHarness: h, address: listener.Addr().String()}
+}
+
+func (h *scopeSubscriptionGRPCHarness) clientForToken(t *testing.T, token string) filer_pb.SeaweedFilerClient {
+	t.Helper()
+	conn, err := grpc.NewClient("passthrough:///"+h.address,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithPerRPCCredentials(scopeToken(token)),
 	)
@@ -66,7 +79,7 @@ func newScopeSubscriptionGRPCHarness(t *testing.T, token string) *scopeSubscript
 		t.Fatalf("dial: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return &scopeSubscriptionGRPCHarness{subscribeHarness: h, client: filer_pb.NewSeaweedFilerClient(conn)}
+	return filer_pb.NewSeaweedFilerClient(conn)
 }
 
 func scopeSubscriptionToken(t *testing.T, lifetime time.Duration, allowed, readOnly []string) string {
@@ -257,8 +270,9 @@ func TestGeneralScopedSubscriptionFiltersFilerConfThroughFilerHandler(t *testing
 func TestGeneralScopedSubscriptionExpiresIdleAndActive(t *testing.T) {
 	for _, active := range []bool{false, true} {
 		t.Run(map[bool]string{false: "idle", true: "active"}[active], func(t *testing.T) {
+			h := newScopeSubscriptionGRPCServer(t)
 			token := scopeSubscriptionToken(t, 2*time.Second, []string{"/t"}, nil)
-			h := newScopeSubscriptionGRPCHarness(t, token)
+			h.client = h.clientForToken(t, token)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			stream, err := h.client.SubscribeLocalMetadata(ctx, &filer_pb.SubscribeMetadataRequest{

@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -58,23 +59,24 @@ func TestScopeFilterEventVisibility(t *testing.T) {
 		name, dir, oldName, newDir, newName   string
 		wantDir, wantOld, wantNew, wantParent string
 	}{
-		{name: "create", dir: "/visible", newName: "file", wantDir: "/visible", wantNew: "file"},
+		{name: "create", dir: "/visible", newName: "file", wantDir: "/visible", wantNew: "file", wantParent: "/visible"},
+		{name: "nested create", dir: "/visible/nested", newDir: "/visible/nested", newName: "report.txt", wantDir: "/visible/nested", wantNew: "report.txt", wantParent: "/visible/nested"},
 		{name: "delete", dir: "/visible", oldName: "file", wantDir: "/visible", wantOld: "file"},
-		{name: "update", dir: "/visible", oldName: "file", newName: "file", wantDir: "/visible", wantOld: "file", wantNew: "file"},
+		{name: "update", dir: "/visible", oldName: "file", newName: "file", wantDir: "/visible", wantOld: "file", wantNew: "file", wantParent: "/visible"},
 		{name: "outside", dir: "/other", newName: "file"},
 		{name: "prefix collision", dir: "/visible-other", newName: "file"},
 		{name: "unclean directory", dir: "/visible/../other", newName: "file"},
 		{name: "unclean name", dir: "/visible", newName: "../file"},
 		{name: "rename within", dir: "/visible", oldName: "old", newDir: "/visible/sub", newName: "new", wantDir: "/visible", wantOld: "old", wantNew: "new", wantParent: "/visible/sub"},
 		{name: "rename out", dir: "/visible", oldName: "old", newDir: "/other", newName: "new", wantDir: "/visible", wantOld: "old"},
-		{name: "rename in", dir: "/other", oldName: "old", newDir: "/visible", newName: "new", wantDir: "/visible", wantNew: "new"},
+		{name: "rename in", dir: "/other", oldName: "old", newDir: "/visible/nested", newName: "new", wantDir: "/visible/nested", wantNew: "new", wantParent: "/visible/nested"},
 		{name: "config create", dir: scopeFilerConfDir, newName: scopeFilerConfName},
 		{name: "config delete", dir: scopeFilerConfDir, oldName: scopeFilerConfName},
 		{name: "config update", dir: scopeFilerConfDir, oldName: scopeFilerConfName, newName: scopeFilerConfName},
 		{name: "config rename out", dir: scopeFilerConfDir, oldName: scopeFilerConfName, newDir: "/visible", newName: "copy"},
 		{name: "config rename in", dir: "/visible", oldName: "old", newDir: scopeFilerConfDir, newName: scopeFilerConfName, wantDir: "/visible", wantOld: "old"},
 		{name: "config rename from hidden", dir: "/other", oldName: "old", newDir: scopeFilerConfDir, newName: scopeFilerConfName},
-		{name: "config sibling", dir: scopeFilerConfDir, newName: "visible.json", wantDir: scopeFilerConfDir, wantNew: "visible.json"},
+		{name: "config sibling", dir: scopeFilerConfDir, newName: "visible.json", wantDir: scopeFilerConfDir, wantNew: "visible.json", wantParent: scopeFilerConfDir},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ev := &filer_pb.EventNotification{NewParentPath: tc.newDir}
@@ -101,6 +103,12 @@ func TestScopeFilterEventVisibility(t *testing.T) {
 			}
 			if out.TsNs != 10 || out.MutationTsNs != 9 {
 				t.Fatalf("event lost timestamps: %v", out)
+			}
+			if tc.wantNew != "" {
+				replayed := filer.FromPbEntry(out.EventNotification.NewParentPath, out.EventNotification.NewEntry)
+				if wantPath := tc.wantParent + "/" + tc.wantNew; string(replayed.FullPath) != wantPath {
+					t.Fatalf("replayed path = %q, want %q", replayed.FullPath, wantPath)
+				}
 			}
 		})
 	}

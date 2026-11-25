@@ -123,9 +123,8 @@ func (sc *scope) filterSubscriptionEvent(resp *filer_pb.SubscribeMetadataRespons
 	}
 	if newOK {
 		out.EventNotification.NewEntry = ev.NewEntry
-		if oldOK {
-			out.EventNotification.NewParentPath = ev.NewParentPath
-		} else {
+		out.EventNotification.NewParentPath = newDir
+		if !oldOK {
 			out.Directory = newDir
 		}
 	}
