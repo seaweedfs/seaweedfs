@@ -1157,6 +1157,13 @@ impl CompactionJob {
 
             if vacuum_ttl_expired(&n, &self.super_block.ttl, now) {
                 expired.add(size);
+                debug!(
+                    volume_id = self.id.0,
+                    key = id.0,
+                    offset = offset.to_actual_offset(),
+                    size = size.0,
+                    "vacuum: dropping TTL-expired needle"
+                );
                 continue;
             }
             copied.add(size);
