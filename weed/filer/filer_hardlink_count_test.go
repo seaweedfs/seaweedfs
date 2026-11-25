@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -11,9 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A filer's store counts the names of a hard-linked file itself (countLink).
-// These tests send it what clients send, counts worked out from an entry
-// another client has changed since, and check the record against the names.
+// A filer's own store counts the names of a hard-linked file itself and lets
+// no write leave the file's link count below them (linkNames). These tests
+// send it what clients send, counts worked out from an entry another client
+// has changed since, and check the record against the names.
 
 // countingWrapper is the wrapper Filer.SetStore puts around a filer's store.
 func countingWrapper(store FilerStore) *FilerStoreWrapper {
@@ -32,6 +34,18 @@ func linkName(id HardLinkId, name util.FullPath, count int32) *Entry {
 		HardLinkCounter: count,
 		Chunks:          []*filer_pb.FileChunk{{FileId: linkedChunk, Size: 4}},
 	}
+}
+
+// namesCounted is the number of names the store has counted for id, -1 when
+// it has counted none.
+func namesCounted(t *testing.T, store *stubFilerStore, id HardLinkId) int32 {
+	t.Helper()
+	value, err := store.KvGet(context.Background(), linkNamesKey(id))
+	if errors.Is(err, ErrKvNotFound) {
+		return -1
+	}
+	require.NoError(t, err)
+	return int32(util.BytesToUint32(value))
 }
 
 func checkNames(t *testing.T, wrapper *FilerStoreWrapper, want int32, names ...util.FullPath) {
@@ -109,11 +123,13 @@ func TestWriteWithAnOldCountKeepsTheCount(t *testing.T) {
 
 // The first link of a file: the client gives the file's one name a link id
 // and sends the count with the new name in it already, then the new name. Or
-// the other way around. Two names are counted either way, and one when the
-// second write never comes.
-func TestFirstLinkCountsTheNamesThatAreThere(t *testing.T) {
+// the other way around. The record has the client's count from the first
+// write on, so that the file is not taken for one with a single name while
+// the second is on its way, and the filer counts the names as they come.
+func TestFirstLinkCountsTheNamesAsTheyCome(t *testing.T) {
+	chunk := []*filer_pb.FileChunk{{FileId: linkedChunk, Size: 4}}
 	plain := func(store *stubFilerStore) {
-		store.entries["/d/x"] = &Entry{FullPath: "/d/x", Attr: Attr{Mode: 0o644}, Chunks: []*filer_pb.FileChunk{{FileId: linkedChunk, Size: 4}}}
+		store.entries["/d/x"] = &Entry{FullPath: "/d/x", Attr: Attr{Mode: 0o644}, Chunks: chunk}
 	}
 	t.Run("old name first", func(t *testing.T) {
 		store := newStubFilerStore()
@@ -123,9 +139,11 @@ func TestFirstLinkCountsTheNamesThatAreThere(t *testing.T) {
 		id := NewHardLinkId()
 
 		require.NoError(t, wrapper.UpdateEntry(ctx, linkName(id, "/d/x", 2)))
-		require.Equal(t, int32(1), linkCount(t, store, id))
+		require.Equal(t, int32(2), linkCount(t, store, id))
+		require.Equal(t, int32(1), namesCounted(t, store, id))
 		require.NoError(t, wrapper.InsertEntry(ctx, linkName(id, "/d/y", 2)))
 		require.Equal(t, int32(2), linkCount(t, store, id))
+		require.Equal(t, int32(2), namesCounted(t, store, id))
 		checkNames(t, wrapper, 2, "/d/x", "/d/y")
 	})
 	t.Run("new name first", func(t *testing.T) {
@@ -136,10 +154,36 @@ func TestFirstLinkCountsTheNamesThatAreThere(t *testing.T) {
 		id := NewHardLinkId()
 
 		require.NoError(t, wrapper.InsertEntryKnownAbsent(ctx, linkName(id, "/d/y", 2)))
-		require.Equal(t, int32(1), linkCount(t, store, id))
+		require.Equal(t, int32(1), namesCounted(t, store, id))
 		require.NoError(t, wrapper.UpdateEntry(ctx, linkName(id, "/d/x", 2)))
 		require.Equal(t, int32(2), linkCount(t, store, id))
+		require.Equal(t, int32(2), namesCounted(t, store, id))
 		checkNames(t, wrapper, 2, "/d/x", "/d/y")
+	})
+	// Another client deletes the source between the two writes of the link.
+	// The count the source's update left has the coming name in it: the
+	// delete is not the file's last (lastLinkDropped goes by the count it
+	// read), the chunks stay, and the new name reads them.
+	t.Run("the source goes before the new name comes", func(t *testing.T) {
+		store := newStubFilerStore()
+		plain(store)
+		wrapper := countingWrapper(store)
+		ctx := context.Background()
+		id := NewHardLinkId()
+
+		require.NoError(t, wrapper.UpdateEntry(ctx, linkName(id, "/d/x", 2)))
+		x, err := wrapper.FindEntry(ctx, "/d/x")
+		require.NoError(t, err)
+		require.Equal(t, int32(2), x.HardLinkCounter, "the delete would take the source for the file's last name")
+		require.NoError(t, wrapper.DeleteEntry(ctx, "/d/x"))
+		require.Equal(t, int32(1), linkCount(t, store, id))
+		require.Equal(t, int32(0), namesCounted(t, store, id))
+
+		require.NoError(t, wrapper.InsertEntry(ctx, linkName(id, "/d/y", 2)))
+		require.Equal(t, int32(1), namesCounted(t, store, id))
+		y, err := wrapper.FindEntry(ctx, "/d/y")
+		require.NoError(t, err)
+		require.Len(t, y.GetChunks(), 1)
 	})
 	t.Run("the new name is not made", func(t *testing.T) {
 		store := newStubFilerStore()
@@ -150,34 +194,72 @@ func TestFirstLinkCountsTheNamesThatAreThere(t *testing.T) {
 
 		require.NoError(t, wrapper.UpdateEntry(ctx, linkName(id, "/d/x", 2)))
 		// the client takes the link id off the name again
-		require.NoError(t, wrapper.UpdateEntry(ctx, &Entry{FullPath: "/d/x", Attr: Attr{Mode: 0o644}, Chunks: []*filer_pb.FileChunk{{FileId: linkedChunk, Size: 4}}}))
-		require.Equal(t, int32(0), linkCount(t, store, id), "the record outlived the one name that had it")
+		require.NoError(t, wrapper.UpdateEntry(ctx, &Entry{FullPath: "/d/x", Attr: Attr{Mode: 0o644}, Chunks: chunk}))
+		x, err := wrapper.FindEntry(ctx, "/d/x")
+		require.NoError(t, err)
+		require.Empty(t, x.HardLinkId)
+		require.Equal(t, int32(0), namesCounted(t, store, id), "a name was left counted on a link no name holds")
 	})
 }
 
+// A write the store refuses, sent again: the name is counted once it is
+// stored, and once. Counted with the refused attempt as well, every retry
+// left the count one higher, and the record and the chunks outlived the
+// file's last name.
+func TestRefusedWriteOfANameIsCountedOnceWhenSentAgain(t *testing.T) {
+	for _, counted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("names counted before=%v", counted), func(t *testing.T) {
+			store := newStubFilerStore()
+			id := linkedFile(t, store, "/d/x", "/d/y")
+			wrapper := countingWrapper(store)
+			ctx := context.Background()
+			if counted {
+				require.NoError(t, wrapper.UpdateEntry(ctx, linkName(id, "/d/x", 2)))
+				require.Equal(t, int32(2), namesCounted(t, store, id))
+			}
+
+			store.insertErr = storeRefusal
+			for i := 0; i < 3; i++ {
+				require.ErrorIs(t, wrapper.InsertEntry(ctx, linkName(id, "/d/a", 3)), storeRefusal)
+			}
+			require.Equal(t, int32(2), namesCounted(t, store, id), "a name that was not stored was counted")
+			store.insertErr = nil
+			require.NoError(t, wrapper.InsertEntry(ctx, linkName(id, "/d/a", 3)))
+			require.Equal(t, int32(3), linkCount(t, store, id))
+			require.Equal(t, int32(3), namesCounted(t, store, id))
+
+			for _, name := range []util.FullPath{"/d/x", "/d/y", "/d/a"} {
+				require.NoError(t, wrapper.DeleteEntry(ctx, name))
+			}
+			require.Equal(t, int32(0), linkCount(t, store, id), "the record outlived the file's last name")
+			require.Equal(t, int32(-1), namesCounted(t, store, id))
+		})
+	}
+}
+
 // A rename stores the file under the new name (WithMovedLink) and deletes the
-// old one (OP "MV"): the name moves, link and all, and the count stays what
-// it is at every step, so that the rename's event carries it.
+// old one (OP "MV"): the name moves, link and all, and neither the count nor
+// the names counted change at any step.
 func TestRenameOfALinkedNameKeepsTheCount(t *testing.T) {
 	store := newStubFilerStore()
 	id := linkedFile(t, store, "/d/x", "/d/y")
 	wrapper := countingWrapper(store)
 	ctx := context.Background()
 
-	moved := linkName(id, "/e/z", 9)
-	require.NoError(t, wrapper.InsertEntry(WithMovedLink(ctx), moved))
+	require.NoError(t, wrapper.InsertEntry(WithMovedLink(ctx), linkName(id, "/e/z", 2)))
 	require.Equal(t, int32(2), linkCount(t, store, id))
-	require.Equal(t, int32(2), moved.HardLinkCounter, "the count the rename's event carries")
+	require.Equal(t, int32(2), namesCounted(t, store, id))
 	require.NoError(t, wrapper.DeleteEntry(context.WithValue(ctx, "OP", "MV"), "/d/x"))
 	require.Equal(t, int32(2), linkCount(t, store, id))
+	require.Equal(t, int32(2), namesCounted(t, store, id))
 	checkNames(t, wrapper, 2, "/d/y", "/e/z")
 
-	moved = linkName(id, "/e/w", 9)
-	require.NoError(t, wrapper.InsertEntryKnownAbsent(WithMovedLink(ctx), moved))
+	require.NoError(t, wrapper.InsertEntryKnownAbsent(WithMovedLink(ctx), linkName(id, "/e/w", 2)))
 	z, err := wrapper.FindEntry(ctx, "/e/z")
 	require.NoError(t, err)
 	require.NoError(t, wrapper.DeleteOneEntry(context.WithValue(ctx, "OP", "MV"), z))
 	require.Equal(t, int32(2), linkCount(t, store, id))
+	require.Equal(t, int32(2), namesCounted(t, store, id))
 	checkNames(t, wrapper, 2, "/d/y", "/e/w")
 
 	// a renamed file written over a name of another file takes that name off the other
@@ -190,17 +272,22 @@ func TestRenameOfALinkedNameKeepsTheCount(t *testing.T) {
 
 // A peer's update of a name is replayed as a delete of the row and an insert
 // of the new one (Filer.Replay). The count comes out as it went in, also for
-// a file's only name, whose record goes with the delete and is made again.
+// a file's only name, whose record goes with the delete and is made again,
+// and also when the event carries a count from before another name was added.
 func TestReplayedUpdateKeepsTheCount(t *testing.T) {
-	for _, names := range [][]util.FullPath{{"/d/x"}, {"/d/x", "/d/y"}} {
+	for _, names := range [][]util.FullPath{{"/d/x"}, {"/d/x", "/d/y"}, {"/d/x", "/d/y", "/d/z"}} {
 		t.Run(fmt.Sprint(len(names)), func(t *testing.T) {
 			store := newStubFilerStore()
 			id := linkedFile(t, store, names...)
 			wrapper := countingWrapper(store)
 			ctx := context.Background()
 
+			sent := int32(len(names))
+			if sent > 2 {
+				sent = 2 // from before the third name
+			}
 			require.NoError(t, wrapper.DeleteEntry(ctx, "/d/x"))
-			require.NoError(t, wrapper.InsertEntry(ctx, linkName(id, "/d/x", 7)))
+			require.NoError(t, wrapper.InsertEntry(ctx, linkName(id, "/d/x", sent)))
 			require.Equal(t, int32(len(names)), linkCount(t, store, id))
 			checkNames(t, wrapper, int32(len(names)), names...)
 		})
@@ -462,8 +549,8 @@ func (s *versionedStore) once(t *testing.T, what string, f func() error) (ran *b
 }
 
 // Two filers on one store each add a name to the same file, the second
-// between the first one's read of the record and its write. The store refuses
-// the first one's commit, it counts again from the record as it is now, and
+// between the first one's read of the names counted and its write. The store
+// refuses the first one's commit, it counts again from what is there now, and
 // both names are counted. The same for a name taken off in between.
 func TestLinkCountedAgainAfterAnotherFilerChangedTheRecord(t *testing.T) {
 	for _, between := range []struct {
@@ -486,8 +573,13 @@ func TestLinkCountedAgainAfterAnotherFilerChangedTheRecord(t *testing.T) {
 			raced := store.once(t, "k"+string(id), func() error { return between.run(other, id) })
 			require.NoError(t, one.InsertEntry(context.Background(), linkName(id, "/d/a", 3)))
 			require.True(t, *raced)
-			require.Equal(t, between.want, linkCount(t, store.stubFilerStore, id))
-			checkNames(t, one, between.want, "/d/x", "/d/a")
+			require.Equal(t, between.want, namesCounted(t, store.stubFilerStore, id))
+			// the count is the client's 3 where that is more than the names: too high only leaks
+			count := between.want
+			if count < 3 {
+				count = 3
+			}
+			require.Equal(t, count, linkCount(t, store.stubFilerStore, id))
 		})
 	}
 }

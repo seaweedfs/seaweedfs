@@ -14,9 +14,9 @@ import (
 
 // A filer on a real store, sent what two mounts send when both add a name to
 // a file at once: each read the file's count as 2 and sends 3. The filer
-// counts the four names itself, a later write with an old count changes
-// nothing, and the file outlives the three names a count of 3 would have
-// taken for all of them.
+// counts the four names itself and keeps the count at no less, a later write
+// with an old count changes nothing, and the file outlives the three names a
+// count of 3 would have taken for all of them.
 func TestTwoClientsLinkingOneFileAreBothCounted(t *testing.T) {
 	testFiler := filer.NewFiler(pb.ServerDiscovery{}, nil, "", "", "", "", "", 255, nil)
 	store := &LevelDBStore{}
