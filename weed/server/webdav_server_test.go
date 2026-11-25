@@ -53,6 +53,28 @@ func TestToFileInfoRootIsDirectory(t *testing.T) {
 	}
 }
 
+func TestToFileInfoETag(t *testing.T) {
+	file := func(etags ...string) *filer_pb.Entry {
+		entry := &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{}}
+		for i, etag := range etags {
+			entry.Chunks = append(entry.Chunks, &filer_pb.FileChunk{FileId: fmt.Sprintf("1,%x", i+1), ETag: etag})
+		}
+		return entry
+	}
+
+	if etag := toFileInfo("/f", file("", "")).etag; etag != "" {
+		t.Errorf("chunks without digests got etag %q; every 2-chunk file would share it", etag)
+	}
+	if etag := toFileInfo("/f", file("XUFAKrxLKna5cZ2REBfFkg==", "XUFAKrxLKna5cZ2REBfFkg==")).etag; etag == "" {
+		t.Error("chunks with digests got no etag")
+	}
+	withMd5 := file("")
+	withMd5.Attributes.Md5 = []byte{0xab}
+	if etag := toFileInfo("/f", withMd5).etag; etag != "ab" {
+		t.Errorf("entry md5 etag = %q, want ab", etag)
+	}
+}
+
 func TestFileInfoETag(t *testing.T) {
 	ctx := context.Background()
 

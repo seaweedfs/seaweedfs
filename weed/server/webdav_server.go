@@ -736,6 +736,19 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 	return toFileInfo(fullpath, entry), nil
 }
 
+// contentETag is the filer ETag when it tells contents apart: one built from
+// chunks stored without a digest is shared by every file with as many chunks.
+func contentETag(entry *filer_pb.Entry) string {
+	if entry.Attributes == nil || entry.Attributes.Md5 == nil {
+		for _, chunk := range entry.GetChunks() {
+			if chunk.ETag == "" {
+				return ""
+			}
+		}
+	}
+	return filer.ETag(entry)
+}
+
 func toFileInfo(fullpath util.FullPath, entry *filer_pb.Entry) *FileInfo {
 	// Name is what WebDAV publishes as DAV:displayname; clients that build a
 	// child URL from it reach nothing when it carries the whole path.
@@ -745,7 +758,7 @@ func toFileInfo(fullpath util.FullPath, entry *filer_pb.Entry) *FileInfo {
 		name:         fp.Name(),
 		mode:         os.FileMode(entry.Attributes.FileMode),
 		modifiedTime: time.Unix(entry.Attributes.Mtime, 0),
-		etag:         filer.ETag(entry),
+		etag:         contentETag(entry),
 		isDirectory:  entry.IsDirectory,
 	}
 
