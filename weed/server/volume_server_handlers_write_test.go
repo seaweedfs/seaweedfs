@@ -302,8 +302,10 @@ func TestPostHandlerForwardsAContentMd5TheReplicaAccepts(t *testing.T) {
 			resp := httptest.NewRecorder()
 			vs.PostHandler(resp, req)
 			var forwarded *httptest.ResponseRecorder
+			var forwardedCrc32c string
 			select {
 			case forwarded = <-replicaResp:
+				forwardedCrc32c = <-replicaCrc32c
 			default:
 				t.Fatalf("primary did not forward the write: %d %s", resp.Code, resp.Body.String())
 			}
@@ -325,7 +327,7 @@ func TestPostHandlerForwardsAContentMd5TheReplicaAccepts(t *testing.T) {
 			replicaData := stored(replicaVs.store)
 			require.Equal(t, stored(vs.store), replicaData)
 			require.Equal(t, tc.rewritten, !bytes.Equal(replicaData, tc.data))
-			require.Equal(t, needle.ContentCrc32c(replicaData), <-replicaCrc32c)
+			require.Equal(t, needle.ContentCrc32c(replicaData), forwardedCrc32c)
 		})
 	}
 }
