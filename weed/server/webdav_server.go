@@ -110,20 +110,36 @@ func (h basicAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.next.ServeHTTP(w, r)
 }
 
-// putOutcomeKey carries the flag WebDavFileSystem.OpenFile sets when a PUT
-// replaced an existing entry, so the PUT can answer 204 instead of 201
+// putOutcomeKey carries the putOutcome a PUT's WebDavFileSystem calls fill
 type putOutcomeKey struct{}
 
-// putOutcomeWriter turns the 201 of a PUT that replaced a file into 204
-// and swallows the status text webdav.Handler writes after it
+// putOutcome records whether OpenFile replaced an existing entry, so the PUT
+// can answer 204 instead of 201, and the ETag of what Close committed:
+// webdav.Handler takes the ETag from a Stat made before Close
+type putOutcome struct {
+	replaced  bool
+	committed bool
+	etag      string
+}
+
+// putOutcomeWriter turns the 201 of a PUT that replaced a file into 204,
+// swallows the status text webdav.Handler writes after it, and sends the
+// committed content's ETag
 type putOutcomeWriter struct {
 	http.ResponseWriter
-	replaced  *bool
+	outcome   *putOutcome
 	noContent bool
 }
 
 func (w *putOutcomeWriter) WriteHeader(code int) {
-	if code == http.StatusCreated && *w.replaced {
+	if code == http.StatusCreated && w.outcome.committed {
+		if w.outcome.etag != "" {
+			w.Header().Set("ETag", `"`+w.outcome.etag+`"`)
+		} else {
+			w.Header().Del("ETag")
+		}
+	}
+	if code == http.StatusCreated && w.outcome.replaced {
 		code = http.StatusNoContent
 		w.noContent = true
 	}
@@ -271,9 +287,9 @@ func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	// always answers 201, so OpenFile reports a replace on the request
 	// context and the writer rewrites the status it sends
 	if r.Method == "PUT" {
-		replaced := new(bool)
-		w = &putOutcomeWriter{ResponseWriter: w, replaced: replaced}
-		r = r.WithContext(context.WithValue(r.Context(), putOutcomeKey{}, replaced))
+		outcome := &putOutcome{}
+		w = &putOutcomeWriter{ResponseWriter: w, outcome: outcome}
+		r = r.WithContext(context.WithValue(r.Context(), putOutcomeKey{}, outcome))
 	}
 	// RFC 4918 10.6: a missing Overwrite header means T, but webdav.Handler
 	// only overwrites on MOVE when it is set (golang/go#66059)
@@ -566,8 +582,8 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		// outcome matches what the write did even against racing writers: a
 		// PUT that landed on an entry answers 204, a fresh create answers 201
 		if resp.GetMetadataEvent().GetEventNotification().GetOldEntry() != nil {
-			if replaced, ok := ctx.Value(putOutcomeKey{}).(*bool); ok {
-				*replaced = true
+			if outcome, ok := ctx.Value(putOutcomeKey{}).(*putOutcome); ok {
+				outcome.replaced = true
 			}
 		}
 		return &WebDavFile{
@@ -894,6 +910,10 @@ func (f *WebDavFile) Close() error {
 	err := f.bufWriter.Close()
 
 	if f.entry != nil {
+		if outcome, ok := f.requestContext().Value(putOutcomeKey{}).(*putOutcome); ok && err == nil {
+			outcome.committed = true
+			outcome.etag = contentETag(f.entry)
+		}
 		f.entry = nil
 		f.visibleIntervals = nil
 	}

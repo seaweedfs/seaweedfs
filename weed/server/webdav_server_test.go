@@ -21,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/buffered_writer"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/stretchr/testify/assert"
 )
@@ -72,6 +73,27 @@ func TestToFileInfoETag(t *testing.T) {
 	withMd5.Attributes.Md5 = []byte{0xab}
 	if etag := toFileInfo("/f", withMd5).etag; etag != "ab" {
 		t.Errorf("entry md5 etag = %q, want ab", etag)
+	}
+}
+
+func TestPutAnswersCommittedETag(t *testing.T) {
+	outcome := &putOutcome{}
+	f := &WebDavFile{
+		bufWriter: buffered_writer.NewBufferedWriteCloser(1024),
+		entry: &filer_pb.Entry{Name: "f", Attributes: &filer_pb.FuseAttributes{},
+			Chunks: []*filer_pb.FileChunk{{FileId: "1,01", ETag: "XUFAKrxLKna5cZ2REBfFkg=="}}},
+		ctx: context.WithValue(context.Background(), putOutcomeKey{}, outcome),
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	// webdav.Handler sets the ETag from a Stat made before Close committed
+	rec.Header().Set("ETag", `"d41d8cd98f00b204e9800998ecf8427e-0"`)
+	(&putOutcomeWriter{ResponseWriter: rec, outcome: outcome}).WriteHeader(http.StatusCreated)
+	if got, want := rec.Header().Get("ETag"), `"5d41402abc4b2a76b9719d911017c592"`; got != want {
+		t.Errorf("PUT ETag = %s, want the committed %s", got, want)
 	}
 }
 
@@ -914,8 +936,8 @@ type putOutcomeFS struct {
 func (f putOutcomeFS) OpenFile(ctx context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
 	if flag&os.O_CREATE != 0 {
 		if _, err := f.FileSystem.Stat(ctx, name); err == nil {
-			if replaced, ok := ctx.Value(putOutcomeKey{}).(*bool); ok {
-				*replaced = true
+			if outcome, ok := ctx.Value(putOutcomeKey{}).(*putOutcome); ok {
+				outcome.replaced = true
 			}
 		}
 	}
@@ -951,14 +973,14 @@ func TestWebDavFileSystem_OpenFile_PutOutcomeFlag(t *testing.T) {
 	}}
 
 	open := func(name string) bool {
-		replaced := new(bool)
-		ctx := context.WithValue(context.Background(), putOutcomeKey{}, replaced)
+		outcome := &putOutcome{}
+		ctx := context.WithValue(context.Background(), putOutcomeKey{}, outcome)
 		f, err := fs.OpenFile(ctx, name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 		assert.NoError(t, err)
 		if f != nil {
 			assert.NoError(t, f.Close())
 		}
-		return *replaced
+		return outcome.replaced
 	}
 
 	assert.True(t, open("/old.txt"))
