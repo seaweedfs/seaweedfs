@@ -117,3 +117,66 @@ func TestDeleteNonEmptyMarkerDemotesOnThePriorOwner(t *testing.T) {
 	require.NotNil(t, marker, "the prior owner lost the directory its child lives in")
 	require.False(t, marker.IsDirectoryKeyObject(), "the prior owner still holds album/ as an object")
 }
+
+// The new owner's empty marker is the key "album/", but the prior owner may
+// already hold "album" with uploaded data the new owner has not received.
+func TestDeleteMarkerLeavesDataOnThePriorOwner(t *testing.T) {
+	bucketEntry := &filer_pb.Entry{Name: "b", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}}
+	next := &markerFiler{anonymousReadFiler: anonymousReadFiler{entries: map[string]*filer_pb.Entry{
+		"/buckets/b":       bucketEntry,
+		"/buckets/b/album": {Name: "album", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mime: "application/octet-stream"}},
+	}}}
+	prior := &markerFiler{anonymousReadFiler: anonymousReadFiler{entries: map[string]*filer_pb.Entry{
+		"/buckets/b": bucketEntry,
+		"/buckets/b/album": {Name: "album", Attributes: &filer_pb.FuseAttributes{FileSize: 11},
+			Chunks: []*filer_pb.FileChunk{{FileId: "1,0123456789", Size: 11}}},
+	}}}
+	nextAddr := startFakeFiler(t, next)
+	priorAddr := startFakeFiler(t, prior)
+	s3a := newPutTestServer(t, nextAddr, priorAddr)
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b"})
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, priorAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{priorAddr}, 1)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{nextAddr}, 2)
+	require.Equal(t, priorAddr, s3a.priorWriteOwner("b", "album"))
+
+	r := httptest.NewRequest(http.MethodDelete, "/b/album/", nil)
+	require.Equal(t, s3err.ErrNone, s3a.deleteDirectoryMarker(r, "b", "album/"))
+
+	next.mu.Lock()
+	require.NotContains(t, next.entries, "/buckets/b/album", "the new owner kept the marker")
+	next.mu.Unlock()
+	prior.mu.Lock()
+	defer prior.mu.Unlock()
+	require.Contains(t, prior.entries, "/buckets/b/album", "album/ removed the object album on the prior owner")
+	require.Zero(t, prior.deletes)
+}
+
+// A prior owner that cannot be reached may still hold the marker, and another
+// filer reporting the delete done would not remove it there.
+func TestDeleteMarkerFailsWithoutThePriorOwner(t *testing.T) {
+	bucketEntry := &filer_pb.Entry{Name: "b", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}}
+	marker := &filer_pb.Entry{Name: "album", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{Mime: "application/octet-stream"}}
+	connected := &markerFiler{anonymousReadFiler: anonymousReadFiler{entries: map[string]*filer_pb.Entry{
+		"/buckets/b": bucketEntry, "/buckets/b/album": marker,
+	}}}
+	next := &markerFiler{anonymousReadFiler: anonymousReadFiler{entries: map[string]*filer_pb.Entry{
+		"/buckets/b": bucketEntry, "/buckets/b/album": marker,
+	}}}
+	connectedAddr := startFakeFiler(t, connected)
+	nextAddr := startFakeFiler(t, next)
+	priorAddr := closedFilerAddress(t)
+	s3a := newPutTestServer(t, connectedAddr, nextAddr, priorAddr)
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b"})
+	s3a.objectWriteLockClient = cluster.NewLockClient(s3a.option.GrpcDialOption, nextAddr)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{priorAddr}, 1)
+	s3a.objectWriteLockClient.SetRing([]pb.ServerAddress{nextAddr}, 2)
+	require.Equal(t, priorAddr, s3a.priorWriteOwner("b", "album"))
+
+	r := httptest.NewRequest(http.MethodDelete, "/b/album/", nil)
+	require.Equal(t, s3err.ErrInternalError, s3a.deleteDirectoryMarker(r, "b", "album/"))
+	require.Zero(t, connected.deletes, "the prior owner's delete was reported done by another filer")
+	require.Zero(t, next.deletes, "the delete half finished before the prior owner was known")
+}
