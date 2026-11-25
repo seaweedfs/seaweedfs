@@ -83,7 +83,7 @@ func testReadOpenHandleAfterChunkMerge(t *testing.T, framework *FuseTestFramewor
 		_, err = held.WriteAt(window, int64(start*mergePageSize))
 		require.NoError(t, err)
 		require.NoError(t, held.Sync())
-		if after := mergeEntryChunks(t, framework, name); len(after) == 1 && after[0].ModifiedTsNs == 0 {
+		if after := mergeEntryChunks(t, framework, name); len(before) > 1 && len(after) == 1 {
 			replaced = before
 			break
 		}
@@ -151,9 +151,8 @@ func mergePagePattern(page, version int) []byte {
 }
 
 type mergeChunk struct {
-	FileId       string `json:"file_id"`
-	ModifiedTsNs int64  `json:"modified_ts_ns"`
-	Fid          *struct {
+	FileId string `json:"file_id"`
+	Fid    *struct {
 		VolumeId uint32 `json:"volume_id"`
 		FileKey  uint64 `json:"file_key"`
 		Cookie   uint32 `json:"cookie"`
