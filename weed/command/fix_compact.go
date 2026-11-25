@@ -286,6 +286,17 @@ func (c *datCompactor) commit(rewritten, deleteOriginal bool) (idxBak, datBak st
 	if serr := util.FsyncDir(dir); serr != nil {
 		fmt.Fprintf(os.Stderr, "warning: the files are swapped, but syncing the directory failed: %v\n", serr)
 	}
+	// Defensive: the pending-commit guard already refuses to start while a .cpc
+	// marker exists, but a marker must never outlive a completed swap and make
+	// the volume server roll anything forward later.
+	cpc := strings.TrimSuffix(c.datName, ".dat") + ".cpc"
+	if util.FileExists(cpc) {
+		if rerr := os.Remove(cpc); rerr != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not remove the stale commit marker %s: %v\n", cpc, rerr)
+		} else {
+			util.FsyncDir(dir)
+		}
+	}
 	if rewritten && deleteOriginal {
 		if rerr := os.Remove(datBak); rerr != nil {
 			fmt.Fprintf(os.Stderr, "could not delete the original %s: %v\n", datBak, rerr)

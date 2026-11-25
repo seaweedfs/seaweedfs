@@ -223,6 +223,71 @@ func buildVerifyFixtureVersion(t *testing.T, count int, version needle.Version) 
 	return datName
 }
 
+// TestFixRefusesPendingCompactMarker: a .cpc marker means an interrupted
+// vacuum commit is waiting for the volume server to reconcile it. Writing a
+// rebuilt .idx or new .cpd/.cpx on top of that decision must be refused with a
+// clear, scriptable error.
+func TestFixRefusesPendingCompactMarker(t *testing.T) {
+	dir := t.TempDir()
+	base, _ := writeFixTestVolume(t, dir, 3)
+	if err := os.WriteFile(base+".cpc", nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	savedVerify, savedIgnore, savedStatus := *fixVerify, *fixIgnoreError, commandExitStatus
+	*fixVerify, *fixIgnoreError, commandExitStatus = true, true, 0
+	t.Cleanup(func() {
+		*fixVerify, *fixIgnoreError, commandExitStatus = savedVerify, savedIgnore, savedStatus
+	})
+
+	doFixOneVolume(dir, "fix_7", "fix", 7, true)
+	if CommandExitStatus() != 1 {
+		t.Fatalf("exit status = %d, want 1 (pending commit marker must fail the run)", CommandExitStatus())
+	}
+	if _, err := os.Stat(base + ".idx"); !os.IsNotExist(err) {
+		t.Fatal("a rebuilt .idx was written despite the pending commit marker")
+	}
+	if _, err := os.Stat(base + ".cpc"); err != nil {
+		t.Fatalf("the pending marker must be left for the volume server: %v", err)
+	}
+}
+
+// TestFixCompactClearsCommitMarkerAfterSwap: even if a marker slips past the
+// start guard (e.g. a test harness or a race), a completed swap must not leave
+// it behind to be rolled forward later.
+func TestFixCompactClearsCommitMarkerAfterSwap(t *testing.T) {
+	datName, _ := buildVerifyFixture(t, 3)
+	idxName := strings.TrimSuffix(datName, ".dat") + ".idx"
+	c, err := newDatCompactor(datName, idxName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.src.Close()
+	if _, err := c.cpxW.WriteString("rebuilt index"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.cpxW.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.cpx.Close(); err != nil {
+		t.Fatal(err)
+	}
+	cpc := strings.TrimSuffix(datName, ".dat") + ".cpc"
+	if err := os.WriteFile(cpc, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := c.commit(false, false); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if _, err := os.Stat(cpc); !os.IsNotExist(err) {
+		t.Fatal("a stale .cpc marker survived a completed swap")
+	}
+	if _, err := os.Stat(idxName); err != nil {
+		t.Fatalf("the new index was not swapped in: %v", err)
+	}
+}
+
 // idxOffsets returns key -> .dat offset for every entry of the rebuilt .idx.
 func idxOffsets(t *testing.T, idxPath string) map[uint64]int64 {
 	t.Helper()

@@ -37,6 +37,8 @@ var cmdFix = &Command{
   On a damaged .dat, fix indexes only the needles before the first unreadable header or a record cut off by the end of the file, and exits non-zero; repair from a replica, or run fix on a copy, before compacting or loading the volume.
   With -ignoreError, fix keeps going and writes what it could index, but still exits non-zero if any volume failed.
   With -verifyCrc, fix also reads every needle, indexes the ones whose data fails its CRC check as deleted, and exits non-zero if it found any.
+  The rebuilt .idx is written next to the .dat. If the volume server runs with a separate -dir.idx directory, replace the .idx there afterwards and drop any stale .ldb, or run the server without -dir.idx until the volume is repaired.
+  -verify and -compact refuse to run while a .cpc compaction commit marker exists: start the volume server once so it reconciles the interrupted vacuum, then re-run.
 `,
 }
 

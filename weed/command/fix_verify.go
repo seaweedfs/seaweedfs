@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 )
 
@@ -608,6 +609,20 @@ func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64
 	vid := needle.VolumeId(volumeId)
 	datName := path.Join(basepath, baseFileName+".dat")
 
+	// A .cpc marker means an interrupted vacuum commit is pending: the volume
+	// server reconciles it on its next start (roll forward with the marker, roll
+	// back orphan .cpd/.cpx without it). Writing new .cpd/.cpx or a rebuilt .idx
+	// here would race that decision, so make the operator settle it first.
+	if cpcPath := strings.TrimSuffix(datName, ".dat") + ".cpc"; util.FileExists(cpcPath) {
+		err := fmt.Errorf("volume %d: a compaction commit is pending (%s); start the volume server once so it reconciles the interrupted vacuum, then re-run", volumeId, cpcPath)
+		if *fixIgnoreError {
+			glog.Error(err)
+			SetCommandExitStatus(1)
+			return
+		}
+		glog.Fatal(err)
+	}
+
 	// -compact writes the index itself, so the in-memory key map is only needed for the plain rebuild
 	compacting := *fixCompact && !*fixDryRun
 	nm := needle_map.NewMemDb()
@@ -655,6 +670,7 @@ func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64
 	}
 	if comp != nil {
 		finishCompaction(comp, sum, datName, volumeId)
+		printIdxDirHint(volumeId)
 		return
 	}
 	if sum.TailGarbage {
@@ -680,4 +696,13 @@ func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64
 	if err := SaveToIdx(scanner, indexFileName); err != nil {
 		glog.Fatalf("save to .idx File: %v", strings.TrimSpace(err.Error()))
 	}
+	printIdxDirHint(volumeId)
+}
+
+// printIdxDirHint reminds the operator that a volume server started with a
+// separate -dir.idx directory keeps its own .idx there: this command writes the
+// rebuilt index next to the .dat, so the file must be moved over (and any stale
+// .ldb dropped) or the server keeps using the old index.
+func printIdxDirHint(volumeId int64) {
+	fmt.Printf("volume %d: the rebuilt index was written next to the .dat; if the server uses a separate -dir.idx directory, replace the .idx there and drop any stale .ldb\n", volumeId)
 }
