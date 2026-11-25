@@ -66,6 +66,10 @@ const (
 	recentDeleteCap = 1 << 16
 )
 
+// ErrLookupUnanswered marks a lookup the provider gave no answer to, so a
+// "volume N not found" from it says nothing about whether the volume exists.
+var ErrLookupUnanswered = errors.New("no answer to the volume lookup")
+
 const (
 	// DefaultVidMapCacheSize is the default number of resets a volume location
 	// survives without being relearned. This provides cache history when
@@ -269,7 +273,7 @@ func (vc *vidMapClient) LookupVolumeIdsWithFallback(ctx context.Context, volumeI
 				// with them would make a gRPC handler drop its response.
 				return batchResult, nil
 			}
-			return batchResult, fmt.Errorf("provider lookup failed: %w", err)
+			return batchResult, fmt.Errorf("provider lookup failed: %w: %w", ErrLookupUnanswered, err)
 		}
 		for _, vidString := range stillNeedLookup {
 			// The provider answered, so its answer replaces what was set

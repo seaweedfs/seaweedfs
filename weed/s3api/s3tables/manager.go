@@ -98,6 +98,16 @@ func WithTableBucketCreatedAt(ctx context.Context, createdAt time.Time) context.
 	return context.WithValue(ctx, tableBucketCreatedAtKey{}, createdAt)
 }
 
+type tableStagedAtKey struct{}
+
+// WithTableStagedAt dates a CreateTable run through Execute from stagedAt, when
+// a staged create handed out the table's location, so the files the engine
+// wrote there before the commit are the table's. In-process only, like
+// WithTableBucketCreatedAt.
+func WithTableStagedAt(ctx context.Context, stagedAt time.Time) context.Context {
+	return context.WithValue(ctx, tableStagedAtKey{}, stagedAt)
+}
+
 // boundTableBucket returns the bucket creation time ctx binds the request to.
 func boundTableBucket(ctx context.Context) (time.Time, bool) {
 	createdAt, ok := ctx.Value(tableBucketCreatedAtKey{}).(time.Time)

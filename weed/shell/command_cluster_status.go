@@ -358,7 +358,12 @@ func (sp *ClusterStatusPrinter) printClusterInfo() {
 	}
 
 	sp.write("cluster:")
-	sp.write("\tid:       %s", sp.topology.Id)
+	id := sp.topology.TopologyId
+	if id == "" {
+		// Older masters only report the topology root's fixed name.
+		id = sp.topology.Id
+	}
+	sp.write("\tid:       %s", id)
 	sp.write("\tstatus:   %s", status)
 	sp.write("\tnodes:    %s", sp.int(nodes))
 	sp.write("\ttopology: %s %s, %s %s on %s %s",

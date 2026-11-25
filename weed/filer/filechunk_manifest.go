@@ -614,7 +614,7 @@ func mergeIntoManifest(saveFunc SaveDataAsChunkFunctionType, dataChunks []*filer
 		}
 	}
 
-	manifestChunk, err = saveFunc(bytes.NewReader(data), "", 0, 0, uint64(len(data)))
+	manifestChunk, err = saveFunc(bytes.NewReader(data), "", 0, LatestModifiedTsNs(dataChunks), uint64(len(data)))
 	if err != nil {
 		return nil, err
 	}

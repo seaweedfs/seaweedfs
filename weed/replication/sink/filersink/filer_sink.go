@@ -116,6 +116,25 @@ func (fs *FilerSink) SetSourceFiler(s *source.FilerSource) {
 	fs.filerSource = s
 }
 
+// TargetFiler names the filer this sink writes into.
+func (fs *FilerSink) TargetFiler() string {
+	return fs.grpcAddress
+}
+
+// TargetDigest returns the digest the target filer reports, empty for a
+// filer that predates the setting.
+func (fs *FilerSink) TargetDigest() (digest string, err error) {
+	err = fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		digest = resp.Digest
+		return nil
+	})
+	return
+}
+
 // SetUploader sets a custom uploader for this sink, used when the target
 // cluster requires different TLS certificates than the global config.
 // Must be called during initialization, before any replication goroutines

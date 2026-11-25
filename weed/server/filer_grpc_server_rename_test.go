@@ -371,6 +371,9 @@ func newRenameTestFiler(t *testing.T, store filer.FilerStore) *filer.Filer {
 	t.Cleanup(logBuffer.ShutdownLogBuffer)
 
 	return &filer.Filer{
+		// Use an explicit bucket root so ordinary fixture paths retain the
+		// default collection. Collection tests configure their own bucket root.
+		DirBucketsPath:      "/test-buckets",
 		Store:               filer.NewFilerStoreWrapper(store),
 		MasterClient:        masterClient,
 		FilerConf:           filer.NewFilerConf(),

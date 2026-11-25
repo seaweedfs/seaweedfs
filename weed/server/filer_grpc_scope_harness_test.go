@@ -120,6 +120,10 @@ func (f *scopeFakeFiler) scopeFindEntry(_ context.Context, path string) (*filer_
 	return proto.Clone(entry).(*filer_pb.Entry), nil
 }
 
+func (f *scopeFakeFiler) scopeCollection(context.Context, string) (string, error) {
+	return "", nil
+}
+
 func (f *scopeFakeFiler) scopeKvGet(_ context.Context, key []byte) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

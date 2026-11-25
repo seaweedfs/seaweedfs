@@ -2,6 +2,7 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -10,7 +11,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
+
+var errNativeSSES3Read = errors.New("native mount cannot decrypt SSE-S3 data")
 
 func (fh *FileHandle) lockForRead(startOffset int64, size int) {
 	fh.dirtyPages.LockForRead(startOffset, startOffset+int64(size))
@@ -61,6 +65,18 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 	fileSize := int64(pbEntry.Attributes.FileSize)
 	if fileSize == 0 {
 		fileSize = int64(filer.FileSize(pbEntry))
+	}
+	if entry.hasSSES3DataLocked() {
+		reader := fh.wfs.option.SSES3Reader
+		if reader == nil {
+			entry.RUnlock()
+			return 0, 0, errNativeSSES3Read
+		}
+		etag := sseObjectETag(pbEntry)
+		version := string(pbEntry.GetExtended()[s3_constants.ExtVersionIdKey])
+		entry.RUnlock()
+		n, err := reader.readAt(ctx, string(fileFullPath), etag, version, fileSize, buff, offset)
+		return n, 0, err
 	}
 	content := pbEntry.Content
 	chunks := pbEntry.Chunks

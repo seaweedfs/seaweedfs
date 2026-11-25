@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/apache/iceberg-go/table"
 	"github.com/google/uuid"
@@ -217,6 +218,10 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 
 				repairManifests(location)
 
+				var stagedAt time.Time
+				if latestMarker != nil {
+					stagedAt, _ = time.Parse(time.RFC3339Nano, latestMarker.CreatedAt)
+				}
 				result, reqErr := s.finalizeCreateOnCommit(r.Context(), createOnCommitInput{
 					bucketARN:         bucketARN,
 					markerBucket:      bucketName,
@@ -230,6 +235,7 @@ func (s *Server) handleUpdateTable(w http.ResponseWriter, r *http.Request) {
 					baseMetadataVer:   baseMetadataVersion,
 					updates:           req.Updates,
 					statisticsUpdates: statisticsUpdates,
+					stagedAt:          stagedAt,
 				})
 				if reqErr != nil {
 					writeError(w, reqErr.status, reqErr.errType, reqErr.message)

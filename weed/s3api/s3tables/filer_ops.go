@@ -208,6 +208,12 @@ func (h *S3TablesHandler) removeExtendedAttributes(ctx context.Context, client f
 	})
 }
 
+// catalogRecordKeys are the attributes that make a directory a catalog record.
+var catalogRecordKeys = []string{
+	ExtendedKeyMetadata, ExtendedKeyMetadataVersion, ExtendedKeyPolicy, ExtendedKeyTags, ExtendedKeyEntryType,
+	ExtendedKeyMaintenance, ExtendedKeyMaintenanceStatus, ExtendedKeyDeleting, ExtendedKeyMoving,
+}
+
 // removeExtendedAttributesIf drops the given attributes only while they still
 // hold the values the caller captured. A rename copies attributes to the
 // destination and then clears the source; without this, a write that landed in
@@ -899,17 +905,51 @@ func (w *markRemovalWrites) UpdateEntry(ctx context.Context, in *filer_pb.Update
 	return resp, err
 }
 
-// dirListPageSize is how many entries dirHoldsFiles reads per ListEntries call.
+// dirListPageSize is how many entries DirHoldsFiles reads per ListEntries call.
 const dirListPageSize = 1024
 
-// dirHoldsFiles reports whether any file sits under dirPath, at any depth. It
-// walks breadth-first, pages through each directory, and stops at the first
-// file it sees. Returning at that file abandons the page being read, so the
-// listings run on a context of their own that ends with the call: otherwise
-// the filer keeps producing that page until the whole request is over.
-func (h *S3TablesHandler) dirHoldsFiles(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath string) (bool, error) {
+// anyFileTime is a DirHoldsFiles cutoff past every file time.
+var anyFileTime = time.Unix(1<<62, 0)
+
+// ViewHoldsFiles reports whether dirPath holds a file a view created at
+// createdAt did not write: any file but its metadata, which it writes only
+// after its record, and any metadata file from an earlier second.
+func ViewHoldsFiles(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath string, createdAt time.Time) (bool, error) {
+	if holds, err := DirHoldsFiles(ctx, client, dirPath, anyFileTime); holds || err != nil {
+		return holds, err
+	}
+	return DirHoldsFiles(ctx, client, path.Join(dirPath, "metadata"), createdAt)
+}
+
+// DirHoldsFiles reports whether any file sits under dirPath, at any depth, or
+// an S3 object is stored on dirPath or a directory under it. A non-zero before
+// counts only those created in an earlier second (file times have second
+// granularity, and a writer's first file can share the record's second), other
+// than Iceberg metadata files in dirPath/metadata, which a create stages ahead
+// of its record. It walks breadth-first, pages through
+// each directory, and stops at the first file it sees. Returning at that file
+// abandons the page being read, so the listings run on a context of their own
+// that ends with the call: otherwise the filer keeps producing that page until
+// the whole request is over.
+func DirHoldsFiles(ctx context.Context, client filer_pb.SeaweedFilerClient, dirPath string, before time.Time) (bool, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	counts := func(dir string, entry *filer_pb.Entry) bool {
+		if entry.IsDirectory && !entry.IsDirectoryKeyObject() {
+			return false
+		}
+		return before.IsZero() || (entry.GetAttributes().GetCrtime() < before.Unix() &&
+			!(dir == path.Join(dirPath, "metadata") && strings.HasSuffix(entry.Name, ".metadata.json")))
+	}
+	parent, name := path.Split(dirPath)
+	if resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: strings.TrimSuffix(parent, "/"), Name: name}); err == nil {
+		if counts(parent, resp.Entry) {
+			return true, nil
+		}
+	} else if !errors.Is(err, filer_pb.ErrNotFound) {
+		return false, err
+	}
 
 	pending := []string{dirPath}
 	for len(pending) > 0 {
@@ -946,10 +986,12 @@ func (h *S3TablesHandler) dirHoldsFiles(ctx context.Context, client filer_pb.Sea
 				}
 				received = true
 				lastFileName = entry.Entry.Name
-				if !entry.Entry.IsDirectory {
+				if counts(dir, entry.Entry) {
 					return true, nil
 				}
-				pending = append(pending, path.Join(dir, entry.Entry.Name))
+				if entry.Entry.IsDirectory {
+					pending = append(pending, path.Join(dir, entry.Entry.Name))
+				}
 			}
 			if !received {
 				break

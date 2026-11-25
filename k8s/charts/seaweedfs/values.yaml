@@ -856,6 +856,11 @@ filer:
   extraVolumes: ""
   extraVolumeMounts: ""
 
+  # Share one process namespace between the containers of the filer pod, so a
+  # sidecar can see and signal the filer process, for example to reload its
+  # configuration with SIGHUP. The filer is then no longer PID 1.
+  shareProcessNamespace: false
+
   # Labels to be added to the filer pods
   podLabels: {}
 
@@ -1091,6 +1096,13 @@ filer:
     # set to the name of an existing kubernetes Secret with the s3 json config file
     # should have a secret key called seaweedfs_s3_config with an inline json configure
     existingConfigSecret: null
+    # Reload the identities file without restarting the filer: a sidecar sends
+    # SIGHUP to SeaweedFS when kubelet updates the mounted config Secret, and the
+    # pod no longer restarts when the content of existingConfigSecret changes.
+    # Needs enableAuth, and turns on shareProcessNamespace. See the README.
+    configReloader:
+      enabled: false
+      resources: {}
     # To provide explicit credentials for the S3 gateway, set them under
     # the top-level s3.credentials key (not filer.s3.credentials).
     # The s3-secret.yaml template only reads from .Values.s3.credentials.
@@ -1169,6 +1181,13 @@ s3:
   # set to the name of an existing kubernetes Secret with the s3 json config file
   # should have a secret key called seaweedfs_s3_config with an inline json config
   existingConfigSecret: null
+  # Reload the identities file without restarting the gateway: a sidecar sends
+  # SIGHUP to SeaweedFS when kubelet updates the mounted config Secret, and the
+  # pod no longer restarts when the content of existingConfigSecret changes.
+  # Needs enableAuth, and turns on shareProcessNamespace. See the README.
+  configReloader:
+    enabled: false
+    resources: {}
   # Optionally provide explicit credentials for the S3 gateway.
   # When set, these are used in the generated s3 secret instead of
   # auto-generating random credentials.
@@ -1227,6 +1246,11 @@ s3:
 
   extraVolumes: ""
   extraVolumeMounts: ""
+
+  # Share one process namespace between the containers of the s3 pod, so a
+  # sidecar can see and signal the gateway process, for example to reload its
+  # configuration with SIGHUP. The gateway is then no longer PID 1.
+  shareProcessNamespace: false
 
   # Labels to be added to the s3 pods
   podLabels: {}

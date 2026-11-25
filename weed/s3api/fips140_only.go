@@ -19,10 +19,11 @@ import (
 // test binary under fips140=only.
 var fips140Enforced = fips140.Enforced
 
-// contentMd5Matches compares a body digest with the client's Content-MD5.
-// Under fips140=only the digest is not an MD5, so Content-MD5 goes unchecked.
-func contentMd5Matches(digest, contentMd5 []byte) bool {
-	return fips140Enforced() || bytes.Equal(digest, contentMd5)
+// contentMd5Matches compares the body's MD5, from util.BodyMd5, with the
+// client's Content-MD5. bodyMd5 is nil only under fips140=only with digest
+// sha256, where no MD5 can be computed, and Content-MD5 then goes unchecked.
+func contentMd5Matches(bodyMd5, contentMd5 []byte) bool {
+	return bodyMd5 == nil || bytes.Equal(bodyMd5, contentMd5)
 }
 
 // fips140SecretTooShort reports whether SigV4 cannot sign with secretKey under

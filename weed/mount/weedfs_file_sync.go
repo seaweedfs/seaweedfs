@@ -319,10 +319,10 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 
 	if entry.Attributes != nil {
 		entry.Attributes.Mime = fh.contentType
-		if entry.Attributes.Uid == 0 {
+		if entry.Attributes.Uid == 0 && uid != unknownCallerId {
 			entry.Attributes.Uid = uid
 		}
-		if entry.Attributes.Gid == 0 {
+		if entry.Attributes.Gid == 0 && gid != unknownCallerId {
 			entry.Attributes.Gid = gid
 		}
 		// Do not stamp mtime/ctime here. Write/SetAttr already maintain
@@ -722,8 +722,8 @@ func contentFileIdKey(c *filer_pb.FileChunk) string {
 // not name and that chunks still covers. A commit deletes what it leaves out
 // of the stored entry and what its own chunk list covers, so a covered chunk no
 // stored entry ever named is only deleted if the request carries it. The filer
-// compacts only plain chunks, and merged chunks carry no modification time, so
-// each one is sent only if newer plain chunks of the request hide all of it.
+// compacts only plain chunks, so each one is sent only if newer plain chunks of
+// the request hide all of it.
 func (fh *FileHandle) unpublishedChunks(dropped, chunks []*filer_pb.FileChunk) (unpublished []*filer_pb.FileChunk) {
 	inBase := make(map[string]bool)
 	for _, c := range fh.baseEntry.Load().GetChunks() {
@@ -797,6 +797,25 @@ func shouldMergeChunks(compactedChunks []*filer_pb.FileChunk, manifestChunks []*
 	return
 }
 
+// oldestVisibleTsNs is the stamp of the oldest data in [start, stop), or 0 if
+// part of it is a hole. A merged chunk stamped so still yields to any write
+// newer than some byte it holds.
+func oldestVisibleTsNs(visibles []*filer.Interval[*filer.VisibleInterval], start, stop int64) int64 {
+	tsNs := int64(math.MaxInt64)
+	i := sort.Search(len(visibles), func(i int) bool { return visibles[i].StopOffset > start })
+	for ; i < len(visibles) && start < stop; i++ {
+		if visibles[i].StartOffset > start {
+			return 0
+		}
+		tsNs = min(tsNs, visibles[i].TsNs)
+		start = visibles[i].StopOffset
+	}
+	if start < stop {
+		return 0
+	}
+	return tsNs
+}
+
 // maybeMergeChunks re-reads and re-uploads file data as properly sized chunks
 // when the total stored chunk data significantly exceeds the logical file size,
 // which happens after many random writes create partially-overlapping small chunks.
@@ -816,6 +835,15 @@ func (wfs *WFS) maybeMergeChunks(fileFullPath util.FullPath, compactedChunks []*
 	reader := filer.NewChunkStreamReaderFromLookup(ctx, wfs.LookupFn(), allChunks)
 	defer reader.Close()
 
+	list, err := filer.NonOverlappingVisibleIntervals(ctx, wfs.LookupFn(), allChunks, 0, int64(fileSize))
+	if err != nil {
+		return nil, err
+	}
+	var visibles []*filer.Interval[*filer.VisibleInterval]
+	for x := list.Front(); x != nil; x = x.Next {
+		visibles = append(visibles, x)
+	}
+
 	saveFunc := wfs.saveDataAsChunk(fileFullPath)
 	chunkSize := wfs.option.ChunkSizeLimit
 	if int64(fileSize) < chunkSize {
@@ -829,7 +857,7 @@ func (wfs *WFS) maybeMergeChunks(fileFullPath util.FullPath, compactedChunks []*
 	for {
 		n, readErr := io.ReadFull(reader, buf)
 		if n > 0 {
-			chunk, uploadErr := saveFunc(bytes.NewReader(buf[:n]), "", offset, 0, uint64(n))
+			chunk, uploadErr := saveFunc(bytes.NewReader(buf[:n]), "", offset, oldestVisibleTsNs(visibles, offset, offset+int64(n)), uint64(n))
 			if uploadErr != nil {
 				return nil, uploadErr
 			}

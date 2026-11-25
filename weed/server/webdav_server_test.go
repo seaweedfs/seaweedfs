@@ -18,6 +18,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/stretchr/testify/assert"
@@ -270,33 +271,28 @@ func TestWebDavFileSystem_OverwriteKeepsTargetOnParentFailure(t *testing.T) {
 
 // DELETE, and MOVE or COPY with Overwrite: T, remove a collection through RemoveAll, which must take its contents too.
 func TestWebDavFileSystem_RemoveAll_Recursive(t *testing.T) {
-	filer := &deleteRecordingFiler{}
-	filerAddr := startFakeWebDavFiler(t, filer)
-	fs := &WebDavFileSystem{option: &WebDavOption{
-		Filer:          filerAddr,
-		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
-	}}
+	fs, filer := newWebDavLockFS(t, map[string]*filer_pb.Entry{"/dir/sub": {Name: "sub", IsDirectory: true}})
 
 	assert.NoError(t, fs.RemoveAll(context.Background(), "/dir/sub"))
-	if assert.NotNil(t, filer.req) {
-		assert.Equal(t, "/dir", filer.req.Directory)
-		assert.Equal(t, "sub", filer.req.Name)
-		assert.True(t, filer.req.IsRecursive)
+	if assert.Len(t, filer.deletes, 1) {
+		assert.Equal(t, "/dir", filer.deletes[0].Directory)
+		assert.Equal(t, "sub", filer.deletes[0].Name)
+		assert.True(t, filer.deletes[0].IsRecursive)
 	}
 
-	filer.req = nil
+	filer.deletes = nil
 	assert.NoError(t, fs.RemoveAll(context.Background(), "/dir/sub/"))
-	if assert.NotNil(t, filer.req) {
-		assert.Equal(t, "/dir", filer.req.Directory)
-		assert.Equal(t, "sub", filer.req.Name)
+	if assert.Len(t, filer.deletes, 1) {
+		assert.Equal(t, "/dir", filer.deletes[0].Directory)
+		assert.Equal(t, "sub", filer.deletes[0].Name)
 	}
 
-	filer.req = nil
+	filer.deletes = nil
 	wrapped := NewWrappedFs(fs, "/served")
 	assert.Equal(t, os.ErrInvalid, fs.RemoveAll(context.Background(), "/"))
 	assert.Equal(t, os.ErrInvalid, wrapped.RemoveAll(context.Background(), "/../"))
 	assert.Equal(t, os.ErrInvalid, wrapped.Rename(context.Background(), "/", "/x"))
-	assert.Nil(t, filer.req)
+	assert.Empty(t, filer.deletes)
 }
 
 // MOVE or COPY into an ancestor destination is refused before the
@@ -993,4 +989,47 @@ func TestWebDavFileSystem_Rename_MissingDestParent(t *testing.T) {
 
 	assert.NoError(t, fs.Rename(context.Background(), "/dir/file.txt", "/dir/moved.txt"))
 	assert.NotNil(t, filer.req)
+}
+
+func TestWebDavBasicAuth(t *testing.T) {
+	ws, err := NewWebDavServer(&WebDavOption{Filer: "127.0.0.1:1", CacheDir: t.TempDir(), BasicAuth: security.NewBasicAuth("alice", "secret")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth, ok := ws.Handler.(basicAuthHandler)
+	if !ok {
+		t.Fatalf("handler %T does not check Basic Auth", ws.Handler)
+	}
+	reached := 0
+	auth.next = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached++ })
+
+	for _, creds := range [][2]string{{}, {"alice", "wrong"}, {"bob", "secret"}} {
+		req := httptest.NewRequest("PROPFIND", "/buckets/", nil)
+		if creds[0] != "" {
+			req.SetBasicAuth(creds[0], creds[1])
+		}
+		rec := httptest.NewRecorder()
+		auth.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized || rec.Header().Get("WWW-Authenticate") == "" {
+			t.Fatalf("credentials %q: got %d %q, want 401 with a Basic challenge", creds, rec.Code, rec.Header().Get("WWW-Authenticate"))
+		}
+	}
+	if reached != 0 {
+		t.Fatalf("an unauthenticated request reached WebDAV")
+	}
+
+	req := httptest.NewRequest("PROPFIND", "/buckets/", nil)
+	req.SetBasicAuth("alice", "secret")
+	auth.ServeHTTP(httptest.NewRecorder(), req)
+	if reached != 1 {
+		t.Fatalf("valid credentials did not reach WebDAV")
+	}
+
+	open, err := NewWebDavServer(&WebDavOption{Filer: "127.0.0.1:1", CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := open.Handler.(basicAuthHandler); ok {
+		t.Fatalf("Basic Auth is on without a password")
+	}
 }

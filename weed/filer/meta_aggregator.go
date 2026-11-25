@@ -56,6 +56,9 @@ type MetaAggregator struct {
 	// started failing to connect; see notePeerUnreachable. Guarded by
 	// peerChansLock, so a removed peer's exiting loop cannot recreate it.
 	peerUnreachableSinceNs map[pb.ServerAddress]int64
+	// peerSharesStore marks followed peers whose store signature matched this
+	// filer's when their subscription last connected. Guarded by peerChansLock.
+	peerSharesStore map[pb.ServerAddress]bool
 	// lowWatermarkTsNs and lowFlushWatermarkTsNs are the last minima signalled
 	// on deliveryAdvanced and flushAdvanced, each closed and replaced when its
 	// own minimum rises. Held readers park on the one that bounds them:
@@ -102,6 +105,7 @@ func NewMetaAggregator(filer *Filer, self pb.ServerAddress, grpcDialOption grpc.
 		peerResumeTsNs:      make(map[pb.ServerAddress]int64),
 
 		peerUnreachableSinceNs: make(map[pb.ServerAddress]int64),
+		peerSharesStore:        make(map[pb.ServerAddress]bool),
 	}
 	t.peerSubscribeLoop = t.loopSubscribeToOneFiler
 	// nil notifyFn: aggregated subscribers wake through the buffer's
@@ -148,6 +152,7 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 			delete(ma.peerChans, address)
 		}
 		delete(ma.peerUnreachableSinceNs, address)
+		delete(ma.peerSharesStore, address)
 		// Only mark: dropping the watermarks at once would let subscribers
 		// advance past a flapping peer's unflushed events (see peerRemovedAtNs).
 		ma.markPeerWatermarkRemoved(address)
@@ -202,6 +207,25 @@ func (ma *MetaAggregator) notePeerReachable(peer pb.ServerAddress, stopChan <-ch
 	}
 	delete(ma.peerUnreachableSinceNs, peer)
 	ma.initPeerWatermark(peer)
+}
+
+// notePeerStore records whether peer runs on this filer's store. A subscription
+// the master has removed meanwhile must not record it.
+func (ma *MetaAggregator) notePeerStore(peer pb.ServerAddress, stopChan <-chan struct{}, sharesStore bool) {
+	ma.peerChansLock.Lock()
+	defer ma.peerChansLock.Unlock()
+	if ma.peerChans[peer] == stopChan {
+		ma.peerSharesStore[peer] = sharesStore
+	}
+}
+
+// SharesStore reports whether peer is followed and runs on this filer's
+// store, so an entry missing here is missing there too. A peer not yet
+// connected reports false.
+func (ma *MetaAggregator) SharesStore(peer pb.ServerAddress) bool {
+	ma.peerChansLock.Lock()
+	defer ma.peerChansLock.Unlock()
+	return ma.peerSharesStore[peer]
 }
 
 // initPeerWatermark adds the peer with a zero (unknown) watermark; a re-added
@@ -611,11 +635,18 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		}
 	}()
 
-	peerSignature, err := ma.readFilerStoreSignature(ctx, peer)
+	peerSignature, peerDigest, err := ma.readFilerStoreSignature(ctx, peer)
 	if err != nil {
 		return lastTsNs, fmt.Errorf("%w %s: %v", errPeerUnreachable, peer, err)
 	}
+	if err := checkPeerDigest(peer, peerDigest, peerSignature == f.Signature); err != nil {
+		glog.Errorf("%v", err)
+		// A refused peer counts as unreachable, so the loop retires it from the
+		// low watermarks instead of letting its zero hold every subscriber.
+		return lastTsNs, fmt.Errorf("%w %s: %v", errPeerUnreachable, peer, err)
+	}
 	ma.notePeerReachable(peer, stopChan)
+	ma.notePeerStore(peer, stopChan, peerSignature == f.Signature)
 
 	// when filer store is not shared by multiple filers
 	if peerSignature != f.Signature {
@@ -978,16 +1009,36 @@ func (f *Filer) applyTraversedEntry(ctx context.Context, entry *Entry, peerTsNs 
 	return nil
 }
 
-func (ma *MetaAggregator) readFilerStoreSignature(ctx context.Context, peer pb.ServerAddress) (sig int32, err error) {
+// readFilerStoreSignature returns a peer filer's store signature and the
+// digest it reports, empty for a filer that predates the setting.
+func (ma *MetaAggregator) readFilerStoreSignature(ctx context.Context, peer pb.ServerAddress) (sig int32, digest string, err error) {
 	err = pb.WithFilerClient(false, 0, peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return err
 		}
 		sig = resp.Signature
+		digest = resp.Digest
 		return nil
 	})
 	return
+}
+
+// checkPeerDigest compares a peer filer's digest with this filer's. A peer
+// with a store of its own would replay entries holding the other kind of
+// digest into this filer's store, so its changes are refused. A peer on the
+// same store writes into it directly; refusing its stream would only starve
+// this filer's subscribers of its changes, so the mismatch is logged and the
+// stream kept. A peer that reports no digest predates the setting.
+func checkPeerDigest(peer pb.ServerAddress, peerDigest string, sharedStore bool) error {
+	if peerDigest == "" || peerDigest == util.Digest() {
+		return nil
+	}
+	if sharedStore {
+		glog.Errorf("peer filer %s on this filer's store uses digest %s and this filer uses digest %s; the store holds digests of both kinds", peer, peerDigest, util.Digest())
+		return nil
+	}
+	return fmt.Errorf("peer filer %s uses digest %s and this filer uses digest %s; not replaying its metadata, which would put digests of both kinds into this filer's store", peer, peerDigest, util.Digest())
 }
 
 const (

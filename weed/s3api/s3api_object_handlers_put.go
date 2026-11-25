@@ -128,10 +128,21 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Check bucket policy
+	// The bucket's policy reaches the engine when the bucket loads; a missing
+	// bucket passes so auto-create below still applies.
+	if _, errCode := s3a.getBucketConfig(bucket); errCode != s3err.ErrNone && errCode != s3err.ErrNoSuchBucket {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 	if errCode, _ := s3a.checkPolicyWithEntry(r, bucket, object, string(s3_constants.ACTION_WRITE), "", nil); errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
 		return
+	}
+	if !isExtractZip(r) {
+		if errCode := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, object, "", string(s3_constants.ACTION_WRITE), "PutObjectHandler"); errCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, errCode)
+			return
+		}
 	}
 
 	if errCode := ValidateRequestEncryption(r.Header); errCode != s3err.ErrNone {
@@ -236,7 +247,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		// ETag of the marker content, empty or not
 		dirMd5 := util.Md5(dirContent)
-		if expectedMd5, _ := validateContentMd5(r.Header); len(expectedMd5) > 0 && !contentMd5Matches(dirMd5, expectedMd5) {
+		if expectedMd5, _ := validateContentMd5(r.Header); len(expectedMd5) > 0 && !contentMd5Matches(util.BodyMd5Of(dirMd5, dirContent), expectedMd5) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrBadDigest)
 			return
 		}
@@ -615,6 +626,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	plaintextHash := util.NewMd5()
 	dataReader = io.TeeReader(dataReader, plaintextHash)
+	var contentMd5Hash hash.Hash
+	if r.Header.Get("Content-Md5") != "" {
+		if contentMd5Hash = util.NewContentMd5(); contentMd5Hash != nil {
+			dataReader = io.TeeReader(dataReader, contentMd5Hash)
+		}
+	}
 
 	// Parse the request's query string once. AWS SDK presigners hoist signed
 	// headers such as x-amz-sdk-checksum-algorithm into the URL's query string,
@@ -802,7 +819,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
 			return "", s3err.ErrInvalidDigest, SSEResponseMetadata{}
 		}
-		if !contentMd5Matches(md5Sum, expectedMd5) {
+		if !contentMd5Matches(util.BodyMd5(md5Sum, contentMd5Hash), expectedMd5) {
 			glog.Warningf("putToFiler: Checksum verification failed, attempting to cleanup %d orphaned chunks", len(chunkResult.FileChunks))
 			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
 			return "", s3err.ErrBadDigest, SSEResponseMetadata{}
@@ -1322,6 +1339,10 @@ func (s3a *S3ApiServer) createAfterAmbiguousRoute(filePath, bucket, object strin
 				glog.Warningf("putToFiler: ambiguous routed PUT for %s cannot prove an empty stored entry is its own; not claiming it", filePath)
 				return s3err.ErrServiceUnavailable
 			}
+			if err := s3a.ensureObjectParent(lookupCtx, bucket, dir); err != nil {
+				glog.Errorf("putToFiler: ambiguous routed PUT for %s stored the entry but its directory is still missing: %v", filePath, err)
+				return s3err.ErrInternalError
+			}
 			*entryCreated = true
 			if finalize != nil && finalize.afterCreate != nil {
 				if code := finalize.afterCreate(entry); code != s3err.ErrNone {
@@ -1456,6 +1477,10 @@ func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object, routeObjec
 			if resolveErr != nil || !sameFileChunks(resolved, uploaded) {
 				return s3err.ErrNone
 			}
+		}
+		if err := s3a.ensureObjectParent(lookupCtx, bucket, dir); err != nil {
+			glog.Errorf("putToFiler: create entry for %s failed and its directory is still missing: %v", filePath, err)
+			return s3err.ErrNone
 		}
 		glog.Warningf("putToFiler: create entry for %s failed but the entry exists, treating the write as successful", filePath)
 		if finalize == nil || finalize.afterCreate == nil {

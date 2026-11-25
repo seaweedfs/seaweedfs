@@ -34,7 +34,6 @@ func TestScopeRetainsData(t *testing.T) {
 			name:      "changed inline content",
 			stored:    &filer_pb.Entry{Content: []byte("stored")},
 			requested: &filer_pb.Entry{Content: []byte("new")},
-			wantErr:   true,
 		},
 		{
 			name:      "cleared inline content",
@@ -60,7 +59,7 @@ func TestScopeRetainsData(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := scopeRetainsData(tc.stored, tc.requested)
+			err := scopeRetainsData(tc.stored, tc.requested, nil)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("scopeRetainsData err=%v, wantErr=%v", err, tc.wantErr)
 			}
@@ -72,6 +71,7 @@ type scopeRetentionCase struct {
 	name        string
 	initial     *filer_pb.Entry
 	replacement *filer_pb.Entry
+	staleErr    bool
 }
 
 func scopeRetentionCases() []scopeRetentionCase {
@@ -85,6 +85,7 @@ func scopeRetentionCases() []scopeRetentionCase {
 			name:        "chunks",
 			initial:     entryWith("retained", "5,0c00000055"),
 			replacement: entryWith("retained", "5,0c00000056"),
+			staleErr:    true,
 		},
 	}
 }
@@ -142,7 +143,7 @@ func TestScopeRetentionRechecksCreateAndUpdateUnderPathLock(t *testing.T) {
 				}
 
 				called := false
-				_, err := scope.unary(scopedRetentionContext(), req, &grpc.UnaryServerInfo{
+				resp, err := scope.unary(scopedRetentionContext(), req, &grpc.UnaryServerInfo{
 					FullMethod: scopeFilerMethodPrefix + method,
 				}, func(handlerCtx context.Context, handlerReq any) (any, error) {
 					called = true
@@ -159,15 +160,31 @@ func TestScopeRetentionRechecksCreateAndUpdateUnderPathLock(t *testing.T) {
 						return nil, nil
 					}
 				})
-				if status.Code(err) != codes.PermissionDenied || !called {
-					t.Fatalf("stale %s err=%v called=%v, want handler recheck PermissionDenied", method, err, called)
+				if tc.staleErr {
+					if status.Code(err) != codes.PermissionDenied || !called {
+						t.Fatalf("stale %s err=%v called=%v, want handler recheck PermissionDenied", method, err, called)
+					}
+				} else {
+					if err != nil || !called {
+						t.Fatalf("stale %s err=%v called=%v, want inline write admitted", method, err, called)
+					}
+					if method == "CreateEntry" {
+						createResp, ok := resp.(*filer_pb.CreateEntryResponse)
+						if !ok || createResp == nil || createResp.GetError() != "" || createResp.GetErrorCode() != filer_pb.FilerError_OK {
+							t.Fatalf("stale inline CreateEntry response = %#v, want empty error and FilerError_OK", resp)
+						}
+					}
 				}
 				got, findErr := store.FindEntry(context.Background(), util.FullPath(path))
 				if findErr != nil {
 					t.Fatalf("find replacement: %v", findErr)
 				}
-				if !retentionEntryDataEqual(got, tc.replacement) {
-					t.Fatalf("rejected stale %s changed replacement data: got content=%q chunks=%v, want content=%q chunks=%v", method, got.Content, got.GetChunks(), tc.replacement.Content, tc.replacement.GetChunks())
+				want := tc.replacement
+				if !tc.staleErr {
+					want = tc.initial
+				}
+				if !retentionEntryDataEqual(got, want) {
+					t.Fatalf("stale %s stored content=%q chunks=%v, want content=%q chunks=%v", method, got.Content, got.GetChunks(), want.Content, want.GetChunks())
 				}
 			})
 

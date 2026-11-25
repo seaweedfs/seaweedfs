@@ -184,6 +184,9 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 		if code, _ := s3a.checkPolicyWithEntry(r, bucket, memberKey, string(s3_constants.ACTION_WRITE), "", nil); code != s3err.ErrNone {
 			return code
 		}
+		if code := s3a.recheckTagConditionedPolicyWithLookup(r, bucket, memberKey, "", string(s3_constants.ACTION_WRITE), "extractZipObject"); code != s3err.ErrNone {
+			return code
+		}
 		// Lock headers validated for the request still need the dedicated
 		// permissions against the member's own key.
 		if r.Header.Get(s3_constants.AmzObjectLockMode) != "" || r.Header.Get(s3_constants.AmzObjectLockRetainUntilDate) != "" {

@@ -11,6 +11,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
@@ -350,7 +351,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 			if strings.HasSuffix(metadataPath, tablePath) {
 				// The name went to another table before this request wrote a
 				// record, so nothing names the directory the server picked.
-				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), metadataBucket, metadataPath); cleanupErr != nil {
+				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), metadataBucket, metadataPath, nil); cleanupErr != nil {
 					glog.V(1).Infof("Iceberg: CreateTable cleanup %s: %v", metadataPath, cleanupErr)
 				}
 			}
@@ -813,7 +814,8 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 	// delete, so we can purge data files afterwards. The catalog is the
 	// authoritative owner of this mapping — if the table is not registered,
 	// there is nothing to clean up and DeleteTable will return NoSuchTable.
-	var storedMetadataLocation string
+	var storedMetadataLocation, storedVersionToken string
+	var storedCreatedAt time.Time
 	lookupReq := &s3tables.GetTableRequest{
 		TableBucketARN: bucketARN,
 		Namespace:      namespace,
@@ -826,12 +828,15 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 	})
 	if lookupErr == nil {
 		storedMetadataLocation = lookupResp.MetadataLocation
+		storedCreatedAt = lookupResp.CreatedAt
+		storedVersionToken = lookupResp.VersionToken
 	}
 
 	deleteReq := &s3tables.DeleteTableRequest{
 		TableBucketARN: bucketARN,
 		Namespace:      namespace,
 		Name:           tableName,
+		VersionToken:   storedVersionToken,
 	}
 
 	err := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -857,7 +862,13 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 	if storedMetadataLocation != "" {
 		if tableLoc := tableLocationFromMetadataLocation(storedMetadataLocation); tableLoc != "" {
 			if dataBucket, dataPath, parseErr := parseS3Location(tableLoc); parseErr == nil {
-				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), dataBucket, dataPath); cleanupErr != nil {
+				var holdsFiles func(filer_pb.SeaweedFilerClient, string) (bool, error)
+				if !storedCreatedAt.IsZero() {
+					holdsFiles = func(client filer_pb.SeaweedFilerClient, dir string) (bool, error) {
+						return s3tables.DirHoldsFiles(r.Context(), client, dir, storedCreatedAt)
+					}
+				}
+				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), dataBucket, dataPath, holdsFiles); cleanupErr != nil {
 					glog.V(1).Infof("Iceberg: failed to purge dropped table location s3://%s/%s: %v", dataBucket, dataPath, cleanupErr)
 				}
 			}
@@ -950,13 +961,14 @@ func isNoSuchTableError(err error) bool {
 // empty location (e.g. Trino CTAS) can proceed after a DROP. Callers must
 // have confirmed via the catalog that no table is registered at this name —
 // live tables must never be touched by this helper. Missing paths are not
-// an error.
+// an error. A location for which a non-nil holdsFiles reports files the
+// dropped entry did not write is left alone.
 //
 // The tablePath is validated to contain only safe, relative segments before
 // being joined with the bucket prefix, so a maliciously crafted location
 // (e.g. containing "..") cannot escape the bucket subtree and delete data
 // outside of it.
-func (s *Server) cleanupStaleTableLocation(ctx context.Context, bucketName, tablePath string) error {
+func (s *Server) cleanupStaleTableLocation(ctx context.Context, bucketName, tablePath string, holdsFiles func(filer_pb.SeaweedFilerClient, string) (bool, error)) error {
 	tablePath = strings.Trim(tablePath, "/")
 	if bucketName == "" || tablePath == "" {
 		return nil
@@ -975,14 +987,34 @@ func (s *Server) cleanupStaleTableLocation(ctx context.Context, bucketName, tabl
 		return fmt.Errorf("cleanupStaleTableLocation: refusing unsafe table path %q", tablePath)
 	}
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		roots, err := s3tables.CatalogRecordRoots(ctx, client, bucketName)
-		if err != nil {
+		checkUnclaimed := func() error {
+			roots, err := s3tables.CatalogRecordRoots(ctx, client, bucketName)
+			if err != nil {
+				return err
+			}
+			if s3tables.RootClaimed(roots, "", path.Join(parentDir, name)) {
+				return s3tables.ErrLocationInUse
+			}
+			return nil
+		}
+		if err := checkUnclaimed(); err != nil {
 			return err
 		}
-		if s3tables.RootClaimed(roots, "", path.Join(parentDir, name)) {
-			return s3tables.ErrLocationInUse
+		if holdsFiles != nil {
+			holds, err := holdsFiles(client, path.Join(parentDir, name))
+			if err != nil {
+				return err
+			}
+			if holds {
+				return fmt.Errorf("keeping %s: it holds files the dropped entry did not write", path.Join(parentDir, name))
+			}
+			// The scan takes time in proportion to the tree; a record that
+			// claimed the location meanwhile keeps it.
+			if err := checkUnclaimed(); err != nil {
+				return err
+			}
 		}
-		err = filer_pb.DoRemove(ctx, client, parentDir, name, true, true, true, false, nil)
+		err := filer_pb.DoRemove(ctx, client, parentDir, name, true, true, true, false, nil)
 		if err == nil || errors.Is(err, filer_pb.ErrNotFound) {
 			return nil
 		}

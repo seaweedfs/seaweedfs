@@ -107,7 +107,7 @@ func extractSessionToken(r *http.Request) string {
 	return r.URL.Query().Get("X-Amz-Security-Token")
 }
 
-func (h *S3TablesHandler) authorizeIAMAction(r *http.Request, identityPolicyNames []string, action string, resources ...string) (bool, error) {
+func (h *S3TablesHandler) authorizeIAMAction(r *http.Request, identityPolicyNames []string, action string, requestTags map[string]string, resources ...string) (bool, error) {
 	if h.iamAuthorizer == nil {
 		err := fmt.Errorf("nil iamAuthorizer in authorizeIAMAction")
 		glog.V(2).Infof("S3Tables: %v", err)
@@ -127,7 +127,7 @@ func (h *S3TablesHandler) authorizeIAMAction(r *http.Request, identityPolicyName
 
 	sessionToken := extractSessionToken(r)
 
-	requestContext := buildIAMRequestContext(r, getIdentityClaims(r))
+	requestContext := buildIAMRequestContext(r, getIdentityClaims(r), requestTags)
 	policyNames := identityPolicyNames
 	if len(policyNames) == 0 {
 		policyNames = getIdentityPolicyNames(r)
@@ -230,8 +230,14 @@ func getIdentityClaims(r *http.Request) map[string]interface{} {
 	return claims
 }
 
-func buildIAMRequestContext(r *http.Request, claims map[string]interface{}) map[string]interface{} {
+func buildIAMRequestContext(r *http.Request, claims map[string]interface{}, requestTags map[string]string) map[string]interface{} {
 	ctx := make(map[string]interface{})
+	for key, value := range requestTags {
+		ctx["aws:RequestTag/"+key] = value
+	}
+	if keys := mapKeys(requestTags); len(keys) > 0 {
+		ctx["aws:TagKeys"] = keys
+	}
 	if ua := r.Header.Get("User-Agent"); ua != "" {
 		ctx["userAgent"] = ua
 	}

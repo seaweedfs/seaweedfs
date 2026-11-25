@@ -199,7 +199,8 @@ type MasterClient struct {
 	// before it is ready to be routed to.
 	announceCh chan struct{}
 
-	lancePort uint32
+	lancePort  uint32
+	s3Endpoint string
 }
 
 // SetAnnounceCh sets a channel that must be closed before this client
@@ -212,6 +213,12 @@ func (mc *MasterClient) SetAnnounceCh(ch chan struct{}) {
 // on. Must be called before KeepConnectedToMaster starts.
 func (mc *MasterClient) SetLancePort(port uint32) {
 	mc.lancePort = port
+}
+
+// SetS3Endpoint advertises the URL this S3 gateway serves the S3 API on. Must
+// be called before KeepConnectedToMaster starts.
+func (mc *MasterClient) SetS3Endpoint(endpoint string) {
+	mc.s3Endpoint = endpoint
 }
 
 // ListMasters returns the configured master addresses without waiting for a
@@ -389,6 +396,7 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 			Version:       version.Version(),
 			LeaveLockRing: mc.leavingLockRing,
 			LancePort:     mc.lancePort,
+			S3Endpoint:    mc.s3Endpoint,
 		})
 		if err == nil {
 			mc.stream = stream

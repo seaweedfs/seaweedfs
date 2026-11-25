@@ -325,6 +325,7 @@ func (s3opt *S3Options) startS3Server() bool {
 	var filerMaxMB int32
 	// the filer's -encryptVolumeData, which turns on chunk encryption here too
 	var filerCipher bool
+	var filerDigest string
 
 	for {
 		err := pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -339,6 +340,7 @@ func (s3opt *S3Options) startS3Server() bool {
 			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
 			filerMaxMB = int32(resp.MaxMb)
 			filerCipher = resp.Cipher
+			filerDigest = resp.Digest
 			glog.V(0).Infof("S3 read filer buckets dir: %s", filerBucketsPath)
 			glog.V(0).Infof("S3 read filer maxMB: %d", filerMaxMB)
 			if len(masterAddresses) > 0 {
@@ -354,6 +356,7 @@ func (s3opt *S3Options) startS3Server() bool {
 			break
 		}
 	}
+	adoptFilerDigest(*s3opt.filer, filerDigest)
 
 	go stats_collect.LoopPushingMetric("s3", stats_collect.SourceName(uint32(*s3opt.port)), metricsAddress, metricsIntervalSec)
 
@@ -434,6 +437,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		AllowUntrustedRemoteEndpoints: *s3opt.allowUntrustedRemoteEndpoints,
 		AllowBackslashInKey:           *s3opt.allowBackslashInKey,
 		LancePort:                     s3opt.lancePort(),
+		S3Endpoint:                    s3opt.s3Endpoint(),
 		IamSelfServiceRequiresGrant:   *s3opt.iamSelfServiceRequiresGrant,
 		RoutedLookupTimeout:           *s3opt.routedLookupTimeout,
 		UnreachableOwnerTTL:           *s3opt.unreachableOwnerTTL,
@@ -882,6 +886,20 @@ func (s3opt *S3Options) deriveLanceStorageEndpoint() string {
 	case "", "0.0.0.0", "::", "[::]":
 		return ""
 	}
+	return s3opt.endpointOn(host)
+}
+
+// s3Endpoint is the URL advertised to the master. Unlike the Lance endpoint it
+// falls back to the detected address, as the gateway's own registration does.
+func (s3opt *S3Options) s3Endpoint() string {
+	if endpoint := s3opt.deriveLanceStorageEndpoint(); endpoint != "" {
+		return endpoint
+	}
+	return s3opt.endpointOn(util.DetectedHostAddress())
+}
+
+// endpointOn is the S3 URL on host, using the TLS port when TLS is on.
+func (s3opt *S3Options) endpointOn(host string) string {
 	scheme := "http"
 	port := 0
 	if s3opt.port != nil {
@@ -921,19 +939,7 @@ func (s3opt *S3Options) deriveS3AdvertisedEndpoint() string {
 	case "", "0.0.0.0", "::", "[::]":
 		return ""
 	}
-
-	scheme := "http"
-	port := 0
-	if s3opt.port != nil {
-		port = *s3opt.port
-	}
-	if s3opt.tlsPrivateKey != nil && *s3opt.tlsPrivateKey != "" {
-		scheme = "https"
-		if s3opt.portHttps != nil && *s3opt.portHttps > 0 {
-			port = *s3opt.portHttps
-		}
-	}
-	return fmt.Sprintf("%s://%s", scheme, util.JoinHostPort(host, port))
+	return s3opt.endpointOn(host)
 }
 
 // icebergCredentialVendor adapts the S3 gateway's STS-backed vending to the

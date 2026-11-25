@@ -93,6 +93,11 @@ func (wo *WebDavOption) startWebDav() bool {
 
 	util.SetOutboundLocalIP(*wo.ipBind)
 
+	basicAuth := webDavBasicAuth()
+	if basicAuth == nil && !isLoopbackIp(*wo.ipBind) {
+		glog.Warningf("WebDAV has no authentication: anyone who can reach %s:%d can read, write and delete under %s. Set [webdav.basic_auth] in security.toml.", *wo.ipBind, *wo.port, *wo.filerRootPath)
+	}
+
 	// detect current user
 	uid, gid := uint32(0), uint32(0)
 	if u, err := user.Current(); err == nil {
@@ -110,6 +115,7 @@ func (wo *WebDavOption) startWebDav() bool {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	var cipher bool
+	var digest string
 	// connect to filer
 	for {
 		err := pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -118,6 +124,7 @@ func (wo *WebDavOption) startWebDav() bool {
 				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
 			}
 			cipher = resp.Cipher
+			digest = resp.Digest
 			return nil
 		})
 		if err != nil {
@@ -128,6 +135,7 @@ func (wo *WebDavOption) startWebDav() bool {
 			break
 		}
 	}
+	adoptFilerDigest(*wo.filer, digest)
 
 	ws, webdavServer_err := weed_server.NewWebDavServer(&weed_server.WebDavOption{
 		Filer:          filerAddress,
@@ -142,6 +150,7 @@ func (wo *WebDavOption) startWebDav() bool {
 		CacheDir:       *wo.cacheDir,
 		CacheSizeMB:    *wo.cacheSizeMB,
 		MaxMB:          *wo.maxMB,
+		BasicAuth:      basicAuth,
 	})
 	if webdavServer_err != nil {
 		glog.Fatalf("WebDav Server startup error: %v", webdavServer_err)
@@ -184,4 +193,11 @@ func (wo *WebDavOption) startWebDav() bool {
 
 	return true
 
+}
+
+// webDavBasicAuth reads [webdav.basic_auth] from security.toml and the WEED_
+// environment; nil means WebDAV is open.
+func webDavBasicAuth() *security.BasicAuth {
+	v := util.GetViper()
+	return security.NewBasicAuth(v.GetString("webdav.basic_auth.user"), v.GetString("webdav.basic_auth.password"))
 }

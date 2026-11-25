@@ -373,9 +373,9 @@ func guardedMaxConnsPerHost() int {
 // it is built that its configuration does not hold, so that a change of them
 // builds a new client: the gcs credentials sources of CredentialsVersion, or,
 // for an s3-compatible remote, the resolved keys (which a type's environment
-// fallback may supply), plus — with a key or secret still missing (the SDK's
-// default chain) — the shared credentials and config files and the AWS_*
-// variables the chain reads. "" for a remote of another kind.
+// fallback may supply) and WEED_REMOTE_S3_CREDENTIALS, plus — with a key or
+// secret still missing (the SDK's default chain) — the shared credentials and
+// config files and every AWS_* variable. "" for a remote of another kind.
 func guardedCredentialsVersion(conf *remote_pb.RemoteConf) string {
 	if conf.GetType() == "gcs" {
 		return remote_storage.CredentialsVersion(conf)
@@ -388,6 +388,8 @@ func guardedCredentialsVersion(conf *remote_pb.RemoteConf) string {
 	h.Write([]byte(accessKey))
 	h.Write([]byte{0})
 	h.Write([]byte(secretKey))
+	h.Write([]byte{0})
+	h.Write([]byte(os.Getenv("WEED_REMOTE_S3_CREDENTIALS")))
 	if s3remote.UsesDefaultCredentialChain(conf) {
 		shared := awsSharedFile("AWS_SHARED_CREDENTIALS_FILE", "credentials")
 		config := awsSharedFile("AWS_CONFIG_FILE", "config")
@@ -395,9 +397,18 @@ func guardedCredentialsVersion(conf *remote_pb.RemoteConf) string {
 		h.Write([]byte(remote_storage.FileVersion(shared)))
 		h.Write([]byte{0})
 		h.Write([]byte(remote_storage.FileVersion(config)))
-		for _, k := range []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE", "AWS_DEFAULT_PROFILE"} {
+		// the SDK takes its keys, profile, web identity, container, IMDS, STS
+		// and endpoint settings from AWS_* variables when it builds the session
+		var vars []string
+		for _, kv := range os.Environ() {
+			if strings.HasPrefix(kv, "AWS_") {
+				vars = append(vars, kv)
+			}
+		}
+		slices.Sort(vars)
+		for _, kv := range vars {
 			h.Write([]byte{0})
-			h.Write([]byte(os.Getenv(k)))
+			h.Write([]byte(kv))
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil)[:16])

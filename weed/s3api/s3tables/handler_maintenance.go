@@ -342,6 +342,7 @@ func (h *S3TablesHandler) authorizeMaintenanceBucket(r *http.Request, filerClien
 
 	var bucketMetadata tableBucketMetadata
 	var bucketPolicy string
+	var bucketTags map[string]string
 	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 		if err != nil {
@@ -350,7 +351,10 @@ func (h *S3TablesHandler) authorizeMaintenanceBucket(r *http.Request, filerClien
 		if err := json.Unmarshal(data, &bucketMetadata); err != nil {
 			return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
 		}
-		bucketPolicy, err = h.readPolicy(r, client, bucketPath)
+		if bucketPolicy, err = h.readPolicy(r, client, bucketPath); err != nil || bucketPolicy == "" {
+			return err
+		}
+		bucketTags, err = h.readTags(r.Context(), client, bucketPath)
 		return err
 	})
 	if err != nil {
@@ -364,6 +368,8 @@ func (h *S3TablesHandler) authorizeMaintenanceBucket(r *http.Request, filerClien
 		Subject:          callerSubject(r),
 		IsLocalAccountID: h.localAccountIDs,
 		TableBucketName:  bucketName,
+		TableBucketTags:  bucketTags,
+		ResourceTags:     bucketTags,
 		IdentityActions:  getIdentityActions(r),
 		DefaultAllow:     h.defaultAllowFor(r),
 	}) {

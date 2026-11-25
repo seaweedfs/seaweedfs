@@ -78,6 +78,20 @@ impl VectorService for ObservedService {
         }
         result
     }
+    async fn query_indexed_vectors(
+        &self,
+        request: Request<pb::QueryVectorsRequest>,
+    ) -> Result<Response<pb::QueryVectorsResponse>, Status> {
+        let mut in_flight = self.metrics.start("QueryVectors");
+        let result = self.inner.query_indexed_vectors(request).await;
+        in_flight.complete(result.as_ref().err().map(|e| e.code()));
+        if let Ok(response) = &result {
+            self.metrics
+                .query_results
+                .inc_by(response.get_ref().vectors.len() as u64);
+        }
+        result
+    }
     async fn metadata_keys(
         &self,
         request: Request<pb::MetadataKeysRequest>,

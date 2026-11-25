@@ -324,7 +324,7 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		return nil, nil, "", nil, errCode
 	}
 
-	// 5a. Reject requests that carry x-amz-* headers outside of SignedHeaders.
+	// 5a. Reject requests with headers that require signing outside of SignedHeaders.
 	// Without this check a presigned-URL holder can inject unsigned headers
 	// (x-amz-tagging, x-amz-acl, x-amz-meta-*, x-amz-storage-class, x-amz-object-lock-*,
 	// x-amz-server-side-encryption*, etc.) that downstream handlers still persist.
@@ -972,8 +972,8 @@ var presignedUnsignedSSECHeaders = map[string]struct{}{
 	strings.ToLower(s3_constants.AmzCopySourceServerSideEncryptionCustomerKeyMD5): {},
 }
 
-// verifySignedHeadersCoverage rejects requests that carry x-amz-* headers
-// outside of the SignedHeaders list. AWS SigV4 requires every x-amz-* header
+// verifySignedHeadersCoverage checks x-amz-* headers and the vector search
+// mode header against SignedHeaders. AWS SigV4 requires every x-amz-* header
 // present in the request to be covered by the signature; without this check a
 // presigned-URL holder can add unsigned headers (ACL, tagging, storage class,
 // user metadata, encryption options, object lock) that the server still
@@ -985,7 +985,7 @@ func verifySignedHeadersCoverage(r *http.Request, signedHeaders []string, isPres
 	}
 	for name := range r.Header {
 		lower := strings.ToLower(name)
-		if !strings.HasPrefix(lower, "x-amz-") {
+		if !strings.HasPrefix(lower, "x-amz-") && lower != s3_constants.SeaweedFSVectorSearchMode {
 			continue
 		}
 		if _, ok := signedSet[lower]; ok {

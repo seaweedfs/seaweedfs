@@ -94,7 +94,7 @@ func TestFlushSendsUnpublishedCoveredChunks(t *testing.T) {
 }
 
 // A dropped chunk goes out only while newer plain chunks of the request hide
-// all of it: merged chunks are stamped 0, the filer does not look into a
+// all of it: an unstamped chunk hides nothing, the filer does not look into a
 // manifest, and another dropped chunk is not sent to hide it either.
 func TestUnpublishedChunksStayCovered(t *testing.T) {
 	chunk := func(key uint64, offset, size, ts int64) *filer_pb.FileChunk {
@@ -110,7 +110,7 @@ func TestUnpublishedChunksStayCovered(t *testing.T) {
 		{"covered", []*filer_pb.FileChunk{chunk(4, 0, 1, 4), chunk(5, 1, 1, 5)}, []uint64{2, 3}},
 		{"between", []*filer_pb.FileChunk{chunk(4, 0, 2, 3)}, []uint64{2}},
 		{"partly", []*filer_pb.FileChunk{chunk(4, 0, 1, 4)}, nil},
-		{"merged", []*filer_pb.FileChunk{chunk(4, 0, 2, 0)}, nil},
+		{"unstamped", []*filer_pb.FileChunk{chunk(4, 0, 2, 0)}, nil},
 		{"manifest", []*filer_pb.FileChunk{{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 4, Cookie: 1}, Size: 2, ModifiedTsNs: 4, IsChunkManifest: true}}, nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -121,5 +121,37 @@ func TestUnpublishedChunksStayCovered(t *testing.T) {
 				t.Fatalf("unpublished %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// A merged chunk yields to a write newer than any byte it holds, as a peer's
+// pending write over bytes the merge did not change must still show.
+func TestOldestVisibleTsNs(t *testing.T) {
+	chunk := func(key uint64, offset, size, ts int64) *filer_pb.FileChunk {
+		return &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: key, Cookie: 1}, Offset: offset, Size: uint64(size), ModifiedTsNs: ts}
+	}
+	list, err := filer.NonOverlappingVisibleIntervals(context.Background(), nil, []*filer_pb.FileChunk{chunk(1, 0, 8, 1), chunk(2, 4, 4, 5), chunk(3, 12, 4, 3)}, 0, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var visibles []*filer.Interval[*filer.VisibleInterval]
+	for x := list.Front(); x != nil; x = x.Next {
+		visibles = append(visibles, x)
+	}
+	for _, tt := range []struct {
+		start, stop, want int64
+	}{
+		{0, 8, 1},
+		{4, 8, 5},
+		{6, 7, 5},
+		{12, 16, 3},
+		{13, 15, 3},
+		{8, 12, 0},
+		{4, 16, 0},
+		{0, 16, 0},
+	} {
+		if got := oldestVisibleTsNs(visibles, tt.start, tt.stop); got != tt.want {
+			t.Errorf("[%d,%d): %d, want %d", tt.start, tt.stop, got, tt.want)
+		}
 	}
 }

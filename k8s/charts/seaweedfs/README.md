@@ -330,6 +330,47 @@ applies. Rotating a key in the Secret takes effect on the next pod restart, as
 with any other environment variable. The COSI driver parses the config itself
 and does not resolve these references.
 
+#### Reload identities without a restart
+
+The chart hashes `existingConfigSecret` into the filer and S3 pod templates when it renders,
+so the first Helm upgrade after the Secret's content changes restarts those pods, and every
+identity change briefly takes S3 down, completely so with a single filer. SeaweedFS also
+reloads the identities file on SIGHUP, which `configReloader` uses instead:
+
+```yaml
+filer:
+  s3:
+    enabled: true
+    enableAuth: true
+    existingConfigSecret: my-s3-identities
+    configReloader:
+      enabled: true
+```
+
+`s3.configReloader` does the same for the standalone S3 gateway. With it:
+
+- An `s3-config-reloader` sidecar checks the mounted identities file every second, and
+  sends SIGHUP to SeaweedFS when it changes and once when it starts. Kubelet updates the
+  file at its next sync of the pod. Secret volumes are eventually consistent, so there is no
+  fixed bound: with the kubelet's default settings (a one-minute sync period and the `Watch`
+  Secret change detection strategy) it typically takes up to about 90 seconds, and changing
+  an annotation on the pod usually brings it down to seconds. Other kubelet settings can make
+  it slower. Until the file is updated, a revoked identity keeps working.
+- Changes to the content of `existingConfigSecret` no longer restart the pod: the chart
+  leaves `checksum/s3config` off it. Adding, changing, disabling and deleting identities
+  apply without a restart. Other files in the Secret, such as an audit log config, still
+  need one, and so do changes to the values the chart generates its own Secret from, such
+  as `s3.credentials`.
+- Every reload also re-creates the KMS providers configured in the identities file. The
+  `local` provider keeps its keys in memory, so a reload replaces them, as a restart does;
+  use another provider for objects that must stay readable.
+- The pod shares its process namespace (see [Sharing the process namespace](#sharing-the-process-namespace)),
+  so the sidecar can see SeaweedFS. It uses the component's image and container security
+  context, because it must run as the same user as SeaweedFS to signal it. If it can't
+  signal SeaweedFS, it logs a warning.
+
+The all-in-one deployment does not have this option.
+
 ## Admin Component
 
 The admin component provides a modern web-based administration interface for managing SeaweedFS clusters. It includes:
@@ -628,6 +669,10 @@ The volume servers do not require client certificates, because kubelet probes ca
 ## Common labels
 
 `commonLabels` adds labels to the metadata of every object the chart creates. It may be a map or a template string rendering to one. The chart's own labels cannot be overridden, and pods (see `podLabels`) and `volumeClaimTemplates` are left unchanged.
+
+## Sharing the process namespace
+
+`filer.shareProcessNamespace` and `s3.shareProcessNamespace` let the containers in the filer and S3 pods see each other's processes, so a sidecar can signal SeaweedFS, for example with SIGHUP to reload the S3 identities file. SeaweedFS is then no longer PID 1 in its container, and every container in the pod can read the other containers' processes and files through `/proc`. Both are off by default.
 
 ## Pod and container security contexts
 

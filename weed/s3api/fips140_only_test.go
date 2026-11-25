@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"crypto/fips140"
 	"crypto/md5"
 	"encoding/base64"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // setFIPS140Enforced overrides fips140Enforced for the duration of the test.
@@ -256,5 +258,37 @@ func TestFIPS140OnlyShortSecret(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestContentMd5CheckedInBothDigests checks that a client's Content-MD5 is
+// verified against the body's real MD5 under digest md5 and digest sha256,
+// and goes unchecked only when no MD5 can be computed.
+func TestContentMd5CheckedInBothDigests(t *testing.T) {
+	if fips140.Enforced() {
+		t.Skip("GODEBUG=fips140=only refuses MD5")
+	}
+	t.Cleanup(func() { util.SetDigest("") })
+	body := []byte("hello")
+	right := md5.Sum(body)
+	wrong := md5.Sum([]byte("other"))
+	for _, digest := range []string{util.DigestMd5, util.DigestSha256} {
+		if err := util.SetDigest(digest); err != nil {
+			t.Fatal(err)
+		}
+		contentMd5Hash := util.NewContentMd5()
+		if contentMd5Hash != nil {
+			contentMd5Hash.Write(body)
+		}
+		bodyMd5 := util.BodyMd5(util.Md5(body), contentMd5Hash)
+		if !contentMd5Matches(bodyMd5, right[:]) {
+			t.Errorf("digest %s: the right Content-MD5 was refused", digest)
+		}
+		if contentMd5Matches(bodyMd5, wrong[:]) {
+			t.Errorf("digest %s: a wrong Content-MD5 matched", digest)
+		}
+	}
+	if !contentMd5Matches(nil, wrong[:]) {
+		t.Error("without a body MD5 Content-MD5 should go unchecked")
 	}
 }

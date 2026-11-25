@@ -3,7 +3,6 @@ package leveldb
 import (
 	"bytes"
 	"context"
-	"crypto/fips140"
 	"crypto/md5"
 	"fmt"
 	"io"
@@ -118,7 +117,7 @@ func (store *LevelDB2Store) initialize(dir string, dbCount int) (err error) {
 	}
 	store.dbCount = dbCount
 
-	if err := leveldb_handle.CheckKeyHash(store.dbs, fips140.Enforced(), store.ReadOnly); err != nil {
+	if err := leveldb_handle.CheckKeyHash(store.dbs, weed_util.DigestIsSha256(), store.ReadOnly); err != nil {
 		store.Shutdown()
 		return err
 	}

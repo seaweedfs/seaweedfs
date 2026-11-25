@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -80,35 +81,22 @@ func paginateEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 	processEntry func(entry *filer_pb.Entry) (stop bool, err error)) error {
 	lastFileName := ""
 	for {
-		resp, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
-			Directory:          dir,
-			StartFromFileName:  lastFileName,
-			InclusiveStartFrom: false,
-			Limit:              10000,
-		})
+		// Read the page to its end before processing it: processing may list a
+		// subdirectory, and the filer can hold a store connection while a
+		// listing stays open.
+		page, err := listEntriesPage(ctx, client, dir, lastFileName)
 		if err != nil {
-			return fmt.Errorf("failed to list directory %s: %w", dir, err)
+			return err
 		}
+		if len(page) == 0 {
+			return nil
+		}
+		lastFileName = page[len(page)-1].Name
 
-		entriesReceived := false
-		for {
-			entryResp, recvErr := resp.Recv()
-			if recvErr != nil {
-				if errors.Is(recvErr, io.EOF) {
-					break // Normal end of stream
-				}
-				return fmt.Errorf("failed to receive entry from %s: %w", dir, recvErr)
-			}
-			entry := entryResp.Entry
-			if entry == nil {
-				continue
-			}
-			entriesReceived = true
-			lastFileName = entry.Name
-
+		for _, entry := range page {
 			// Skip invalid entry names to prevent path traversal
 			if entry.Name == "" || entry.Name == "." || entry.Name == ".." ||
-				strings.ContainsAny(entry.Name, "/\\") {
+				strings.Contains(entry.Name, "/") {
 				glog.V(2).Infof("Skipping invalid entry name: %q in %s", entry.Name, dir)
 				continue
 			}
@@ -121,12 +109,35 @@ func paginateEntries(ctx context.Context, client filer_pb.SeaweedFilerClient, di
 				return nil
 			}
 		}
+	}
+}
 
-		if !entriesReceived {
-			break
+func listEntriesPage(ctx context.Context, client filer_pb.SeaweedFilerClient, dir, startFrom string) ([]*filer_pb.Entry, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	resp, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
+		Directory:          dir,
+		StartFromFileName:  startFrom,
+		InclusiveStartFrom: false,
+		Limit:              10000,
+		OmitChunks:         true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list directory %s: %w", dir, err)
+	}
+	var page []*filer_pb.Entry
+	for {
+		entryResp, recvErr := resp.Recv()
+		if recvErr != nil {
+			if errors.Is(recvErr, io.EOF) {
+				return page, nil
+			}
+			return nil, fmt.Errorf("failed to receive entry from %s: %w", dir, recvErr)
+		}
+		if e := entryResp.Entry; e != nil {
+			page = append(page, &filer_pb.Entry{Name: e.Name, IsDirectory: e.IsDirectory, Extended: e.Extended})
 		}
 	}
-	return nil
 }
 
 // recursivelyCheckLocksWithClient recursively checks all objects and versions for active locks
@@ -140,30 +151,19 @@ func recursivelyCheckLocksWithClient(ctx context.Context, client filer_pb.Seawee
 			return true, nil // Stop iteration
 		}
 
-		// Skip special directories
-		if entry.Name == s3_constants.MultipartUploadsFolder {
-			return false, nil // Continue
-		}
-
 		if entry.IsDirectory {
-			subDir := dir + "/" + entry.Name
-			if entry.Name == s3_constants.VersionsFolder {
-				// Check all version files (exact match for .versions folder)
-				if err := checkVersionsForLocksWithClient(ctx, client, subDir, hasLocks, currentTime); err != nil {
-					return false, err
-				}
-			} else {
-				// A directory-marker object (key ending in "/") is stored as a
-				// directory entry and can carry a lock, so check it before recursing.
-				if EntryHasActiveLock(entry, currentTime) {
-					*hasLocks = true
-					glog.V(2).Infof("Found directory marker with active lock: %s/%s", dir, entry.Name)
-					return true, nil
-				}
-				// Recursively check subdirectories
-				if err := recursivelyCheckLocksWithClient(ctx, client, subDir, hasLocks, currentTime); err != nil {
-					return false, err
-				}
+			// A directory-marker object (key ending in "/") is stored as a
+			// directory entry and can carry a lock, so check it before recursing.
+			// A multipart upload's directory holds the lock settings for an object
+			// that does not exist yet.
+			uploadDir := path.Base(dir) == s3_constants.MultipartUploadsFolder && len(entry.Extended[s3_constants.ExtMultipartObjectKey]) > 0
+			if !uploadDir && EntryHasActiveLock(entry, currentTime) {
+				*hasLocks = true
+				glog.V(2).Infof("Found directory marker with active lock: %s/%s", dir, entry.Name)
+				return true, nil
+			}
+			if err := recursivelyCheckLocksWithClient(ctx, client, dir+"/"+entry.Name, hasLocks, currentTime); err != nil {
+				return false, err
 			}
 		} else {
 			// Check if this object has an active lock
@@ -172,22 +172,6 @@ func recursivelyCheckLocksWithClient(ctx context.Context, client filer_pb.Seawee
 				glog.V(2).Infof("Found object with active lock: %s/%s", dir, entry.Name)
 				return true, nil // Stop iteration
 			}
-		}
-		return false, nil // Continue
-	})
-}
-
-// checkVersionsForLocksWithClient checks all versions in a .versions directory for active locks
-func checkVersionsForLocksWithClient(ctx context.Context, client filer_pb.SeaweedFilerClient, versionsDir string, hasLocks *bool, currentTime time.Time) error {
-	return paginateEntries(ctx, client, versionsDir, func(entry *filer_pb.Entry) (bool, error) {
-		if *hasLocks {
-			return true, nil // Stop iteration
-		}
-
-		if EntryHasActiveLock(entry, currentTime) {
-			*hasLocks = true
-			glog.V(2).Infof("Found version with active lock: %s/%s", versionsDir, entry.Name)
-			return true, nil // Stop iteration
 		}
 		return false, nil // Continue
 	})

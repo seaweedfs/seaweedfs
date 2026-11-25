@@ -7,6 +7,7 @@ import (
 	"path"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -42,6 +43,7 @@ func startRenameManager(t *testing.T) (*s3tablestest.MemFiler, *Manager) {
 		Name:             "t",
 		Namespace:        "ns",
 		Format:           "ICEBERG",
+		CreatedAt:        time.Now().Add(-time.Hour),
 		OwnerAccountID:   DefaultAccountID,
 		MetadataVersion:  3,
 		MetadataLocation: "s3://" + renameTestBucket + "/ns/t/metadata/v3.metadata.json",

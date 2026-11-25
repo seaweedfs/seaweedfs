@@ -54,6 +54,9 @@ type FileHandle struct {
 	// nothing to delete after all can tell its own mark from a later one.
 	deleteEpoch uint64
 	isRenamed   bool // set by Rename before waiting for async flush; skips old-path metadata flush
+	// nameTaken is set when another mount's rename took the name of this
+	// unpublished create; its publication is refused from then on.
+	nameTaken bool
 	// linkRefresh is the hard link id of a link change whose stored entry
 	// could not be read; the next flush reads it before publishing.
 	linkRefresh []byte
@@ -374,6 +377,15 @@ func (fh *FileHandle) markSince(base *filer_pb.Entry) baseMark {
 // setAuthoritativeBase installs the base snapshot a local ack acknowledged.
 func (fh *FileHandle) setAuthoritativeBase(base *filer_pb.Entry) {
 	fh.baseEntry.Store(base)
+}
+
+// unpublishedCreate reports a file this mount created whose deferred create
+// has not reached the filer yet: Create leaves such a handle dirty with no
+// base, and the first successful flush installs one. The filer holds nothing
+// of the file, so an event at its name from another mount is about another
+// file. The caller holds the handle's lock.
+func (fh *FileHandle) unpublishedCreate() bool {
+	return fh.dirtyMetadata && fh.baseEntry.Load() == nil
 }
 
 // advanceEntryVersion raises the entry version, never regresses it, and

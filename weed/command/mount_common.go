@@ -140,13 +140,14 @@ func peerStringOrEmpty(p *string) string {
 }
 
 // connectToFiler retries the filer handshake, returning the cluster's cipher
-// setting and bucket root.
+// setting and bucket root, and adopts the filer's digest.
 func connectToFiler(option *MountOptions) (filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialOption, cipher bool, bucketRootPath string, ok bool) {
 	// try to connect to filer
 	filerAddresses = pb.ServerAddresses(*option.filer).ToAddresses()
 	util.LoadSecurityConfiguration()
 	grpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
 	var err error
+	var digest string
 	for i := 0; i < 10; i++ {
 		err = pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
@@ -155,6 +156,7 @@ func connectToFiler(option *MountOptions) (filerAddresses []pb.ServerAddress, gr
 			}
 			cipher = resp.Cipher
 			bucketRootPath = resp.DirBuckets
+			digest = resp.Digest
 			return nil
 		})
 		if err == nil {
@@ -168,6 +170,10 @@ func connectToFiler(option *MountOptions) (filerAddresses []pb.ServerAddress, gr
 		glog.Errorf("failed to talk to filer %v: %v", filerAddresses, err)
 		return nil, nil, false, "", false
 	}
+	if err = util.AdoptFilerDigest(*option.filer, digest); err != nil {
+		glog.Errorf("%v", err)
+		return nil, nil, false, "", false
+	}
 	if bucketRootPath == "" {
 		bucketRootPath = "/buckets"
 	}
@@ -177,6 +183,7 @@ func connectToFiler(option *MountOptions) (filerAddresses []pb.ServerAddress, gr
 // fileSystemParams are the pieces of a mount that each platform works out for
 // itself: where it is attached, and whose identity the entries carry.
 type fileSystemParams struct {
+	sseS3Reader      *mount.SSES3Reader
 	dir              string
 	mountRoot        string
 	filerAddresses   []pb.ServerAddress
@@ -205,6 +212,7 @@ func buildSeaweedFileSystem(option *MountOptions, p fileSystemParams) *mount.WFS
 		readerCacheSizeMB = *option.readerCacheSizeMB
 	}
 	return mount.NewSeaweedFileSystem(&mount.Option{
+		SSES3Reader:                 p.sseS3Reader,
 		MountDirectory:              p.dir,
 		FilerAddresses:              p.filerAddresses,
 		GrpcDialOption:              p.grpcDialOption,

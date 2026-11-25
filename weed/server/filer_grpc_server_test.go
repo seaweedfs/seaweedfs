@@ -8,6 +8,8 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func newAssignTestServer(fc *filer.FilerConf, diskType string) *FilerServer {
@@ -124,5 +126,28 @@ func TestCreateEntryReadOnlyReturnsErrorCode(t *testing.T) {
 	}
 	if want := "read only: /buckets/overquota"; !strings.HasPrefix(resp.Error, want) {
 		t.Fatalf("CreateEntry error = %q, want prefix %q", resp.Error, want)
+	}
+}
+
+func TestResolveAssignStorageOptionKeepsScopedCallerInPathCollection(t *testing.T) {
+	fs := newAssignTestServer(filer.NewFilerConf(), "hdd")
+	scoped := withScopeKeepOnly(context.Background())
+	path := "/buckets/zot/file.bin"
+
+	for _, collection := range []string{"", "zot"} {
+		so, err := fs.resolveAssignStorageOption(scoped, &filer_pb.AssignVolumeRequest{Path: path, Collection: collection})
+		if err != nil || so.Collection != "zot" {
+			t.Fatalf("scoped assign with collection %q: so=%+v err=%v, want collection zot", collection, so, err)
+		}
+	}
+	if _, err := fs.resolveAssignStorageOption(scoped, &filer_pb.AssignVolumeRequest{Path: path, Collection: "other"}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("scoped assign into another collection: %v, want PermissionDenied", err)
+	}
+	if resp, err := fs.AssignVolume(scoped, &filer_pb.AssignVolumeRequest{Path: path, Collection: "other", Count: 1}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("scoped AssignVolume into another collection: resp=%v err=%v, want PermissionDenied", resp, err)
+	}
+	so, err := fs.resolveAssignStorageOption(context.Background(), &filer_pb.AssignVolumeRequest{Path: path, Collection: "other"})
+	if err != nil || so.Collection != "other" {
+		t.Fatalf("unscoped assign: so=%+v err=%v, want collection other", so, err)
 	}
 }

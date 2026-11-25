@@ -1166,3 +1166,35 @@ func TestBuildGuardedRemoteStorageClientS3EnvironmentCredentials(t *testing.T) {
 		t.Fatalf("a changed environment credential must build a new client (err %v)", err)
 	}
 }
+
+// A keyed s3 remote reads the credentials mode too, so an unknown value fails its next build instead of returning the cached client.
+func TestBuildGuardedRemoteStorageClientS3KeysFollowTheCredentialsMode(t *testing.T) {
+	guardedCacheTest(t, nil)
+	t.Setenv("WEED_REMOTE_S3_CREDENTIALS", "")
+	conf := &remote_pb.RemoteConf{Name: "keyed", Type: "s3", S3AccessKey: "a", S3SecretKey: "b", S3Region: "us-east-1", S3Endpoint: "https://93.184.216.34"}
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), conf, false); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	t.Setenv("WEED_REMOTE_S3_CREDENTIALS", "bogus")
+	if _, err := BuildGuardedRemoteStorageClient(context.Background(), conf, false); err == nil {
+		t.Fatal("an unknown credentials mode must fail the build of a cached keyed client")
+	}
+}
+
+func TestGuardedCredentialsVersionFollowsTheWorkloadSource(t *testing.T) {
+	conf := &remote_pb.RemoteConf{Type: "s3", Name: "r", S3Region: "us-east-1"}
+	t.Setenv("AWS_CONTAINER_CREDENTIALS_FULL_URI", "http://169.254.170.23/v1/credentials")
+	for _, k := range []string{"AWS_CONTAINER_AUTHORIZATION_TOKEN", "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+		"AWS_ROLE_SESSION_NAME", "AWS_REGION", "AWS_DEFAULT_REGION", "AWS_STS_REGIONAL_ENDPOINTS",
+		"AWS_EC2_METADATA_SERVICE_ENDPOINT", "AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE",
+		"AWS_EC2_METADATA_DISABLED", "AWS_EC2_METADATA_V1_DISABLED",
+		"AWS_USE_FIPS_ENDPOINT", "AWS_USE_DUALSTACK_ENDPOINT", "AWS_CA_BUNDLE"} {
+		t.Setenv(k, "")
+		before := guardedCredentialsVersion(conf)
+		t.Setenv(k, "changed")
+		if guardedCredentialsVersion(conf) == before {
+			t.Errorf("%s changed, the guarded client's version did not", k)
+		}
+		t.Setenv(k, "")
+	}
+}
