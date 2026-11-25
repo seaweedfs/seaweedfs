@@ -1027,7 +1027,7 @@ func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		if observed != nil && !clauseSatisfied(observed, entry) {
 			refusal = status.Errorf(codes.FailedPrecondition, "entry changed during update: %s", fullpath)
 		}
-		if refusal == nil {
+		if refusal == nil && !req.IsFromOtherCluster {
 			if refusal, err = fs.refuseSecondHardLink(ctx, fullpath, entry, req.Entry); err != nil {
 				return err
 			}
@@ -1167,7 +1167,8 @@ func (fs *FilerServer) runEntryTransaction(ctx context.Context, path util.FullPa
 // entry again and links under the id the file has.
 //
 // An id that has a record belongs to a file already: writing it over a name
-// of another file replaces that name, as before.
+// of another file replaces that name, as before. A replicated update is not
+// refused: the other cluster's link ids never get records here.
 func (fs *FilerServer) refuseSecondHardLink(ctx context.Context, fullpath string, stored *filer.Entry, requested *filer_pb.Entry) (refusal, err error) {
 	if len(stored.HardLinkId) == 0 || len(requested.GetHardLinkId()) == 0 || bytes.Equal(stored.HardLinkId, requested.GetHardLinkId()) {
 		return nil, nil

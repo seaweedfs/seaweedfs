@@ -293,6 +293,25 @@ func TestUpdateEntryRefusesAFileASecondLinkId(t *testing.T) {
 	checkDeletions(t, f)
 }
 
+// filer.sync sends the other cluster's link id without its record: taken.
+func TestUpdateEntryFromOtherClusterTakesItsLinkId(t *testing.T) {
+	server, f, _, _ := hardLinkChunkServer(t, 2)
+	other := filer.HardLinkId("hl-chunks-test-02")
+
+	if _, err := server.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+		Directory: "/dir", Entry: dstEntry(other, 2, written(replacedChunk, 1)), IsFromOtherCluster: true,
+	}); err != nil {
+		t.Fatalf("replicated update with another link id: %v", err)
+	}
+	dst, err := f.FindEntry(context.Background(), "/dir/dst.txt")
+	if err != nil {
+		t.Fatalf("find dst: %v", err)
+	}
+	if string(dst.HardLinkId) != string(other) {
+		t.Fatalf("dst has link id %q, want the replicated %q", dst.HardLinkId, other)
+	}
+}
+
 // A link id that has a record is another file's, not a second one for this
 // file: an update that carries it puts that file at the name, which leaves
 // the old file as a create over the name does.
