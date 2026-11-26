@@ -540,12 +540,19 @@ func verifyDatFileWith(datName string, vid needle.VolumeId, opts datVerifyOption
 				s.sum.Tombstones++
 			}
 			if n.AppendAtNs != 0 {
-				if n.AppendAtNs < s.lastAppendAtNs {
+				switch {
+				case !plausibleAppendAtNs(n.AppendAtNs):
+					s.anomalies = append(s.anomalies, datAnomaly{Offset: pos, Kind: "timestamp-implausible",
+						Detail: fmt.Sprintf("appendAtNs %d is outside the plausible range", n.AppendAtNs)})
+					s.sum.Warnings++
+				case n.AppendAtNs < s.lastAppendAtNs:
 					s.anomalies = append(s.anomalies, datAnomaly{Offset: pos, Kind: "timestamp-regression",
 						Detail: fmt.Sprintf("appendAtNs %d is older than the previous needle (%d)", n.AppendAtNs, s.lastAppendAtNs)})
 					s.sum.Warnings++
+					s.lastAppendAtNs = n.AppendAtNs
+				default:
+					s.lastAppendAtNs = n.AppendAtNs
 				}
-				s.lastAppendAtNs = n.AppendAtNs
 			}
 			if v.needle != nil {
 				if err := v.needle(n, pos, s.hdr[:], s.body[:disk-types.NeedleHeaderSize]); err != nil {

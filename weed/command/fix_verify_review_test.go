@@ -456,3 +456,42 @@ func TestVerifyDeleteChainEndingAtLastProbe(t *testing.T) {
 		t.Fatalf("a delete chain of 16 records ending at the end of the file was rejected")
 	}
 }
+
+// A live record whose timestamp alone is corrupted still passes its CRC. That
+// timestamp must not become the lower bound a later delete record is held to.
+func TestVerifyImplausibleTimestampIsNotResyncBaseline(t *testing.T) {
+	if needle.GetCurrentVersion() != needle.Version3 {
+		t.Skip("needs v3 timestamps")
+	}
+	datName, layout := buildVerifyFixture(t, 5)
+	raw, err := os.ReadFile(datName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := layout[3].offset
+	size := int64(binary.BigEndian.Uint32(raw[live+types.CookieSize+types.NeedleIdSize:]))
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, ^uint64(0))
+	patchDat(t, datName, live+types.NeedleHeaderSize+size+needle.NeedleChecksumSize, b)
+	patchDat(t, datName, layout[4].offset, bytes.Repeat([]byte{0xA5}, types.NeedleHeaderSize))
+
+	deleted := false
+	_, anomalies, err := verifyDatFile(datName, 1, datVerifyOptions{window: 64 << 10, zeroWindow: 512}, func(n *needle.Needle, offset int64) {
+		if offset == layout[5].offset && !n.Size.IsValid() {
+			deleted = true
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deleted {
+		t.Fatalf("the delete record after damage was rejected; anomalies %+v", anomalies)
+	}
+	found := false
+	for _, a := range anomalies {
+		found = found || (a.Kind == "timestamp-implausible" && a.Offset == live)
+	}
+	if !found {
+		t.Fatalf("the implausible timestamp was not reported: %+v", anomalies)
+	}
+}
