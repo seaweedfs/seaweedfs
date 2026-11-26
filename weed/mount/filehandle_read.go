@@ -14,7 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
-var errNativeSSES3Read = errors.New("native mount cannot decrypt SSE-S3 data")
+var errNativeSSERead = errors.New("native mount cannot decrypt S3 server-side encrypted data")
 
 func (fh *FileHandle) lockForRead(startOffset int64, size int) {
 	fh.dirtyPages.LockForRead(startOffset, startOffset+int64(size))
@@ -66,11 +66,11 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 	if fileSize == 0 {
 		fileSize = int64(filer.FileSize(pbEntry))
 	}
-	if entry.hasSSES3DataLocked() {
+	if sse := entry.sseTypeLocked(); sse != filer_pb.SSEType_NONE {
 		reader := fh.wfs.option.SSES3Reader
-		if reader == nil {
+		if sse != filer_pb.SSEType_SSE_S3 || reader == nil {
 			entry.RUnlock()
-			return 0, 0, errNativeSSES3Read
+			return 0, 0, errNativeSSERead
 		}
 		etag := sseObjectETag(pbEntry)
 		version := string(pbEntry.GetExtended()[s3_constants.ExtVersionIdKey])
