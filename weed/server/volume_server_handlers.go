@@ -224,8 +224,10 @@ func (vs *VolumeServer) waitForUploadSlot(w http.ResponseWriter, r *http.Request
 	if err == nil {
 		inFlight = atomic.AddInt64(&vs.inFlightUploadDataSize, charged)
 	}
-	vs.inFlightUploadDataLimitCond.L.Unlock()
+	// Set under the lock, so a concurrent release cannot leave the gauge on
+	// an older value than the counter.
 	stats.VolumeServerInFlightUploadSize.Set(float64(inFlight))
+	vs.inFlightUploadDataLimitCond.L.Unlock()
 
 	if err == nil {
 		return true
@@ -259,9 +261,9 @@ func (vs *VolumeServer) releaseUploadSlot(charged int64) {
 	}
 	vs.inFlightUploadDataLimitCond.L.Lock()
 	inFlight := atomic.AddInt64(&vs.inFlightUploadDataSize, -charged)
+	stats.VolumeServerInFlightUploadSize.Set(float64(inFlight))
 	vs.inFlightUploadDataLimitCond.Broadcast()
 	vs.inFlightUploadDataLimitCond.L.Unlock()
-	stats.VolumeServerInFlightUploadSize.Set(float64(inFlight))
 }
 
 // handleGetRequest processes GET/HEAD requests with download limiting.

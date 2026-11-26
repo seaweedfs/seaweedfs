@@ -149,3 +149,27 @@ func TestFilerUploadSlotAdmitsHugeObjectBesideSmallOnes(t *testing.T) {
 		t.Fatalf("in-flight %d, want admitted with 48 MiB", fs.inFlightDataSize)
 	}
 }
+
+// A filer started with -maxMB 0 still charges a chunk for an unknown length
+// and caps a known one at four chunks: the chunk size is clamped as S3 does,
+// so the charge never collapses to 0 and admits without counting.
+func TestFilerUploadChargeClampsNonPositiveMaxMB(t *testing.T) {
+	for _, maxMB := range []int{0, -1} {
+		fs := &FilerServer{option: &FilerOption{MaxMB: maxMB}}
+		req := filerPutRequest(context.Background())
+		req.ContentLength = -1
+		if got := fs.uploadCharge(req); got != filerDefaultChunkSizeMB<<20 {
+			t.Fatalf("maxMB %d, unknown length: charge %d, want %d", maxMB, got, filerDefaultChunkSizeMB<<20)
+		}
+		req.ContentLength = 5 << 30
+		if got := fs.uploadCharge(req); got != 4*filerDefaultChunkSizeMB<<20 {
+			t.Fatalf("maxMB %d, 5 GiB: charge %d, want %d", maxMB, got, 4*filerDefaultChunkSizeMB<<20)
+		}
+	}
+	fs := &FilerServer{option: &FilerOption{MaxMB: 1 << 20}}
+	req := filerPutRequest(context.Background())
+	req.ContentLength = -1
+	if got := fs.uploadCharge(req); got != filerMaxChunkSizeMB<<20 {
+		t.Fatalf("huge maxMB: charge %d, want %d", got, int64(filerMaxChunkSizeMB)<<20)
+	}
+}

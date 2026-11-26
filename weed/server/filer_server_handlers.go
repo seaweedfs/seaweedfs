@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"path"
@@ -131,10 +132,25 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+const (
+	// filerDefaultChunkSizeMB is the filer's -maxMB default, used for the
+	// upload charge when -maxMB is not positive.
+	filerDefaultChunkSizeMB = 4
+	// filerMaxChunkSizeMB keeps the chunk size within an int32, as
+	// requestChunkSize does.
+	filerMaxChunkSizeMB = math.MaxInt32 / (1024 * 1024) // 2047
+)
+
 // uploadCharge is the bytes r reserves against the in-flight upload budget; see
-// util.GatewayUploadCharge. The chunk is -maxMB, what the filer cuts per chunk.
+// util.GatewayUploadCharge. The chunk is -maxMB, what the filer cuts per chunk,
+// clamped as S3's uploadChunkSize does so the charge never collapses to 0.
 func (fs *FilerServer) uploadCharge(r *http.Request) int64 {
-	return util.GatewayUploadCharge(r.ContentLength, int64(fs.option.MaxMB)<<20, fs.option.ConcurrentUploadLimit)
+	sizeMB := fs.option.MaxMB
+	if sizeMB <= 0 {
+		sizeMB = filerDefaultChunkSizeMB
+	}
+	sizeMB = min(sizeMB, filerMaxChunkSizeMB)
+	return util.GatewayUploadCharge(r.ContentLength, int64(sizeMB)<<20, fs.option.ConcurrentUploadLimit)
 }
 
 // waitForUploadSlot reserves charged bytes and one upload slot, or writes the

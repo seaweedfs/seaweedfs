@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/stretchr/testify/require"
 )
 
@@ -117,12 +120,24 @@ func TestUploadLimitAdmitsWhenSlotFrees(t *testing.T) {
 	r, _ := uploadRequest(context.Background(), "/1,0123456789abcdef", 4)
 	w := httptest.NewRecorder()
 
+	waits := stats.VolumeServerHandlerCounter.WithLabelValues(stats.UploadLimitCond)
+	baseline := testutil.ToFloat64(waits)
 	got := make(chan bool, 1)
 	go func() {
 		ok, _ := admitUpload(vs, w, r)
 		got <- ok
 	}()
-	time.Sleep(20 * time.Millisecond)
+	// The waiter counts itself under the cond's lock, which it only gives up
+	// inside cond.Wait: once the count moves, the release below (which takes
+	// that lock) can only run while the waiter is parked, so it is the
+	// broadcast that admits it.
+	parkDeadline := time.Now().Add(5 * time.Second)
+	for testutil.ToFloat64(waits) == baseline {
+		if time.Now().After(parkDeadline) {
+			t.Fatal("the upload never started waiting for a slot")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	vs.releaseUploadSlot(10)
 
 	select {
@@ -135,7 +150,9 @@ func TestUploadLimitAdmitsWhenSlotFrees(t *testing.T) {
 }
 
 func TestUploadLimitAdmitsOversizedWhenIdle(t *testing.T) {
-	vs := newUploadLimitVolumeServer(10, 0, 50*time.Millisecond)
+	// A 5s wait, so admitted at once and waited out stay far apart under a
+	// CI-safe bound.
+	vs := newUploadLimitVolumeServer(10, 0, 5*time.Second)
 	r, _ := uploadRequest(context.Background(), "/1,0123456789abcdef", 100)
 	w := httptest.NewRecorder()
 
@@ -143,7 +160,7 @@ func TestUploadLimitAdmitsOversizedWhenIdle(t *testing.T) {
 	ok, charged := admitUpload(vs, w, r)
 
 	require.True(t, ok)
-	require.Less(t, time.Since(start), 40*time.Millisecond)
+	require.Less(t, time.Since(start), time.Second)
 	require.Equal(t, int64(100), charged)
 	require.Equal(t, int64(100), atomic.LoadInt64(&vs.inFlightUploadDataSize))
 }
@@ -160,7 +177,7 @@ func TestUploadLimitCountsGatewayHolderWrites(t *testing.T) {
 }
 
 func TestUploadLimitLetsPrimaryForwardsThrough(t *testing.T) {
-	vs := newUploadLimitVolumeServer(10, 10, 50*time.Millisecond)
+	vs := newUploadLimitVolumeServer(10, 10, 5*time.Second)
 	r, _ := uploadRequest(context.Background(), "/1,0123456789abcdef?type=replicate", 4)
 	w := httptest.NewRecorder()
 
@@ -168,7 +185,7 @@ func TestUploadLimitLetsPrimaryForwardsThrough(t *testing.T) {
 	ok, charged := admitUpload(vs, w, r)
 
 	require.True(t, ok)
-	require.Less(t, time.Since(start), 40*time.Millisecond)
+	require.Less(t, time.Since(start), time.Second)
 	require.Equal(t, int64(4), charged)
 	require.Equal(t, int64(14), atomic.LoadInt64(&vs.inFlightUploadDataSize))
 }
@@ -188,7 +205,7 @@ func TestUploadLimitChargesUnknownLength(t *testing.T) {
 
 func TestUploadLimitChargesUnknownLengthHalfTheBudget(t *testing.T) {
 	t.Run("admitted while at most half the budget is in use", func(t *testing.T) {
-		vs := newUploadLimitVolumeServer(10, 4, 50*time.Millisecond)
+		vs := newUploadLimitVolumeServer(10, 4, 5*time.Second)
 		vs.fileSizeLimitBytes = 100
 		r, _ := uploadRequest(context.Background(), "/1,0123456789abcdef", -1)
 		w := httptest.NewRecorder()
@@ -197,7 +214,7 @@ func TestUploadLimitChargesUnknownLengthHalfTheBudget(t *testing.T) {
 		ok, charged := admitUpload(vs, w, r)
 
 		require.True(t, ok)
-		require.Less(t, time.Since(start), 40*time.Millisecond)
+		require.Less(t, time.Since(start), time.Second)
 		require.Equal(t, int64(5), charged)
 		require.Equal(t, int64(9), atomic.LoadInt64(&vs.inFlightUploadDataSize))
 	})
@@ -279,4 +296,22 @@ func TestUploadLimit503ReachesGoClientForLargeBody(t *testing.T) {
 	_, _ = io.Copy(io.Discard, resp.Body)
 	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 	require.Equal(t, "1", resp.Header.Get("Retry-After"))
+}
+
+// An upload admitted through handleUploadRequest gives its charge back when
+// the handler returns, whatever the handler answered, so in-flight returns to
+// its baseline.
+func TestHandleUploadRequestReleasesItsCharge(t *testing.T) {
+	for _, limit := range []int64{0, 10} {
+		vs := newUploadLimitVolumeServer(limit, 3, 5*time.Second)
+		vs.guard = security.NewGuard(nil, "", 0, "", 0, "", "")
+		// Not a volume id, so PostHandler answers 400 without a store.
+		r, _ := uploadRequest(context.Background(), "/notavolume,0123456789abcdef", 4)
+		w := httptest.NewRecorder()
+
+		vs.handleUploadRequest(w, r)
+
+		require.Equal(t, http.StatusBadRequest, w.Code, "limit %d: the request must reach PostHandler", limit)
+		require.Equal(t, int64(3), atomic.LoadInt64(&vs.inFlightUploadDataSize), "limit %d", limit)
+	}
 }
