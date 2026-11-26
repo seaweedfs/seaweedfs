@@ -376,3 +376,45 @@ func TestRunFixVolumeIdFilterSkipsOutOfRangeName(t *testing.T) {
 		t.Fatalf("the selected volume was not fixed: keys %v", got)
 	}
 }
+
+// A damaged size field at a known boundary must be rejected from the data
+// length that follows the header, before a body of that size is allocated.
+func TestVerifyInflatedSizeRejectedBeforeBodyRead(t *testing.T) {
+	datName, layout := buildVerifyFixture(t, 5)
+	raw, err := os.OpenFile(datName, os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := raw.Stat()
+	if err := raw.Truncate(st.Size() + 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = raw.Stat()
+	raw.Close()
+	inflated := st.Size() - layout[1].offset - 64
+	var b [4]byte
+	binary.BigEndian.PutUint32(b[:], uint32(inflated))
+	patchDat(t, datName, layout[1].offset+types.CookieSize+types.NeedleIdSize, b[:])
+
+	f, err := os.Open(datName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	opts := datVerifyOptions{window: 64 << 10, zeroWindow: 512}
+	opts.normalize()
+	s := &datVerifier{f: f, vid: 1, version: needle.GetCurrentVersion(), base: 8, size: st.Size(), opts: opts,
+		win: &datWindow{f: f, size: st.Size(), buf: make([]byte, opts.window)}}
+	if _, _, err := s.readNeedleAt(layout[1].offset, false); err == nil || !strings.Contains(err.Error(), "does not fit") {
+		t.Fatalf("readNeedleAt = %v, want a data size rejection", err)
+	}
+	if cap(s.body) != 0 {
+		t.Fatalf("allocated a %d byte body for the damaged record", cap(s.body))
+	}
+	_, _, seen := runVerify(t, datName)
+	for _, id := range []uint64{1, 3, 4, 5} {
+		if !seen[id] {
+			t.Fatalf("needle %d after the damaged size was not recovered: %v", id, seen)
+		}
+	}
+}

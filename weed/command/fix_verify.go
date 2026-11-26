@@ -197,6 +197,15 @@ func (s *datVerifier) readNeedleAt(off int64, bounded bool) (n *needle.Needle, d
 	if off+disk > s.size {
 		return n, 0, fmt.Errorf("needle extends past end of .dat (%d > %d)", off+disk, s.size)
 	}
+	if s.version != needle.Version1 && n.Size > 0 {
+		var b [4]byte
+		if err = s.win.readAt(b[:], off+types.NeedleHeaderSize); err != nil {
+			return n, 0, fmt.Errorf("read data size: %w", err)
+		}
+		if dataSize := binary.BigEndian.Uint32(b[:]); !dataSizeFits(n.Size, dataSize) {
+			return n, 0, fmt.Errorf("data size %d does not fit a record of size %d", dataSize, n.Size)
+		}
+	}
 	bodyLen := int(disk - types.NeedleHeaderSize)
 	if cap(s.body) < bodyLen {
 		s.body = make([]byte, bodyLen)
@@ -212,6 +221,12 @@ func (s *datVerifier) readNeedleAt(off int64, bounded bool) (n *needle.Needle, d
 		return n, 0, err
 	}
 	return n, disk, nil
+}
+
+// dataSizeFits reports whether a v2/v3 live record of the given size can hold
+// dataSize bytes of data and the fields that follow it.
+func dataSizeFits(size types.Size, dataSize uint32) bool {
+	return size >= 5 && int64(dataSize)+5 <= int64(size) && int64(size)-4-int64(dataSize) <= maxNonDataLen
 }
 
 // checkRecordFields rejects a v2/v3 record whose parsed fields do not add up
@@ -257,9 +272,6 @@ func (s *datVerifier) candidateOK(h *needle.Needle, chunk []byte, i int, off int
 		return false
 	}
 	if s.version != needle.Version1 && h.Size > 0 {
-		if h.Size < 5 {
-			return false
-		}
 		var dataSize uint32
 		if i+types.NeedleHeaderSize+4 <= len(chunk) {
 			dataSize = binary.BigEndian.Uint32(chunk[i+types.NeedleHeaderSize:])
@@ -270,7 +282,7 @@ func (s *datVerifier) candidateOK(h *needle.Needle, chunk []byte, i int, off int
 			}
 			dataSize = binary.BigEndian.Uint32(b[:])
 		}
-		if int64(dataSize)+5 > int64(h.Size) || int64(h.Size)-4-int64(dataSize) > maxNonDataLen {
+		if !dataSizeFits(h.Size, dataSize) {
 			return false
 		}
 		var flags [1]byte
