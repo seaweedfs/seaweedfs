@@ -314,12 +314,21 @@ func TestLimitUploadSlotWait(t *testing.T) {
 
 	t.Run("freed bytes admit every waiter that fits", func(t *testing.T) {
 		cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentUploadLimit: 100, InflightUploadDataTimeout: time.Minute})
+		// A large upload is charged at most half the budget, so two of them
+		// fill it and the waiters below have to wait for a release.
 		release := holdUploadSlot(t, cb, 1000)
+		releaseOther := holdUploadSlot(t, cb, 1000)
+		defer releaseOther()
+		if got := atomic.LoadInt64(&cb.s3a.inFlightDataSize); got != 100 {
+			t.Fatalf("in-flight %d, want the budget full at 100", got)
+		}
 
 		var admitted sync.WaitGroup
+		var entered atomic.Int32
 		admitted.Add(2)
 		proceed := make(chan struct{})
 		h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) {
+			entered.Add(1)
 			admitted.Done()
 			<-proceed
 		}, s3_constants.ACTION_WRITE)
@@ -332,6 +341,9 @@ func TestLimitUploadSlotWait(t *testing.T) {
 			}()
 		}
 		time.Sleep(50 * time.Millisecond)
+		if n := entered.Load(); n != 0 {
+			t.Fatalf("%d waiters entered a full budget", n)
+		}
 		release()
 
 		bothIn := make(chan struct{})
