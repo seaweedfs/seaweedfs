@@ -63,20 +63,25 @@ func TestAnonHugePagesAlways(t *testing.T) {
 		enabled   string
 		sizeModes []string
 		want      bool
+		wantKnown bool
 	}{
-		{name: "no per-size policies, always", enabled: "always", want: true},
-		{name: "no per-size policies, madvise", enabled: "madvise", want: false},
-		{name: "default sizes, always", enabled: "always", sizeModes: []string{"never", "inherit", "never"}, want: true},
-		{name: "default sizes, madvise", enabled: "madvise", sizeModes: []string{"never", "inherit", "never"}, want: false},
-		{name: "small size always under madvise", enabled: "madvise", sizeModes: []string{"always", "inherit"}, want: true},
-		{name: "small size always under never", enabled: "never", sizeModes: []string{"always", "never"}, want: true},
-		{name: "pmd size never under always", enabled: "always", sizeModes: []string{"never", "never"}, want: false},
-		{name: "per-size madvise under always", enabled: "always", sizeModes: []string{"madvise", "never"}, want: false},
+		{name: "no per-size policies, always", enabled: "always", want: true, wantKnown: true},
+		{name: "no per-size policies, madvise", enabled: "madvise", want: false, wantKnown: true},
+		{name: "default sizes, always", enabled: "always", sizeModes: []string{"never", "inherit", "never"}, want: true, wantKnown: true},
+		{name: "default sizes, madvise", enabled: "madvise", sizeModes: []string{"never", "inherit", "never"}, want: false, wantKnown: true},
+		{name: "small size always under madvise", enabled: "madvise", sizeModes: []string{"always", "inherit"}, want: true, wantKnown: true},
+		{name: "small size always under never", enabled: "never", sizeModes: []string{"always", "never"}, want: true, wantKnown: true},
+		{name: "pmd size never under always", enabled: "always", sizeModes: []string{"never", "never"}, want: false, wantKnown: true},
+		{name: "per-size madvise under always", enabled: "always", sizeModes: []string{"madvise", "never"}, want: false, wantKnown: true},
+		{name: "unreadable size under never", enabled: "never", sizeModes: []string{"", "never"}, want: false, wantKnown: false},
+		{name: "unreadable size beside always", enabled: "never", sizeModes: []string{"", "always"}, want: true, wantKnown: true},
+		{name: "all sizes unreadable", enabled: "always", sizeModes: []string{"", ""}, want: false, wantKnown: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := anonHugePagesAlways(tc.enabled, tc.sizeModes); got != tc.want {
-				t.Errorf("anonHugePagesAlways(%q, %q) = %t, want %t", tc.enabled, tc.sizeModes, got, tc.want)
+			got, known := anonHugePagesAlways(tc.enabled, tc.sizeModes)
+			if got != tc.want || known != tc.wantKnown {
+				t.Errorf("anonHugePagesAlways(%q, %q) = %t, %t, want %t, %t", tc.enabled, tc.sizeModes, got, known, tc.want, tc.wantKnown)
 			}
 		})
 	}

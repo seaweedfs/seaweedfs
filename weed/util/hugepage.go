@@ -42,15 +42,21 @@ func goHeapHugePagesDisabled(godebug string) bool {
 // anonHugePagesAlways reports whether the host gives huge pages to anonymous
 // memory that was not madvised, which is how the runtime maps the heap (it
 // advises only GC metadata). Since Linux 6.8 each size has its own policy and
-// only "inherit" follows the top-level one; older kernels have none.
-func anonHugePagesAlways(enabled string, sizeModes []string) bool {
+// only "inherit" follows the top-level one; older kernels have none. An empty
+// size mode is one that could not be read, so known is false when it alone
+// could have allowed huge pages.
+func anonHugePagesAlways(enabled string, sizeModes []string) (always, known bool) {
 	if len(sizeModes) == 0 {
-		return enabled == "always"
+		return enabled == "always", true
 	}
+	known = true
 	for _, mode := range sizeModes {
 		if mode == "always" || mode == "inherit" && enabled == "always" {
-			return true
+			return true, true
+		}
+		if mode == "" {
+			known = false
 		}
 	}
-	return false
+	return false, known
 }

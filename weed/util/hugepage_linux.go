@@ -23,7 +23,7 @@ type TransparentHugePages struct {
 	Enabled     string   // always, madvise or never
 	Defrag      string   // always, defer, defer+madvise or madvise
 	MaxPtesNone string   // khugepaged/max_ptes_none, empty when unreadable
-	SizeModes   []string // hugepages-<size>kB/enabled, Linux 6.8+
+	SizeModes   []string // hugepages-<size>kB/enabled, Linux 6.8+; empty when unreadable
 }
 
 func readTHPMode(path string) string {
@@ -46,9 +46,7 @@ func readTHPSizeModes() []string {
 	paths, _ := filepath.Glob(thpSizesGlob)
 	var modes []string
 	for _, path := range paths {
-		if mode := readTHPMode(path); mode != "" {
-			modes = append(modes, mode)
-		}
+		modes = append(modes, readTHPMode(path))
 	}
 	return modes
 }
@@ -87,17 +85,18 @@ func LogTransparentHugePages() {
 	if status == nil {
 		return
 	}
-	hostAllowsHeap := anonHugePagesAlways(status.Enabled, status.SizeModes)
-	if status.Enabled == "never" && !hostAllowsHeap {
+	hostAllowsHeap, hostKnown := anonHugePagesAlways(status.Enabled, status.SizeModes)
+	if status.Enabled == "never" && hostKnown && !hostAllowsHeap {
 		glog.V(0).Infof("transparent huge pages: disabled by the host; the Go heap will not use them")
 		return
 	}
 	goHeapTHP := "false"
-	if hostAllowsHeap && !goHeapHugePagesDisabled(os.Getenv("GODEBUG")) {
+	if (hostAllowsHeap || !hostKnown) && !goHeapHugePagesDisabled(os.Getenv("GODEBUG")) {
 		switch disabled, known := processHugePagesDisabled(); {
-		case !known:
+		case known && disabled:
+		case !known || !hostKnown:
 			goHeapTHP = "unknown"
-		case !disabled:
+		default:
 			goHeapTHP = "true"
 		}
 	}
