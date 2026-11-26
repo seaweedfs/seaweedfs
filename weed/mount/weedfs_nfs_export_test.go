@@ -3,6 +3,8 @@ package mount
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"sync"
 	"syscall"
 	"testing"
@@ -36,17 +38,33 @@ func (kv *fakeKv) get(_ context.Context, key []byte) ([]byte, error) {
 	return kv.values[string(key)], kv.err
 }
 
+// waitFor waits until the inode's record holds only a registration of want,
+// or none when want is empty.
 func (kv *fakeKv) waitFor(t *testing.T, inode uint64, want util.FullPath) {
+	t.Helper()
+	kv.waitUntil(t, inode, want, func(got []exportedHandleRegistration) bool {
+		return want == "" && len(got) == 0 || len(got) == 1 && got[0].path == want
+	})
+}
+
+func (kv *fakeKv) waitForRegistrations(t *testing.T, inode uint64, want ...exportedHandleRegistration) {
+	t.Helper()
+	kv.waitUntil(t, inode, want, func(got []exportedHandleRegistration) bool {
+		return slices.Equal(got, want)
+	})
+}
+
+func (kv *fakeKv) waitUntil(t *testing.T, inode uint64, want any, done func([]exportedHandleRegistration) bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		value, _ := kv.get(context.Background(), exportedHandleKey(inode))
-		_, got, _ := parseExportedHandle(value)
-		if got == want {
+		got := parseExportedHandle(value)
+		if done(got) {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("record of inode %d = %q, want %q", inode, got, want)
+			t.Fatalf("registrations of inode %d = %v, want %v", inode, got, want)
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -100,19 +118,45 @@ func TestExportedHandlesReopenBeforeCloseKeepsRecord(t *testing.T) {
 	kv.waitFor(t, 7, "")
 }
 
-func TestExportedHandlesRemovalKeepsAnotherMountsRecord(t *testing.T) {
+func TestExportedHandlesRemovalKeepsAnotherMountsRegistration(t *testing.T) {
 	kv := &fakeKv{values: map[string][]byte{}}
 	first := newExportedHandlesForTest(kv, 1, 10*time.Millisecond)
-	second := newExportedHandlesForTest(kv, 2, time.Minute)
+	second := newExportedHandlesForTest(kv, 2, 10*time.Millisecond)
 
 	first.AcquireHandle(7, "/buckets/a.txt")
 	kv.waitFor(t, 7, "/buckets/a.txt")
-	first.ReleaseHandle(7)
 	second.AcquireHandle(7, "/buckets/a.txt")
-	time.Sleep(60 * time.Millisecond)
-	value, _ := kv.get(context.Background(), exportedHandleKey(7))
-	if owner, path, ok := parseExportedHandle(value); !ok || owner != 2 || path != "/buckets/a.txt" {
-		t.Fatalf("record = %d %q %v, want the second mount's", owner, path, ok)
+	kv.waitForRegistrations(t, 7, exportedHandleRegistration{1, "/buckets/a.txt"}, exportedHandleRegistration{2, "/buckets/a.txt"})
+	second.ReleaseHandle(7)
+	kv.waitFor(t, 7, "/buckets/a.txt")
+	first.ReleaseHandle(7)
+	kv.waitFor(t, 7, "")
+
+	first.AcquireHandle(8, "/buckets/b.txt")
+	kv.waitFor(t, 8, "/buckets/b.txt")
+	second.AcquireHandle(8, "/buckets/b.txt")
+	kv.waitForRegistrations(t, 8, exportedHandleRegistration{1, "/buckets/b.txt"}, exportedHandleRegistration{2, "/buckets/b.txt"})
+	first.ReleaseHandle(8)
+	kv.waitForRegistrations(t, 8, exportedHandleRegistration{2, "/buckets/b.txt"})
+}
+
+func TestExportedHandlesRecordKeepsNewestRegistrations(t *testing.T) {
+	kv := &fakeKv{values: map[string][]byte{}}
+	var want []exportedHandleRegistration
+	for owner := uint32(1); owner <= maxExportedHandleRegistrations+2; owner++ {
+		path := util.FullPath(fmt.Sprintf("/buckets/%d.txt", owner))
+		newExportedHandlesForTest(kv, owner, time.Minute).AcquireHandle(7, path)
+		want = append(want, exportedHandleRegistration{owner, path})
+		if len(want) > maxExportedHandleRegistrations {
+			want = want[1:]
+		}
+		kv.waitForRegistrations(t, 7, want...)
+	}
+
+	wfs := newDotLookupTestWFS("/buckets", true)
+	wfs.exportedHandles = newExportedHandlesForTest(kv, 99, time.Minute)
+	if path, status := wfs.exportedHandles.GetPath(context.Background(), 7); status != fuse.OK || path != want[len(want)-1].path {
+		t.Fatalf("GetPath = %q, %v; want the newest registration %q", path, status, want[len(want)-1].path)
 	}
 }
 
