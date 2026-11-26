@@ -2801,15 +2801,13 @@ fn is_zero_u32(v: &u32) -> bool {
 /// a 503 before its deadline cuts the request off as a stall.
 const VOLUME_CLIENT_UPLOAD_WAIT_CAP: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// How long a client write waits for upload budget: the configured timeout
-/// (2s when unset), at most VOLUME_CLIENT_UPLOAD_WAIT_CAP.
+/// How long a client write waits for upload budget: the configured timeout,
+/// at most VOLUME_CLIENT_UPLOAD_WAIT_CAP (also when the timeout is 0).
 fn client_upload_wait(configured: std::time::Duration) -> std::time::Duration {
-    let timeout = if configured.is_zero() {
-        std::time::Duration::from_secs(2)
-    } else {
-        configured
-    };
-    timeout.min(VOLUME_CLIENT_UPLOAD_WAIT_CAP)
+    if configured.is_zero() {
+        return VOLUME_CLIENT_UPLOAD_WAIT_CAP;
+    }
+    configured.min(VOLUME_CLIENT_UPLOAD_WAIT_CAP)
 }
 
 /// Go's util.UploadAdmits: a limit of 0 admits, an idle server admits any
@@ -6995,7 +6993,10 @@ mod tests {
     #[test]
     fn client_upload_wait_is_capped() {
         use std::time::Duration;
-        assert_eq!(client_upload_wait(Duration::ZERO), Duration::from_secs(2));
+        assert_eq!(
+            client_upload_wait(Duration::ZERO),
+            VOLUME_CLIENT_UPLOAD_WAIT_CAP
+        );
         assert_eq!(
             client_upload_wait(Duration::from_millis(50)),
             Duration::from_millis(50)
