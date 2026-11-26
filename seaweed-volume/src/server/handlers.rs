@@ -2812,6 +2812,12 @@ fn client_upload_wait(configured: std::time::Duration) -> std::time::Duration {
     timeout.min(VOLUME_CLIENT_UPLOAD_WAIT_CAP)
 }
 
+/// Go's util.UploadAdmits: a limit of 0 admits, an idle server admits any
+/// single upload, otherwise in_flight + size must stay within limit.
+fn upload_admits(in_flight: i64, size: i64, limit: i64) -> bool {
+    limit == 0 || in_flight == 0 || in_flight.saturating_add(size) <= limit
+}
+
 /// Store an uploaded needle on the local volume — durable (fsync) uploads
 /// through the per-volume write queue, the rest synchronously — and then
 /// replicate it if the volume's placement calls for more copies.
@@ -2896,26 +2902,30 @@ pub async fn post_handler(
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(0);
 
-    if !is_replica_forward && state.concurrent_upload_limit > 0 {
-        // Wait for inflight bytes to drop below limit, or timeout
-        let timeout = client_upload_wait(state.inflight_upload_data_timeout);
-        let deadline = tokio::time::Instant::now() + timeout;
-
+    let charged = content_length;
+    let limit = state.concurrent_upload_limit;
+    if !is_replica_forward && limit > 0 {
+        let deadline =
+            tokio::time::Instant::now() + client_upload_wait(state.inflight_upload_data_timeout);
+        let mut waited = false;
         loop {
-            let current = state.inflight_upload_bytes.load(Ordering::Relaxed);
-            if current <= state.concurrent_upload_limit {
+            // Created before the check, so a release in between still wakes it.
+            let notified = state.upload_notify.notified();
+            if let Ok(prev) = state.inflight_upload_bytes.try_update(
+                Ordering::AcqRel,
+                Ordering::Acquire,
+                |in_flight| upload_admits(in_flight, charged, limit).then_some(in_flight + charged),
+            ) {
+                metrics::INFLIGHT_UPLOAD_SIZE.set(prev + charged);
                 break;
             }
-            // Go increments UploadLimitCond once per upload that has to
-            // wait; this loop counts every wake-up, so it can count more.
-            metrics::HANDLER_COUNTER
-                .with_label_values(&[metrics::UPLOAD_LIMIT_COND])
-                .inc();
-            // Wait for notification or timeout
-            if tokio::time::timeout_at(deadline, state.upload_notify.notified())
-                .await
-                .is_err()
-            {
+            if !waited {
+                waited = true;
+                metrics::HANDLER_COUNTER
+                    .with_label_values(&[metrics::UPLOAD_LIMIT_COND])
+                    .inc();
+            }
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
                 let mut response = json_error_with_query(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "upload limit exceeded",
@@ -2927,23 +2937,20 @@ pub async fn post_handler(
                 return response;
             }
         }
+    } else {
+        // Counted but never refused: a forward the primary already accepted
+        // must reach its replicas.
         let new_val = state
             .inflight_upload_bytes
-            .fetch_add(content_length, Ordering::Relaxed)
-            + content_length;
+            .fetch_add(charged, Ordering::Relaxed)
+            + charged;
         metrics::INFLIGHT_UPLOAD_SIZE.set(new_val);
     }
-
-    // RAII guard to release upload throttle on any exit path
-    let _upload_guard = if !is_replica_forward && state.concurrent_upload_limit > 0 {
-        Some(InflightGuard {
-            counter: &state.inflight_upload_bytes,
-            bytes: content_length,
-            notify: &state.upload_notify,
-            metric: &metrics::INFLIGHT_UPLOAD_SIZE,
-        })
-    } else {
-        None
+    let _upload_guard = InflightGuard {
+        counter: &state.inflight_upload_bytes,
+        bytes: charged,
+        notify: &state.upload_notify,
+        metric: &metrics::INFLIGHT_UPLOAD_SIZE,
     };
 
     let content_type_str = headers
@@ -6863,6 +6870,74 @@ mod tests {
         )
         .await;
         assert_ne!(forward.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(state.inflight_upload_bytes.load(Ordering::Relaxed), 11);
+    }
+
+    #[test]
+    fn upload_admits_matches_go() {
+        assert!(upload_admits(1 << 40, 1 << 30, 0));
+        assert!(upload_admits(6, 4, 10));
+        assert!(!upload_admits(8, 4, 10));
+        assert!(upload_admits(0, 100, 10));
+        assert!(!upload_admits(1, 100, 10));
+        assert!(upload_admits(10, 0, 10));
+        assert!(!upload_admits(11, i64::MAX, 10));
+    }
+
+    /// Admission counts the request's own size: under the limit is not
+    /// enough when the upload would overshoot it.
+    #[tokio::test]
+    async fn upload_limit_refuses_an_upload_that_would_overshoot() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.concurrent_upload_limit = 10;
+            s.inflight_upload_data_timeout = std::time::Duration::from_millis(50);
+        }
+        state.inflight_upload_bytes.store(8, Ordering::Relaxed);
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/1,0123456789abcdef")
+            .header(header::CONTENT_LENGTH, "4")
+            .body(Body::from("abcd"))
+            .unwrap();
+        let resp = post_handler(State(state.clone()), request).await;
+
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(state.inflight_upload_bytes.load(Ordering::Relaxed), 8);
+    }
+
+    #[tokio::test]
+    async fn upload_limit_waiter_proceeds_once_budget_is_released() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.concurrent_upload_limit = 10;
+            s.inflight_upload_data_timeout = std::time::Duration::from_secs(4);
+        }
+        state.inflight_upload_bytes.store(8, Ordering::Relaxed);
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/1,0123456789abcdef")
+            .header(header::CONTENT_LENGTH, "4")
+            .body(Body::from("abcd"))
+            .unwrap();
+        let waiter = tokio::spawn(post_handler(State(state.clone()), request));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(!waiter.is_finished());
+        state.inflight_upload_bytes.store(0, Ordering::Relaxed);
+        state.upload_notify.notify_waiters();
+
+        let resp = tokio::time::timeout(std::time::Duration::from_secs(2), waiter)
+            .await
+            .expect("waiter should be admitted once budget is released")
+            .unwrap();
+        assert_ne!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(state.inflight_upload_bytes.load(Ordering::Relaxed), 0);
     }
 
     #[test]
