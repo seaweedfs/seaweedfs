@@ -357,3 +357,22 @@ func TestRunFixRejectsVerifyFlagCombinations(t *testing.T) {
 		})
 	}
 }
+
+func TestRunFixVolumeIdFilterSkipsOutOfRangeName(t *testing.T) {
+	dir := t.TempDir()
+	writeFixTestVolume(t, dir, 2)
+	if err := os.WriteFile(filepath.Join(dir, "fix_4294967296.dat"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	saved, savedStatus := *fixVolumeId, commandExitStatus
+	*fixVolumeId, commandExitStatus = 7, 0
+	t.Cleanup(func() { *fixVolumeId, commandExitStatus = saved, savedStatus })
+	captureStdout(t, func() {
+		if !runFix(cmdFix, []string{dir}) {
+			t.Errorf("runFix stopped at a file the -volumeId filter excludes")
+		}
+	})
+	if got := indexedKeys(t, filepath.Join(dir, "fix_7.idx")); len(got) != 2 {
+		t.Fatalf("the selected volume was not fixed: keys %v", got)
+	}
+}

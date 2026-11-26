@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path"
 	"sort"
@@ -171,8 +172,13 @@ func runFix(cmd *Command, args []string) bool {
 				collection = baseFileName[:sepIndex]
 				volumeIdStr = baseFileName[sepIndex+1:]
 			}
-			parsedId, parseErr := strconv.ParseUint(volumeIdStr, 10, 32)
-			volumeId := int64(parsedId)
+			volumeId, parseErr := strconv.ParseInt(volumeIdStr, 10, 64)
+			if parseErr == nil && *fixVolumeId != 0 && *fixVolumeId != volumeId {
+				continue
+			}
+			if parseErr == nil && (volumeId < 0 || volumeId > math.MaxUint32) {
+				parseErr = fmt.Errorf("volume id %d out of range", volumeId)
+			}
 			if parseErr != nil {
 				fmt.Printf("Failed to parse volume id from %s: %v\n", baseFileName, parseErr)
 				if *fixIgnoreError {
@@ -180,9 +186,6 @@ func runFix(cmd *Command, args []string) bool {
 					continue
 				}
 				return false
-			}
-			if *fixVolumeId != 0 && *fixVolumeId != volumeId {
-				continue
 			}
 			doFixOneVolume(basePath, baseFileName, collection, volumeId, *fixIncludeDeleted)
 		}
