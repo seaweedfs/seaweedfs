@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
@@ -394,5 +395,39 @@ func TestTruncateDatTailKeepsEarlierBackup(t *testing.T) {
 	}
 	if st, _ := os.Stat(datName); st.Size() != cleanEnd {
 		t.Fatalf("size %d, want %d", st.Size(), cleanEnd)
+	}
+}
+
+func TestTruncateDatTailRetriesInOneSecond(t *testing.T) {
+	datName, layout := buildVerifyFixture(t, 3)
+	cleanEnd := layout[3].offset + layout[3].disk
+	first := fmt.Sprintf("%s.tail.%d.bak", datName, cleanEnd)
+	now := time.Now().Unix()
+	for _, name := range []string{first, fmt.Sprintf("%s.%d", first, now), fmt.Sprintf("%s.%d", first, now+1)} {
+		if err := os.WriteFile(name, []byte("earlier"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for retry := 0; retry < 3; retry++ {
+		f, err := os.OpenFile(datName, os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.Write([]byte("not a needle"))
+		f.Close()
+		captureStdout(t, func() {
+			if err := truncateDatTail(datName, cleanEnd); err != nil {
+				t.Fatalf("retry %d: %v", retry, err)
+			}
+		})
+	}
+	matches, _ := filepath.Glob(first + ".*")
+	if len(matches) != 5 {
+		t.Fatalf("want 5 backups next to %s, got %v", first, matches)
+	}
+	for _, name := range []string{first, fmt.Sprintf("%s.%d", first, now), fmt.Sprintf("%s.%d", first, now+1)} {
+		if b, _ := os.ReadFile(name); string(b) != "earlier" {
+			t.Fatalf("%s was overwritten: %q", name, b)
+		}
 	}
 }

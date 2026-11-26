@@ -799,13 +799,21 @@ func printIdxDirHint(volumeId int64) {
 	fmt.Printf("volume %d: the rebuilt index was written next to the .dat; a volume server started with -dir.idx uses it in preference to the copy in that directory\n", volumeId)
 }
 
-// backupName returns path.bak, or path.bak.<unix time> when that already exists.
+// backupName returns the first free name among path.bak, path.bak.<unix time>
+// and path.bak.<unix time>.<n>.
 func backupName(path string) string {
 	bak := path + ".bak"
-	if _, err := os.Stat(bak); err == nil {
-		bak = fmt.Sprintf("%s.bak.%d", path, time.Now().Unix())
+	if _, err := os.Lstat(bak); err != nil {
+		return bak
 	}
-	return bak
+	stamped := fmt.Sprintf("%s.bak.%d", path, time.Now().Unix())
+	bak = stamped
+	for n := 1; ; n++ {
+		if _, err := os.Lstat(bak); err != nil {
+			return bak
+		}
+		bak = fmt.Sprintf("%s.%d", stamped, n)
+	}
 }
 
 func newProgressPrinter(volumeId int64) func(pos, total int64) {
