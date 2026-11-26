@@ -30,14 +30,13 @@ var ErrorWriteRefused = errors.New("write refused before append")
 // ReplicatedWrite writes a needle to the local volume and fans it out to all
 // remote replica locations. When type=replicate is set, the request is itself
 // a forwarded replication and no further remote lookups are performed.
+// replicaJwt supplies the write JWT of each replica forward and is called right
+// before that forward, after the master lookup; nil sends no JWT.
 // contentMd5 and contentCrc32c are the checked client digests replicas verify
 // again; empty sends none.
 // Returns isUnchanged=true when the local write determined the needle content
 // was already present.
-func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request, contentMd5, contentCrc32c string) (isUnchanged bool, err error) {
-
-	//check JWT
-	jwt := security.GetJwt(r)
+func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request, replicaJwt func() security.EncodedJwt, contentMd5, contentCrc32c string) (isUnchanged bool, err error) {
 
 	// check whether this is a replicated write request
 	var remoteLocations []operation.Location
@@ -158,6 +157,11 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 
 				bytesBuffer := buffer_pool.SyncPoolGetBuffer()
 				defer buffer_pool.SyncPoolPutBuffer(bytesBuffer)
+
+				var jwt security.EncodedJwt
+				if replicaJwt != nil {
+					jwt = replicaJwt()
+				}
 
 				// volume server do not know about encryption
 				uploadOption := &operation.UploadOption{

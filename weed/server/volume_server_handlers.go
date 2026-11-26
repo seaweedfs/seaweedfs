@@ -402,6 +402,16 @@ func (vs *VolumeServer) maybeCheckJwtAuthorization(r *http.Request, vid, fid str
 	return vs.checkJwtAuthorizationWithKey(r, vid, fid, signingKey, previousSigningKey)
 }
 
+// baseFid strips the "_<delta>" suffix from the needle part of a file ID.
+// Write JWTs are issued for the base file ID, so every check and mint of a
+// volume write JWT compares against the stripped form.
+func baseFid(fid string) string {
+	if sep := strings.LastIndex(fid, "_"); sep > 0 {
+		return fid[:sep]
+	}
+	return fid
+}
+
 // checkJwtAuthorizationWithKey authorizes against caller-snapshotted signing
 // keys, so a write handler can classify an expired-JWT refusal against the exact
 // keys it authorized under rather than re-reading ones that may have rotated
@@ -429,10 +439,7 @@ func (vs *VolumeServer) checkJwtAuthorizationWithKey(r *http.Request, vid, fid s
 	}
 
 	if sc, ok := token.Claims.(*security.SeaweedFileIdClaims); ok {
-		if sepIndex := strings.LastIndex(fid, "_"); sepIndex > 0 {
-			fid = fid[:sepIndex]
-		}
-		expectedFid := vid + "," + fid
+		expectedFid := vid + "," + baseFid(fid)
 		if sc.Fid != expectedFid {
 			glog.V(1).Infof("jwt fid mismatch from %s: token has %q, request has %q", r.RemoteAddr, sc.Fid, expectedFid)
 			return false

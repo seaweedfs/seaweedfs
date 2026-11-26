@@ -218,6 +218,41 @@ func TestUploadExpiryProxyRefreshesFilerJwtOnRetry(t *testing.T) {
 	require.Equal(t, "Bearer fresh-filer-jwt-1", auths[1])
 }
 
+// A proxy retry after any failure, such as a 500 from a failed replica forward,
+// must carry a freshly minted filer credential: the first one may have expired
+// while the failed attempt streamed its body (#6220).
+func TestUploadProxyRefreshesFilerJwtOnEveryRetry(t *testing.T) {
+	const fid = "3,01637037d6"
+	var mu sync.Mutex
+	var auths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		mu.Lock()
+		auths = append(auths, r.Header.Get("Authorization"))
+		n := len(auths)
+		mu.Unlock()
+		if n < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"error":"failed to write to replicas"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"size":5}`)
+	}))
+	defer srv.Close()
+	proxyURL := srv.URL + "/?" + util_http.ProxyChunkIdParam + "=" + fid
+	minted := 0
+	option := &UploadOption{UploadUrl: proxyURL, Jwt: "first-filer-jwt", FilerJwt: func(isWrite bool) security.EncodedJwt {
+		minted++
+		return security.EncodedJwt(fmt.Sprintf("fresh-filer-jwt-%d", minted))
+	}}
+	result, err := NewUploaderWithHttpClient(srv.Client()).UploadData(context.Background(), []byte("plain"), option)
+	require.NoError(t, err)
+	require.Equal(t, uint32(5), result.Size)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, []string{"Bearer first-filer-jwt", "Bearer fresh-filer-jwt-1", "Bearer fresh-filer-jwt-2"}, auths)
+}
+
 // A proxy upload driven through uploadWithRetryData must be terminal after its
 // bounded same-FID attempts: the outer loop must not reassign a FID the proxy
 // owns, nor count exhausted groups toward the expiry budget.
