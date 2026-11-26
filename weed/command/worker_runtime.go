@@ -42,6 +42,7 @@ type pluginWorkerRunOptions struct {
 
 func runPluginWorkerWithOptions(options pluginWorkerRunOptions) bool {
 	util.LoadConfiguration("security", false)
+	util.RequireFipsMode()
 
 	options.AdminServer = strings.TrimSpace(options.AdminServer)
 	if options.AdminServer == "" {
