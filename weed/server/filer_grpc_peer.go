@@ -20,8 +20,8 @@ func (fs *FilerServer) peerContext(ctx context.Context) context.Context {
 	return security.WithFilerPeerCredentials(ctx, key)
 }
 
-// peerSubscriptionContext keeps the shared key for metadata subscriptions,
-// whose verifier accepts admin tokens signed only with that key.
+// peerSubscriptionContext prefers the shared key for metadata subscriptions:
+// older filers verify subscription admin tokens only with that key.
 func (fs *FilerServer) peerSubscriptionContext(ctx context.Context) context.Context {
 	var key security.SigningKey
 	if fs.filerGuard != nil {

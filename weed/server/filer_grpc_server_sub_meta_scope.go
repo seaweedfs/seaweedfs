@@ -35,11 +35,16 @@ func (fs *FilerServer) metadataSubscriptionScope(ctx context.Context, method str
 	if fs.filerGuard != nil {
 		adminKey, previousAdminKey = fs.filerGuard.VerificationKeys(true)
 	}
-	return security.CheckGrpcMetadataSubscription(ctx,
-		security.SigningKey(util.GetViper().GetString("jwt.filer_signing.subscribe.key")),
-		adminKey,
-		previousAdminKey,
-		method)
+	subscribeKey := security.SigningKey(util.GetViper().GetString("jwt.filer_signing.subscribe.key"))
+	subscription, err := security.CheckGrpcMetadataSubscription(ctx, subscribeKey, adminKey, previousAdminKey, method)
+	if settings := fs.grpcScopeSettings.Load(); err != nil && settings != nil && len(settings.key) > 0 {
+		// An unscoped grpc_key token already has full filer gRPC access, and
+		// peers without the shared key sign their subscriptions with it.
+		if grpcSubscription, grpcErr := security.CheckGrpcMetadataSubscription(ctx, subscribeKey, settings.key, settings.previousKey, method); grpcErr == nil {
+			return grpcSubscription, nil
+		}
+	}
+	return subscription, err
 }
 
 // scopeMetadataResponse keeps only what a scoped subscriber may see: events

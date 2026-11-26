@@ -262,6 +262,12 @@ func TestPeerAdminTokenSignedWithGrpcVerificationKey(t *testing.T) {
 			if !security.IsFilerAdminToken(subscriptionKey, security.EncodedJwt(strings.TrimPrefix(auth[0], security.BearerPrefix))) {
 				t.Fatal("subscription bearer is not an admin token for the key its verifier accepts")
 			}
+			v := util.GetViper()
+			v.Set("jwt.filer_signing.subscribe.key", subscriptionTokenKey)
+			t.Cleanup(func() { v.Set("jwt.filer_signing.subscribe.key", "") })
+			if scope, err := c.fsB.metadataSubscriptionScope(metadata.NewIncomingContext(ctx, md), security.MethodSubscribeLocalMetadata); err != nil || scope != nil {
+				t.Fatalf("peer subscription with a subscribe key set: scope=%+v err=%v, want the full stream", scope, err)
+			}
 		})
 	}
 }
