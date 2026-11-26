@@ -106,7 +106,7 @@ require (
 	github.com/xdg-go/scram v1.2.0
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.3
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.155.1
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.157.1
 	go.etcd.io/etcd/api/v3 v3.7.3
 	go.etcd.io/etcd/client/pkg/v3 v3.7.4
 	go.etcd.io/etcd/client/v3 v3.7.3
