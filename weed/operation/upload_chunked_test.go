@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -823,10 +824,19 @@ func TestIsReplicaForward(t *testing.T) {
 
 // A volume overload is retried on one fresh assignment and then given up, so
 // a busy cluster is not hit again and again while the chunk buffer is held.
+// A 429 from a volume server that predates the 503 gets the same treatment.
 func TestUploadReaderInChunksReassignsOnceOnOverload(t *testing.T) {
+	for _, status := range []int{http.StatusServiceUnavailable, http.StatusTooManyRequests} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			testUploadReaderInChunksReassignsOnceOnOverload(t, status)
+		})
+	}
+}
+
+func testUploadReaderInChunksReassignsOnceOnOverload(t *testing.T, status int) {
 	t.Run("relay", func(t *testing.T) {
 		_, assigns, err := uploadSingleChunk(t, func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
-			return nil, &uploadStatusError{StatusCode: http.StatusServiceUnavailable, err: errors.New("volume server upload limit")}
+			return nil, &uploadStatusError{StatusCode: status, err: errors.New("volume server upload limit")}
 		})
 		if !IsUploadOverloaded(err) {
 			t.Fatalf("expected the overload to reach the caller, got %v", err)
@@ -845,7 +855,7 @@ func TestUploadReaderInChunksReassignsOnceOnOverload(t *testing.T) {
 			}
 			atomic.AddInt32(&overloadedPosts, 1)
 			w.Header().Set("Retry-After", "1")
-			w.WriteHeader(http.StatusServiceUnavailable)
+			w.WriteHeader(status)
 			fmt.Fprint(w, `{"error":"volume server upload limit"}`)
 		}))
 		defer overloaded.Close()

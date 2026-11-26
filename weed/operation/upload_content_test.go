@@ -68,6 +68,7 @@ func TestShouldReassignUpload(t *testing.T) {
 		{name: "no response (transport)", err: &uploadStatusError{StatusCode: 0, err: fmt.Errorf("dial tcp: no such host")}, want: true},
 		{name: "500 replica write failed", err: &uploadStatusError{StatusCode: 500, err: fmt.Errorf("failed to write to replicas")}, want: true},
 		{name: "503 service unavailable", err: &uploadStatusError{StatusCode: 503, err: fmt.Errorf("busy")}, want: true},
+		{name: "429 upload limit (volume servers before 503)", err: &uploadStatusError{StatusCode: http.StatusTooManyRequests, err: fmt.Errorf("upload limit")}, want: true},
 		{name: "proven conflict", err: &uploadStatusError{StatusCode: http.StatusConflict, refusedBeforeAppend: true, err: errors.New("read only")}, want: true},
 		{name: "unmarked conflict", err: &uploadStatusError{StatusCode: http.StatusConflict, err: errors.New("read only")}, want: false},
 		{name: "400 bad request", err: &uploadStatusError{StatusCode: 400, err: fmt.Errorf("bad needle")}, want: false},

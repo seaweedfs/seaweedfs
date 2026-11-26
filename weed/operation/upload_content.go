@@ -193,7 +193,9 @@ func IsUploadOverloaded(err error) bool {
 // ShouldReassignUpload reports whether an upload error means the client should
 // ask for a fresh volume assignment and retry on another volume.
 //
-// Transport and 5xx failures retain their existing retry policy. A conflict
+// Transport and 5xx failures retain their existing retry policy. A 429 is a
+// volume server's upload-limit refusal (volume servers before 503 used it), so
+// it gets a fresh assignment like the 503 that replaced it. A conflict
 // requires explicit proof that the upload was refused before append.
 func ShouldReassignUpload(err error) bool {
 	if err == nil {
@@ -206,7 +208,7 @@ func ShouldReassignUpload(err error) bool {
 	}
 	var se *uploadStatusError
 	if errors.As(err, &se) {
-		return se.StatusCode == 0 || se.StatusCode >= 500 || (se.StatusCode == http.StatusConflict && se.refusedBeforeAppend) || (se.StatusCode == http.StatusUnauthorized && se.expiredBeforeAppend)
+		return se.StatusCode == 0 || se.StatusCode >= 500 || se.StatusCode == http.StatusTooManyRequests || (se.StatusCode == http.StatusConflict && se.refusedBeforeAppend) || (se.StatusCode == http.StatusUnauthorized && se.expiredBeforeAppend)
 	}
 	return strings.Contains(err.Error(), "transport")
 }
