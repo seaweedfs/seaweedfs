@@ -38,15 +38,15 @@ jobs:
       run:
         working-directory: test/postgres
     steps:
+    - name: Check out code
+      uses: actions/checkout@v7
+
     - name: Set up Go 1.x
       uses: actions/setup-go@v7
       with:
         cache: ${{ runner.environment == 'github-hosted' }}
-        go-version: ^1.26
+        go-version-file: 'go.mod'
       id: go
-
-    - name: Check out code
-      uses: actions/checkout@v7
 
     - name: Configure Docker Hub mirror
       run: |
