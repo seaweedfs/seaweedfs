@@ -24,12 +24,19 @@ func TestDeleteFileIdsWithLookupVolumeId_NoActiveLocations(t *testing.T) {
 		t.Fatalf("expected %d results, got %d", len(fileIds), len(results))
 	}
 
+	counts := make(map[string]int)
 	for _, res := range results {
+		counts[res.FileId]++
 		if res.Status != http.StatusNotFound {
 			t.Errorf("expected status %d, got %d", http.StatusNotFound, res.Status)
 		}
 		if res.Error != "lookup error: volume 3 has no active locations" {
 			t.Errorf("unexpected error message: %q", res.Error)
+		}
+	}
+	for _, fileId := range fileIds {
+		if counts[fileId] != 1 {
+			t.Errorf("expected one result for %s, got %d", fileId, counts[fileId])
 		}
 	}
 }
