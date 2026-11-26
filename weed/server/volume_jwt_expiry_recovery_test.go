@@ -18,6 +18,7 @@ import (
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -476,7 +477,7 @@ func TestReplicaForwardJwtOutlivesIncomingJwt(t *testing.T) {
 	incoming.Header.Set("Authorization", "Bearer "+expirySignedToken(t, key, "1,01637037d6", time.Now().Add(-time.Minute)))
 	require.False(t, vs.maybeCheckJwtAuthorization(incoming, "1", "01637037d6_1", true), "incoming token must be expired")
 
-	forwarded := vs.replicaJwt(incoming, "1", "01637037d6_1", key)
+	forwarded := vs.replicaJwt(incoming, "1", "01637037d6_1", key)()
 
 	replicaRequest := httptest.NewRequest(http.MethodPost, "/1,01637037d6_1?type=replicate", nil)
 	replicaRequest.Header.Set("Authorization", "Bearer "+string(forwarded))
@@ -489,5 +490,68 @@ func TestReplicaForwardJwtWithoutSigningKey(t *testing.T) {
 	vs := &VolumeServer{guard: security.NewGuard(nil, "", 0, "", 0, "", "")}
 	incoming := httptest.NewRequest(http.MethodPost, "/1,01637037d6", nil)
 	incoming.Header.Set("Authorization", "Bearer incoming-token")
-	require.Equal(t, security.EncodedJwt("incoming-token"), vs.replicaJwt(incoming, "1", "01637037d6", nil))
+	require.Equal(t, security.EncodedJwt("incoming-token"), vs.replicaJwt(incoming, "1", "01637037d6", nil)())
+}
+
+type delayedBody struct {
+	io.Reader
+	until time.Time
+	once  sync.Once
+}
+
+func (b *delayedBody) Read(p []byte) (int, error) {
+	b.once.Do(func() { time.Sleep(time.Until(b.until)) })
+	return b.Reader.Read(p)
+}
+
+// PostHandler authorizes a write whose JWT then expires while the body streams
+// in; the replica forward must carry a fresh, valid JWT for the base file ID.
+func TestPostHandlerForwardsFreshJwtAfterSlowBody(t *testing.T) {
+	const vid = "849300102"
+	key := security.SigningKey("posthandler-replica-key")
+	replicaAuth := make(chan string, 1)
+	replica := newProxyTestHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		replicaAuth <- r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"size":1}`)
+	}))
+	vs := newProxyTestVolumeServer(t, vid, []*master_pb.Location{{Url: strings.TrimPrefix(replica.URL, "http://")}}, nil)
+	vs.guard = security.NewGuard(nil, string(key), 10, "", 0, "", "")
+	vs.fileSizeLimitBytes = 4 << 20
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	part, err := mw.CreateFormFile("file", "slow.bin")
+	require.NoError(t, err)
+	_, err = part.Write([]byte("slow chunk"))
+	require.NoError(t, err)
+	require.NoError(t, mw.Close())
+
+	// JWT expiry has one-second precision, so truncate to know the exact instant.
+	expires := time.Now().Add(2 * time.Second).Truncate(time.Second)
+	incoming := expirySignedToken(t, key, vid+",01637037d6", expires)
+	req := httptest.NewRequest(http.MethodPost, "/"+vid+",01637037d6_1", &delayedBody{Reader: &body, until: expires.Add(time.Second)})
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+incoming)
+
+	rec := httptest.NewRecorder()
+	vs.PostHandler(rec, req)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	require.False(t, vs.maybeCheckJwtAuthorization(req, vid, "01637037d6_1", true), "incoming token must have expired while the body streamed in")
+
+	var got string
+	select {
+	case got = <-replicaAuth:
+	default:
+		t.Fatal("replica never received the forward")
+	}
+	forwarded, ok := strings.CutPrefix(got, "Bearer ")
+	require.True(t, ok, got)
+	require.NotEqual(t, incoming, forwarded)
+	claims := &security.SeaweedFileIdClaims{}
+	parsed, err := security.DecodeJwt(key, security.EncodedJwt(forwarded), claims)
+	require.NoError(t, err)
+	require.True(t, parsed.Valid)
+	require.Equal(t, vid+",01637037d6", claims.Fid)
 }

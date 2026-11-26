@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -215,7 +216,7 @@ func TestReplicatedWriteForwardsFsyncToReplicas(t *testing.T) {
 				Data: []byte("test data"),
 				Ttl:  needle.EMPTY_TTL,
 			}
-			if _, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, volumeId, n, r, "", "", ""); err != nil {
+			if _, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, volumeId, n, r, nil, "", ""); err != nil {
 				t.Fatalf("ReplicatedWrite: %v", err)
 			}
 
@@ -235,8 +236,9 @@ func TestReplicatedWriteForwardsFsyncToReplicas(t *testing.T) {
 	}
 }
 
-// TestReplicatedWriteForwardsReplicaJwt verifies that the fan-out carries the
-// JWT the caller supplies for replicas, not the one on the incoming request.
+// TestReplicatedWriteForwardsReplicaJwt verifies that each forward carries a
+// JWT minted after the master lookup, right before the replica request, not
+// the one on the incoming request.
 func TestReplicatedWriteForwardsReplicaJwt(t *testing.T) {
 	replicaAuth := make(chan string, 1)
 	replica := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -248,9 +250,10 @@ func TestReplicatedWriteForwardsReplicaJwt(t *testing.T) {
 	}))
 	defer replica.Close()
 
-	masterFn, dialOption := startMockMasterServer(t, &mockMasterServer{
+	master := &mockMasterServer{
 		locations: []*master_pb.Location{{Url: strings.TrimPrefix(replica.URL, "http://")}},
-	})
+	}
+	masterFn, dialOption := startMockMasterServer(t, master)
 	volumeId := needle.VolumeId(1)
 	operation.InvalidateVolumeIdLocationCache(volumeId.String())
 
@@ -259,8 +262,16 @@ func TestReplicatedWriteForwardsReplicaJwt(t *testing.T) {
 	if err := r.ParseForm(); err != nil {
 		t.Fatal(err)
 	}
+	var mints, lookupsAtMint int
+	replicaJwt := func() security.EncodedJwt {
+		master.mu.Lock()
+		lookupsAtMint = master.calls
+		master.mu.Unlock()
+		mints++
+		return "replica-jwt"
+	}
 	n := &needle.Needle{Id: 1, Data: []byte("test data"), Ttl: needle.EMPTY_TTL}
-	if _, err := ReplicatedWrite(context.Background(), masterFn, dialOption, &storage.Store{}, volumeId, n, r, "replica-jwt", "", ""); err != nil {
+	if _, err := ReplicatedWrite(context.Background(), masterFn, dialOption, &storage.Store{}, volumeId, n, r, replicaJwt, "", ""); err != nil {
 		t.Fatalf("ReplicatedWrite: %v", err)
 	}
 
@@ -271,6 +282,12 @@ func TestReplicatedWriteForwardsReplicaJwt(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("replica never received the fan-out request")
+	}
+	if mints != 1 {
+		t.Errorf("replica JWT minted %d times, want once per replica", mints)
+	}
+	if lookupsAtMint == 0 {
+		t.Error("replica JWT minted before the master lookup")
 	}
 }
 
@@ -349,7 +366,7 @@ func TestReplicatedWriteOverlapsLocalAndReplicaWrites(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, volumeId, n, r, "", "", "")
+		_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, volumeId, n, r, nil, "", "")
 		done <- err
 	}()
 
@@ -438,7 +455,7 @@ func TestReplicatedWriteFailsWhenEitherLegFails(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, tc.volumeId, n, r, "", "", "")
+			_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, tc.volumeId, n, r, nil, "", "")
 			if err == nil {
 				t.Fatal("ReplicatedWrite succeeded despite a failed leg")
 			}
@@ -481,7 +498,7 @@ func TestReplicatedWriteRejectsWriteWithNoTarget(t *testing.T) {
 				Data: []byte("test data"),
 				Ttl:  needle.EMPTY_TTL,
 			}
-			_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, volumeId, n, r, "", "", "")
+			_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, store, volumeId, n, r, nil, "", "")
 			if err == nil {
 				t.Fatal("ReplicatedWrite acknowledged a write that no volume stored")
 			}
@@ -522,7 +539,7 @@ func TestReplicatedWriteFailsAtTheBoundWhenAReplicaNeverAnswers(t *testing.T) {
 	timeouts := stats.VolumeServerReplicationFailures.WithLabelValues(stats.ReplicationOpWrite, stats.FailureTimeout)
 	timeoutsBefore := testutil.ToFloat64(timeouts)
 	start := time.Now()
-	_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, &storage.Store{}, volumeId, n, r, "", "", "")
+	_, err := ReplicatedWrite(context.Background(), masterFn, dialOption, &storage.Store{}, volumeId, n, r, nil, "", "")
 	elapsed := time.Since(start)
 	select {
 	case <-received:
@@ -579,7 +596,7 @@ func TestReplicatedWriteGivesALargerBodyMoreTime(t *testing.T) {
 	}
 	n := &needle.Needle{Id: 1, Data: data, Ttl: needle.EMPTY_TTL}
 
-	if _, err := ReplicatedWrite(context.Background(), masterFn, dialOption, &storage.Store{}, volumeId, n, r, "", "", ""); err != nil {
+	if _, err := ReplicatedWrite(context.Background(), masterFn, dialOption, &storage.Store{}, volumeId, n, r, nil, "", ""); err != nil {
 		t.Fatalf("a replica answering within the %v bound for a %d-byte body failed the write: %v", replicaRequestBound(len(data)), len(data), err)
 	}
 	select {

@@ -52,17 +52,26 @@ func (vs *VolumeServer) replicaContentCrc32c(n *needle.Needle, contentCrc32c str
 	return needle.ContentCrc32c(n.Data)
 }
 
-// replicaJwt is the write JWT a replica forward carries. Reading the body can
-// outlast the incoming JWT, so with a signing key the forward gets a fresh one
-// for the same file ID, which the request was already authorized for.
-func (vs *VolumeServer) replicaJwt(r *http.Request, vid, fid string, signingKey security.SigningKey) security.EncodedJwt {
+// replicaJwt returns the source of the write JWT a replica forward carries,
+// called right before each replica request. Reading the body can outlast the
+// incoming JWT, so with a signing key every forward gets a fresh JWT for the
+// base file ID, which the request was already authorized for. Without a
+// signing key the incoming JWT passes through unchanged.
+func (vs *VolumeServer) replicaJwt(r *http.Request, vid, fid string, signingKey security.SigningKey) func() security.EncodedJwt {
 	if len(signingKey) == 0 {
-		return security.GetJwt(r)
+		incoming := security.GetJwt(r)
+		return func() security.EncodedJwt { return incoming }
 	}
-	if sep := strings.LastIndex(fid, "_"); sep > 0 {
-		fid = fid[:sep]
+	fileId := vid + "," + baseFid(fid)
+	return func() security.EncodedJwt {
+		// Minting unconditionally, rather than forwarding a still-valid incoming
+		// JWT, keeps a forward from carrying one that expires in flight. The cost
+		// falls on key rotation: replicas verify a JWT signed with the key current
+		// on this server, so a new write signing key must be present as
+		// previous_key (verify-only) on every volume server before any volume
+		// server makes the new key current.
+		return security.GenJwtForVolumeServer(signingKey, vs.guard.ExpiresAfterSec(), fileId)
 	}
-	return security.GenJwtForVolumeServer(signingKey, vs.guard.ExpiresAfterSec(), vid+","+fid)
 }
 
 func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
@@ -90,11 +99,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 		// and status precedence for other content types, which get no retry marker.
 		contentType, _, typeErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if typeErr == nil && contentType == "multipart/form-data" {
-			baseFid := fid
-			if sep := strings.LastIndex(baseFid, "_"); sep > 0 {
-				baseFid = baseFid[:sep]
-			}
-			if security.IsExpiredVolumeJwt(writeSigningKey, security.GetJwt(r), vid+","+baseFid, previousWriteSigningKey) {
+			if security.IsExpiredVolumeJwt(writeSigningKey, security.GetJwt(r), vid+","+baseFid(fid), previousWriteSigningKey) {
 				w.Header().Set(util_http.WriteOutcomeHeader, util_http.WriteOutcomeExpiredJwtBeforeAppend)
 			}
 		}
