@@ -383,6 +383,7 @@ func testFirstLinkTakesTheLinkId(t *testing.T, wfs *WFS, server *createEntryTest
 			Attributes:      &filer_pb.FuseAttributes{FileMode: 0o600, FileSize: 12, Crtime: 1, Mtime: 1, Uid: 99, Gid: 100},
 			Chunks:          []*filer_pb.FileChunk{{FileId: "3,0c03", Size: 12}},
 			Content:         []byte("inline"),
+			RemoteEntry:     &filer_pb.RemoteEntry{StorageName: "s3", RemoteETag: "etag"},
 			HardLinkId:      theirs,
 			HardLinkCounter: 2,
 		}}, nil
@@ -415,6 +416,9 @@ func testFirstLinkTakesTheLinkId(t *testing.T, wfs *WFS, server *createEntryTest
 	}
 	if created.GetAttributes().GetFileMode() != 0o600 || len(created.GetChunks()) != 1 || string(created.GetContent()) != "inline" {
 		t.Fatalf("new name has mode %o, %d chunks and content %q, want the stored 600, 1 and \"inline\"", created.GetAttributes().GetFileMode(), len(created.GetChunks()), created.GetContent())
+	}
+	if created.GetRemoteEntry().GetRemoteETag() != "etag" {
+		t.Fatalf("new name has remote entry %v, want the stored one", created.GetRemoteEntry())
 	}
 	linked, _, st := wfs.maybeLoadEntry(context.Background(), sourcePath)
 	if st != fuse.OK {
