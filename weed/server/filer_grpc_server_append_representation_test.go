@@ -144,6 +144,48 @@ func TestAppendToEntryRemoteRefusalKeepsTheRealRemoteReadPath(t *testing.T) {
 	require.NoError(t, err, "the path lock must be released after refusing the append")
 }
 
+func TestAppendToEntryRemoteRefusalAfterLazyDiscoveryKeepsRemoteObject(t *testing.T) {
+	remoteData := []byte("remote-")
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprint(len(remoteData)))
+		if r.Method == http.MethodGet {
+			_, _ = w.Write(remoteData)
+		}
+	}))
+	t.Cleanup(origin.Close)
+	fs, store := newAppendLockServer(t)
+	close(store.release)
+	fs.option.AllowUntrustedRemoteEndpoints = true
+	configureAppendRemoteMount(t, fs, store, origin.URL)
+
+	const path = "/buckets/b/lazy-append.txt"
+	request := appendRepresentationRequest("/buckets/b", "lazy-append.txt")
+	request.Chunks[0].Offset = 123
+	var operations []string
+	store.afterOp = func(op string, p util.FullPath) {
+		operations = append(operations, fmt.Sprintf("%s %s", op, p))
+	}
+
+	_, err := fs.AppendToEntry(context.Background(), request)
+	require.Equal(t, "filer: cannot append chunks to a remote-only entry", status.Convert(err).Message())
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+	require.Equal(t, int64(123), request.Chunks[0].Offset, "refusal must happen before append offsets are assigned")
+	require.Contains(t, operations, "insert "+path, "lazy remote discovery should register the remote metadata row")
+
+	stored, findErr := fs.filer.FindEntry(context.Background(), path)
+	require.NoError(t, findErr)
+	require.True(t, stored.IsInRemoteOnly(), "lazy discovery must leave a remote-only entry")
+	require.Empty(t, stored.GetChunks(), "refused append must not persist request chunks")
+	fs.filer.FileIdDeletionQueue.Consume(func(ids []string) {
+		t.Fatalf("refused append queued chunks for deletion: %v", ids)
+	})
+
+	recorder := httptest.NewRecorder()
+	fs.GetOrHeadHandler(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, remoteData, recorder.Body.Bytes(), "lazy discovery must preserve the real remote read path")
+}
+
 type appendReadLookup struct {
 	urls map[string]string
 }
