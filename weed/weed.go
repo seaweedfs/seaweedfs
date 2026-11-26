@@ -94,6 +94,9 @@ func main() {
 			cmd.Flag.Parse(args[1:])
 			args = cmd.Flag.Args()
 			IsDebug = cmd.IsDebug
+			if isLongRunningCommand(cmd.Name()) {
+				util.LogTransparentHugePages()
+			}
 			if !cmd.Run(cmd, args) {
 				fmt.Fprintf(os.Stderr, "\n")
 				cmd.Flag.Usage()
@@ -113,6 +116,22 @@ func main() {
 	fmt.Fprintf(os.Stderr, "weed: unknown subcommand %q\nRun 'weed help' for usage.\n", args[0])
 	setExitStatus(2)
 	exit()
+}
+
+// isLongRunningCommand reports whether the command keeps serving after
+// startup. Only those report the host THP policy, so one-shot tools stay quiet.
+// mini and fuse report it themselves: mini after quieting stderr, fuse only in
+// the child that serves the mount, not in the parent that starts it.
+func isLongRunningCommand(name string) bool {
+	switch name {
+	case "server", "master", "master.follower", "volume", "filer", "s3", "iam",
+		"admin", "worker", "webdav", "sftp", "mount",
+		"filer.sync", "filer.backup", "filer.meta.backup", "filer.replicate",
+		"filer.remote.sync", "filer.remote.gateway",
+		"mq.broker", "mq.agent", "mq.kafka.gateway":
+		return true
+	}
+	return false
 }
 
 var usageTemplate = `

@@ -4,11 +4,11 @@ import "testing"
 
 func TestParseHostPort(t *testing.T) {
 	tests := []struct {
-		name       string
-		hostPort   string
-		wantHost   string
-		wantPort   int64
-		wantErr    bool
+		name     string
+		hostPort string
+		wantHost string
+		wantPort int64
+		wantErr  bool
 	}{
 		{
 			name:     "hostname",

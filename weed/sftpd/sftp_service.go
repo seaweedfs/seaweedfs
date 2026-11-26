@@ -54,6 +54,8 @@ type SFTPServiceOptions struct {
 	// JWT Configuration for Filer
 	FilerSigningKey          []byte // JWT signing key for filer uploads
 	FilerSigningExpiresAfter int    // JWT token expiration time in seconds
+
+	BucketsDir string // S3 buckets folder on the filer
 }
 
 // NewSFTPService creates a new service instance.
@@ -214,6 +216,7 @@ func (s *SFTPService) handleSSHConnection(conn net.Conn, config *ssh.ServerConfi
 		sftpUser,
 		s.options.FilerSigningKey,
 		s.options.FilerSigningExpiresAfter,
+		s.options.BucketsDir,
 	)
 
 	// Ensure home directory exists with proper permissions

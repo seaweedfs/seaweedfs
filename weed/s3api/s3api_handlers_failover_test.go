@@ -187,3 +187,48 @@ func TestFailoverDoesNotBlameFilersForTheCallersExpiredBudget(t *testing.T) {
 		t.Errorf("the second filer was tried %d times with no budget left to answer in", n)
 	}
 }
+
+// hangingAssignFiler answers AssignVolume only when the caller gives up,
+// standing in for a filer still waiting on the master for a volume.
+type hangingAssignFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	calls atomic.Int32
+}
+
+func (f *hangingAssignFiler) AssignVolume(ctx context.Context, _ *filer_pb.AssignVolumeRequest) (*filer_pb.AssignVolumeResponse, error) {
+	f.calls.Add(1)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// An S3 client that disconnects while its chunk waits for a volume cancels the
+// assignment. That cancel must not count against the filer, or a few clients
+// going away would open the circuit on healthy filers, and it must not send the
+// same dead request on to the next filer.
+func TestAssignUploadVolumeDoesNotBlameFilersForAClientThatLeft(t *testing.T) {
+	first := &hangingAssignFiler{}
+	second := &hangingAssignFiler{}
+	firstAddr := startFakeFiler(t, first)
+	secondAddr := startFakeFiler(t, second)
+	s3a := newFailoverTestServer(t, firstAddr, secondAddr)
+
+	// More attempts than the three failures it takes to open the circuit.
+	for attempt := 0; attempt < 5; attempt++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		time.AfterFunc(50*time.Millisecond, cancel)
+		_, err := s3a.assignUploadVolume(ctx, &filer_pb.AssignVolumeRequest{Count: 1})
+		cancel()
+		if err == nil {
+			t.Fatalf("attempt %d: want the cancelled assignment surfaced as an error", attempt)
+		}
+	}
+
+	for _, addr := range []pb.ServerAddress{firstAddr, secondAddr} {
+		if s3a.filerClient.ShouldSkipUnhealthyFiler(addr) {
+			t.Errorf("filer %s was flagged unhealthy because the client went away", addr)
+		}
+	}
+	if n := second.calls.Load(); n != 0 {
+		t.Errorf("the second filer was asked %d times for a client that had already gone", n)
+	}
+}

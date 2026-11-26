@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -45,6 +47,20 @@ type fakeVolumeServer struct {
 	mu          sync.Mutex
 	deletedFids []string
 	stored      map[string][]byte
+	// uploadStatus, when set, answers every upload with that status the way
+	// an over-budget volume server does; uploads counts the POSTs.
+	uploadStatus int
+	uploads      int
+	// holdUploads makes an upload read its body, then wait for the request to
+	// be cancelled; uploadsHeld and uploadsCancelled count them. gotUpload is
+	// signalled (once per held upload) when the body has been read.
+	holdUploads      bool
+	uploadsHeld      int
+	uploadsCancelled int
+	gotUpload        chan struct{}
+	// httpDeletedFids records the fids the gateway's own cleanup DELETEs over
+	// HTTP (a failed chunk write), as opposed to BatchDelete's orphan cleanup.
+	httpDeletedFids []string
 }
 
 func (f *fakeVolumeServer) BatchDelete(_ context.Context, req *volume_server_pb.BatchDeleteRequest) (*volume_server_pb.BatchDeleteResponse, error) {
@@ -64,11 +80,25 @@ func (f *fakeVolumeServer) deleted() []string {
 	return append([]string(nil), f.deletedFids...)
 }
 
+func (f *fakeVolumeServer) httpDeleted() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.httpDeletedFids...)
+}
+
 func startFakeVolumeServer(t *testing.T) *fakeVolumeServer {
 	t.Helper()
 	v := &fakeVolumeServer{stored: map[string][]byte{}}
 	upload := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fid := strings.TrimPrefix(r.URL.Path, "/")
+		if r.Method == http.MethodDelete {
+			v.mu.Lock()
+			v.httpDeletedFids = append(v.httpDeletedFids, fid)
+			delete(v.stored, fid)
+			v.mu.Unlock()
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 		if r.Method == http.MethodGet {
 			v.mu.Lock()
 			data, ok := v.stored[fid]
@@ -101,7 +131,38 @@ func startFakeVolumeServer(t *testing.T) *fakeVolumeServer {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+		v.mu.Lock()
+		status := v.uploadStatus
+		if r.Method == http.MethodPost {
+			v.uploads++
+		} else {
+			status = 0
+		}
+		v.mu.Unlock()
+		if status != 0 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(status)
+			io.WriteString(w, `{"error":"volume server upload limit"}`)
+			return
+		}
 		data, _ := io.ReadAll(r.Body)
+		v.mu.Lock()
+		hold := v.holdUploads && r.Method == http.MethodPost
+		if hold {
+			v.uploadsHeld++
+		}
+		v.mu.Unlock()
+		if hold {
+			select {
+			case v.gotUpload <- struct{}{}:
+			default:
+			}
+			<-r.Context().Done()
+			v.mu.Lock()
+			v.uploadsCancelled++
+			v.mu.Unlock()
+			return
+		}
 		v.mu.Lock()
 		v.stored[fid] = data
 		v.mu.Unlock()
@@ -1318,5 +1379,184 @@ func TestTxnConditionHoldsQuotedStoredETag(t *testing.T) {
 	notMatch := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_ETAG_NOT_MATCH, Etags: []string{"abc123"}}}}
 	if !txnConditionHolds(match, stored) || txnConditionHolds(notMatch, stored) {
 		t.Fatalf("a quoted stored ETag must compare equal to the same ETag")
+	}
+}
+
+// overloadedUploadError returns what a chunk upload to a holder answering
+// status yields, wrapped the way UploadReaderInChunks wraps it.
+func overloadedUploadError(t *testing.T, status int) error {
+	t.Helper()
+	holder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(status)
+		io.WriteString(w, `{"error":"volume server upload limit"}`)
+	}))
+	defer holder.Close()
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = uploader.UploadData(context.Background(), []byte("hello"), &operation.UploadOption{
+		UploadUrl:   holder.URL + "/3,01637037d6",
+		MaxAttempts: 1,
+	})
+	if err == nil {
+		t.Fatalf("upload against a %d holder succeeded", status)
+	}
+	return fmt.Errorf("upload chunk: %w", err)
+}
+
+// CopyObject and UploadPartCopy write chunks too: a destination volume short
+// of budget, or a stalled chunk write, is SlowDown there as for PutObject.
+func TestMapCopyErrorOverloadIsSlowDown(t *testing.T) {
+	s3a := &S3ApiServer{}
+	tests := []struct {
+		name string
+		err  error
+		want s3err.ErrorCode
+	}{
+		{"volume 503", fmt.Errorf("upload chunk data: %w", overloadedUploadError(t, http.StatusServiceUnavailable)), s3err.ErrTooManyRequest},
+		{"volume 429", fmt.Errorf("upload chunk data: %w", overloadedUploadError(t, http.StatusTooManyRequests)), s3err.ErrTooManyRequest},
+		{"exhausted stall", fmt.Errorf("upload chunk data: %w", operation.ErrUploadStalled), s3err.ErrTooManyRequest},
+		{"volume 500", fmt.Errorf("upload chunk data: %w", overloadedUploadError(t, http.StatusInternalServerError)), s3err.ErrInternalError},
+		{"plain error", errors.New("upload chunk data: 503 service unavailable"), s3err.ErrInternalError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := s3a.mapCopyErrorToS3Error(tt.err); got != tt.want {
+				t.Errorf("mapCopyErrorToS3Error(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+// A volume that refuses the write for lack of budget, or a stall that used up
+// its retries, is load the client should back off from: SlowDown, not a 500
+// the client cannot tell from a fault.
+func TestMapChunkedUploadErrorOverloadIsSlowDown(t *testing.T) {
+	// A dial failure is a status-0 error too, but not a stall.
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedAddr := lis.Addr().String()
+	lis.Close()
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, dialErr := uploader.UploadData(context.Background(), []byte("hello"), &operation.UploadOption{
+		UploadUrl:   "http://" + closedAddr + "/3,01637037d6",
+		MaxAttempts: 1,
+	})
+	if dialErr == nil {
+		t.Fatal("upload to a closed port succeeded")
+	}
+
+	tests := []struct {
+		name string
+		err  error
+		want s3err.ErrorCode
+	}{
+		{"volume 503", overloadedUploadError(t, http.StatusServiceUnavailable), s3err.ErrTooManyRequest},
+		{"volume 429", overloadedUploadError(t, http.StatusTooManyRequests), s3err.ErrTooManyRequest},
+		{"exhausted stall", fmt.Errorf("upload chunk: %w", operation.ErrUploadStalled), s3err.ErrTooManyRequest},
+		{"volume 500", overloadedUploadError(t, http.StatusInternalServerError), s3err.ErrInternalError},
+		{"dial failure", fmt.Errorf("upload chunk: %w", dialErr), s3err.ErrInternalError},
+		{"plain error", errors.New("upload chunk: 503 service unavailable"), s3err.ErrInternalError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := mapChunkedUploadErrorToS3Error(context.Background(), tt.err); got != tt.want {
+				t.Errorf("mapChunkedUploadErrorToS3Error(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+// End to end: every holder over budget answers 503; the PUT answers SlowDown
+// after one reassign, not an InternalError after three.
+func TestPutToFilerVolumeOverloadAnswersSlowDown(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	volume.mu.Lock()
+	volume.uploadStatus = http.StatusServiceUnavailable
+	volume.mu.Unlock()
+	filerImpl := &ambiguousPutFiler{volume: volume, entries: map[string]*filer_pb.Entry{}, apply: true}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+
+	_, code := putTestObject(t, s3a)
+	if code != s3err.ErrTooManyRequest {
+		t.Fatalf("putToFiler returned %v, want ErrTooManyRequest (SlowDown)", code)
+	}
+	volume.mu.Lock()
+	uploads := volume.uploads
+	volume.mu.Unlock()
+	if uploads != 2 {
+		t.Fatalf("volume saw %d upload POSTs, want 2 (one per assignment)", uploads)
+	}
+}
+
+// The client going away must stop the chunk uploads: they follow the request
+// context instead of running on, holding buffers, until a volume times out.
+func TestPutToFilerClientGoneCancelsChunkUploads(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	volume.mu.Lock()
+	volume.holdUploads = true
+	volume.gotUpload = make(chan struct{}, 1)
+	volume.mu.Unlock()
+	filerImpl := &ambiguousPutFiler{volume: volume, entries: map[string]*filer_pb.Entry{}, apply: true}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := httptest.NewRequest(http.MethodPut, "/b/o", nil).WithContext(ctx)
+
+	type result struct {
+		code s3err.ErrorCode
+	}
+	done := make(chan result, 1)
+	go func() {
+		_, code, _ := s3a.putToFiler(r, "/buckets/b/o", strings.NewReader("hello world"), "b", "o", 1, 0, nil, false, "")
+		done <- result{code}
+	}()
+
+	select {
+	case <-volume.gotUpload:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the volume never received the chunk upload")
+	}
+	time.AfterFunc(100*time.Millisecond, cancel)
+
+	select {
+	case res := <-done:
+		if res.code != s3err.ErrClientDisconnected {
+			t.Fatalf("putToFiler returned %v, want ErrClientDisconnected", res.code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("putToFiler kept running after the client went away")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		volume.mu.Lock()
+		cancelled := volume.uploadsCancelled
+		volume.mu.Unlock()
+		if cancelled > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the volume never saw the upload being cancelled")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// The volume commits on a context that ignores the cancel, so a body it
+	// already holds may still land: the cancelled chunk's fid must be deleted
+	// rather than left as a needle nothing references.
+	filerImpl.mu.Lock()
+	assigned := fmt.Sprintf("3,%016x%08x", filerImpl.nextKey, uint32(filerImpl.nextKey))
+	filerImpl.mu.Unlock()
+	if deleted := volume.httpDeleted(); !slices.Contains(deleted, assigned) {
+		t.Fatalf("the cancelled chunk %s was not deleted, deletes=%v", assigned, deleted)
 	}
 }

@@ -67,8 +67,16 @@ type UploadOption struct {
 	GenUploadUrl      func(host, fileId string) string // if nil → fallback "http://{host}/{fileId}"
 	FilerJwt          security.FilerJwtProvider        // credential for proxy chunk URLs; nil → process-wide jwt.filer_signing
 
+	// BodyDeadline opts this upload into the body deadline (uploadBodyDeadline):
+	// a body still unsent past it is cut as back-pressure. Gateways that hold a
+	// client's chunk buffers set it (S3 chunk uploads, the filer's chunk loop);
+	// other callers (mount, filer.sync, filer.copy, UploadWithRetry) keep the
+	// stall watchdog only.
+	BodyDeadline bool
+
 	// stallWatchdogDisarmed turns the watchdog off for this upload's later
-	// attempts once it fired: a re-arm could burn every retry.
+	// attempts once it fired: a re-arm could burn every retry. The body
+	// deadline (uploadBodyDeadline), when opted into, still bounds them.
 	stallWatchdogDisarmed bool
 }
 
@@ -134,17 +142,60 @@ type uploadStatusError struct {
 	StatusCode          int
 	refusedBeforeAppend bool
 	expiredBeforeAppend bool
-	stalled             bool // the stall watchdog cancelled this attempt's request
+	stalled             bool // the stall watchdog or the body deadline cancelled this attempt's request
+	deadlineCut         bool // the body deadline, not the watchdog, made that cut
 	err                 error
 }
 
 func (e *uploadStatusError) Error() string { return e.err.Error() }
 func (e *uploadStatusError) Unwrap() error { return e.err }
 
+// Is matches ErrUploadStalled for a request the stall watchdog or the body
+// deadline cancelled before any response came back.
+func (e *uploadStatusError) Is(target error) bool {
+	return target == ErrUploadStalled && e.StatusCode == 0 && e.stalled
+}
+
+// ErrUploadStalled matches (with errors.Is) an upload the stall watchdog or the
+// body deadline cancelled before the volume server answered. Once its retries
+// are spent it is load, not a fault: the caller should back off and try again.
+var ErrUploadStalled = errors.New("upload stalled")
+
+// isBodyDeadlineCut reports whether the body deadline cancelled the upload
+// before any response came back. Unlike a watchdog cut, which blames one
+// wedged conn and is worth a retry on a fresh one, it says the link to that
+// holder crawls: asking it again only holds the buffer longer.
+func isBodyDeadlineCut(err error) bool {
+	var se *uploadStatusError
+	return errors.As(err, &se) && se.StatusCode == 0 && se.deadlineCut
+}
+
+// IsUploadBackpressure reports whether an upload failed because the cluster
+// is short of capacity rather than faulty: a volume server refused it for
+// lack of upload budget (IsUploadOverloaded), or its body crawled past the
+// body deadline. Such an error gets no same-holder retry and at most one
+// fresh assignment per chunk; then the client is told to slow down.
+func IsUploadBackpressure(err error) bool {
+	return IsUploadOverloaded(err) || isBodyDeadlineCut(err)
+}
+
+// IsUploadOverloaded reports whether a volume server refused the upload for
+// lack of capacity (429 or 503). Retrying the same holder right away only adds
+// to its load, so callers give it at most one fresh assignment.
+func IsUploadOverloaded(err error) bool {
+	var se *uploadStatusError
+	if errors.As(err, &se) {
+		return se.StatusCode == http.StatusTooManyRequests || se.StatusCode == http.StatusServiceUnavailable
+	}
+	return false
+}
+
 // ShouldReassignUpload reports whether an upload error means the client should
 // ask for a fresh volume assignment and retry on another volume.
 //
-// Transport and 5xx failures retain their existing retry policy. A conflict
+// Transport and 5xx failures retain their existing retry policy. A 429 is a
+// volume server's upload-limit refusal (volume servers before 503 used it), so
+// it gets a fresh assignment like the 503 that replaced it. A conflict
 // requires explicit proof that the upload was refused before append.
 func ShouldReassignUpload(err error) bool {
 	if err == nil {
@@ -157,7 +208,7 @@ func ShouldReassignUpload(err error) bool {
 	}
 	var se *uploadStatusError
 	if errors.As(err, &se) {
-		return se.StatusCode == 0 || se.StatusCode >= 500 || (se.StatusCode == http.StatusConflict && se.refusedBeforeAppend) || (se.StatusCode == http.StatusUnauthorized && se.expiredBeforeAppend)
+		return se.StatusCode == 0 || se.StatusCode >= 500 || se.StatusCode == http.StatusTooManyRequests || (se.StatusCode == http.StatusConflict && se.refusedBeforeAppend) || (se.StatusCode == http.StatusUnauthorized && se.expiredBeforeAppend)
 	}
 	return strings.Contains(err.Error(), "transport")
 }
@@ -409,6 +460,14 @@ func (uploader *Uploader) retriedUploadData(ctx context.Context, prepared *prepa
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+		// An overloaded holder, or one whose body crawled past the body
+		// deadline, is not asked again from here: the caller's reassign loop
+		// decides whether one fresh assignment is worth it, so retries stay in
+		// one place and do not multiply while buffers are held. A watchdog cut
+		// keeps its retry: it blames one wedged conn, and the retry dials anew.
+		if IsUploadBackpressure(err) {
+			return nil, err
+		}
 		var statusErr *uploadStatusError
 		if errors.As(err, &statusErr) {
 			// A marked-expiry 401 is terminal here only for a direct volume
@@ -568,6 +627,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, prepared *preparedUp
 			Digest:                option.Digest,
 			ContentCrc32c:         prepared.contentCrc32c,
 			BytesBuffer:           option.BytesBuffer,
+			BodyDeadline:          option.BodyDeadline,
 			stallWatchdogDisarmed: option.stallWatchdogDisarmed,
 		})
 		if uploadResult == nil {
@@ -601,6 +661,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, prepared *preparedUp
 			Digest:                option.Digest,
 			ContentCrc32c:         prepared.contentCrc32c,
 			BytesBuffer:           option.BytesBuffer,
+			BodyDeadline:          option.BodyDeadline,
 			stallWatchdogDisarmed: option.stallWatchdogDisarmed,
 		})
 		if uploadResult == nil {
@@ -726,10 +787,49 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 			}
 		})
 	}
+	// The body deadline, when the caller opted into it (BodyDeadline), bounds
+	// the send alongside the watchdog when that is armed: whichever fires
+	// first cancels. It catches what the watchdog cannot — an unproven host, a
+	// host whose slow mark stretches the watchdog budget, an attempt after the
+	// watchdog disarmed — and, since a slow link is not one bad conn, it
+	// leaves fastUploadHosts alone.
+	// Each arming checks the body it was armed for, so a timer that fires
+	// across the inner retry's body swap cannot misjudge the fresh body.
+	var cutByBodyDeadline atomic.Bool
+	bodyDeadlineFired := func() {
+		if !uploadDone.CompareAndSwap(false, true) {
+			return
+		}
+		cutByBodyDeadline.Store(true)
+		glog.WarningfCtx(ctx, "upload %d bytes to %s still sending its body after %v, cancelling", originalDataSize, option.UploadUrl, uploadBodyDeadline(bodySize))
+		cancelUpload()
+	}
+	// The deadline runs from before httpClient.Do, so it also counts the dial
+	// and TLS handshake, not only the body's time on the wire.
+	armBodyDeadline := func(sentAt *atomic.Int64) *time.Timer {
+		if !option.BodyDeadline {
+			return nil
+		}
+		return time.AfterFunc(uploadBodyDeadline(bodySize), func() {
+			if sentAt.Load() == 0 {
+				bodyDeadlineFired()
+			}
+		})
+	}
+	stopBodyDeadline := func(t *time.Timer) {
+		if t != nil {
+			t.Stop()
+		}
+	}
+	bodyTimer := armBodyDeadline(bodySentAt)
+	defer func() { stopBodyDeadline(bodyTimer) }()
 
 	// print("+")
 	started := time.Now()
 	resp, post_err := uploader.httpClient.Do(req)
+	// A response, or a failure, ends the send: from here the wait is the
+	// server's, bounded by the transport's response header timeout.
+	stopBodyDeadline(bodyTimer)
 	defer util_http.CloseResponse(resp)
 	if post_err != nil {
 		if strings.Contains(post_err.Error(), "connection reset by peer") ||
@@ -753,8 +853,12 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 					if stallTimer != nil && !uploadDone.Load() {
 						stallTimer.Reset(uploadStallTimeout(bodySize, mark.(fastHostMark).bps))
 					}
+					if !uploadDone.Load() {
+						bodyTimer = armBodyDeadline(bodySentAt)
+					}
 					req.Body = &watchdogBody{ReadCloser: newBody, sentAt: bodySentAt}
 					resp, post_err = uploader.httpClient.Do(req)
+					stopBodyDeadline(bodyTimer)
 					defer util_http.CloseResponse(resp)
 				} else {
 					glog.V(1).InfofCtx(ctx, "skip inner retry for %s: GetBody returned %v", option.UploadUrl, gbErr)
@@ -766,7 +870,8 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	}
 	if post_err != nil {
 		stats.UploadErrorCounter.WithLabelValues("0").Inc()
-		return nil, &uploadStatusError{StatusCode: 0, stalled: reqCtx.Err() != nil && ctx.Err() == nil, err: fmt.Errorf("upload %s %d bytes to %v: %v", option.Filename, originalDataSize, option.UploadUrl, post_err)}
+		cut := reqCtx.Err() != nil && ctx.Err() == nil
+		return nil, &uploadStatusError{StatusCode: 0, stalled: cut, deadlineCut: cut && cutByBodyDeadline.Load(), err: fmt.Errorf("upload %s %d bytes to %v: %v", option.Filename, originalDataSize, option.UploadUrl, post_err)}
 	}
 	// Rate is bounded by elapsed-to-response: the server cannot answer before
 	// the body lands, so this can only understate link speed — a drain-time
@@ -865,6 +970,29 @@ func uploadStallTimeout(size, bps int64) time.Duration {
 		}
 	}
 	return uploadStallMinWait
+}
+
+var (
+	// uploadBodyMinWait is the floor of the body deadline, which only uploads
+	// that set UploadOption.BodyDeadline get: S3 chunk uploads (relay and
+	// gateway fan-out) and the filer's chunk loop.
+	//
+	// Invariant: it stays above the volume server's volumeClientUploadWaitCap
+	// (5s), so a holder that parks an opted-in body while it waits for upload
+	// budget answers 503 before the deadline cuts the request off as a stall.
+	uploadBodyMinWait = 10 * time.Second
+	// uploadBodyMinBytesPerSec is the slowest rate a body may cross the link
+	// at, the same floor a volume server's replica forward allows
+	// (replicaMinBytesPerSec in weed/topology/store_replicate.go).
+	uploadBodyMinBytesPerSec int64 = 1 << 20
+)
+
+// uploadBodyDeadline is the most an opted-in upload's body of size bytes may
+// take to send, proven host or not: the floor plus the time the body needs at
+// uploadBodyMinBytesPerSec. A body still unsent past it holds the caller's
+// buffer on a link too slow to be worth waiting on.
+func uploadBodyDeadline(size int64) time.Duration {
+	return uploadBodyMinWait + time.Duration(size*1000/uploadBodyMinBytesPerSec)*time.Millisecond
 }
 
 // uploadObservedBps returns the wire rate a completed upload proved on its

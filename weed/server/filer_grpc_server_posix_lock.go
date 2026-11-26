@@ -9,6 +9,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -65,6 +67,9 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 
 	if fs.filer.Dlm != nil {
 		if owner := fs.filer.Dlm.LockRing.GetPrimary(req.Key); owner != "" && owner != fs.option.Host {
+			if !req.IsMoved && scopeKeepOnly(ctx) {
+				return &filer_pb.PosixLockResponse{}, status.Error(codes.PermissionDenied, "scoped PosixLock cannot be forwarded")
+			}
 			if err := fs.checkMovedMarker(ctx, req.IsMoved, owner); err != nil {
 				return &filer_pb.PosixLockResponse{}, err
 			}
@@ -80,7 +85,7 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 				var resp *filer_pb.PosixLockResponse
 				err := pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 					var e error
-					resp, e = client.PosixLock(ctx, forwarded)
+					resp, e = client.PosixLock(withCallerAuthContext(ctx), forwarded)
 					return e
 				})
 				if err != nil {
@@ -207,7 +212,7 @@ func (fs *FilerServer) posixCoolingOrWarmup(ctx context.Context, key string, lk 
 	var resp *filer_pb.PosixLockResponse
 	err := pb.WithFilerClient(false, 0, prior, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		var e error
-		resp, e = client.PosixLock(probeCtx, &filer_pb.PosixLockRequest{
+		resp, e = client.PosixLock(fs.peerContext(probeCtx), &filer_pb.PosixLockRequest{
 			Key:          key,
 			IsMoved:      true,
 			CoolingProbe: true,

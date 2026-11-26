@@ -15,7 +15,8 @@ import (
 )
 
 func (fs *FilerServer) metadataSubscriptionScope(ctx context.Context, method string) (*security.MetadataSubscriptionScope, error) {
-	if sc, ok := ctx.Value(scopeSubscriptionContextKey{}).(*scope); ok {
+	switch sc := ctx.Value(scopeSubscriptionContextKey{}).(type) {
+	case *scope:
 		if sc.expired() {
 			return nil, scopeExpiredError(sc)
 		}
@@ -24,16 +25,26 @@ func (fs *FilerServer) metadataSubscriptionScope(ctx context.Context, method str
 			prefixes = append(prefixes, grant.path)
 		}
 		return &security.MetadataSubscriptionScope{Prefixes: prefixes, ExpiresAt: sc.exp}, nil
+	case *security.MetadataSubscriptionScope:
+		if !time.Now().Before(sc.ExpiresAt) {
+			return nil, errMetadataSubscriptionExpired
+		}
+		return sc, nil
 	}
 	var adminKey, previousAdminKey security.SigningKey
 	if fs.filerGuard != nil {
 		adminKey, previousAdminKey = fs.filerGuard.VerificationKeys(true)
 	}
-	return security.CheckGrpcMetadataSubscription(ctx,
-		security.SigningKey(util.GetViper().GetString("jwt.filer_signing.subscribe.key")),
-		adminKey,
-		previousAdminKey,
-		method)
+	subscribeKey := security.SigningKey(util.GetViper().GetString("jwt.filer_signing.subscribe.key"))
+	subscription, err := security.CheckGrpcMetadataSubscription(ctx, subscribeKey, adminKey, previousAdminKey, method)
+	if settings := fs.grpcScopeSettings.Load(); err != nil && settings != nil && len(settings.key) > 0 {
+		// An unscoped grpc_key token already has full filer gRPC access, and
+		// peers without the shared key sign their subscriptions with it.
+		if grpcSubscription, grpcErr := security.CheckGrpcMetadataSubscription(ctx, subscribeKey, settings.key, settings.previousKey, method); grpcErr == nil {
+			return grpcSubscription, nil
+		}
+	}
+	return subscription, err
 }
 
 // scopeMetadataResponse keeps only what a scoped subscriber may see: events

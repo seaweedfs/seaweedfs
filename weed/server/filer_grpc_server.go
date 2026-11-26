@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -224,7 +223,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 			glog.V(2).InfofCtx(ctx, "CreateEntry %s: forwarding to owner %s", fullpath, owner)
 			req.IsMoved = true
 			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-				forwarded, e := client.CreateEntry(ctx, req)
+				forwarded, e := client.CreateEntry(withCallerAuthContext(ctx), req)
 				if e != nil {
 					return e
 				}
@@ -394,7 +393,7 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s: forwarding to owner %s", req.LockKey, owner)
 			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 				var e error
-				resp, e = client.ObjectTransaction(ctx, forwarded)
+				resp, e = client.ObjectTransaction(withCallerAuthContext(ctx), forwarded)
 				return e
 			})
 		})
@@ -961,7 +960,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 			glog.V(2).InfofCtx(ctx, "UpdateEntry %s: forwarding to owner %s", fullpath, owner)
 			req.IsMoved = true
 			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-				forwarded, e := client.UpdateEntry(ctx, req)
+				forwarded, e := client.UpdateEntry(withCallerAuthContext(ctx), req)
 				if e != nil {
 					return e
 				}
@@ -1263,7 +1262,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	glog.V(4).InfofCtx(ctx, "AppendToEntry %s/%s", req.GetDirectory(), req.GetEntryName())
 	fullpath := util.NewFullPath(req.Directory, req.EntryName)
 
-	lockClient := cluster.NewLockClient(fs.grpcDialOption, fs.option.Host)
+	lockClient := fs.newLockClient()
 	lock := lockClient.NewBlockingLongLivedLock(string(fullpath), string(fs.option.Host), 0)
 	if lock == nil {
 		return nil, fmt.Errorf("failed to acquire lock for %s", fullpath)
@@ -1306,8 +1305,10 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 		if err := scopeCheckAppendState(entry.ToProtoEntry(), req.GetChunks()); err != nil {
 			return &filer_pb.AppendToEntryResponse{}, status.Errorf(codes.PermissionDenied, "filer: scoped append refused: %v", err)
 		}
+	} else if err := checkAppendStoredRepresentation(entry, req.GetChunks()); err != nil {
+		return &filer_pb.AppendToEntryResponse{}, err
 	}
-	offset = int64(filer.TotalSize(entry.GetChunks()))
+	offset = int64(entry.Size())
 
 	for _, chunk := range req.Chunks {
 		chunk.Offset = offset
@@ -1353,6 +1354,23 @@ func scopeAppendChunkTotalFits(offset int64, chunks []*filer_pb.FileChunk) error
 			return fmt.Errorf("chunk %s exceeds int64 file range", chunk.GetFileIdString())
 		}
 		end += chunk.Size
+	}
+	return nil
+}
+
+// AppendToEntry only accepts chunk references. It cannot safely combine them
+// with inline bytes or a remote-only object: the reader would prefer the
+// inline bytes or place the new chunk at offset zero and hide the remote
+// object. Callers can promote or cache those representations first.
+func checkAppendStoredRepresentation(entry *filer.Entry, chunks []*filer_pb.FileChunk) error {
+	if len(chunks) == 0 {
+		return nil
+	}
+	if len(entry.Content) > 0 {
+		return status.Error(codes.FailedPrecondition, "filer: cannot append chunks to an inline entry")
+	}
+	if entry.IsInRemoteOnly() {
+		return status.Error(codes.FailedPrecondition, "filer: cannot append chunks to a remote-only entry")
 	}
 	return nil
 }

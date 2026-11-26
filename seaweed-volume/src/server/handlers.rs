@@ -64,7 +64,10 @@ struct InflightGuard<'a> {
 
 impl<'a> Drop for InflightGuard<'a> {
     fn drop(&mut self) {
-        let new_val = self.counter.fetch_sub(self.bytes, Ordering::Relaxed) - self.bytes;
+        let new_val = self
+            .counter
+            .fetch_sub(self.bytes, Ordering::Relaxed)
+            .wrapping_sub(self.bytes);
         self.metric.set(new_val);
         self.notify.notify_waiters();
     }
@@ -738,15 +741,18 @@ async fn batch_delete_file_ids(
 }
 
 /// `query` with the fields named in `overrides` replaced by their values.
-fn override_query_fields(query: &str, overrides: &[(&str, String)]) -> Result<String, String> {
+fn override_query_fields(
+    query: &str,
+    overrides: &[(&str, String)],
+    removed: &[&str],
+) -> Result<String, String> {
     let mut fields = Vec::new();
     for field in query.split('&').filter(|field| !field.is_empty()) {
         let decoded: Vec<(String, String)> = serde_urlencoded::from_str(field)
             .map_err(|e| format!("parse replication query: {e}"))?;
-        if !decoded
-            .iter()
-            .any(|(name, _)| overrides.iter().any(|(o, _)| o == name))
-        {
+        if !decoded.iter().any(|(name, _)| {
+            overrides.iter().any(|(o, _)| o == name) || removed.contains(&name.as_str())
+        }) {
             fields.push(field);
         }
     }
@@ -848,7 +854,7 @@ async fn do_replicated_request(
         return Ok(());
     }
 
-    let new_query = override_query_fields(query, &[("type", "replicate".to_string())])?;
+    let new_query = override_query_fields(query, &[("type", "replicate".to_string())], &["src"])?;
 
     let mut futures = Vec::new();
     for loc in remote_locations {
@@ -2795,6 +2801,68 @@ fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
 
+/// Bounds how long a client write waits for upload budget, whatever
+/// -inflightUploadDataTimeout says; Go's volumeClientUploadWaitCap. It stays
+/// below the uploading gateway's 10s body deadline floor, so the client gets
+/// a 503 before its deadline cuts the request off as a stall.
+const VOLUME_CLIENT_UPLOAD_WAIT_CAP: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long a client write waits for upload budget: the configured timeout,
+/// at most VOLUME_CLIENT_UPLOAD_WAIT_CAP (also when the timeout is 0).
+fn client_upload_wait(configured: std::time::Duration) -> std::time::Duration {
+    if configured.is_zero() {
+        return VOLUME_CLIENT_UPLOAD_WAIT_CAP;
+    }
+    configured.min(VOLUME_CLIENT_UPLOAD_WAIT_CAP)
+}
+
+/// Go's util.UploadAdmits: a limit of 0 admits, an idle server admits any
+/// single upload, otherwise in_flight + size must stay within limit.
+fn upload_admits(in_flight: i64, size: i64, limit: i64) -> bool {
+    limit == 0 || in_flight == 0 || in_flight.saturating_add(size) <= limit
+}
+
+/// Go's VolumeServer.uploadCharge: a known length is charged as-is; an
+/// unknown one (chunked transfer) counts as one file, at most half the limit
+/// and at least 1 byte, so it is still admitted while half the budget is in use.
+fn upload_charge(content_length: Option<u64>, file_size_limit: i64, limit: i64) -> i64 {
+    if let Some(len) = content_length {
+        return i64::try_from(len).unwrap_or(i64::MAX);
+    }
+    let half = (limit / 2).max(1);
+    match (file_size_limit > 0, limit > 0) {
+        (true, true) => file_size_limit.min(half),
+        (true, false) => file_size_limit,
+        (false, true) => half,
+        (false, false) => 0,
+    }
+}
+
+/// The 503 for an upload that gets no budget. Go's uploadRejectCloseThreshold:
+/// a large or unknown-length HTTP/1 body is cheaper to drop with the
+/// connection than to drain.
+fn upload_limit_exceeded(
+    query: &str,
+    version: axum::http::Version,
+    declared_length: Option<u64>,
+) -> Response {
+    let mut response = json_error_with_query(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "upload limit exceeded",
+        Some(query),
+    );
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, header::HeaderValue::from_static("1"));
+    if version < axum::http::Version::HTTP_2 && declared_length.is_none_or(|len| len > 256 << 10) {
+        response.headers_mut().insert(
+            header::CONNECTION,
+            header::HeaderValue::from_static("close"),
+        );
+    }
+    response
+}
+
 /// Store an uploaded needle on the local volume — durable (fsync) uploads
 /// through the per-volume write queue, the rest synchronously — and then
 /// replicate it if the volume's placement calls for more copies.
@@ -2866,60 +2934,79 @@ pub async fn post_handler(
         .iter()
         .find(|(name, _)| name == "type")
         .is_some_and(|(_, value)| value == "replicate");
-    let content_length = headers
+    // Go's operation.IsReplicaForward: a gateway's fan-out write to each
+    // holder (src=client) is client traffic, not a primary-to-replica forward.
+    let is_replica_forward = is_replicate
+        && !query_fields
+            .iter()
+            .find(|(name, _)| name == "src")
+            .is_some_and(|(_, value)| value == "client");
+    let limit = state.concurrent_upload_limit;
+    let declared_length = headers
         .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<i64>().ok())
-        .unwrap_or(0);
-
-    if !is_replicate && state.concurrent_upload_limit > 0 {
-        // Wait for inflight bytes to drop below limit, or timeout
-        let timeout = if state.inflight_upload_data_timeout.is_zero() {
-            std::time::Duration::from_secs(2)
-        } else {
-            state.inflight_upload_data_timeout
-        };
-        let deadline = tokio::time::Instant::now() + timeout;
-
+        .and_then(|s| s.parse::<u64>().ok())
+        .or_else(|| http_body::Body::size_hint(request.body()).exact());
+    let charged = upload_charge(declared_length, state.file_size_limit_bytes, limit);
+    if !is_replica_forward && limit > 0 {
+        let deadline =
+            tokio::time::Instant::now() + client_upload_wait(state.inflight_upload_data_timeout);
+        let mut waited = false;
         loop {
-            let current = state.inflight_upload_bytes.load(Ordering::Relaxed);
-            if current <= state.concurrent_upload_limit {
+            // Created before the check, so a release in between still wakes it.
+            let notified = state.upload_notify.notified();
+            // try_update needs 1.95; rust-version is 1.91.1.
+            #[allow(deprecated)]
+            let admitted = state.inflight_upload_bytes.fetch_update(
+                Ordering::AcqRel,
+                Ordering::Acquire,
+                |in_flight| {
+                    if upload_admits(in_flight, charged, limit) {
+                        in_flight.checked_add(charged)
+                    } else {
+                        None
+                    }
+                },
+            );
+            if let Ok(prev) = admitted {
+                metrics::INFLIGHT_UPLOAD_SIZE.set(prev + charged);
                 break;
             }
-            // Go increments UploadLimitCond on every loop iteration (L184),
-            // not just on timeout.
-            metrics::HANDLER_COUNTER
-                .with_label_values(&[metrics::UPLOAD_LIMIT_COND])
-                .inc();
-            // Wait for notification or timeout
-            if tokio::time::timeout_at(deadline, state.upload_notify.notified())
-                .await
-                .is_err()
-            {
-                return json_error_with_query(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "upload limit exceeded",
-                    Some(&query),
-                );
+            if !waited {
+                waited = true;
+                metrics::HANDLER_COUNTER
+                    .with_label_values(&[metrics::UPLOAD_LIMIT_COND])
+                    .inc();
+            }
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
+                return upload_limit_exceeded(&query, request.version(), declared_length);
             }
         }
+    } else if limit > 0 {
+        // A forward the primary already accepted must reach its replicas, so
+        // it is refused only when the counter cannot hold its size.
+        #[allow(deprecated)]
+        let reserved = state.inflight_upload_bytes.fetch_update(
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            |in_flight| in_flight.checked_add(charged),
+        );
+        match reserved {
+            Ok(prev) => metrics::INFLIGHT_UPLOAD_SIZE.set(prev + charged),
+            Err(_) => return upload_limit_exceeded(&query, request.version(), declared_length),
+        }
+    } else {
         let new_val = state
             .inflight_upload_bytes
-            .fetch_add(content_length, Ordering::Relaxed)
-            + content_length;
+            .fetch_add(charged, Ordering::Relaxed)
+            .wrapping_add(charged);
         metrics::INFLIGHT_UPLOAD_SIZE.set(new_val);
     }
-
-    // RAII guard to release upload throttle on any exit path
-    let _upload_guard = if !is_replicate && state.concurrent_upload_limit > 0 {
-        Some(InflightGuard {
-            counter: &state.inflight_upload_bytes,
-            bytes: content_length,
-            notify: &state.upload_notify,
-            metric: &metrics::INFLIGHT_UPLOAD_SIZE,
-        })
-    } else {
-        None
+    let _upload_guard = InflightGuard {
+        counter: &state.inflight_upload_bytes,
+        bytes: charged,
+        notify: &state.upload_notify,
+        metric: &metrics::INFLIGHT_UPLOAD_SIZE,
     };
 
     let content_type_str = headers
@@ -3440,7 +3527,7 @@ pub async fn post_handler(
                 vid.0,
                 Method::POST,
                 &path_clone,
-                &override_query_fields(&query_clone, &overrides)?,
+                &override_query_fields(&query_clone, &overrides, &[])?,
                 &replica_headers,
                 Some(replica_body),
             )
@@ -5471,6 +5558,17 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_override_query_fields_removes_src() {
+        let q = override_query_fields(
+            "%73rc=client&fsync=true&type=x",
+            &[("type", "replicate".to_string())],
+            &["src"],
+        )
+        .unwrap();
+        assert_eq!(q, "fsync=true&type=replicate");
+    }
+
     /// Every URL form the volume server accepts, against what Go's
     /// `parseURLPath` returns for it (`weed/server/common.go:218-249`):
     /// the `vid/fid/filename` form leaves the fid alone and takes the
@@ -6774,6 +6872,233 @@ mod tests {
             .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
         test_state_with_store(store)
+    }
+
+    /// An upload that finds no budget within the wait answers 503 with
+    /// Retry-After, the same as the Go volume server.
+    #[tokio::test]
+    async fn upload_limit_timeout_answers_503_with_retry_after() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.concurrent_upload_limit = 10;
+            s.inflight_upload_data_timeout = std::time::Duration::from_millis(50);
+        }
+        state.inflight_upload_bytes.store(11, Ordering::Relaxed);
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/1,0123456789abcdef")
+            .header(header::CONTENT_LENGTH, "4")
+            .body(Body::from("abcd"))
+            .unwrap();
+        let resp = post_handler(State(state.clone()), request).await;
+
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            resp.headers().get(header::RETRY_AFTER).unwrap(),
+            &header::HeaderValue::from_static("1")
+        );
+        assert!(resp.headers().get(header::CONNECTION).is_none());
+        assert_eq!(state.inflight_upload_bytes.load(Ordering::Relaxed), 11);
+    }
+
+    /// A gateway's fan-out write (type=replicate&src=client) waits for upload
+    /// budget like any client write; a primary's own forward does not.
+    #[tokio::test]
+    async fn upload_limit_counts_gateway_fan_out_not_replica_forward() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.concurrent_upload_limit = 10;
+            s.inflight_upload_data_timeout = std::time::Duration::from_millis(50);
+        }
+        state.inflight_upload_bytes.store(11, Ordering::Relaxed);
+
+        let post = |uri: &str| {
+            Request::builder()
+                .method(Method::POST)
+                .uri(uri)
+                .header(header::CONTENT_LENGTH, "4")
+                .body(Body::from("abcd"))
+                .unwrap()
+        };
+        let fan_out = post_handler(
+            State(state.clone()),
+            post("/1,0123456789abcdef?type=replicate&src=client"),
+        )
+        .await;
+        assert_eq!(fan_out.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let forward = post_handler(
+            State(state.clone()),
+            post("/1,0123456789abcdef?type=replicate"),
+        )
+        .await;
+        assert_ne!(forward.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(state.inflight_upload_bytes.load(Ordering::Relaxed), 11);
+    }
+
+    /// A forward whose size the in-flight counter cannot hold is refused
+    /// instead of wrapping the counter negative.
+    #[tokio::test]
+    async fn upload_limit_refuses_a_forward_the_counter_cannot_hold() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.concurrent_upload_limit = 10;
+            s.inflight_upload_data_timeout = std::time::Duration::from_millis(50);
+        }
+        state.inflight_upload_bytes.store(4 << 20, Ordering::Relaxed);
+
+        let request = |uri: &str| {
+            Request::builder()
+                .method(Method::POST)
+                .uri(uri)
+                .header(header::CONTENT_LENGTH, i64::MAX.to_string())
+                .body(Body::from("abcd"))
+                .unwrap()
+        };
+        for uri in [
+            "/1,0123456789abcdef?type=replicate",
+            "/1,0123456789abcdef?type=replicate&src=client",
+        ] {
+            let resp = post_handler(State(state.clone()), request(uri)).await;
+            assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+            assert_eq!(
+                state.inflight_upload_bytes.load(Ordering::Relaxed),
+                4 << 20,
+                "{uri}"
+            );
+        }
+    }
+
+    #[test]
+    fn upload_charge_matches_go() {
+        assert_eq!(upload_charge(Some(0), 8 << 20, 10), 0);
+        assert_eq!(upload_charge(Some(123), 8 << 20, 10), 123);
+        assert_eq!(upload_charge(None, 8 << 20, 100 << 20), 8 << 20);
+        assert_eq!(upload_charge(None, 8 << 20, 10 << 20), 5 << 20);
+        assert_eq!(upload_charge(None, 8 << 20, 1), 1);
+        assert_eq!(upload_charge(None, 8 << 20, 0), 8 << 20);
+        assert_eq!(upload_charge(None, 0, 10), 5);
+    }
+
+    /// A chunked upload without Content-Length still reserves upload budget.
+    #[tokio::test]
+    async fn upload_limit_charges_an_unknown_length_upload() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.concurrent_upload_limit = 10;
+            s.inflight_upload_data_timeout = std::time::Duration::from_millis(50);
+        }
+        state.inflight_upload_bytes.store(6, Ordering::Relaxed);
+
+        let body = Body::from_stream(futures::stream::iter(vec![Ok::<_, std::io::Error>(
+            bytes::Bytes::from_static(b"abcd"),
+        )]));
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/1,0123456789abcdef")
+            .body(body)
+            .unwrap();
+        let resp = post_handler(State(state.clone()), request).await;
+
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            resp.headers().get(header::CONNECTION).unwrap(),
+            &header::HeaderValue::from_static("close")
+        );
+        assert_eq!(state.inflight_upload_bytes.load(Ordering::Relaxed), 6);
+    }
+
+    #[test]
+    fn upload_admits_matches_go() {
+        assert!(upload_admits(1 << 40, 1 << 30, 0));
+        assert!(upload_admits(6, 4, 10));
+        assert!(!upload_admits(8, 4, 10));
+        assert!(upload_admits(0, 100, 10));
+        assert!(!upload_admits(1, 100, 10));
+        assert!(upload_admits(10, 0, 10));
+        assert!(!upload_admits(11, i64::MAX, 10));
+    }
+
+    /// Admission counts the request's own size: under the limit is not
+    /// enough when the upload would overshoot it.
+    #[tokio::test]
+    async fn upload_limit_refuses_an_upload_that_would_overshoot() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.concurrent_upload_limit = 10;
+            s.inflight_upload_data_timeout = std::time::Duration::from_millis(50);
+        }
+        state.inflight_upload_bytes.store(8, Ordering::Relaxed);
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/1,0123456789abcdef")
+            .header(header::CONTENT_LENGTH, "4")
+            .body(Body::from("abcd"))
+            .unwrap();
+        let resp = post_handler(State(state.clone()), request).await;
+
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(state.inflight_upload_bytes.load(Ordering::Relaxed), 8);
+    }
+
+    #[tokio::test]
+    async fn upload_limit_waiter_proceeds_once_budget_is_released() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.concurrent_upload_limit = 10;
+            s.inflight_upload_data_timeout = std::time::Duration::from_secs(4);
+        }
+        state.inflight_upload_bytes.store(8, Ordering::Relaxed);
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/1,0123456789abcdef")
+            .header(header::CONTENT_LENGTH, "4")
+            .body(Body::from("abcd"))
+            .unwrap();
+        let waiter = tokio::spawn(post_handler(State(state.clone()), request));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(!waiter.is_finished());
+        state.inflight_upload_bytes.store(0, Ordering::Relaxed);
+        state.upload_notify.notify_waiters();
+
+        let resp = tokio::time::timeout(std::time::Duration::from_secs(2), waiter)
+            .await
+            .expect("waiter should be admitted once budget is released")
+            .unwrap();
+        assert_ne!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(state.inflight_upload_bytes.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn client_upload_wait_is_capped() {
+        use std::time::Duration;
+        assert_eq!(
+            client_upload_wait(Duration::ZERO),
+            VOLUME_CLIENT_UPLOAD_WAIT_CAP
+        );
+        assert_eq!(
+            client_upload_wait(Duration::from_millis(50)),
+            Duration::from_millis(50)
+        );
+        assert_eq!(
+            client_upload_wait(Duration::from_secs(60)),
+            VOLUME_CLIENT_UPLOAD_WAIT_CAP
+        );
     }
 
     #[tokio::test]

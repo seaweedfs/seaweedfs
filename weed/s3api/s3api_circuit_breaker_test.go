@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -313,12 +314,21 @@ func TestLimitUploadSlotWait(t *testing.T) {
 
 	t.Run("freed bytes admit every waiter that fits", func(t *testing.T) {
 		cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentUploadLimit: 100, InflightUploadDataTimeout: time.Minute})
+		// A large upload is charged at most half the budget, so two of them
+		// fill it and the waiters below have to wait for a release.
 		release := holdUploadSlot(t, cb, 1000)
+		releaseOther := holdUploadSlot(t, cb, 1000)
+		defer releaseOther()
+		if got := atomic.LoadInt64(&cb.s3a.inFlightDataSize); got != 100 {
+			t.Fatalf("in-flight %d, want the budget full at 100", got)
+		}
 
 		var admitted sync.WaitGroup
+		var entered atomic.Int32
 		admitted.Add(2)
 		proceed := make(chan struct{})
 		h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) {
+			entered.Add(1)
 			admitted.Done()
 			<-proceed
 		}, s3_constants.ACTION_WRITE)
@@ -331,6 +341,9 @@ func TestLimitUploadSlotWait(t *testing.T) {
 			}()
 		}
 		time.Sleep(50 * time.Millisecond)
+		if n := entered.Load(); n != 0 {
+			t.Fatalf("%d waiters entered a full budget", n)
+		}
 		release()
 
 		bothIn := make(chan struct{})
@@ -376,5 +389,162 @@ func TestLimitUploadSlotRejectsStalledBody(t *testing.T) {
 	resp := stalledPut(t, h)
 	if resp.StatusCode != http.StatusServiceUnavailable || !resp.Close {
 		t.Fatalf("got %d close=%v, want 503 with Connection: close", resp.StatusCode, resp.Close)
+	}
+}
+
+// putThroughLimit sends req through a write-limited handler and reports the
+// status and the in-flight bytes seen while the handler ran (-1 if it did not).
+func putThroughLimit(cb *CircuitBreaker, req *http.Request) (code int, body string, inFlight int64) {
+	inFlight = -1
+	h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) {
+		inFlight = atomic.LoadInt64(&cb.s3a.inFlightDataSize)
+	}, s3_constants.ACTION_WRITE)
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	return rec.Code, rec.Body.String(), inFlight
+}
+
+func TestLimitUploadSlotNoOvershoot(t *testing.T) {
+	cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentUploadLimit: 10, InflightUploadDataTimeout: 50 * time.Millisecond})
+	cb.s3a.inFlightDataSize = 8
+	code, body, _ := putThroughLimit(cb, putRequest(context.Background(), 4))
+	if code != http.StatusServiceUnavailable || !strings.Contains(body, "<Code>SlowDown</Code>") {
+		t.Fatalf("got %d %q, want 503 SlowDown", code, body)
+	}
+	if n := atomic.LoadInt64(&cb.s3a.inFlightDataSize); n != 8 {
+		t.Fatalf("in-flight bytes %d, want 8", n)
+	}
+}
+
+func TestLimitUploadSlotChargesUnknownLength(t *testing.T) {
+	const limit = 1 << 20
+	newCB := func(inFlight int64) *CircuitBreaker {
+		cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentUploadLimit: limit, MaxMB: 4, InflightUploadDataTimeout: 50 * time.Millisecond})
+		cb.s3a.inFlightDataSize = inFlight
+		return cb
+	}
+	unknown := func() *http.Request {
+		req := putRequest(context.Background(), 1)
+		req.ContentLength = -1
+		return req
+	}
+
+	// an unknown length is charged half the budget, not 0 and not a 4 MiB chunk
+	cb := newCB(600 << 10)
+	if code, _, _ := putThroughLimit(cb, unknown()); code != http.StatusServiceUnavailable {
+		t.Fatalf("got %d, want 503", code)
+	}
+	cb = newCB(0)
+	code, _, inFlight := putThroughLimit(cb, unknown())
+	if code != http.StatusOK || inFlight != limit/2 {
+		t.Fatalf("idle: got %d in-flight %d, want 200 and %d", code, inFlight, limit/2)
+	}
+	if n := atomic.LoadInt64(&cb.s3a.inFlightDataSize); n != 0 {
+		t.Fatalf("in-flight bytes %d after release, want 0", n)
+	}
+}
+
+func TestLimitUploadSlotUsesDecodedLengthOnlyWhenUnknown(t *testing.T) {
+	newCB := func() *CircuitBreaker {
+		return newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentUploadLimit: 1 << 30, MaxMB: 4, InflightUploadDataTimeout: 50 * time.Millisecond})
+	}
+	req := putRequest(context.Background(), 1)
+	req.ContentLength = 5000
+	req.Header.Set("X-Amz-Decoded-Content-Length", "4096")
+	if _, _, inFlight := putThroughLimit(newCB(), req); inFlight != 5000 {
+		t.Fatalf("known length: in-flight %d, want 5000", inFlight)
+	}
+	req = putRequest(context.Background(), 1)
+	req.ContentLength = -1
+	req.Header.Set("X-Amz-Content-Sha256", streamingUnsignedPayload)
+	req.Header.Set("X-Amz-Decoded-Content-Length", "4096")
+	if _, _, inFlight := putThroughLimit(newCB(), req); inFlight != 4096 {
+		t.Fatalf("unknown length, aws-chunked: in-flight %d, want 4096", inFlight)
+	}
+	// Only an aws-chunked body is held to the header, so on any other body it
+	// cannot lower the charge below the one chunk an unknown length costs.
+	req = putRequest(context.Background(), 1)
+	req.ContentLength = -1
+	req.Header.Set("X-Amz-Decoded-Content-Length", "0")
+	if _, _, inFlight := putThroughLimit(newCB(), req); inFlight != 4<<20 {
+		t.Fatalf("unknown length, plain body: in-flight %d, want one 4 MiB chunk", inFlight)
+	}
+}
+
+func TestLimitUploadSlotAdmitsHugeObjectBesideSmallOnes(t *testing.T) {
+	cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentUploadLimit: 64 << 20, MaxMB: 4, InflightUploadDataTimeout: 50 * time.Millisecond})
+	cb.s3a.inFlightDataSize = 32 << 20
+	req := putRequest(context.Background(), 1)
+	req.ContentLength = 5 << 30
+	code, _, inFlight := putThroughLimit(cb, req)
+	if code != http.StatusOK || inFlight != 48<<20 {
+		t.Fatalf("got %d in-flight %d, want 200 and %d", code, inFlight, 48<<20)
+	}
+}
+
+// The breaker's byte counters keep their meaning: what the request declares,
+// with an unknown length counted as one chunk — not the upload budget's
+// charge, which caps at four chunks and at half the budget.
+func TestLimitBucketBytesCounterSymmetricForUnknownLength(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		contentLength int64
+		want          int64
+	}{
+		{name: "unknown length counts one chunk", contentLength: -1, want: 4 << 20},
+		{name: "declared length counts in full", contentLength: 64 << 20, want: 64 << 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// A 1 MiB budget charges either request 512 KiB; the counter must not.
+			cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentUploadLimit: 1 << 20, MaxMB: 4})
+			cb.Enabled = true
+			key := s3_constants.Concat(s3_constants.ACTION_WRITE, s3_constants.LimitTypeBytes)
+			cb.limitations[key] = 1 << 40
+			req := putRequest(context.Background(), 1)
+			req.ContentLength = tc.contentLength
+			var during, budget int64
+			h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) {
+				during = atomic.LoadInt64(cb.counters[key])
+				budget = atomic.LoadInt64(&cb.s3a.inFlightDataSize)
+			}, s3_constants.ACTION_WRITE)
+			h(httptest.NewRecorder(), req)
+			if during != tc.want {
+				t.Fatalf("counter during request %d, want %d", during, tc.want)
+			}
+			if budget != 512<<10 {
+				t.Fatalf("upload budget charge %d, want %d", budget, 512<<10)
+			}
+			if n := atomic.LoadInt64(cb.counters[key]); n != 0 {
+				t.Fatalf("counter after request %d, want 0", n)
+			}
+		})
+	}
+}
+
+// A bucket bytes limit still rejects one PUT that declares more than it
+// allows, even though the upload budget charges that PUT far less.
+func TestLimitBucketBytesRejectsDeclaredOversizedPut(t *testing.T) {
+	cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentUploadLimit: 1 << 30, MaxMB: 4})
+	cb.Enabled = true
+	key := s3_constants.Concat("b", s3_constants.ACTION_WRITE, s3_constants.LimitTypeBytes)
+	cb.limitations[key] = 16 << 20
+	req := mux.SetURLVars(putRequest(context.Background(), 1), map[string]string{"bucket": "b"})
+	req.ContentLength = 64 << 20
+	ran := false
+	h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) { ran = true }, s3_constants.ACTION_WRITE)
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if ran {
+		t.Fatal("a PUT declaring 64 MiB must not pass a 16 MiB bucket bytes limit")
+	}
+	want := s3err.GetAPIError(s3err.ErrRequestBytesExceed)
+	if rec.Code != want.HTTPStatusCode || !strings.Contains(rec.Body.String(), want.Code) {
+		t.Fatalf("got %d %q, want %d %s", rec.Code, rec.Body.String(), want.HTTPStatusCode, want.Code)
+	}
+	if n := atomic.LoadInt64(cb.counters[key]); n != 0 {
+		t.Fatalf("bucket counter after rejection %d, want 0", n)
+	}
+	if n := atomic.LoadInt64(&cb.s3a.inFlightDataSize); n != 0 {
+		t.Fatalf("upload budget after rejection %d, want 0", n)
 	}
 }

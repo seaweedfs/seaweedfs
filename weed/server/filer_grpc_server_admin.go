@@ -107,14 +107,16 @@ func (fs *FilerServer) Ping(ctx context.Context, req *filer_pb.PingRequest) (res
 	resp = &filer_pb.PingResponse{
 		StartTimeNs: time.Now().UnixNano(),
 	}
-	// Empty target is a self-liveness probe and stays unauthenticated.
+	// Empty target is a self-liveness probe. In compatibility mode it remains
+	// available without a bearer; require-token enforcement runs before this
+	// handler and rejects tokenless calls.
 	if req.Target != "" && !fs.isKnownPingTarget(ctx, req.Target, req.TargetType) {
 		resp.StopTimeNs = time.Now().UnixNano()
 		return resp, status.Errorf(codes.InvalidArgument, "unknown ping target %s of type %s", req.Target, req.TargetType)
 	}
 	if req.TargetType == cluster.FilerType {
 		pingErr = pb.WithFilerClient(false, 0, pb.ServerAddress(req.Target), fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			pingResp, err := client.Ping(ctx, &filer_pb.PingRequest{})
+			pingResp, err := client.Ping(withCallerAuthContext(ctx), &filer_pb.PingRequest{})
 			if pingResp != nil {
 				resp.RemoteTimeNs = pingResp.StartTimeNs
 			}

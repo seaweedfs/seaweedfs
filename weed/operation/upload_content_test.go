@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	crand "crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -67,6 +68,7 @@ func TestShouldReassignUpload(t *testing.T) {
 		{name: "no response (transport)", err: &uploadStatusError{StatusCode: 0, err: fmt.Errorf("dial tcp: no such host")}, want: true},
 		{name: "500 replica write failed", err: &uploadStatusError{StatusCode: 500, err: fmt.Errorf("failed to write to replicas")}, want: true},
 		{name: "503 service unavailable", err: &uploadStatusError{StatusCode: 503, err: fmt.Errorf("busy")}, want: true},
+		{name: "429 upload limit (volume servers before 503)", err: &uploadStatusError{StatusCode: http.StatusTooManyRequests, err: fmt.Errorf("upload limit")}, want: true},
 		{name: "proven conflict", err: &uploadStatusError{StatusCode: http.StatusConflict, refusedBeforeAppend: true, err: errors.New("read only")}, want: true},
 		{name: "unmarked conflict", err: &uploadStatusError{StatusCode: http.StatusConflict, err: errors.New("read only")}, want: false},
 		{name: "400 bad request", err: &uploadStatusError{StatusCode: 400, err: fmt.Errorf("bad needle")}, want: false},
@@ -1034,5 +1036,408 @@ func TestUploadWithRetryForeverStopsOnReadOnlyVerdict(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("RetryForever kept retrying a read-only verdict")
+	}
+}
+
+func TestIsUploadOverloaded(t *testing.T) {
+	testCases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "429", err: &uploadStatusError{StatusCode: http.StatusTooManyRequests, err: errors.New("slow down")}, want: true},
+		{name: "503", err: &uploadStatusError{StatusCode: http.StatusServiceUnavailable, err: errors.New("upload limit")}, want: true},
+		{name: "wrapped 503", err: fmt.Errorf("upload chunk: %w", &uploadStatusError{StatusCode: http.StatusServiceUnavailable, err: errors.New("upload limit")}), want: true},
+		{name: "500", err: &uploadStatusError{StatusCode: http.StatusInternalServerError, err: errors.New("disk full")}, want: false},
+		{name: "no response", err: &uploadStatusError{StatusCode: 0, err: errors.New("dial tcp: refused")}, want: false},
+		{name: "plain error", err: errors.New("503 service unavailable"), want: false},
+		{name: "nil", err: nil, want: false},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsUploadOverloaded(tc.err); got != tc.want {
+				t.Fatalf("IsUploadOverloaded(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// Only a request the stall watchdog cancelled before any response arrived is
+// a stall; a dial failure has the same status 0 and is not.
+func TestUploadStalledMatchesErrUploadStalled(t *testing.T) {
+	testCases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "stalled before a response", err: &uploadStatusError{StatusCode: 0, stalled: true, err: errors.New("context canceled")}, want: true},
+		{name: "wrapped stall", err: fmt.Errorf("upload chunk: %w", &uploadStatusError{StatusCode: 0, stalled: true, err: errors.New("context canceled")}), want: true},
+		{name: "dial failure", err: &uploadStatusError{StatusCode: 0, err: errors.New("dial tcp: refused")}, want: false},
+		{name: "stalled reading a response", err: &uploadStatusError{StatusCode: http.StatusCreated, stalled: true, err: errors.New("context canceled")}, want: false},
+		{name: "plain error", err: errors.New("stalled"), want: false},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := errors.Is(tc.err, ErrUploadStalled); got != tc.want {
+				t.Fatalf("errors.Is(%v, ErrUploadStalled) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// An overloaded holder is not hammered again from the same caller while it
+// holds the chunk buffer: the overload goes straight back to the one place
+// that decides on a reassign. Other failures keep their same-URL retries.
+func TestRetriedUploadDataDoesNotRetryOverload(t *testing.T) {
+	testCases := []struct {
+		name      string
+		status    int
+		wantPosts int32
+	}{
+		{name: "503 overload", status: http.StatusServiceUnavailable, wantPosts: 1},
+		{name: "429 overload", status: http.StatusTooManyRequests, wantPosts: 1},
+		{name: "500 keeps its retries", status: http.StatusInternalServerError, wantPosts: 3},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var posts int32
+			holder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&posts, 1)
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, `{"error":"volume server upload limit"}`)
+			}))
+			defer holder.Close()
+
+			_, err := newUploader(http.DefaultClient).UploadData(context.Background(), []byte("hello"), &UploadOption{
+				UploadUrl: holder.URL + "/3,01637037d6",
+				Filename:  "test.bin",
+			})
+			if err == nil {
+				t.Fatal("expected the upload to fail")
+			}
+			if got := atomic.LoadInt32(&posts); got != tc.wantPosts {
+				t.Fatalf("holder saw %d POSTs, want %d", got, tc.wantPosts)
+			}
+		})
+	}
+}
+
+// tricklingHTTPClient drains the request body chunk bytes per interval, the
+// way a degraded link does, and answers 201 once it has it all. It honours the
+// request ctx between reads, as a transport aborts a cancelled write. With
+// resetFirstAfter set, the first call instead drains at once, holds that long
+// and fails with a connection reset, which triggers the inner rewind retry.
+type tricklingHTTPClient struct {
+	chunk           int
+	interval        time.Duration
+	resetFirstAfter time.Duration
+	calls           int32
+}
+
+func (c *tricklingHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	defer req.Body.Close()
+	if atomic.AddInt32(&c.calls, 1) == 1 && c.resetFirstAfter > 0 {
+		_, _ = io.Copy(io.Discard, req.Body)
+		select {
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		case <-time.After(c.resetFirstAfter):
+		}
+		return nil, errors.New("write tcp: connection reset by peer")
+	}
+	buf := make([]byte, c.chunk)
+	for {
+		select {
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		case <-time.After(c.interval):
+		}
+		if _, err := io.ReadFull(req.Body, buf); err != nil {
+			break
+		}
+	}
+	return &http.Response{
+		StatusCode: http.StatusCreated,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"size":1}`)),
+	}, nil
+}
+
+// setUploadBodyMinWait shrinks the body deadline floor for one test. Tests
+// that call it must not run in parallel.
+func setUploadBodyMinWait(t *testing.T, d time.Duration) {
+	orig := uploadBodyMinWait
+	uploadBodyMinWait = d
+	t.Cleanup(func() { uploadBodyMinWait = orig })
+}
+
+// incompressibleBytes returns n random bytes, so the upload is not gzipped
+// down to a body too small to trickle.
+func incompressibleBytes(t *testing.T, n int) []byte {
+	b := make([]byte, n)
+	if _, err := crand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestUploadBodyDeadlineScalesWithSize(t *testing.T) {
+	if d := uploadBodyDeadline(0); d != uploadBodyMinWait {
+		t.Fatalf("uploadBodyDeadline(0) = %v, want %v", d, uploadBodyMinWait)
+	}
+	if d := uploadBodyDeadline(10 << 20); d != uploadBodyMinWait+10*time.Second {
+		t.Fatalf("uploadBodyDeadline(10MiB) = %v, want %v", d, uploadBodyMinWait+10*time.Second)
+	}
+}
+
+// A host that never proved a rate gets no stall watchdog, but a body crawling
+// far below the minimum rate is still cut, as a stall the caller can reassign.
+func TestUploadBodyDeadlineCutsTrickleToUnprovenHost(t *testing.T) {
+	setUploadBodyMinWait(t, 100*time.Millisecond)
+
+	client := &tricklingHTTPClient{chunk: 1 << 10, interval: 50 * time.Millisecond}
+	uploader := newUploader(client)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	_, err := uploader.UploadData(ctx, incompressibleBytes(t, 64<<10), &UploadOption{
+		UploadUrl:    "http://slow-host:8080/1,deadbeef",
+		MaxAttempts:  1,
+		BodyDeadline: true,
+	})
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatalf("a trickling body must be cut at the body deadline, got success after %v", elapsed)
+	}
+	if elapsed >= time.Second {
+		t.Fatalf("body deadline cut the upload after %v, want under 1s", elapsed)
+	}
+	if !ShouldReassignUpload(err) {
+		t.Fatalf("a body deadline cut must be reassignable: %v", err)
+	}
+	if !errors.Is(err, ErrUploadStalled) {
+		t.Fatalf("a body deadline cut must read as a stall: %v", err)
+	}
+}
+
+// slowCommitHTTPClient drains the request body at once, then takes commitFor
+// to answer 201, giving up as a transport would if the request ctx is
+// cancelled while it commits.
+type slowCommitHTTPClient struct {
+	commitFor time.Duration
+}
+
+func (c *slowCommitHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	_, _ = io.Copy(io.Discard, req.Body)
+	_ = req.Body.Close()
+	select {
+	case <-req.Context().Done():
+		return nil, req.Context().Err()
+	case <-time.After(c.commitFor):
+	}
+	return &http.Response{
+		StatusCode: http.StatusCreated,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"size":1}`)),
+	}, nil
+}
+
+// Once the body is sent the wait is the server's commit, bounded by the
+// transport's response header timeout, not by the body deadline.
+func TestUploadBodyDeadlineAllowsSlowCommit(t *testing.T) {
+	setUploadBodyMinWait(t, 100*time.Millisecond)
+
+	client := &slowCommitHTTPClient{commitFor: 300 * time.Millisecond}
+	uploader := newUploader(client)
+
+	result, err := uploader.UploadData(context.Background(), incompressibleBytes(t, 64<<10), &UploadOption{
+		UploadUrl:    "http://slow-host:8080/1,deadbeef",
+		MaxAttempts:  1,
+		BodyDeadline: true,
+	})
+	if err != nil || result.RetryCount != 0 {
+		t.Fatalf("a slow commit after the body is sent must not be cut: result=%+v err=%v", result, err)
+	}
+}
+
+// A host marked at a slow rate gets a stall budget eight times that slow, so
+// the body deadline is what bounds it — and it leaves the mark alone, since
+// only the watchdog blames a pooled conn.
+func TestUploadBodyDeadlineCutsSlowProvenHost(t *testing.T) {
+	setUploadBodyMinWait(t, 100*time.Millisecond)
+
+	const host = "slow-host:8080"
+	const size = 300 << 10
+	slowMark := fastHostMark{at: time.Now().UnixNano(), bps: 100 << 10}
+	if budget := uploadStallTimeout(size, slowMark.bps); budget < 10*time.Second {
+		t.Fatalf("test setup: watchdog budget %v must dwarf the body deadline", budget)
+	}
+	client := &tricklingHTTPClient{chunk: 1 << 10, interval: 50 * time.Millisecond}
+	uploader := newUploader(client)
+	uploader.fastUploadHosts.Store(host, slowMark)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	_, err := uploader.UploadData(ctx, incompressibleBytes(t, size), &UploadOption{
+		UploadUrl:    "http://" + host + "/1,deadbeef",
+		MaxAttempts:  1,
+		BodyDeadline: true,
+	})
+	elapsed := time.Since(start)
+	if !errors.Is(err, ErrUploadStalled) {
+		t.Fatalf("a slow host's trickle must be cut as a stall at the body deadline, got %v after %v", err, elapsed)
+	}
+	if elapsed >= time.Second {
+		t.Fatalf("body deadline cut the upload after %v, want under 1s", elapsed)
+	}
+	if mark, ok := uploader.fastUploadHosts.Load(host); !ok || mark.(fastHostMark) != slowMark {
+		t.Fatalf("the body deadline must not touch the host's rate mark, got %+v (present=%v)", mark, ok)
+	}
+}
+
+// The inner connection-reset retry sends a fresh body, which gets its own
+// deadline: the first attempt's deadline expired while its body was already
+// sent, so without a re-arm the retry would trickle unbounded.
+func TestUploadBodyDeadlineRearmsOnConnectionReset(t *testing.T) {
+	setUploadBodyMinWait(t, 50*time.Millisecond)
+
+	client := &tricklingHTTPClient{chunk: 1 << 10, interval: 20 * time.Millisecond, resetFirstAfter: 200 * time.Millisecond}
+	uploader := newUploader(client)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	_, err := uploader.UploadData(ctx, incompressibleBytes(t, 64<<10), &UploadOption{
+		UploadUrl:    "http://slow-host:8080/1,deadbeef",
+		MaxAttempts:  1,
+		BodyDeadline: true,
+	})
+	elapsed := time.Since(start)
+	if got := atomic.LoadInt32(&client.calls); got != 2 {
+		t.Fatalf("Do calls = %d, want the reset plus its inner retry", got)
+	}
+	if !errors.Is(err, ErrUploadStalled) {
+		t.Fatalf("the inner retry's trickle must be cut at its own deadline, got %v after %v", err, elapsed)
+	}
+	if elapsed >= time.Second {
+		t.Fatalf("inner retry was cut after %v, want under 1s", elapsed)
+	}
+}
+
+// The body deadline is opt-in: an upload that did not ask for it (mount,
+// filer.sync, filer.copy, UploadWithRetry) keeps today's watchdog-only
+// behaviour, so a body trickling far below the deadline's rate to an unproven
+// host — where no watchdog arms — runs to completion.
+func TestUploadWithoutBodyDeadlineIsNotCut(t *testing.T) {
+	setUploadBodyMinWait(t, 20*time.Millisecond)
+
+	client := &tricklingHTTPClient{chunk: 1 << 10, interval: 10 * time.Millisecond}
+	uploader := newUploader(client)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	result, err := uploader.UploadData(ctx, incompressibleBytes(t, 16<<10), &UploadOption{
+		UploadUrl:   "http://slow-host:8080/1,deadbeef",
+		MaxAttempts: 1,
+	})
+	elapsed := time.Since(start)
+	if err != nil || result.RetryCount != 0 {
+		t.Fatalf("an opted-out trickle must not be cut: result=%+v err=%v after %v", result, err, elapsed)
+	}
+	if deadline := uploadBodyDeadline(16 << 10); elapsed <= deadline {
+		t.Fatalf("test setup: the trickle took %v, must outlast the %v deadline it would get opted in", elapsed, deadline)
+	}
+}
+
+// The gateway fan-out writes each holder through retriedUploadData with its
+// default attempts. A body deadline cut is back-pressure, not a wedged conn:
+// it goes straight back to the chunk loop, which decides on one reassign, so
+// a trickling holder is written once per assignment. A watchdog cut keeps its
+// same-holder retry on a fresh conn, and the body deadline then bounds that
+// retry — still ending as a reassignable stall (S3 SlowDown).
+func TestUploadBodyDeadlineStallsEveryFanOutAttempt(t *testing.T) {
+	setUploadBodyMinWait(t, 50*time.Millisecond)
+	origStall := uploadStallMinWait
+	uploadStallMinWait = 20 * time.Millisecond
+	t.Cleanup(func() { uploadStallMinWait = origStall })
+
+	testCases := []struct {
+		name      string
+		proven    bool // the host carries a fast mark, so the watchdog arms first
+		wantCalls int32
+	}{
+		{name: "unproven holder: one call, cut at the deadline", proven: false, wantCalls: 1},
+		{name: "proven holder: watchdog cut retried once, then cut at the deadline", proven: true, wantCalls: 2},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			const host = "holder:8080"
+			client := &tricklingHTTPClient{chunk: 1 << 10, interval: 20 * time.Millisecond}
+			uploader := newUploader(client)
+			if tc.proven {
+				markHostFast(uploader, host)
+			}
+			option := &UploadOption{UploadUrl: fmt.Sprintf("http://%s/3,01637037d6?type=replicate&%s=%s", host, ReplicateSourceParam, ReplicateSourceClient), BodyDeadline: true}
+			prepared, err := prepareUploadData(incompressibleBytes(t, 64<<10), option)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			start := time.Now()
+			_, err = uploader.retriedUploadData(ctx, prepared, option)
+			elapsed := time.Since(start)
+			if got := atomic.LoadInt32(&client.calls); got != tc.wantCalls {
+				t.Fatalf("Do calls = %d, want %d", got, tc.wantCalls)
+			}
+			if !errors.Is(err, ErrUploadStalled) || !ShouldReassignUpload(err) || !IsUploadBackpressure(err) {
+				t.Fatalf("a holder trickling to the deadline must end as a reassignable back-pressure stall, got %v after %v", err, elapsed)
+			}
+			if _, ok := uploader.fastUploadHosts.Load(host); ok {
+				t.Fatalf("no fast mark may survive: the watchdog cut clears it and the deadline never sets one")
+			}
+			if elapsed >= 2*time.Second {
+				t.Fatalf("cut attempts took %v, want well under 2s", elapsed)
+			}
+		})
+	}
+}
+
+// Only a body deadline cut and an overload are back-pressure; a watchdog cut
+// (one wedged conn) and other failures keep their retry policy.
+func TestIsUploadBackpressure(t *testing.T) {
+	testCases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "503 overload", err: &uploadStatusError{StatusCode: http.StatusServiceUnavailable, err: errors.New("limit")}, want: true},
+		{name: "429 overload", err: &uploadStatusError{StatusCode: http.StatusTooManyRequests, err: errors.New("limit")}, want: true},
+		{name: "body deadline cut", err: &uploadStatusError{StatusCode: 0, stalled: true, deadlineCut: true, err: errors.New("context canceled")}, want: true},
+		{name: "wrapped body deadline cut", err: fmt.Errorf("upload chunk: %w", &uploadStatusError{StatusCode: 0, stalled: true, deadlineCut: true, err: errors.New("context canceled")}), want: true},
+		{name: "watchdog cut", err: &uploadStatusError{StatusCode: 0, stalled: true, err: errors.New("context canceled")}, want: false},
+		{name: "500 fault", err: &uploadStatusError{StatusCode: http.StatusInternalServerError, err: errors.New("disk")}, want: false},
+		{name: "plain error", err: errors.New("deadline"), want: false},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsUploadBackpressure(tc.err); got != tc.want {
+				t.Fatalf("IsUploadBackpressure(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+	// Both kinds of cut still read as a stall and stay reassignable.
+	for _, err := range []error{
+		&uploadStatusError{StatusCode: 0, stalled: true, deadlineCut: true, err: errors.New("context canceled")},
+		&uploadStatusError{StatusCode: 0, stalled: true, err: errors.New("context canceled")},
+	} {
+		if !errors.Is(err, ErrUploadStalled) || !ShouldReassignUpload(err) {
+			t.Fatalf("%+v must match ErrUploadStalled and be reassignable", err)
+		}
 	}
 }

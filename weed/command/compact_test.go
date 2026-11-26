@@ -102,7 +102,7 @@ func TestCompactDataMethodSkipsUnreadableRecord(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			for method, want := range map[string][]uint64{"data": tc.wantData, "index": tc.wantIndex} {
 				dir := t.TempDir()
-				base, offsets := writeFixTestVolume(t, dir, 5)
+				base, offsets := writeFixTestVolume(t, dir, 5, needle.GetCurrentVersion())
 				doFixOneVolume(dir, "fix_7", "fix", 7, true)
 				tc.corrupt(t, base, offsets)
 
@@ -122,7 +122,7 @@ func TestCompactDataMethodSkipsUnreadableRecord(t *testing.T) {
 
 func TestCompactFailureLeavesNoOutput(t *testing.T) {
 	dir := t.TempDir()
-	base, _ := writeFixTestVolume(t, dir, 5)
+	base, _ := writeFixTestVolume(t, dir, 5, needle.GetCurrentVersion())
 	doFixOneVolume(dir, "fix_7", "fix", 7, true)
 	if err := os.Mkdir(base+".cpd", 0755); err != nil {
 		t.Fatal(err)

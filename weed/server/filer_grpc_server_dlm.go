@@ -35,7 +35,8 @@ func (fs *FilerServer) DistributedLock(ctx context.Context, req *filer_pb.LockRe
 	} else if !req.IsMoved && movedTo != "" && movedTo != fs.option.Host {
 		glog.V(3).Infof("FILER LOCK: Forwarding to correct filer - from=%s to=%s", fs.option.Host, movedTo)
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			secondResp, err := client.DistributedLock(ctx, &filer_pb.LockRequest{
+			forwardCtx := withCallerAuthContext(ctx)
+			secondResp, err := client.DistributedLock(forwardCtx, &filer_pb.LockRequest{
 				Name:          req.Name,
 				SecondsToLock: req.SecondsToLock,
 				RenewToken:    req.RenewToken,
@@ -89,7 +90,8 @@ func (fs *FilerServer) DistributedUnlock(ctx context.Context, req *filer_pb.Unlo
 		err = mErr
 	} else if !req.IsMoved && movedTo != "" {
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			secondResp, err := client.DistributedUnlock(ctx, &filer_pb.UnlockRequest{
+			forwardCtx := withCallerAuthContext(ctx)
+			secondResp, err := client.DistributedUnlock(forwardCtx, &filer_pb.UnlockRequest{
 				Name:       req.Name,
 				RenewToken: req.RenewToken,
 				IsMoved:    true,
@@ -120,7 +122,7 @@ func (fs *FilerServer) FindLockOwner(ctx context.Context, req *filer_pb.FindLock
 	}
 	if !req.IsMoved && movedTo != "" {
 		err = pb.WithFilerClient(false, 0, movedTo, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			secondResp, err := client.FindLockOwner(ctx, &filer_pb.FindLockOwnerRequest{
+			secondResp, err := client.FindLockOwner(withCallerAuthContext(ctx), &filer_pb.FindLockOwnerRequest{
 				Name:    req.Name,
 				IsMoved: true,
 			})
@@ -206,7 +208,7 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 				glog.V(0).Infof("DLM: transferring primary lock %s to new primary=%s", lock.Key, primary)
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				err := pb.WithFilerClient(false, 0, primary, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-					_, err := client.TransferLocks(ctx, &filer_pb.TransferLocksRequest{
+					_, err := client.TransferLocks(fs.peerContext(ctx), &filer_pb.TransferLocksRequest{
 						Locks: []*filer_pb.Lock{
 							{
 								Name:           lock.Key,
@@ -235,7 +237,7 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 			// We're neither primary nor backup → transfer to primary and remove locally
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			err := pb.WithFilerClient(false, 0, primary, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-				_, err := client.TransferLocks(ctx, &filer_pb.TransferLocksRequest{
+				_, err := client.TransferLocks(fs.peerContext(ctx), &filer_pb.TransferLocksRequest{
 					Locks: []*filer_pb.Lock{
 						{
 							Name:           lock.Key,
@@ -267,7 +269,7 @@ func (fs *FilerServer) SetupDlmReplication() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		err := pb.WithFilerClient(false, 0, server, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			_, err := client.ReplicateLock(ctx, &filer_pb.ReplicateLockRequest{
+			_, err := client.ReplicateLock(fs.peerContext(ctx), &filer_pb.ReplicateLockRequest{
 				Name:           key,
 				RenewToken:     token,
 				PrevRenewToken: prevToken,

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	jwt "github.com/golang-jwt/jwt/v5"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc"
@@ -34,9 +35,17 @@ func TestScopeMethodOnlyTokenAllowsListedMethodWithoutPathGrant(t *testing.T) {
 	c := h.client(methodScopedToken(t, "alice", nil, []string{"Ping"}))
 
 	expectScopeForwarded(t, h, "Ping", "method-only Ping", func() error {
-		_, err := c.Ping(scopeCtx(t), &filer_pb.PingRequest{})
+		_, err := c.Ping(scopeCtx(t), &filer_pb.PingRequest{Target: "127.0.0.1:1", TargetType: cluster.FilerType})
 		return err
 	})
+	pingCalls := h.fake.received("Ping")
+	if len(pingCalls) != 1 {
+		t.Fatalf("method-only Ping reached handler %d times, want 1", len(pingCalls))
+	}
+	pingReq, ok := pingCalls[0].(*filer_pb.PingRequest)
+	if !ok || pingReq.GetTarget() != "" || pingReq.GetTargetType() != "" {
+		t.Fatalf("scoped Ping forwarded target %q/%q, want empty target", pingReq.GetTarget(), pingReq.GetTargetType())
+	}
 	expectScopeDenied(t, h, "LookupDirectoryEntry", "method-only lookup without a path grant", func() error {
 		_, err := c.LookupDirectoryEntry(scopeCtx(t), &filer_pb.LookupDirectoryEntryRequest{Directory: aliceWS, Name: "file"})
 		return err

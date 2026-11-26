@@ -137,6 +137,10 @@ previous_key = ""
 # When grpc_key is unset, the shared HTTP current/previous pair is used.
 # grpc_key = ""
 # grpc_previous_key = ""
+# Require every filesystem gRPC call to carry a valid bearer token. This also
+# refuses verified mTLS peers that do not present a token. The setting is off
+# by default for compatibility with existing tokenless callers.
+# grpc_require_token = false
 # AssignVolume returns a proof bound to the holder, chunk-ID range and resolved
 # collection in assign_auth. Return it under the chunk's file id in chunk_auth
 # when storing the entry. Auth remains the separate volume-upload credential.

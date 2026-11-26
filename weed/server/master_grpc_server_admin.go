@@ -132,6 +132,9 @@ func (locks *AdminLocks) deleteLockLocked(lockName string) {
 
 func (ms *MasterServer) LeaseAdminToken(ctx context.Context, req *master_pb.LeaseAdminTokenRequest) (*master_pb.LeaseAdminTokenResponse, error) {
 	resp := &master_pb.LeaseAdminTokenResponse{}
+	if err := ms.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
 
 	if !ms.Topo.IsLeader() {
 		return resp, raft.NotLeaderError
@@ -158,6 +161,9 @@ func (ms *MasterServer) LeaseAdminToken(ctx context.Context, req *master_pb.Leas
 
 func (ms *MasterServer) ReleaseAdminToken(ctx context.Context, req *master_pb.ReleaseAdminTokenRequest) (*master_pb.ReleaseAdminTokenResponse, error) {
 	resp := &master_pb.ReleaseAdminTokenResponse{}
+	if err := ms.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
 	// a follower holds no lock state; answering success here would fake a
 	// release while the leader keeps the lock until it expires
 	if !ms.Topo.IsLeader() {
@@ -215,6 +221,24 @@ func (ms *MasterServer) isKnownPingTarget(ctx context.Context, target string, ta
 			return ok
 		}
 		return false
+	}
+	return false
+}
+
+// isConfiguredMaster reports whether addr is this master or one of -peers,
+// compared by gRPC endpoint since that is what raft admission dials.
+func (ms *MasterServer) isConfiguredMaster(addr pb.ServerAddress) bool {
+	grpcAddress := addr.ToGrpcAddress()
+	if ms.option != nil && ms.option.Master.ToGrpcAddress() == grpcAddress {
+		return true
+	}
+	if ms.MasterClient == nil {
+		return false
+	}
+	for _, master := range ms.MasterClient.ListCachedMasters() {
+		if master.ToGrpcAddress() == grpcAddress {
+			return true
+		}
 	}
 	return false
 }

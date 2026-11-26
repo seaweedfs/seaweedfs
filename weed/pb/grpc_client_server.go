@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -163,12 +164,39 @@ func ServeGrpcOnLocalSocket(grpcServer *grpc.Server, grpcPort int) {
 	if socketPath == "" {
 		return
 	}
-	listener := ListenOnLocalSocket(socketPath)
+	listener := listenOnLocalGrpcSocket(socketPath)
 	if listener == nil {
 		return
 	}
 	glog.V(0).Infof("gRPC also listening on Unix socket %s", socketPath)
 	go serveGrpcOnLocalListener(grpcServer, socketPath, listener)
+}
+
+// listenOnLocalGrpcSocket binds the socket for this process only: gRPC
+// servers trust their local socket callers as processes on this host. It is
+// bound inside a private directory and moved into place once restricted, so
+// other users can never connect to it.
+func listenOnLocalGrpcSocket(socketPath string) net.Listener {
+	dir, err := os.MkdirTemp(filepath.Dir(socketPath), ".sock")
+	if err != nil {
+		glog.Errorf("Failed to create a private directory for Unix socket %s: %v", socketPath, err)
+		return nil
+	}
+	defer os.RemoveAll(dir)
+	privatePath := filepath.Join(dir, "s")
+	listener := ListenOnLocalSocket(privatePath)
+	if listener == nil {
+		return nil
+	}
+	if err = os.Chmod(privatePath, 0600); err == nil {
+		err = os.Rename(privatePath, socketPath)
+	}
+	if err != nil {
+		glog.Errorf("Failed to restrict Unix socket %s: %v", socketPath, err)
+		listener.Close()
+		return nil
+	}
+	return listener
 }
 
 // localSocketCheckInterval is how often a served socket path is checked for
@@ -204,7 +232,7 @@ func serveGrpcOnLocalListener(grpcServer *grpc.Server, socketPath string, listen
 			}
 			// Bind before closing the old listener, so a failed bind is
 			// retried on the next check and shutdown still ends this loop.
-			replacement := ListenOnLocalSocket(socketPath)
+			replacement := listenOnLocalGrpcSocket(socketPath)
 			if replacement == nil {
 				continue
 			}

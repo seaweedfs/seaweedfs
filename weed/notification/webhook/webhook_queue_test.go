@@ -1,6 +1,8 @@
 package webhook
 
 import (
+	"encoding/base64"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -410,6 +412,50 @@ func TestQueueNoDuplicateWebhooks(t *testing.T) {
 				t.Errorf("Expected %d webhook call(s), got %d with %d workers", tt.expected, callCount, tt.nWorkers)
 			}
 		})
+	}
+}
+
+func TestQueueSendsNoCipherKeys(t *testing.T) {
+	bodies := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		bodies <- string(body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	q := newQueueForTest(t, &config{
+		endpoint:          server.URL,
+		timeoutSeconds:    5,
+		backoffSeconds:    1,
+		maxBackoffSeconds: 1,
+		nWorkers:          1,
+		bufferSize:        10,
+	})
+	defer closeQueueForTest(q)
+
+	key := []byte("0123456789abcdef0123456789abcdef")
+	msg := &filer_pb.EventNotification{
+		OldEntry: &filer_pb.Entry{Name: "f", Chunks: []*filer_pb.FileChunk{{FileId: "1,aa", CipherKey: key}}},
+		NewEntry: &filer_pb.Entry{Name: "f", Chunks: []*filer_pb.FileChunk{{FileId: "2,bb", CipherKey: key}}},
+	}
+	if err := q.SendMessage("/dir/f", msg); err != nil {
+		t.Fatalf("SendMessage() error = %v", err)
+	}
+
+	select {
+	case body := <-bodies:
+		if !strings.Contains(body, "1,aa") || !strings.Contains(body, "2,bb") {
+			t.Fatalf("webhook body lacks the chunks: %s", body)
+		}
+		if strings.Contains(body, "cipher_key") || strings.Contains(body, base64.StdEncoding.EncodeToString(key)) {
+			t.Fatalf("webhook body carries a cipher key: %s", body)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("webhook was not delivered")
+	}
+	if len(msg.OldEntry.Chunks[0].CipherKey) == 0 || len(msg.NewEntry.Chunks[0].CipherKey) == 0 {
+		t.Fatal("sending mutated the caller's event")
 	}
 }
 

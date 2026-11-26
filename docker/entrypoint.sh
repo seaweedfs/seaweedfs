@@ -5,6 +5,8 @@
 # For strict mode: docker run -e GODEBUG=fips140=only ...
 # The default goes first: Go applies the last of repeated GODEBUG settings, so
 # the caller's fips140 value wins.
+# Transparent huge pages are a host-wide setting this image cannot change; to
+# turn them off for this process only, append GODEBUG=disablethp=1.
 export GODEBUG="fips140=on${GODEBUG:+,$GODEBUG}"
 
 # Fix permissions for mounted volumes

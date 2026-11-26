@@ -58,12 +58,12 @@ var ungatedVolumeServerRPCs = map[string]string{
 // side of the boundary it sits on -- an allowlist this size drifts otherwise,
 // which is how the gate ended up covering less than half the service.
 func TestVolumeServerAdminAuthCoverage(t *testing.T) {
-	declared := rpcNamesFromProto(t)
+	declared := rpcNamesFromProto(t, "volume_server.proto")
 	if len(declared) < 40 {
 		t.Fatalf("parsed only %d RPCs from the proto, expected the full service", len(declared))
 	}
 
-	gated := gatedVolumeServerMethods(t)
+	gated := gatedServerMethods(t, "VolumeServer")
 
 	for _, rpc := range declared {
 		_, exempt := ungatedVolumeServerRPCs[rpc]
@@ -94,9 +94,9 @@ func TestVolumeServerAdminAuthCoverage(t *testing.T) {
 	}
 }
 
-func rpcNamesFromProto(t *testing.T) []string {
+func rpcNamesFromProto(t *testing.T, protoFile string) []string {
 	t.Helper()
-	path := filepath.Join("..", "pb", "volume_server.proto")
+	path := filepath.Join("..", "pb", protoFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -110,11 +110,11 @@ func rpcNamesFromProto(t *testing.T) []string {
 	return names
 }
 
-// gatedVolumeServerMethods reports which methods on *VolumeServer call
+// gatedServerMethods reports which methods on *receiver call
 // checkGrpcAdminAuth anywhere in their body. It walks the AST rather than
 // scanning a fixed window of lines so a guard placed after an early
 // maintenance-mode check still counts.
-func gatedVolumeServerMethods(t *testing.T) map[string]bool {
+func gatedServerMethods(t *testing.T, receiver string) map[string]bool {
 	t.Helper()
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
@@ -132,7 +132,7 @@ func gatedVolumeServerMethods(t *testing.T) map[string]bool {
 				if !ok || fn.Recv == nil || fn.Body == nil {
 					continue
 				}
-				if !isVolumeServerReceiver(fn.Recv) {
+				if !isServerReceiver(fn.Recv, receiver) {
 					continue
 				}
 				ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -149,7 +149,7 @@ func gatedVolumeServerMethods(t *testing.T) map[string]bool {
 	return gated
 }
 
-func isVolumeServerReceiver(recv *ast.FieldList) bool {
+func isServerReceiver(recv *ast.FieldList, receiver string) bool {
 	if len(recv.List) != 1 {
 		return false
 	}
@@ -158,5 +158,5 @@ func isVolumeServerReceiver(recv *ast.FieldList) bool {
 		return false
 	}
 	ident, ok := star.X.(*ast.Ident)
-	return ok && ident.Name == "VolumeServer"
+	return ok && ident.Name == receiver
 }

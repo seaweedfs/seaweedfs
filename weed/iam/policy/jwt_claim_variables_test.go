@@ -14,10 +14,10 @@ import (
 // (int8..int64, uint..uint64, bool) values substitute correctly.
 func TestStringifyClaimValue(t *testing.T) {
 	tests := []struct {
-		name     string
-		value    interface{}
-		want     string
-		wantOk   bool
+		name   string
+		value  interface{}
+		want   string
+		wantOk bool
 	}{
 		{name: "string", value: "alice", want: "alice", wantOk: true},
 		{name: "bool true", value: true, want: "true", wantOk: true},

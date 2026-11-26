@@ -8,8 +8,8 @@ import (
 func TestExtractPrincipalTagsObjectShape(t *testing.T) {
 	claims := map[string]interface{}{
 		PrincipalTagsClaim: map[string]interface{}{
-			"team": "infra",
-			"env":  "prod",
+			"team":  "infra",
+			"env":   "prod",
 			"empty": "",
 			// non-string values are dropped
 			"count": 42,

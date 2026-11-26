@@ -562,6 +562,12 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	}
 	peerAddress := pb.ServerAddress(clientAddress)
 
+	if req.ClientType == cluster.MasterType && !ms.isConfiguredMaster(peerAddress) {
+		if err := ms.checkGrpcAdminAuth(stream.Context()); err != nil {
+			return err
+		}
+	}
+
 	// buffer by 1 so we don't end up getting stuck writing to stopChan forever
 	stopChan := make(chan bool, 1)
 

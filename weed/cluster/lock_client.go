@@ -17,7 +17,11 @@ import (
 )
 
 type LockClient struct {
-	grpcDialOption  grpc.DialOption
+	grpcDialOption grpc.DialOption
+	// RequestContext, when set before using the client, supplies per-attempt
+	// metadata for lock, renewal and unlock RPCs. Generic clients retain their
+	// existing authority when it is nil.
+	RequestContext  func(context.Context) context.Context
 	maxLockDuration time.Duration
 	sleepDuration   time.Duration
 	seedFiler       pb.ServerAddress
@@ -435,6 +439,9 @@ func (lock *LiveLock) StopShortLivedLock() error {
 	return pb.WithFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithTimeout(context.Background(), lock.lc.lockRpcTimeout)
 		defer cancel()
+		if lock.lc.RequestContext != nil {
+			ctx = lock.lc.RequestContext(ctx)
+		}
 		_, err := client.DistributedUnlock(ctx, &filer_pb.UnlockRequest{
 			Name:       lock.key,
 			RenewToken: lock.renewToken,
@@ -493,6 +500,9 @@ func (lock *LiveLock) doLock(lockDuration, attemptTimeout time.Duration) (errorM
 		// but not from this filer would otherwise block on the connect timeout.
 		ctx, cancel := context.WithTimeout(context.Background(), attemptTimeout)
 		defer cancel()
+		if lock.lc.RequestContext != nil {
+			ctx = lock.lc.RequestContext(ctx)
+		}
 		resp, err := client.DistributedLock(ctx, &filer_pb.LockRequest{
 			Name:          lock.key,
 			SecondsToLock: int64(lockDuration.Seconds()),
