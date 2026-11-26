@@ -2795,6 +2795,23 @@ fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
 
+/// Bounds how long a client write waits for upload budget, whatever
+/// -inflightUploadDataTimeout says; Go's volumeClientUploadWaitCap. It stays
+/// below the uploading gateway's 10s body deadline floor, so the client gets
+/// a 503 before its deadline cuts the request off as a stall.
+const VOLUME_CLIENT_UPLOAD_WAIT_CAP: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long a client write waits for upload budget: the configured timeout
+/// (2s when unset), at most VOLUME_CLIENT_UPLOAD_WAIT_CAP.
+fn client_upload_wait(configured: std::time::Duration) -> std::time::Duration {
+    let timeout = if configured.is_zero() {
+        std::time::Duration::from_secs(2)
+    } else {
+        configured
+    };
+    timeout.min(VOLUME_CLIENT_UPLOAD_WAIT_CAP)
+}
+
 /// Store an uploaded needle on the local volume — durable (fsync) uploads
 /// through the per-volume write queue, the rest synchronously — and then
 /// replicate it if the volume's placement calls for more copies.
@@ -2874,11 +2891,7 @@ pub async fn post_handler(
 
     if !is_replicate && state.concurrent_upload_limit > 0 {
         // Wait for inflight bytes to drop below limit, or timeout
-        let timeout = if state.inflight_upload_data_timeout.is_zero() {
-            std::time::Duration::from_secs(2)
-        } else {
-            state.inflight_upload_data_timeout
-        };
+        let timeout = client_upload_wait(state.inflight_upload_data_timeout);
         let deadline = tokio::time::Instant::now() + timeout;
 
         loop {
@@ -6807,6 +6820,20 @@ mod tests {
             &header::HeaderValue::from_static("1")
         );
         assert_eq!(state.inflight_upload_bytes.load(Ordering::Relaxed), 11);
+    }
+
+    #[test]
+    fn client_upload_wait_is_capped() {
+        use std::time::Duration;
+        assert_eq!(client_upload_wait(Duration::ZERO), Duration::from_secs(2));
+        assert_eq!(
+            client_upload_wait(Duration::from_millis(50)),
+            Duration::from_millis(50)
+        );
+        assert_eq!(
+            client_upload_wait(Duration::from_secs(60)),
+            VOLUME_CLIENT_UPLOAD_WAIT_CAP
+        );
     }
 
     #[tokio::test]
