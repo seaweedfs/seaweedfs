@@ -188,9 +188,12 @@ impl std::fmt::Debug for HttpsTls {
 }
 
 /// Both tonic and reqwest link rustls; with more than one crypto provider
-/// compiled in, rustls needs one picked before TLS is configured.
+/// compiled in, rustls needs one picked before TLS is configured. It is the
+/// one every SeaweedFS Rust binary installs (`seaweed_common::tls`): aws-lc-rs,
+/// filtered to the FIPS lists in FIPS mode. A binary's own earlier install
+/// wins, so a library caller cannot replace it.
 pub fn install_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    seaweed_common::tls::install_default_crypto_provider();
 }
 
 /// Default transport: the SeaweedFS volume HTTP API — `GET /<fileId>` with an

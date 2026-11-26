@@ -21,7 +21,7 @@ use http::Uri;
 use hyper_util::rt::TokioIo;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::client::verify_server_cert_signed_by_trust_anchor;
-use rustls::crypto::{CryptoProvider, aws_lc_rs};
+use rustls::crypto::CryptoProvider;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
@@ -215,6 +215,7 @@ fn build_config(files: &GrpcServerTls) -> Result<ServerConfig> {
         .with_single_cert(cert_chain, key)
         .context("server certificate")?;
     config.alpn_protocols = vec![b"h2".to_vec()];
+    config.require_ems = config.require_ems || crate::tls::require_ems();
     Ok(config)
 }
 
@@ -403,7 +404,7 @@ fn client_config(
     crate::tls::install_default_crypto_provider();
     let verifier = ServerIdentityVerifier {
         roots: Arc::new(root_store(&files.ca_path, &ca)?),
-        provider: Arc::new(aws_lc_rs::default_provider()),
+        provider: Arc::new(crate::tls::crypto_provider()),
         allowed_names: files.allowed_server_names.iter().cloned().collect(),
         allowed_wildcard_domain: files.allowed_server_wildcard_domain.clone(),
     };
@@ -416,6 +417,7 @@ fn client_config(
         )
         .context("client certificate")?;
     config.alpn_protocols = vec![b"h2".to_vec()];
+    config.require_ems = config.require_ems || crate::tls::require_ems();
     Ok(config)
 }
 
@@ -762,7 +764,7 @@ mod tests {
             roots: Arc::new(
                 root_store("ca.pem", &std::fs::read(fixture("ca.pem")).unwrap()).unwrap(),
             ),
-            provider: Arc::new(aws_lc_rs::default_provider()),
+            provider: Arc::new(crate::tls::crypto_provider()),
             allowed_names: allowed.iter().map(|s| s.to_string()).collect(),
             allowed_wildcard_domain: wildcard.into(),
         };

@@ -17,6 +17,8 @@ prost.workspace = true
 # System roots for volume servers behind public CAs, as Go's http client.
 reqwest = { version = "0.12", default-features = false, features = ["multipart", "rustls-tls-native-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+# The process-wide rustls provider every SeaweedFS Rust binary installs.
+seaweed-common = { path = "../../../seaweed-common" }
 thiserror = "2"
 tokio.workspace = true
 tonic.workspace = true

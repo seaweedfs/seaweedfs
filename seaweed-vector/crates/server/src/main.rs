@@ -129,8 +129,8 @@ fn advertised_addr(listen: &str, masters: &[String], advertise: Option<&str>) ->
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse_from(normalize_args(std::env::args().collect()));
-    weed_lance_worker::tls::install_default_crypto_provider();
     let security = Security::load(args.security_toml.as_deref())?;
+    weed_lance_worker::tls::install_for_fips_mode(&security)?;
     if let Some(path) = security.path() {
         tracing::info!("security settings from {}", path.display());
     }

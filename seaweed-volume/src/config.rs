@@ -1291,6 +1291,25 @@ fn toml_value_text(raw: &str) -> String {
     }
 }
 
+/// The FIPS mode this volume server runs in: `WEED_FIPS_MODE`, else
+/// `fips.mode` in the security.toml `--securityFile` names or the search
+/// finds, else off.
+pub fn resolve_fips_setting(
+    security_file: &str,
+) -> Result<seaweed_common::fips::Setting, seaweed_common::fips::FipsModeError> {
+    resolve_fips_setting_with_env(security_file, &process_env)
+}
+
+fn resolve_fips_setting_with_env(
+    security_file: &str,
+    env: EnvLookup<'_>,
+) -> Result<seaweed_common::fips::Setting, seaweed_common::fips::FipsModeError> {
+    seaweed_common::fips::resolve(
+        resolve_security_config_path(security_file, env).as_deref(),
+        env,
+    )
+}
+
 fn resolve_security_config_path(path: &str, env: EnvLookup<'_>) -> Option<PathBuf> {
     if !path.is_empty() {
         return Some(PathBuf::from(path));
@@ -2236,6 +2255,26 @@ previous_key = "read-old"
         let cfg = parse_security_config_with_env(&path, &env);
         assert!(!cfg.file_read);
         assert_eq!(cfg.jwt_signing_key, b"env-secret");
+    }
+
+    #[test]
+    fn test_fips_mode_from_the_security_file_and_env() {
+        use seaweed_common::fips::FipsMode;
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "[fips]\nmode = \"on\"\n").unwrap();
+        let path = tmp.path().to_str().unwrap();
+
+        let setting = resolve_fips_setting_with_env(path, &fake_env(&[])).unwrap();
+        assert_eq!(setting.mode, FipsMode::On);
+        let env = fake_env(&[("WEED_FIPS_MODE", "strict")]);
+        let setting = resolve_fips_setting_with_env(path, &env).unwrap();
+        assert_eq!(setting.mode, FipsMode::Strict);
+        let env = fake_env(&[("WEED_FIPS_MODE", "only")]);
+        assert!(resolve_fips_setting_with_env(path, &env).is_err());
+
+        std::fs::write(tmp.path(), "[jwt.signing]\nkey = \"secret\"\n").unwrap();
+        let setting = resolve_fips_setting_with_env(path, &fake_env(&[])).unwrap();
+        assert_eq!(setting.mode, FipsMode::Off);
     }
 
     #[test]

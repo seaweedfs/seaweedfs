@@ -118,8 +118,6 @@ fn metrics_address(ip: &str, port: u16) -> Result<SocketAddr> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    weed_lance_worker::tls::install_default_crypto_provider();
-
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -132,6 +130,7 @@ async fn main() -> Result<()> {
     // One security.toml for everything: the admin stream's and the catalog's
     // signing key, and the cluster connection.
     let security = weed_lance_worker::security::Security::load(args.security_toml.as_deref())?;
+    weed_lance_worker::tls::install_for_fips_mode(&security)?;
     let filer_signing = match args.filer_signing_key.filter(|key| !key.is_empty()) {
         Some(key) => Some((key, 0)),
         None => security
