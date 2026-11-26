@@ -48,7 +48,7 @@ func TestDoMinusChunks(t *testing.T) {
 	assert.Equalf(t, firstNewEntry, emptiedChunksInA, "empty")
 }
 
-func TestDoMinusChunksComparesNeedleIdentity(t *testing.T) {
+func TestDoMinusChunksByNeedleIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		old         *filer_pb.FileChunk
@@ -91,7 +91,7 @@ func TestDoMinusChunksComparesNeedleIdentity(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := DoMinusChunks([]*filer_pb.FileChunk{tc.old}, []*filer_pb.FileChunk{tc.new})
+			got := DoMinusChunksByNeedleIdentity([]*filer_pb.FileChunk{tc.old}, []*filer_pb.FileChunk{tc.new})
 			if tc.wantGarbage {
 				if assert.Len(t, got, 1) {
 					assert.Equal(t, tc.old.GetFileIdString(), got[0].GetFileIdString())

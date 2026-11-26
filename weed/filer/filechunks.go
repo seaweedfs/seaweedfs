@@ -105,6 +105,10 @@ func SeparateGarbageChunks(visibles *IntervalList[*VisibleInterval], chunks []*f
 			garbage = append(garbage, chunk)
 		}
 	}
+	// The literal partition removes covered metadata entries. Before queueing
+	// garbage, also remove any chunk whose spelling resolves to a needle retained
+	// by the compacted entry.
+	garbage = DoMinusChunksByNeedleIdentity(garbage, compacted)
 	return compacted, garbage
 }
 
@@ -131,19 +135,31 @@ func MinusChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFuncti
 		return nil, bErr
 	}
 
-	delta = append(delta, DoMinusChunks(aData, bData)...)
-	delta = append(delta, DoMinusChunks(aMeta, bMeta)...)
+	delta = append(delta, DoMinusChunksByNeedleIdentity(aData, bData)...)
+	delta = append(delta, DoMinusChunksByNeedleIdentity(aMeta, bMeta)...)
 	return
 }
 
 func DoMinusChunks(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {
+	return doMinusChunks(as, bs, func(fileID string) string { return fileID })
+}
+
+// DoMinusChunksByNeedleIdentity compares chunks by the physical needle they
+// reference. Use this for garbage and liveness decisions, where equivalent
+// file-ID spellings must not cause a live needle to be deleted. Source-diff
+// consumers should use DoMinusChunks so a respelling remains observable.
+func DoMinusChunksByNeedleIdentity(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {
+	return doMinusChunks(as, bs, chunkIdentity)
+}
+
+func doMinusChunks(as, bs []*filer_pb.FileChunk, identity func(string) string) (delta []*filer_pb.FileChunk) {
 
 	fileIds := make(map[string]bool)
 	for _, interval := range bs {
-		fileIds[chunkIdentity(interval.GetFileIdString())] = true
+		fileIds[identity(interval.GetFileIdString())] = true
 	}
 	for _, chunk := range as {
-		if _, found := fileIds[chunkIdentity(chunk.GetFileIdString())]; !found {
+		if _, found := fileIds[identity(chunk.GetFileIdString())]; !found {
 			delta = append(delta, chunk)
 		}
 	}

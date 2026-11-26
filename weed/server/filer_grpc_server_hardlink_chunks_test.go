@@ -257,6 +257,68 @@ func TestUpdateEntryThroughHardLinkKeepsEquivalentChunkSpellings(t *testing.T) {
 	}
 }
 
+func TestUpdateEntryDoesNotDeleteCoveredEquivalentChunkSpellings(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		stored     *filer_pb.FileChunk
+		older      *filer_pb.FileChunk
+		newer      *filer_pb.FileChunk
+		wantDelete string
+	}{
+		{
+			name:   "suffix to structured",
+			stored: &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 1},
+			older:  &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 1},
+			newer:  &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}, Offset: 0, Size: 4, ModifiedTsNs: 2},
+		},
+		{
+			name:   "structured to suffix",
+			stored: &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}, Offset: 0, Size: 4, ModifiedTsNs: 1},
+			older:  &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}, Offset: 0, Size: 4, ModifiedTsNs: 1},
+			newer:  &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 2},
+		},
+		{
+			name:       "different needle remains garbage",
+			stored:     &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 1},
+			older:      &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 1},
+			newer:      &filer_pb.FileChunk{FileId: "3,0c00000004_1", Offset: 0, Size: 4, ModifiedTsNs: 2},
+			wantDelete: "3,0c00000003_1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, f, store, id := hardLinkChunkServer(t, 1)
+			// hardLinkChunkServer already installed the shared record; replace its
+			// chunk with the spelling under test while retaining the same link ID.
+			shared := fileEntryWithChunkValue("/dir/dst.txt", 303, tc.stored)
+			shared.HardLinkId, shared.HardLinkCounter = id, 1
+			blob, err := shared.EncodeAttributesAndChunks()
+			if err != nil {
+				t.Fatalf("encode shared chunk: %v", err)
+			}
+			store.kv = map[string][]byte{}
+			store.kv[string(id)] = blob
+
+			updateDst(t, server, dstEntry(id, 1, tc.older, tc.newer))
+			if tc.wantDelete == "" {
+				checkDeletions(t, f)
+			} else {
+				checkDeletions(t, f, tc.wantDelete)
+			}
+			stored, err := f.FindEntry(context.Background(), "/dir/dst.txt")
+			if err != nil {
+				t.Fatalf("find updated entry: %v", err)
+			}
+			if len(stored.GetChunks()) != 1 {
+				t.Fatalf("updated chunks = %v, want only the visible chunk", stored.GetChunks())
+			}
+			got := stored.GetChunks()[0]
+			if got.GetFileIdString() != tc.newer.GetFileIdString() || got.Offset != tc.newer.Offset || got.Size != tc.newer.Size || got.ModifiedTsNs != tc.newer.ModifiedTsNs {
+				t.Fatalf("updated chunk = %v, want visible chunk %v", got, tc.newer)
+			}
+		})
+	}
+}
+
 func renameSrcOverHardLinkedDst(t *testing.T, server *FilerServer, store *renameTestStore) {
 	t.Helper()
 	store.entries["/dir/src.txt"] = fileEntryWithChunk("/dir/src.txt", 101, "1,0a01")

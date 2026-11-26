@@ -71,5 +71,5 @@ func withoutChunksOf(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFu
 	if err != nil {
 		return nil, err
 	}
-	return DoMinusChunks(garbage, append(data, manifests...)), nil
+	return DoMinusChunksByNeedleIdentity(garbage, append(data, manifests...)), nil
 }

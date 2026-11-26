@@ -1097,7 +1097,7 @@ func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	if err != nil {
 		// A commit with unknown outcome may already reference these manifests.
 		if !uncertain || stamp == 0 {
-			fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunks(chunks, req.Entry.GetChunks()))
+			fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunksByNeedleIdentity(chunks, req.Entry.GetChunks()))
 		}
 		fs.filer.ReleaseEntryCommitTsNs(stamp)
 		glog.V(3).InfofCtx(ctx, "UpdateEntry %s: %v", fullpath, err)
@@ -1297,7 +1297,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	// read means another filer may have appended in between. The store write
 	// is not conditional, so a lapse after this check still goes unnoticed.
 	if !lock.IsLocked() || lock.Generation() != generation {
-		fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunks(entry.GetChunks(), appended))
+		fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunksByNeedleIdentity(entry.GetChunks(), appended))
 		return &filer_pb.AppendToEntryResponse{}, fmt.Errorf("lost distributed lock for %s; retry the request", fullpath)
 	}
 
