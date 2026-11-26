@@ -64,7 +64,10 @@ struct InflightGuard<'a> {
 
 impl<'a> Drop for InflightGuard<'a> {
     fn drop(&mut self) {
-        let new_val = self.counter.fetch_sub(self.bytes, Ordering::Relaxed) - self.bytes;
+        let new_val = self
+            .counter
+            .fetch_sub(self.bytes, Ordering::Relaxed)
+            .wrapping_sub(self.bytes);
         self.metric.set(new_val);
         self.notify.notify_waiters();
     }
@@ -2835,6 +2838,31 @@ fn upload_charge(content_length: Option<u64>, file_size_limit: i64, limit: i64) 
     }
 }
 
+/// The 503 for an upload that gets no budget. Go's uploadRejectCloseThreshold:
+/// a large or unknown-length HTTP/1 body is cheaper to drop with the
+/// connection than to drain.
+fn upload_limit_exceeded(
+    query: &str,
+    version: axum::http::Version,
+    declared_length: Option<u64>,
+) -> Response {
+    let mut response = json_error_with_query(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "upload limit exceeded",
+        Some(query),
+    );
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, header::HeaderValue::from_static("1"));
+    if version < axum::http::Version::HTTP_2 && declared_length.is_none_or(|len| len > 256 << 10) {
+        response.headers_mut().insert(
+            header::CONNECTION,
+            header::HeaderValue::from_static("close"),
+        );
+    }
+    response
+}
+
 /// Store an uploaded needle on the local volume — durable (fsync) uploads
 /// through the per-volume write queue, the rest synchronously — and then
 /// replicate it if the volume's placement calls for more copies.
@@ -2932,7 +2960,13 @@ pub async fn post_handler(
             let admitted = state.inflight_upload_bytes.fetch_update(
                 Ordering::AcqRel,
                 Ordering::Acquire,
-                |in_flight| upload_admits(in_flight, charged, limit).then_some(in_flight + charged),
+                |in_flight| {
+                    if upload_admits(in_flight, charged, limit) {
+                        in_flight.checked_add(charged)
+                    } else {
+                        None
+                    }
+                },
             );
             if let Ok(prev) = admitted {
                 metrics::INFLIGHT_UPLOAD_SIZE.set(prev + charged);
@@ -2945,34 +2979,27 @@ pub async fn post_handler(
                     .inc();
             }
             if tokio::time::timeout_at(deadline, notified).await.is_err() {
-                let mut response = json_error_with_query(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "upload limit exceeded",
-                    Some(&query),
-                );
-                response
-                    .headers_mut()
-                    .insert(header::RETRY_AFTER, header::HeaderValue::from_static("1"));
-                // Go's uploadRejectCloseThreshold: a large or unknown-length
-                // body is cheaper to drop with the connection than to drain.
-                if request.version() < axum::http::Version::HTTP_2
-                    && declared_length.is_none_or(|len| len > 256 << 10)
-                {
-                    response.headers_mut().insert(
-                        header::CONNECTION,
-                        header::HeaderValue::from_static("close"),
-                    );
-                }
-                return response;
+                return upload_limit_exceeded(&query, request.version(), declared_length);
             }
         }
+    } else if limit > 0 {
+        // A forward the primary already accepted must reach its replicas, so
+        // it is refused only when the counter cannot hold its size.
+        #[allow(deprecated)]
+        let reserved = state.inflight_upload_bytes.fetch_update(
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            |in_flight| in_flight.checked_add(charged),
+        );
+        match reserved {
+            Ok(prev) => metrics::INFLIGHT_UPLOAD_SIZE.set(prev + charged),
+            Err(_) => return upload_limit_exceeded(&query, request.version(), declared_length),
+        }
     } else {
-        // Counted but never refused: a forward the primary already accepted
-        // must reach its replicas.
         let new_val = state
             .inflight_upload_bytes
             .fetch_add(charged, Ordering::Relaxed)
-            + charged;
+            .wrapping_add(charged);
         metrics::INFLIGHT_UPLOAD_SIZE.set(new_val);
     }
     let _upload_guard = InflightGuard {
@@ -6912,6 +6939,41 @@ mod tests {
         .await;
         assert_ne!(forward.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(state.inflight_upload_bytes.load(Ordering::Relaxed), 11);
+    }
+
+    /// A forward whose size the in-flight counter cannot hold is refused
+    /// instead of wrapping the counter negative.
+    #[tokio::test]
+    async fn upload_limit_refuses_a_forward_the_counter_cannot_hold() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.concurrent_upload_limit = 10;
+            s.inflight_upload_data_timeout = std::time::Duration::from_millis(50);
+        }
+        state.inflight_upload_bytes.store(4 << 20, Ordering::Relaxed);
+
+        let request = |uri: &str| {
+            Request::builder()
+                .method(Method::POST)
+                .uri(uri)
+                .header(header::CONTENT_LENGTH, i64::MAX.to_string())
+                .body(Body::from("abcd"))
+                .unwrap()
+        };
+        for uri in [
+            "/1,0123456789abcdef?type=replicate",
+            "/1,0123456789abcdef?type=replicate&src=client",
+        ] {
+            let resp = post_handler(State(state.clone()), request(uri)).await;
+            assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+            assert_eq!(
+                state.inflight_upload_bytes.load(Ordering::Relaxed),
+                4 << 20,
+                "{uri}"
+            );
+        }
     }
 
     #[test]
