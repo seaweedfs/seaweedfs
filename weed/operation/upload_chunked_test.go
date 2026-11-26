@@ -982,8 +982,9 @@ func TestUploadReaderInChunksReassignsOnceOnBodyDeadline(t *testing.T) {
 			defer cancel()
 			start := time.Now()
 			_, err := UploadReaderInChunks(ctx, bytes.NewReader(incompressibleBytes(t, 64<<10)), &ChunkedUploadOption{
-				ChunkSize:  128 << 10,
-				Collection: "test",
+				ChunkSize:    128 << 10,
+				Collection:   "test",
+				BodyDeadline: true,
 				AssignFunc: func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
 					n := atomic.AddInt32(&assigns, 1)
 					result := &AssignResult{Fid: fmt.Sprintf("%d,0a0b0c0d", n), Url: holders[0].host(), Count: 1}

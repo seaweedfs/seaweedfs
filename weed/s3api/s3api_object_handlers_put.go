@@ -799,6 +799,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		Cipher:          s3a.cipher, // encrypt data on volume servers
 		AssignFunc:      assignFunc,
 		LookupJwtFunc:   s3a.lookupVolumeJwt,
+		// A body that crawls below the minimum rate is cut and answered as
+		// SlowDown, so the gateway does not hold chunk buffers on it.
+		BodyDeadline: true,
 	})
 	if err != nil {
 		if r.Context().Err() != nil {

@@ -143,7 +143,9 @@ func (vs *VolumeServer) waitForDownloadSlot(w http.ResponseWriter, r *http.Reque
 //
 // Invariant: it stays below operation.uploadBodyMinWait (10s), so the volume
 // server answers 503 before the uploading client's body deadline cuts the
-// request off as a stall.
+// request off as a stall. Only gateway chunk uploads that opt in
+// (UploadOption.BodyDeadline: S3 chunk writes and the filer's chunk loop) carry
+// that deadline; other clients keep the stall watchdog only.
 const volumeClientUploadWaitCap = 5 * time.Second
 
 // uploadRejectCloseThreshold is the body size above which a rejected HTTP/1

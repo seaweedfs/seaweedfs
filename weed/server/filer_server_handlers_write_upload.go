@@ -231,6 +231,9 @@ func (fs *FilerServer) doUpload(ctx context.Context, urlLocation string, limited
 		PairMap:           pairMap,
 		Jwt:               auth,
 		Md5:               contentMd5,
+		// The chunk loop holds the client's chunk buffer: a crawling link is
+		// cut and handed back as back-pressure rather than waited on.
+		BodyDeadline: true,
 	}
 
 	uploader, err := operation.NewUploader()

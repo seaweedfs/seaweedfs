@@ -51,6 +51,10 @@ type ChunkedUploadOption struct {
 	// Digest names the target filer's digest, so the content and chunk
 	// digests match what that filer holds; empty uses this process's mode.
 	Digest string
+
+	// BodyDeadline opts every chunk write (relay and fan-out) into the body
+	// deadline; see UploadOption.BodyDeadline.
+	BodyDeadline bool
 }
 
 var chunkBufferPool = sync.Pool{
@@ -371,7 +375,7 @@ func uploadChunk(ctx context.Context, assignResult *AssignResult, data []byte, p
 // chunkUploadOption holds the settings that shape a chunk's bytes, shared by
 // its preparation and every upload of it.
 func chunkUploadOption(opt *ChunkedUploadOption) *UploadOption {
-	return &UploadOption{Cipher: opt.Cipher, MimeType: opt.MimeType, Digest: opt.Digest}
+	return &UploadOption{Cipher: opt.Cipher, MimeType: opt.MimeType, Digest: opt.Digest, BodyDeadline: opt.BodyDeadline}
 }
 
 // chunkHolders returns the assigned volume plus its replica holders.

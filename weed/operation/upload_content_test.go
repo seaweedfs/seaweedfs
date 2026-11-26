@@ -1202,8 +1202,9 @@ func TestUploadBodyDeadlineCutsTrickleToUnprovenHost(t *testing.T) {
 
 	start := time.Now()
 	_, err := uploader.UploadData(ctx, incompressibleBytes(t, 64<<10), &UploadOption{
-		UploadUrl:   "http://slow-host:8080/1,deadbeef",
-		MaxAttempts: 1,
+		UploadUrl:    "http://slow-host:8080/1,deadbeef",
+		MaxAttempts:  1,
+		BodyDeadline: true,
 	})
 	elapsed := time.Since(start)
 	if err == nil {
@@ -1251,8 +1252,9 @@ func TestUploadBodyDeadlineAllowsSlowCommit(t *testing.T) {
 	uploader := newUploader(client)
 
 	result, err := uploader.UploadData(context.Background(), incompressibleBytes(t, 64<<10), &UploadOption{
-		UploadUrl:   "http://slow-host:8080/1,deadbeef",
-		MaxAttempts: 1,
+		UploadUrl:    "http://slow-host:8080/1,deadbeef",
+		MaxAttempts:  1,
+		BodyDeadline: true,
 	})
 	if err != nil || result.RetryCount != 0 {
 		t.Fatalf("a slow commit after the body is sent must not be cut: result=%+v err=%v", result, err)
@@ -1279,8 +1281,9 @@ func TestUploadBodyDeadlineCutsSlowProvenHost(t *testing.T) {
 
 	start := time.Now()
 	_, err := uploader.UploadData(ctx, incompressibleBytes(t, size), &UploadOption{
-		UploadUrl:   "http://" + host + "/1,deadbeef",
-		MaxAttempts: 1,
+		UploadUrl:    "http://" + host + "/1,deadbeef",
+		MaxAttempts:  1,
+		BodyDeadline: true,
 	})
 	elapsed := time.Since(start)
 	if !errors.Is(err, ErrUploadStalled) {
@@ -1307,8 +1310,9 @@ func TestUploadBodyDeadlineRearmsOnConnectionReset(t *testing.T) {
 
 	start := time.Now()
 	_, err := uploader.UploadData(ctx, incompressibleBytes(t, 64<<10), &UploadOption{
-		UploadUrl:   "http://slow-host:8080/1,deadbeef",
-		MaxAttempts: 1,
+		UploadUrl:    "http://slow-host:8080/1,deadbeef",
+		MaxAttempts:  1,
+		BodyDeadline: true,
 	})
 	elapsed := time.Since(start)
 	if got := atomic.LoadInt32(&client.calls); got != 2 {
@@ -1319,6 +1323,32 @@ func TestUploadBodyDeadlineRearmsOnConnectionReset(t *testing.T) {
 	}
 	if elapsed >= time.Second {
 		t.Fatalf("inner retry was cut after %v, want under 1s", elapsed)
+	}
+}
+
+// The body deadline is opt-in: an upload that did not ask for it (mount,
+// filer.sync, filer.copy, UploadWithRetry) keeps today's watchdog-only
+// behaviour, so a body trickling far below the deadline's rate to an unproven
+// host — where no watchdog arms — runs to completion.
+func TestUploadWithoutBodyDeadlineIsNotCut(t *testing.T) {
+	setUploadBodyMinWait(t, 20*time.Millisecond)
+
+	client := &tricklingHTTPClient{chunk: 1 << 10, interval: 10 * time.Millisecond}
+	uploader := newUploader(client)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	result, err := uploader.UploadData(ctx, incompressibleBytes(t, 16<<10), &UploadOption{
+		UploadUrl:   "http://slow-host:8080/1,deadbeef",
+		MaxAttempts: 1,
+	})
+	elapsed := time.Since(start)
+	if err != nil || result.RetryCount != 0 {
+		t.Fatalf("an opted-out trickle must not be cut: result=%+v err=%v after %v", result, err, elapsed)
+	}
+	if deadline := uploadBodyDeadline(16 << 10); elapsed <= deadline {
+		t.Fatalf("test setup: the trickle took %v, must outlast the %v deadline it would get opted in", elapsed, deadline)
 	}
 }
 
@@ -1350,7 +1380,7 @@ func TestUploadBodyDeadlineStallsEveryFanOutAttempt(t *testing.T) {
 			if tc.proven {
 				markHostFast(uploader, host)
 			}
-			option := &UploadOption{UploadUrl: fmt.Sprintf("http://%s/3,01637037d6?type=replicate&%s=%s", host, ReplicateSourceParam, ReplicateSourceClient)}
+			option := &UploadOption{UploadUrl: fmt.Sprintf("http://%s/3,01637037d6?type=replicate&%s=%s", host, ReplicateSourceParam, ReplicateSourceClient), BodyDeadline: true}
 			prepared, err := prepareUploadData(incompressibleBytes(t, 64<<10), option)
 			if err != nil {
 				t.Fatal(err)
