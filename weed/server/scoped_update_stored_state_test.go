@@ -170,6 +170,30 @@ func assertScopedEntryUnchanged(t *testing.T, run scopedEntryRun, want *filer.En
 	}
 }
 
+func TestScopedReplacementsKeepRemoteRenameSourceFilerOwned(t *testing.T) {
+	for _, create := range []bool{false, true} {
+		t.Run(map[bool]string{false: "update", true: "create"}[create], func(t *testing.T) {
+			const name = "remote-rename.txt"
+			initial := newFileEntry(scopeJoin(aliceWS, name), 1)
+			requested := &filer_pb.Entry{
+				Name:       name,
+				Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
+				Content:    []byte("new"),
+				Extended:   map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("/buckets/t1/other-source")},
+			}
+			execute := runScopedUpdateState
+			if create {
+				execute = runScopedCreateState
+			}
+			run := execute(t, initial, requested, nil)
+			if status.Code(run.err) != codes.PermissionDenied || run.called {
+				t.Fatalf("err=%v called=%v, want admission PermissionDenied", run.err, run.called)
+			}
+			assertScopedEntryUnchanged(t, run, initial)
+		})
+	}
+}
+
 func provenUpdateEntry(name string, chunks ...*filer_pb.FileChunk) *filer_pb.Entry {
 	return &filer_pb.Entry{
 		Name:       name,

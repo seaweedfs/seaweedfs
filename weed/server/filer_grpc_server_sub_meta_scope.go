@@ -140,6 +140,7 @@ func (s scopedMetadataStream) send(resp *filer_pb.SubscribeMetadataResponse, sen
 		scoped = scopeMetadataResponse(resp, s.scope.Prefixes)
 	}
 	if scoped != nil {
+		scoped = scopeRedactMetadataResponse(scoped)
 		if err := send(scoped); err != nil {
 			return err
 		}

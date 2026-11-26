@@ -304,13 +304,56 @@ func (sc *scope) checkProtectedPath(method, p string, descendants bool) error {
 	return nil
 }
 
+// scopeEntryEqualRefusal keeps a scoped client from guessing the hidden
+// filer-owned state of a pending remote rename. The caller supplies the
+// stored extended attributes so admission and the locked handler check can
+// share the same rule without changing the global comparator.
+func scopeEntryEqualRefusal(ctx context.Context, condition *filer_pb.WriteCondition, extended map[string][]byte) error {
+	if !scopeKeepOnly(ctx) {
+		return nil
+	}
+	if _, marked := extended[filer.ExtRemoteRenameSourceKey]; !marked {
+		return nil
+	}
+	if scopeHasEntryEqual(condition) {
+		return status.Error(codes.FailedPrecondition, "filer: scoped IF_ENTRY_EQUAL cannot be used while a remote rename is pending")
+	}
+	return nil
+}
+
+// scopeNamesRemoteRenameSource reports a condition or expected attribute that
+// compares against the hidden remote rename source.
+func scopeNamesRemoteRenameSource(condition *filer_pb.WriteCondition, expectedExtended map[string][]byte) bool {
+	if _, ok := expectedExtended[filer.ExtRemoteRenameSourceKey]; ok {
+		return true
+	}
+	for _, clause := range condition.GetClauses() {
+		if clause.GetExtKey() == filer.ExtRemoteRenameSourceKey || clause.GetGateKey() == filer.ExtRemoteRenameSourceKey {
+			return true
+		}
+	}
+	return false
+}
+
+func scopeHasEntryEqual(condition *filer_pb.WriteCondition) bool {
+	for _, clause := range condition.GetClauses() {
+		if clause != nil && clause.GetKind() == filer_pb.WriteCondition_IF_ENTRY_EQUAL {
+			return true
+		}
+	}
+	return false
+}
+
 // checkClientEntry admits retained chunks or chunks with valid assignment proofs.
 // A hard-link id may be retained there, or a fresh id may be introduced by an
 // update of an existing unlinked entry. Attaching another path's id is refused.
 // Client signatures stay allowed so mounts can filter their own events.
-func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method, p string, e *filer_pb.Entry, chunkAuth map[string]string, allowNewHardLink bool) error {
+func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method, p string, e *filer_pb.Entry, condition *filer_pb.WriteCondition, chunkAuth map[string]string, allowNewHardLink bool) error {
 	if err := scopeCheckEntryShape(e); err != nil {
 		return sc.deny(method, err.Error())
+	}
+	if _, ok := e.GetExtended()[filer.ExtRemoteRenameSourceKey]; ok {
+		return sc.deny(method, "remote rename source is filer-owned")
 	}
 	if err := sc.checkProtectedPath(method, p, false); err != nil {
 		return err
@@ -329,6 +372,9 @@ func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method
 		}
 		if err := scopeWritesSharedHardLink(stored, e); err != nil {
 			return sc.deny(method, err.Error())
+		}
+		if err := scopeEntryEqualRefusal(ctx, condition, stored.GetExtended()); err != nil {
+			return err
 		}
 		return nil
 	}
@@ -349,6 +395,11 @@ func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method
 			if err := scopeCheckAppendState(stored, e.GetChunks()); err != nil {
 				return sc.deny(method, err.Error())
 			}
+		}
+	}
+	if scopeHasEntryEqual(condition) {
+		if err := load(); err != nil {
+			return err
 		}
 	}
 
@@ -381,6 +432,9 @@ func (s *filerGrpcScope) checkCreate(ctx context.Context, sc *scope, m string, r
 	if req.GetIsFromOtherCluster() || req.GetIsMoved() {
 		return sc.deny(m, "is_from_other_cluster and is_moved are not allowed")
 	}
+	if scopeNamesRemoteRenameSource(req.GetCondition(), nil) {
+		return sc.deny(m, "remote rename source is filer-owned")
+	}
 	p, err := sc.checkPath(m, req.GetDirectory(), req.GetEntry().GetName(), true)
 	if err != nil {
 		return err
@@ -390,7 +444,10 @@ func (s *filerGrpcScope) checkCreate(ctx context.Context, sc *scope, m string, r
 			return err
 		}
 	}
-	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), req.GetChunkAuth(), false)
+	// CreateEntry reports precondition refusals in its coded response, also on
+	// StreamMutateEntry. Leave this check to the locked handler so mount clients
+	// recognize the verdict and fence writeback publication.
+	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), nil, req.GetChunkAuth(), false)
 }
 
 func (s *filerGrpcScope) checkUpdate(ctx context.Context, sc *scope, m string, req *filer_pb.UpdateEntryRequest) error {
@@ -400,11 +457,14 @@ func (s *filerGrpcScope) checkUpdate(ctx context.Context, sc *scope, m string, r
 	if req.GetIsFromOtherCluster() || req.GetIsMoved() {
 		return sc.deny(m, "is_from_other_cluster and is_moved are not allowed")
 	}
+	if scopeNamesRemoteRenameSource(req.GetCondition(), req.GetExpectedExtended()) {
+		return sc.deny(m, "remote rename source is filer-owned")
+	}
 	p, err := sc.checkPath(m, req.GetDirectory(), req.GetEntry().GetName(), true)
 	if err != nil {
 		return err
 	}
-	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), req.GetChunkAuth(), true)
+	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), req.GetCondition(), req.GetChunkAuth(), true)
 }
 
 func (s *filerGrpcScope) checkAppend(ctx context.Context, sc *scope, m string, req *filer_pb.AppendToEntryRequest) error {
@@ -415,7 +475,7 @@ func (s *filerGrpcScope) checkAppend(ctx context.Context, sc *scope, m string, r
 	if err := s.checkAncestors(ctx, sc, m, p); err != nil {
 		return err
 	}
-	return s.checkClientEntry(ctx, sc, m, p, &filer_pb.Entry{Name: req.GetEntryName(), Chunks: req.GetChunks()}, req.GetChunkAuth(), false)
+	return s.checkClientEntry(ctx, sc, m, p, &filer_pb.Entry{Name: req.GetEntryName(), Chunks: req.GetChunks()}, nil, req.GetChunkAuth(), false)
 }
 
 // checkAncestors refuses a write at p that would make an ancestor outside the
@@ -443,6 +503,9 @@ func (s *filerGrpcScope) checkAncestors(ctx context.Context, sc *scope, m, p str
 func (sc *scope) checkDelete(m string, req *filer_pb.DeleteEntryRequest) error {
 	if req.GetIsFromOtherCluster() || req.GetIsMoved() {
 		return sc.deny(m, "is_from_other_cluster and is_moved are not allowed")
+	}
+	if scopeNamesRemoteRenameSource(nil, req.GetExpectedExtended()) {
+		return sc.deny(m, "remote rename source is filer-owned")
 	}
 	p, err := sc.checkPath(m, req.GetDirectory(), req.GetName(), true)
 	if err != nil {
@@ -542,7 +605,11 @@ func (s *filerGrpcScope) unary(ctx context.Context, req any, info *grpc.UnarySer
 	if !ok || reflect.TypeOf(req) != expected {
 		return nil, sc.deny(info.FullMethod, "not available to a scoped token")
 	}
-	return s.unaryScoped(s.withWriteAuthority(ctx, sc), sc, req, handler)
+	resp, err := s.unaryScoped(s.withWriteAuthority(ctx, sc), sc, req, handler)
+	if err != nil {
+		return resp, err
+	}
+	return scopeRedactResponse(resp), nil
 }
 
 // isScopeFilerConf reports whether (dir, name) is the filer's per-path config

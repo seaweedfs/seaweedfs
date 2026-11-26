@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -49,6 +50,52 @@ func TestScopeRejectsMovedMutations(t *testing.T) {
 		_, err := c.PosixLock(scopeCtx(t), &filer_pb.PosixLockRequest{
 			Key:          scopePosixLockKeyPrefix + aliceWS + "/file",
 			CoolingProbe: true,
+		})
+		return err
+	})
+}
+
+func TestScopeRejectsConditionsOnRemoteRenameSource(t *testing.T) {
+	h := newScopeHarness(t)
+	c := h.client(scopedToken("alice", time.Hour, []string{aliceWS}, nil))
+	guess := []byte("/buckets/other/file")
+	notEqual := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+		Kind: filer_pb.WriteCondition_IF_EXTENDED_NOT_EQUAL, ExtKey: filer.ExtRemoteRenameSourceKey, ExtValue: string(guess),
+	}}}
+
+	expectScopeDenied(t, h, "CreateEntry", "create conditioned on the marker", func() error {
+		_, err := c.CreateEntry(scopeCtx(t), &filer_pb.CreateEntryRequest{
+			Directory: aliceWS, Entry: &filer_pb.Entry{Name: "file"}, Condition: notEqual,
+		})
+		return err
+	})
+	expectScopeDenied(t, h, "UpdateEntry", "update conditioned on the marker", func() error {
+		_, err := c.UpdateEntry(scopeCtx(t), &filer_pb.UpdateEntryRequest{
+			Directory: aliceWS, Entry: &filer_pb.Entry{Name: "file"}, Condition: notEqual,
+		})
+		return err
+	})
+	expectScopeDenied(t, h, "UpdateEntry", "update gated on the marker", func() error {
+		_, err := c.UpdateEntry(scopeCtx(t), &filer_pb.UpdateEntryRequest{
+			Directory: aliceWS, Entry: &filer_pb.Entry{Name: "file"},
+			Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+				Kind: filer_pb.WriteCondition_IF_EXTENDED_TIME_ELAPSED, ExtKey: "client.expiry",
+				GateKey: filer.ExtRemoteRenameSourceKey, GateValue: string(guess),
+			}}},
+		})
+		return err
+	})
+	expectScopeDenied(t, h, "UpdateEntry", "update expecting the marker", func() error {
+		_, err := c.UpdateEntry(scopeCtx(t), &filer_pb.UpdateEntryRequest{
+			Directory: aliceWS, Entry: &filer_pb.Entry{Name: "file"},
+			ExpectedExtended: map[string][]byte{filer.ExtRemoteRenameSourceKey: guess},
+		})
+		return err
+	})
+	expectScopeDenied(t, h, "DeleteEntry", "delete expecting the marker", func() error {
+		_, err := c.DeleteEntry(scopeCtx(t), &filer_pb.DeleteEntryRequest{
+			Directory: aliceWS, Name: "file",
+			ExpectedExtended: map[string][]byte{filer.ExtRemoteRenameSourceKey: guess},
 		})
 		return err
 	})

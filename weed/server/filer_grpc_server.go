@@ -286,6 +286,16 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		if findErr == filer_pb.ErrNotFound {
 			current = nil
 		}
+		var currentExtended map[string][]byte
+		if current != nil {
+			currentExtended = current.Extended
+		}
+		if refusal := scopeEntryEqualRefusal(ctx, req.Condition, currentExtended); refusal != nil {
+			return &filer_pb.CreateEntryResponse{
+				Error:     status.Convert(refusal).Message(),
+				ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED,
+			}, nil
+		}
 		if conditionIsSet(req.Condition) && !writeConditionSatisfied(req.Condition, current) {
 			glog.V(3).InfofCtx(ctx, "CreateEntry %s: precondition failed: %v", fullpath, req.Condition)
 			return &filer_pb.CreateEntryResponse{
@@ -1016,6 +1026,9 @@ func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 			return fmt.Errorf("not found %s: %w", fullpath, err)
 		}
 		if refusal = validateUpdateEntryPreconditions(entry, req.ExpectedExtended); refusal != nil {
+			return nil
+		}
+		if refusal = scopeEntryEqualRefusal(ctx, req.Condition, entry.Extended); refusal != nil {
 			return nil
 		}
 		if conditionIsSet(req.Condition) && !writeConditionSatisfied(req.Condition, entry) {
