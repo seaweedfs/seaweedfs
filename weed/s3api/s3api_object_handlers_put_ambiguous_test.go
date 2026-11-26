@@ -51,6 +51,13 @@ type fakeVolumeServer struct {
 	// an over-budget volume server does; uploads counts the POSTs.
 	uploadStatus int
 	uploads      int
+	// holdUploads makes an upload read its body, then wait for the request to
+	// be cancelled; uploadsHeld and uploadsCancelled count them. gotUpload is
+	// signalled (once per held upload) when the body has been read.
+	holdUploads      bool
+	uploadsHeld      int
+	uploadsCancelled int
+	gotUpload        chan struct{}
 }
 
 func (f *fakeVolumeServer) BatchDelete(_ context.Context, req *volume_server_pb.BatchDeleteRequest) (*volume_server_pb.BatchDeleteResponse, error) {
@@ -122,6 +129,23 @@ func startFakeVolumeServer(t *testing.T) *fakeVolumeServer {
 			return
 		}
 		data, _ := io.ReadAll(r.Body)
+		v.mu.Lock()
+		hold := v.holdUploads && r.Method == http.MethodPost
+		if hold {
+			v.uploadsHeld++
+		}
+		v.mu.Unlock()
+		if hold {
+			select {
+			case v.gotUpload <- struct{}{}:
+			default:
+			}
+			<-r.Context().Done()
+			v.mu.Lock()
+			v.uploadsCancelled++
+			v.mu.Unlock()
+			return
+		}
 		v.mu.Lock()
 		v.stored[fid] = data
 		v.mu.Unlock()
@@ -1428,5 +1452,60 @@ func TestPutToFilerVolumeOverloadAnswersSlowDown(t *testing.T) {
 	volume.mu.Unlock()
 	if uploads != 2 {
 		t.Fatalf("volume saw %d upload POSTs, want 2 (one per assignment)", uploads)
+	}
+}
+
+// The client going away must stop the chunk uploads: they follow the request
+// context instead of running on, holding buffers, until a volume times out.
+func TestPutToFilerClientGoneCancelsChunkUploads(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	volume.mu.Lock()
+	volume.holdUploads = true
+	volume.gotUpload = make(chan struct{}, 1)
+	volume.mu.Unlock()
+	filerImpl := &ambiguousPutFiler{volume: volume, entries: map[string]*filer_pb.Entry{}, apply: true}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := httptest.NewRequest(http.MethodPut, "/b/o", nil).WithContext(ctx)
+
+	type result struct {
+		code s3err.ErrorCode
+	}
+	done := make(chan result, 1)
+	go func() {
+		_, code, _ := s3a.putToFiler(r, "/buckets/b/o", strings.NewReader("hello world"), "b", "o", 1, 0, nil, false, "")
+		done <- result{code}
+	}()
+
+	select {
+	case <-volume.gotUpload:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the volume never received the chunk upload")
+	}
+	time.AfterFunc(100*time.Millisecond, cancel)
+
+	select {
+	case res := <-done:
+		if res.code != s3err.ErrClientDisconnected {
+			t.Fatalf("putToFiler returned %v, want ErrClientDisconnected", res.code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("putToFiler kept running after the client went away")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		volume.mu.Lock()
+		cancelled := volume.uploadsCancelled
+		volume.mu.Unlock()
+		if cancelled > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the volume never saw the upload being cancelled")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

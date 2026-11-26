@@ -737,8 +737,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// Create assign function for chunked upload
 	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*operation.VolumeAssignRequest, *operation.AssignResult, error) {
 		var assignResult *filer_pb.AssignVolumeResponse
+		// ctx follows the client now, so bound the call itself too.
+		assignCtx, assignCancel := context.WithTimeout(ctx, s3AssignVolumeTimeout)
+		defer assignCancel()
 		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			resp, err := client.AssignVolume(ctx, &filer_pb.AssignVolumeRequest{
+			resp, err := client.AssignVolume(assignCtx, &filer_pb.AssignVolumeRequest{
 				Count:            int32(count),
 				Replication:      "",
 				Collection:       collection,
@@ -781,9 +784,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	// Upload with auto-chunking
-	// Use context.Background() to ensure chunk uploads complete even if HTTP request is cancelled
-	// This prevents partial uploads and data corruption
-	chunkResult, err := stages.upload(context.Background(), dataReader, &operation.ChunkedUploadOption{
+	// Chunk uploads follow the request context: when the client goes away the
+	// uploads stop and release their buffers. Orphan cleanup below and the
+	// metadata commit later run on context.Background(), so an aborted upload
+	// still has its already-written chunks deleted and a commit in flight is
+	// never cut short.
+	chunkResult, err := stages.upload(r.Context(), dataReader, &operation.ChunkedUploadOption{
 		ChunkSize:       chunkSize,
 		SmallFileLimit:  smallFileLimit,
 		Collection:      collection,
@@ -795,7 +801,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		LookupJwtFunc:   s3a.lookupVolumeJwt,
 	})
 	if err != nil {
-		glog.Errorf("putToFiler: chunked upload failed: %v", err)
+		if r.Context().Err() != nil {
+			glog.V(1).Infof("putToFiler: chunked upload stopped, client gone: %v", err)
+		} else {
+			glog.Errorf("putToFiler: chunked upload failed: %v", err)
+		}
 
 		// CRITICAL: Cleanup orphaned chunks before returning error
 		// UploadReaderInChunks now returns partial results even on error,
@@ -1890,6 +1900,10 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 	}
 }
 
+// s3AssignVolumeTimeout bounds one AssignVolume RPC; it mirrors operation's
+// unexported assignVolumeTimeout.
+const s3AssignVolumeTimeout = 30 * time.Second
+
 // mapChunkedUploadErrorToS3Error classifies a failed streaming upload. A truncated
 // request body (client abort or reverse-proxy timeout) is a request error, so report
 // IncompleteBody (400) rather than a 500 a reverse proxy would relay as a confusing
@@ -1900,8 +1914,10 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 // peer that went away, and a body that arrived short while the peer was still there.
 // Both surface as the same read error, so without this they are indistinguishable in
 // logs even though they point at opposite causes — a network path versus a client.
-// The upload itself deliberately runs on a background context, so cancellation of
-// reqCtx races the read error; a missed signal degrades to IncompleteBody as before.
+// The chunk uploads run on reqCtx, so once the peer is gone any upload error
+// (including a gRPC Canceled or a transport "context canceled") is the client
+// going away, not a fault; that is checked first. Orphan cleanup and the
+// metadata commit do not use reqCtx.
 //
 // This reads cancellation as "the peer is gone", which is what net/http means by it
 // today: nothing on the S3 request path cancels reqCtx for its own reasons. Anything
@@ -1913,6 +1929,8 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 // quota) is AccessDenied, as in filerErrorToS3Error and mapCopyErrorToS3Error.
 func mapChunkedUploadErrorToS3Error(reqCtx context.Context, err error) s3err.ErrorCode {
 	switch {
+	case errors.Is(reqCtx.Err(), context.Canceled):
+		return s3err.ErrClientDisconnected
 	case errors.Is(err, weed_server.ErrReadOnly):
 		return s3err.ErrAccessDenied
 	case strings.Contains(err.Error(), s3err.ErrMsgContentSha256Mismatch):
