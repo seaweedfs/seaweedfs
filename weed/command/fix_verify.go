@@ -44,7 +44,10 @@ func printVerifySummary(volumeId int64, sum *datVerifySummary, took time.Duratio
 // flags, name, mime, last-modified, ttl and pairs.
 const maxNonDataLen = 1 + 1 + 255 + 1 + 255 + needle.LastModifiedBytesLength + needle.TtlBytesLength + 2 + 65535
 
-var errZeroNeedleId = errors.New("zero needle id")
+var (
+	errZeroNeedleId = errors.New("zero needle id")
+	errDatRead      = errors.New("read .dat")
+)
 
 type datVerifyOptions struct {
 	maxNeedleSize int64
@@ -138,13 +141,19 @@ func (w *datWindow) readAt(p []byte, off int64) error {
 		return io.ErrUnexpectedEOF
 	}
 	if len(p) > len(w.buf) {
-		_, err := w.f.ReadAt(p, off)
-		return err
+		n, err := w.f.ReadAt(p, off)
+		switch {
+		case n == len(p):
+			return nil
+		case err == nil || err == io.EOF:
+			return io.ErrUnexpectedEOF
+		}
+		return fmt.Errorf("%w at %d: %w", errDatRead, off, err)
 	}
 	if off < w.off || off+int64(len(p)) > w.off+int64(w.n) {
 		n, err := w.f.ReadAt(w.buf, off)
 		if err != nil && err != io.EOF {
-			return err
+			return fmt.Errorf("%w at %d: %w", errDatRead, off, err)
 		}
 		w.off, w.n = off, n
 		if off+int64(len(p)) > w.off+int64(w.n) {
@@ -561,6 +570,9 @@ func verifyDatFileWith(datName string, vid needle.VolumeId, opts datVerifyOption
 			}
 			pos += disk
 			continue
+		}
+		if errors.Is(err, errDatRead) {
+			return nil, nil, err
 		}
 		next, ferr := s.findNext(pos + types.NeedlePaddingSize)
 		if ferr != nil {

@@ -495,3 +495,23 @@ func TestVerifyImplausibleTimestampIsNotResyncBaseline(t *testing.T) {
 		t.Fatalf("the implausible timestamp was not reported: %+v", anomalies)
 	}
 }
+
+// A read error at a known record boundary is not damage in the data: it must
+// stop the repair instead of resynchronising past the unread record.
+func TestVerifyReadErrorAtBoundaryIsReported(t *testing.T) {
+	datName, layout := buildVerifyFixture(t, 5)
+	raw, err := os.Open(datName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	st, _ := raw.Stat()
+	r := failingReaderAt{r: raw, failAt: layout[2].offset + 4}
+	opts := datVerifyOptions{window: 64 << 10, zeroWindow: 512}
+	opts.normalize()
+	s := &datVerifier{f: r, vid: 1, version: needle.GetCurrentVersion(), base: 8, size: st.Size(), opts: opts,
+		win: &datWindow{f: r, size: st.Size(), buf: make([]byte, opts.window)}}
+	if _, _, err := s.readNeedleAt(layout[2].offset, false); !errors.Is(err, errDatRead) || !errors.Is(err, syscall.EIO) {
+		t.Fatalf("readNeedleAt = %v, want the read error", err)
+	}
+}
