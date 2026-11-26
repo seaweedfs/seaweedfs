@@ -788,6 +788,26 @@ fn replica_request(
         .timeout(replica_request_timeout(body_len))
 }
 
+/// The key and file id a write signs each replica forward's JWT with. Reading
+/// the body can outlast the incoming JWT, so every forward gets a fresh one for
+/// the file id the request was already authorized for. Mirrors Go's
+/// `VolumeServer.replicaJwt`.
+struct ReplicaJwt {
+    signing_key: crate::security::SigningKey,
+    expires_after_sec: i64,
+    file_id: String,
+}
+
+/// `query` without the raw `jwt=` fields `extract_jwt` would read before the
+/// Authorization header.
+fn without_query_jwt(query: &str) -> String {
+    query
+        .split('&')
+        .filter(|field| !field.starts_with("jwt="))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
 /// Helper to synchronously replicate a request to peer volume servers.
 async fn do_replicated_request(
     state: &VolumeServerState,
@@ -797,6 +817,7 @@ async fn do_replicated_request(
     query: &str,
     headers: &axum::http::HeaderMap,
     body: Option<bytes::Bytes>,
+    replica_jwt: Option<&ReplicaJwt>,
 ) -> Result<(), String> {
     let locations = lookup_volume(
         state.outgoing_grpc_tls.as_ref(),
@@ -877,7 +898,12 @@ async fn do_replicated_request(
         if let Some(crc) = headers.get(CONTENT_CRC32C_HEADER) {
             req_builder = req_builder.header(CONTENT_CRC32C_HEADER, crc);
         }
-        if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
+        if let Some(jwt) = replica_jwt {
+            let token =
+                crate::security::gen_jwt(&jwt.signing_key, jwt.expires_after_sec, &jwt.file_id)
+                    .map_err(|e| format!("sign replica jwt: {}", e))?;
+            req_builder = req_builder.bearer_auth(token);
+        } else if let Some(auth) = headers.get(axum::http::header::AUTHORIZATION) {
             req_builder = req_builder.header(axum::http::header::AUTHORIZATION, auth);
         }
         for (name, value) in headers
@@ -3384,7 +3410,18 @@ pub async fn post_handler(
     let replication = if needs_replication {
         let state_clone = state.clone();
         let path_clone = path.clone();
-        let query_clone = query.clone();
+        let replica_jwt = {
+            let guard = state.guard.read().unwrap();
+            (!guard.signing_key.is_empty()).then(|| ReplicaJwt {
+                signing_key: guard.signing_key.clone(),
+                expires_after_sec: guard.expires_after_sec,
+                file_id: file_id.clone(),
+            })
+        };
+        let query_clone = match replica_jwt {
+            Some(_) => without_query_jwt(&query),
+            None => query.clone(),
+        };
         let mut overrides = vec![("ts", n.last_modified.to_string())];
         if let Some(t) = ttl.filter(|t| !t.is_empty()) {
             overrides.push(("ttl", t.to_string()));
@@ -3443,6 +3480,7 @@ pub async fn post_handler(
                 &override_query_fields(&query_clone, &overrides)?,
                 &replica_headers,
                 Some(replica_body),
+                replica_jwt.as_ref(),
             )
             .await
         }))
@@ -3824,6 +3862,7 @@ pub async fn delete_handler(
                         &del_query,
                         &headers,
                         None,
+                        None,
                     )
                     .await
                 {
@@ -3943,6 +3982,7 @@ pub async fn delete_handler(
                 &path,
                 &del_query,
                 &headers,
+                None,
                 None,
             )
             .await
@@ -5350,10 +5390,64 @@ mod tests {
                 "",
                 &axum::http::HeaderMap::new(),
                 None,
+                None,
             )
             .await;
             assert_eq!(sent.is_ok(), done, "{method}: {sent:?}");
         }
+    }
+
+    /// A write forward carries a JWT signed for it, not the incoming one, which
+    /// can expire while the body streams in.
+    #[tokio::test]
+    async fn test_replicated_write_forwards_a_fresh_jwt() {
+        use crate::security::{SigningKey, decode_jwt};
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let app = axum::Router::new().fallback(move |request: Request<Body>| {
+            let auths: Vec<String> = request
+                .headers()
+                .get_all(header::AUTHORIZATION)
+                .iter()
+                .map(|v| v.to_str().unwrap().to_string())
+                .collect();
+            let _ = sent.send((request.uri().query().unwrap_or("").to_string(), auths));
+            async { StatusCode::CREATED }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let peer = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let state = remote_manifest_state(&tmp, spawn_lookup(peer).await);
+        let key = SigningKey(b"replica-forward-key".to_vec());
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Bearer stale".parse().unwrap());
+        do_replicated_request(
+            &state,
+            1,
+            Method::POST,
+            "/1,01ab_1",
+            "ts=1",
+            &headers,
+            Some(bytes::Bytes::from_static(b"x")),
+            Some(&ReplicaJwt {
+                signing_key: key.clone(),
+                expires_after_sec: 10,
+                file_id: "1,01ab".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+        let (query, auths) = received.try_recv().expect("no forward");
+        assert_eq!(query, "ts=1&type=replicate");
+        assert_eq!(auths.len(), 1, "{auths:?}");
+        let token = auths[0].strip_prefix("Bearer ").unwrap();
+        let claims = decode_jwt(&key, token, &[]).unwrap();
+        assert_eq!(claims.fid.as_deref(), Some("1,01ab"));
+        assert!(claims.exp.is_some());
+        assert_eq!(
+            without_query_jwt("jwt=stale&%6Awt=x&ts=1&xjwt=y"),
+            "%6Awt=x&ts=1&xjwt=y"
+        );
     }
 
     /// The whole replicated write path, not only the request builder: the
@@ -5375,6 +5469,7 @@ mod tests {
             "",
             &axum::http::HeaderMap::new(),
             Some(body),
+            None,
         )
         .await;
         let took = started.elapsed();
