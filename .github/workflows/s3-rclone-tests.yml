@@ -1,0 +1,69 @@
+name: "S3 rclone fstests"
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/**'
+      - 'weed/server/**'
+      - 'weed/command/mini.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'test/s3/rclone_fstests/**'
+      - '.github/workflows/s3-rclone-tests.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/**'
+      - 'weed/server/**'
+      - 'weed/command/mini.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'test/s3/rclone_fstests/**'
+      - '.github/workflows/s3-rclone-tests.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
+
+permissions:
+  contents: read
+
+jobs:
+  s3-rclone-fstests:
+    name: rclone fstests (S3 backend)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+
+      - name: Test the result checker
+        working-directory: test/s3/rclone_fstests
+        run: python3 -m unittest -v test_check_results
+
+      - name: Run rclone fstests
+        working-directory: test/s3/rclone_fstests
+        run: make test
+
+      - name: Show server log on failure
+        if: failure()
+        working-directory: test/s3/rclone_fstests
+        run: tail -200 weed-test.log || true
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: s3-rclone-fstests-results
+          path: test/s3/rclone_fstests/results.jsonl
+          if-no-files-found: ignore
+          retention-days: 7
