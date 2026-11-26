@@ -2,6 +2,7 @@ package command
 
 import (
 	"crypto/rand"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -362,5 +363,36 @@ func TestVerifyDatFileNoFalsePositiveAfterDamagedLastHeader(t *testing.T) {
 	}
 	if sum.Tombstones != 1 || sum.TailGarbage || len(anomalies) != 1 {
 		t.Errorf("the delete record behind the damage must survive: tombstones=%d tail=%v anomalies=%+v", sum.Tombstones, sum.TailGarbage, anomalies)
+	}
+}
+
+// A retry after a failed truncation finds the first tail backup in place; it
+// keeps it and saves the tail again under a new name.
+func TestTruncateDatTailKeepsEarlierBackup(t *testing.T) {
+	datName, layout := buildVerifyFixture(t, 3)
+	cleanEnd := layout[3].offset + layout[3].disk
+	f, err := os.OpenFile(datName, os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Write([]byte("not a needle"))
+	f.Close()
+	first := fmt.Sprintf("%s.tail.%d.bak", datName, cleanEnd)
+	if err := os.WriteFile(first, []byte("earlier"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() {
+		if err := truncateDatTail(datName, cleanEnd); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if b, _ := os.ReadFile(first); string(b) != "earlier" {
+		t.Fatalf("the earlier backup was overwritten: %q", b)
+	}
+	if matches, _ := filepath.Glob(first + ".*"); len(matches) != 1 {
+		t.Fatalf("want a second backup next to %s, got %v", first, matches)
+	}
+	if st, _ := os.Stat(datName); st.Size() != cleanEnd {
+		t.Fatalf("size %d, want %d", st.Size(), cleanEnd)
 	}
 }

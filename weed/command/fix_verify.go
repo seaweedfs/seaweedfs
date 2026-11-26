@@ -630,7 +630,7 @@ func truncateDatTail(datName string, cleanEnd int64) error {
 		}
 	}
 	if nonZero {
-		bak := fmt.Sprintf("%s.tail.%d.bak", datName, cleanEnd)
+		bak := backupName(fmt.Sprintf("%s.tail.%d", datName, cleanEnd))
 		out, err := os.OpenFile(bak, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 		if err != nil {
 			return fmt.Errorf("create tail backup %s: %w", bak, err)
