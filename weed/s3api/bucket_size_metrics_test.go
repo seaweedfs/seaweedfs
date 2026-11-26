@@ -36,9 +36,6 @@ func TestCollectionInfoLogicalSize(t *testing.T) {
 	}
 }
 
-// TestBucketSizeMetricsTickWithoutLockDropsGauges checks that an instance
-// without the metrics lock drops the bucket gauges it set while it held the
-// lock, and that a tick with the lock leaves them to the collection.
 func TestBucketSizeMetricsTickWithoutLockDropsGauges(t *testing.T) {
 	gauges := map[string]*prometheus.GaugeVec{
 		"bucket_size_bytes":          stats.S3BucketSizeBytesGauge,

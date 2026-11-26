@@ -85,12 +85,8 @@ func (s3a *S3ApiServer) startBucketSizeMetricsLoop(ctx context.Context) {
 	}
 }
 
-// bucketSizeMetricsTick publishes the bucket size and quota gauges while this
-// instance holds the metrics lock, and drops them while it does not. Nothing
-// else clears them on an instance that lost the lock: bucketMetricTTLControl
-// only drops a bucket after 10 minutes without activity, and each request the
-// instance serves for the bucket counts as activity. Left alone, it would keep
-// exporting the values it collected last next to the new holder's.
+// bucketSizeMetricsTick drops the bucket gauges while this instance does not
+// hold the lock; otherwise it would keep exporting the values it last collected.
 func (s3a *S3ApiServer) bucketSizeMetricsTick(ctx context.Context, locked bool) {
 	if !locked {
 		stats.ResetBucketSizeMetrics()
