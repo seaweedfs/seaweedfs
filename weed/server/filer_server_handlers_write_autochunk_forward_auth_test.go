@@ -52,13 +52,21 @@ func TestSaveMetaDataHTTPForwardAuthFollowsRequireMode(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			var saveErr error
+			var uncommitted []*filer_pb.FileChunk
 			if tc.write == "append" {
-				_, saveErr, _ = c.fsA.saveMetaData(ctx, r, path.Name(), "", &operation.StorageOption{}, 4, nil, nil, 3, []byte("new"))
+				_, saveErr, uncommitted = c.fsA.saveMetaData(ctx, r, path.Name(), "", &operation.StorageOption{}, 4, nil, nil, 3, []byte("new"))
 			} else {
-				_, saveErr, _ = c.fsA.saveMetaData(ctx, r, path.Name(), "", &operation.StorageOption{}, 4, nil, []*filer_pb.FileChunk{{FileId: "3,new", Offset: 3, Size: 3}}, 6, nil)
+				_, saveErr, uncommitted = c.fsA.saveMetaData(ctx, r, path.Name(), "", &operation.StorageOption{}, 4, nil, []*filer_pb.FileChunk{{FileId: "3,new", Offset: 3, Size: 3}}, 6, nil)
 			}
 			if got := status.Code(saveErr); got != tc.wantError {
 				t.Fatalf("saveMetaData error code = %v, want %v (error=%v)", got, tc.wantError, saveErr)
+			}
+			if tc.write == "offset" && tc.wantError != codes.OK {
+				if len(uncommitted) != 1 || uncommitted[0].GetFileIdString() != "3,new" {
+					t.Fatalf("refused offset write uncommitted chunks = %v, want only the new chunk", uncommitted)
+				}
+			} else if len(uncommitted) != 0 {
+				t.Fatalf("uncommitted chunks = %v, want none", uncommitted)
 			}
 
 			stored, err := c.store.FindEntry(ctx, path)
