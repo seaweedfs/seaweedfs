@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -100,6 +101,24 @@ func TestUploadLimitRejectsWith503AfterTimeout(t *testing.T) {
 			require.Zero(t, body.read.Load(), "rejected upload must not read the body")
 			require.Equal(t, int64(10), atomic.LoadInt64(&vs.inFlightUploadDataSize))
 		})
+	}
+}
+
+func TestUploadLimitRefusesASizeTheCounterCannotHold(t *testing.T) {
+	for _, target := range []string{
+		"/1,0123456789abcdef?type=replicate",
+		"/1,0123456789abcdef?type=replicate&src=client",
+	} {
+		vs := newUploadLimitVolumeServer(10, 4<<20, 50*time.Millisecond)
+		r, body := uploadRequest(context.Background(), target, math.MaxInt64)
+		w := httptest.NewRecorder()
+
+		ok, _ := admitUpload(vs, w, r)
+
+		require.False(t, ok, target)
+		require.Equal(t, http.StatusServiceUnavailable, w.Code, target)
+		require.Zero(t, body.read.Load(), target)
+		require.Equal(t, int64(4<<20), atomic.LoadInt64(&vs.inFlightUploadDataSize), target)
 	}
 }
 

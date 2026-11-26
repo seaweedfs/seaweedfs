@@ -2,7 +2,9 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -153,6 +155,10 @@ const volumeClientUploadWaitCap = 5 * time.Second
 // drain than a new connection is to dial, so they keep the pooled connection.
 const uploadRejectCloseThreshold = 256 << 10
 
+// errUploadUncountable refuses even a replica forward: its size would wrap
+// inFlightUploadDataSize negative and let later uploads past admission.
+var errUploadUncountable = errors.New("upload size overflows the in-flight upload counter")
+
 // uploadCharge returns the bytes an upload reserves against
 // concurrentUploadLimit. A known length is charged as-is. An unknown length
 // (chunked transfer) counts as one chunk, fileSizeLimitBytes, but at most half
@@ -222,7 +228,12 @@ func (vs *VolumeServer) waitForUploadSlot(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if err == nil {
-		inFlight = atomic.AddInt64(&vs.inFlightUploadDataSize, charged)
+		inFlight = atomic.LoadInt64(&vs.inFlightUploadDataSize)
+		if charged > math.MaxInt64-inFlight {
+			err = errUploadUncountable
+		} else {
+			inFlight = atomic.AddInt64(&vs.inFlightUploadDataSize, charged)
+		}
 	}
 	// Set under the lock, so a concurrent release cannot leave the gauge on
 	// an older value than the counter.
@@ -244,8 +255,10 @@ func (vs *VolumeServer) waitForUploadSlot(w http.ResponseWriter, r *http.Request
 	if r.ProtoMajor == 1 && (r.ContentLength < 0 || r.ContentLength > uploadRejectCloseThreshold) {
 		w.Header().Set("Connection", "close")
 	}
-	err = fmt.Errorf("reject because inflight upload data %d + %d > %d, and wait timeout",
-		inFlight, charged, limit)
+	if err != errUploadUncountable {
+		err = fmt.Errorf("reject because inflight upload data %d + %d > %d, and wait timeout",
+			inFlight, charged, limit)
+	}
 	glog.V(1).Infof("too many requests: %v", err)
 	writeJsonError(w, r, http.StatusServiceUnavailable, err)
 	return false
