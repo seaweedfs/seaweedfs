@@ -688,6 +688,28 @@ func (t *countingTransport) RoundTrip(request *http.Request) (*http.Response, er
 	return t.next.RoundTrip(request)
 }
 
+// TestOperationPollRetriesAFailedPoll: a throttled or failed poll does not end
+// the wait while the operation is still running on the service.
+func TestOperationPollRetriesAFailedPoll(t *testing.T) {
+	disk := newFakeDisk(t)
+	disk.put("/root/bucket/a.txt", &fakeNode{data: []byte("hello")})
+	disk.deleteAccepted = true
+	disk.ops["del"] = 1
+	disk.unavailableOps = 2
+	client, _ := newTestClient(t, disk)
+
+	if err := client.DeleteFile(testLocation("bucket", "/a.txt")); err != nil {
+		t.Fatalf("delete with a failed poll: %v", err)
+	}
+
+	disk.put("/root/bucket/b.txt", &fakeNode{data: []byte("hello")})
+	disk.unavailableOps = 100
+	var apiErr *apiError
+	if err := client.DeleteFile(testLocation("bucket", "/b.txt")); !errors.As(err, &apiErr) || apiErr.Status != http.StatusServiceUnavailable {
+		t.Fatalf("err = %v, want the 503 once the retries run out", err)
+	}
+}
+
 // TestOperationPollStopsOnRepeatedUnauthorized: a token the API keeps
 // rejecting while an operation is polled ends the wait with the 401 instead of
 // polling in a tight loop until the operation deadline.

@@ -52,6 +52,7 @@ type fakeDisk struct {
 	// DiskNotFoundError instead of the API's 409 DiskPathDoesntExistsError
 	missingParentNotFound bool
 	unauthorizedOps       bool // operation polls answer 401
+	unavailableOps        int  // operation polls answered 503 before the status
 	lockedUploadLinks     int  // upload-link requests answered 423 before success
 	copyKeepsDestination  bool // a copy onto an existing file reports success but keeps it
 	failCopy              bool // copies answer 500
@@ -507,6 +508,11 @@ func (d *fakeDisk) handleOperation(w http.ResponseWriter, r *http.Request) {
 	defer d.mu.Unlock()
 	if d.unauthorizedOps {
 		writeAPIError(w, http.StatusUnauthorized, "UnauthorizedError", "Invalid token.")
+		return
+	}
+	if d.unavailableOps > 0 {
+		d.unavailableOps--
+		writeAPIError(w, http.StatusServiceUnavailable, "", "")
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/v1/disk/operations/")

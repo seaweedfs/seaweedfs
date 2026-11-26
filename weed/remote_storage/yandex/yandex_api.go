@@ -668,15 +668,36 @@ var errOperationPending = errors.New("yandex operation in progress")
 // pollOperation asks once for an operation's status, within one request
 // deadline. A 401 refreshes the token once per wait, as doJSON does; a token
 // the API keeps rejecting ends the wait instead of polling without a pause.
+// A failed poll is retried like a failed request: the operation keeps running
+// on the service, and a long wait should not end on one throttled answer or
+// dropped connection.
 func (c *apiClient) pollOperation(waitCtx context.Context, href string, refreshed *bool) error {
+	retries := 0
 	for {
 		pollCtx, cancel := context.WithTimeout(waitCtx, c.requestTimeout)
 		err := c.pollOnce(pollCtx, href, refreshed)
 		cancel()
-		if err != errRetryPoll {
-			return err
+		if err == errRetryPoll {
+			continue
 		}
+		if retries < c.maxRetries && waitCtx.Err() == nil && retryablePollError(err) {
+			retries++
+			if sleepErr := sleep(waitCtx, c.backoff(retries)); sleepErr != nil {
+				return fmt.Errorf("wait for yandex operation: %w", sleepErr)
+			}
+			continue
+		}
+		return err
 	}
+}
+
+func retryablePollError(err error) bool {
+	var apiErr *apiError
+	if errors.As(err, &apiErr) {
+		return retryableStatus(apiErr.Status)
+	}
+	var urlErr *url.Error
+	return errors.As(err, &urlErr) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // errRetryPoll asks pollOperation to poll again at once, after a refresh.
