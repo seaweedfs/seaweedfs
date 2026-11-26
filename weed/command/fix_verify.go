@@ -330,7 +330,7 @@ func (s *datVerifier) chainReachesData(off int64) bool {
 		}
 		off += disk
 	}
-	return false
+	return off == s.size
 }
 
 func allZero(b []byte) bool {

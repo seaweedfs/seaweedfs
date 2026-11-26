@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -416,5 +417,42 @@ func TestVerifyInflatedSizeRejectedBeforeBodyRead(t *testing.T) {
 		if !seen[id] {
 			t.Fatalf("needle %d after the damaged size was not recovered: %v", id, seen)
 		}
+	}
+}
+
+// A v2 delete chain that reaches the end of the file on its last probe proves
+// itself just like a shorter one.
+func TestVerifyDeleteChainEndingAtLastProbe(t *testing.T) {
+	datName := buildVerifyFixtureVersion(t, 1, needle.Version2)
+	f, err := os.OpenFile(datName, os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	datBackend := backend.NewDiskFile(f)
+	var first int64 = -1
+	for i := 0; i < 17; i++ {
+		n := &needle.Needle{Id: types.Uint64ToNeedleId(uint64(100 + i))}
+		offset, _, _, err := n.Append(datBackend, needle.Version2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first < 0 {
+			first = int64(offset)
+		}
+	}
+	datBackend.Close()
+
+	raw, err := os.Open(datName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	st, _ := raw.Stat()
+	opts := datVerifyOptions{window: 64 << 10, zeroWindow: 512}
+	opts.normalize()
+	s := &datVerifier{f: raw, vid: 1, version: needle.Version2, base: 8, size: st.Size(), opts: opts,
+		win: &datWindow{f: raw, size: st.Size(), buf: make([]byte, opts.window)}}
+	if !s.chainReachesData(first + needle.GetActualSize(0, needle.Version2)) {
+		t.Fatalf("a delete chain of 16 records ending at the end of the file was rejected")
 	}
 }
