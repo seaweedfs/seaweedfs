@@ -244,8 +244,6 @@ func (vs *VolumeServer) waitForUploadSlot(w http.ResponseWriter, r *http.Request
 		return true
 	}
 
-	// The body of a rejected upload is never read.
-	r.Body = http.NoBody
 	if r.Context().Err() != nil {
 		glog.V(1).Infof("request cancelled from %s: %v", r.RemoteAddr, r.Context().Err())
 		writeJsonError(w, r, util.HttpStatusCancelled, r.Context().Err())
