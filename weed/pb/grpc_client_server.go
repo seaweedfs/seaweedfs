@@ -163,12 +163,27 @@ func ServeGrpcOnLocalSocket(grpcServer *grpc.Server, grpcPort int) {
 	if socketPath == "" {
 		return
 	}
-	listener := ListenOnLocalSocket(socketPath)
+	listener := listenOnLocalGrpcSocket(socketPath)
 	if listener == nil {
 		return
 	}
 	glog.V(0).Infof("gRPC also listening on Unix socket %s", socketPath)
 	go serveGrpcOnLocalListener(grpcServer, socketPath, listener)
+}
+
+// listenOnLocalGrpcSocket binds the socket for this process only: gRPC
+// servers trust their local socket callers as processes on this host.
+func listenOnLocalGrpcSocket(socketPath string) net.Listener {
+	listener := ListenOnLocalSocket(socketPath)
+	if listener == nil {
+		return nil
+	}
+	if err := os.Chmod(socketPath, 0600); err != nil {
+		glog.Errorf("Failed to restrict Unix socket %s: %v", socketPath, err)
+		listener.Close()
+		return nil
+	}
+	return listener
 }
 
 // localSocketCheckInterval is how often a served socket path is checked for
@@ -204,7 +219,7 @@ func serveGrpcOnLocalListener(grpcServer *grpc.Server, socketPath string, listen
 			}
 			// Bind before closing the old listener, so a failed bind is
 			// retried on the next check and shutdown still ends this loop.
-			replacement := ListenOnLocalSocket(socketPath)
+			replacement := listenOnLocalGrpcSocket(socketPath)
 			if replacement == nil {
 				continue
 			}

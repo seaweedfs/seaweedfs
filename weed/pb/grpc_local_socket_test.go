@@ -127,6 +127,39 @@ func TestServeGrpcOnLocalSocketRecreatesRemovedSocket(t *testing.T) {
 	}
 }
 
+func TestServeGrpcOnLocalSocketIsOwnerOnly(t *testing.T) {
+	isolateLocalGrpcSockets(t)
+	prevInterval := localSocketCheckInterval
+	localSocketCheckInterval = 10 * time.Millisecond
+	t.Cleanup(func() { localSocketCheckInterval = prevInterval })
+
+	grpcServer, port := startHealthGrpcServer(t)
+	socketPath := filepath.Join(localSocketDir(t), "grpc.sock")
+	RegisterLocalGrpcSocket("127.0.0.1", port, socketPath)
+	ServeGrpcOnLocalSocket(grpcServer, port)
+	waitForOwnerOnlySocket(t, socketPath)
+
+	if err := os.Remove(socketPath); err != nil {
+		t.Fatalf("remove socket: %v", err)
+	}
+	waitForOwnerOnlySocket(t, socketPath)
+}
+
+func waitForOwnerOnlySocket(t *testing.T, socketPath string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		info, err := os.Lstat(socketPath)
+		if err == nil && info.Mode()&os.ModeSocket != 0 && info.Mode().Perm() == 0600 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("socket %s is not owner-only: %v %v", socketPath, info, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func waitForSocketFile(t *testing.T, socketPath string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
