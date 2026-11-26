@@ -153,6 +153,9 @@ func DoMinusChunksByNeedleIdentity(as, bs []*filer_pb.FileChunk) (delta []*filer
 }
 
 func doMinusChunks(as, bs []*filer_pb.FileChunk, identity func(string) string) (delta []*filer_pb.FileChunk) {
+	if len(as) == 0 {
+		return nil
+	}
 
 	fileIds := make(map[string]bool)
 	for _, interval := range bs {
