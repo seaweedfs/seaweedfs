@@ -1323,40 +1323,90 @@ func TestUploadBodyDeadlineRearmsOnConnectionReset(t *testing.T) {
 }
 
 // The gateway fan-out writes each holder through retriedUploadData with its
-// default attempts. The first stall disarms the watchdog for the rest, but the
-// body deadline still bounds them, so a holder that trickles on every attempt
-// ends as a stall (S3 SlowDown), not a generic transport failure.
+// default attempts. A body deadline cut is back-pressure, not a wedged conn:
+// it goes straight back to the chunk loop, which decides on one reassign, so
+// a trickling holder is written once per assignment. A watchdog cut keeps its
+// same-holder retry on a fresh conn, and the body deadline then bounds that
+// retry — still ending as a reassignable stall (S3 SlowDown).
 func TestUploadBodyDeadlineStallsEveryFanOutAttempt(t *testing.T) {
 	setUploadBodyMinWait(t, 50*time.Millisecond)
 	origStall := uploadStallMinWait
 	uploadStallMinWait = 20 * time.Millisecond
 	t.Cleanup(func() { uploadStallMinWait = origStall })
 
-	const host = "holder:8080"
-	client := &tricklingHTTPClient{chunk: 1 << 10, interval: 20 * time.Millisecond}
-	uploader := newUploader(client)
-	markHostFast(uploader, host)
-	option := &UploadOption{UploadUrl: fmt.Sprintf("http://%s/3,01637037d6?type=replicate&%s=%s", host, ReplicateSourceParam, ReplicateSourceClient)}
-	prepared, err := prepareUploadData(incompressibleBytes(t, 64<<10), option)
-	if err != nil {
-		t.Fatal(err)
+	testCases := []struct {
+		name      string
+		proven    bool // the host carries a fast mark, so the watchdog arms first
+		wantCalls int32
+	}{
+		{name: "unproven holder: one call, cut at the deadline", proven: false, wantCalls: 1},
+		{name: "proven holder: watchdog cut retried once, then cut at the deadline", proven: true, wantCalls: 2},
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			const host = "holder:8080"
+			client := &tricklingHTTPClient{chunk: 1 << 10, interval: 20 * time.Millisecond}
+			uploader := newUploader(client)
+			if tc.proven {
+				markHostFast(uploader, host)
+			}
+			option := &UploadOption{UploadUrl: fmt.Sprintf("http://%s/3,01637037d6?type=replicate&%s=%s", host, ReplicateSourceParam, ReplicateSourceClient)}
+			prepared, err := prepareUploadData(incompressibleBytes(t, 64<<10), option)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
 
-	start := time.Now()
-	_, err = uploader.retriedUploadData(ctx, prepared, option)
-	elapsed := time.Since(start)
-	if got := atomic.LoadInt32(&client.calls); got != 3 {
-		t.Fatalf("Do calls = %d, want the default 3 attempts", got)
+			start := time.Now()
+			_, err = uploader.retriedUploadData(ctx, prepared, option)
+			elapsed := time.Since(start)
+			if got := atomic.LoadInt32(&client.calls); got != tc.wantCalls {
+				t.Fatalf("Do calls = %d, want %d", got, tc.wantCalls)
+			}
+			if !errors.Is(err, ErrUploadStalled) || !ShouldReassignUpload(err) || !IsUploadBackpressure(err) {
+				t.Fatalf("a holder trickling to the deadline must end as a reassignable back-pressure stall, got %v after %v", err, elapsed)
+			}
+			if _, ok := uploader.fastUploadHosts.Load(host); ok {
+				t.Fatalf("no fast mark may survive: the watchdog cut clears it and the deadline never sets one")
+			}
+			if elapsed >= 2*time.Second {
+				t.Fatalf("cut attempts took %v, want well under 2s", elapsed)
+			}
+		})
 	}
-	if !errors.Is(err, ErrUploadStalled) || !ShouldReassignUpload(err) {
-		t.Fatalf("a holder trickling on every attempt must end as a reassignable stall, got %v after %v", err, elapsed)
+}
+
+// Only a body deadline cut and an overload are back-pressure; a watchdog cut
+// (one wedged conn) and other failures keep their retry policy.
+func TestIsUploadBackpressure(t *testing.T) {
+	testCases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "503 overload", err: &uploadStatusError{StatusCode: http.StatusServiceUnavailable, err: errors.New("limit")}, want: true},
+		{name: "429 overload", err: &uploadStatusError{StatusCode: http.StatusTooManyRequests, err: errors.New("limit")}, want: true},
+		{name: "body deadline cut", err: &uploadStatusError{StatusCode: 0, stalled: true, deadlineCut: true, err: errors.New("context canceled")}, want: true},
+		{name: "wrapped body deadline cut", err: fmt.Errorf("upload chunk: %w", &uploadStatusError{StatusCode: 0, stalled: true, deadlineCut: true, err: errors.New("context canceled")}), want: true},
+		{name: "watchdog cut", err: &uploadStatusError{StatusCode: 0, stalled: true, err: errors.New("context canceled")}, want: false},
+		{name: "500 fault", err: &uploadStatusError{StatusCode: http.StatusInternalServerError, err: errors.New("disk")}, want: false},
+		{name: "plain error", err: errors.New("deadline"), want: false},
 	}
-	if _, ok := uploader.fastUploadHosts.Load(host); ok {
-		t.Fatalf("the first attempt's watchdog cut must have cleared the host's mark")
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsUploadBackpressure(tc.err); got != tc.want {
+				t.Fatalf("IsUploadBackpressure(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
-	if elapsed >= 2*time.Second {
-		t.Fatalf("three cut attempts took %v, want under 2s", elapsed)
+	// Both kinds of cut still read as a stall and stay reassignable.
+	for _, err := range []error{
+		&uploadStatusError{StatusCode: 0, stalled: true, deadlineCut: true, err: errors.New("context canceled")},
+		&uploadStatusError{StatusCode: 0, stalled: true, err: errors.New("context canceled")},
+	} {
+		if !errors.Is(err, ErrUploadStalled) || !ShouldReassignUpload(err) {
+			t.Fatalf("%+v must match ErrUploadStalled and be reassignable", err)
+		}
 	}
 }

@@ -135,23 +135,42 @@ type uploadStatusError struct {
 	StatusCode          int
 	refusedBeforeAppend bool
 	expiredBeforeAppend bool
-	stalled             bool // the stall watchdog cancelled this attempt's request
+	stalled             bool // the stall watchdog or the body deadline cancelled this attempt's request
+	deadlineCut         bool // the body deadline, not the watchdog, made that cut
 	err                 error
 }
 
 func (e *uploadStatusError) Error() string { return e.err.Error() }
 func (e *uploadStatusError) Unwrap() error { return e.err }
 
-// Is matches ErrUploadStalled for a request the stall watchdog cancelled
-// before any response came back.
+// Is matches ErrUploadStalled for a request the stall watchdog or the body
+// deadline cancelled before any response came back.
 func (e *uploadStatusError) Is(target error) bool {
 	return target == ErrUploadStalled && e.StatusCode == 0 && e.stalled
 }
 
-// ErrUploadStalled matches (with errors.Is) an upload the stall watchdog
-// cancelled before the volume server answered. Once its retries are spent it
-// is load, not a fault: the caller should back off and try again.
+// ErrUploadStalled matches (with errors.Is) an upload the stall watchdog or the
+// body deadline cancelled before the volume server answered. Once its retries
+// are spent it is load, not a fault: the caller should back off and try again.
 var ErrUploadStalled = errors.New("upload stalled")
+
+// isBodyDeadlineCut reports whether the body deadline cancelled the upload
+// before any response came back. Unlike a watchdog cut, which blames one
+// wedged conn and is worth a retry on a fresh one, it says the link to that
+// holder crawls: asking it again only holds the buffer longer.
+func isBodyDeadlineCut(err error) bool {
+	var se *uploadStatusError
+	return errors.As(err, &se) && se.StatusCode == 0 && se.deadlineCut
+}
+
+// IsUploadBackpressure reports whether an upload failed because the cluster
+// is short of capacity rather than faulty: a volume server refused it for
+// lack of upload budget (IsUploadOverloaded), or its body crawled past the
+// body deadline. Such an error gets no same-holder retry and at most one
+// fresh assignment per chunk; then the client is told to slow down.
+func IsUploadBackpressure(err error) bool {
+	return IsUploadOverloaded(err) || isBodyDeadlineCut(err)
+}
 
 // IsUploadOverloaded reports whether a volume server refused the upload for
 // lack of capacity (429 or 503). Retrying the same holder right away only adds
@@ -432,10 +451,12 @@ func (uploader *Uploader) retriedUploadData(ctx context.Context, prepared *prepa
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		// An overloaded holder is not asked again from here: the caller's
-		// reassign loop decides whether one fresh assignment is worth it, so
-		// retries stay in one place and do not multiply while buffers are held.
-		if IsUploadOverloaded(err) {
+		// An overloaded holder, or one whose body crawled past the body
+		// deadline, is not asked again from here: the caller's reassign loop
+		// decides whether one fresh assignment is worth it, so retries stay in
+		// one place and do not multiply while buffers are held. A watchdog cut
+		// keeps its retry: it blames one wedged conn, and the retry dials anew.
+		if IsUploadBackpressure(err) {
 			return nil, err
 		}
 		var statusErr *uploadStatusError
@@ -762,10 +783,12 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	// since a slow link is not one bad conn, it leaves fastUploadHosts alone.
 	// Each arming checks the body it was armed for, so a timer that fires
 	// across the inner retry's body swap cannot misjudge the fresh body.
+	var cutByBodyDeadline atomic.Bool
 	bodyDeadlineFired := func() {
 		if !uploadDone.CompareAndSwap(false, true) {
 			return
 		}
+		cutByBodyDeadline.Store(true)
 		glog.WarningfCtx(ctx, "upload %d bytes to %s still sending its body after %v, cancelling", originalDataSize, option.UploadUrl, uploadBodyDeadline(bodySize))
 		cancelUpload()
 	}
@@ -825,7 +848,8 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	}
 	if post_err != nil {
 		stats.UploadErrorCounter.WithLabelValues("0").Inc()
-		return nil, &uploadStatusError{StatusCode: 0, stalled: reqCtx.Err() != nil && ctx.Err() == nil, err: fmt.Errorf("upload %s %d bytes to %v: %v", option.Filename, originalDataSize, option.UploadUrl, post_err)}
+		cut := reqCtx.Err() != nil && ctx.Err() == nil
+		return nil, &uploadStatusError{StatusCode: 0, stalled: cut, deadlineCut: cut && cutByBodyDeadline.Load(), err: fmt.Errorf("upload %s %d bytes to %v: %v", option.Filename, originalDataSize, option.UploadUrl, post_err)}
 	}
 	// Rate is bounded by elapsed-to-response: the server cannot answer before
 	// the body lands, so this can only understate link speed — a drain-time

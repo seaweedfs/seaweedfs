@@ -319,17 +319,18 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 // newChunkUploadRetryGate decides, for one chunk, whether another attempt
 // (with a fresh assignment) is worth it.
 func newChunkUploadRetryGate() func(error) bool {
-	overloadRetried := false
+	backpressureRetried := false
 	// Each attempt assigns anew, so also retry the errors a fresh volume dodges:
 	// a target gone read-only or full mid-write 5xxs until the master notices.
-	// An overload gets one fresh assignment only: retrying a cluster short of
-	// upload budget every second while holding the chunk adds to the load.
+	// Back-pressure (an overload, or a body cut at the body deadline) gets one
+	// fresh assignment only: retrying a cluster short of upload budget or link
+	// rate every second while holding the chunk adds to the load.
 	return func(err error) bool {
-		if operation.IsUploadOverloaded(err) {
-			if overloadRetried {
+		if operation.IsUploadBackpressure(err) {
+			if backpressureRetried {
 				return false
 			}
-			overloadRetried = true
+			backpressureRetried = true
 			return true
 		}
 		return util.IsTransientError(err) || operation.ShouldReassignUpload(err)

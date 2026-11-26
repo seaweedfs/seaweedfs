@@ -886,3 +886,128 @@ func TestUploadReaderInChunksReassignsOnceOnOverload(t *testing.T) {
 		}
 	})
 }
+
+// hostCountingClient counts the requests an Uploader sends per host, then
+// hands them to inner.
+type hostCountingClient struct {
+	inner HTTPClient
+	mu    sync.Mutex
+	calls map[string]int
+}
+
+func (c *hostCountingClient) Do(req *http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	if c.calls == nil {
+		c.calls = map[string]int{}
+	}
+	c.calls[req.URL.Host]++
+	c.mu.Unlock()
+	return c.inner.Do(req)
+}
+
+func (c *hostCountingClient) callsTo(host string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls[host]
+}
+
+// useGlobalUploaderClient points the process-wide Uploader, which the chunk
+// loop writes through, at client for one test. Tests that call it must not
+// run in parallel.
+func useGlobalUploaderClient(t *testing.T, client HTTPClient) {
+	t.Helper()
+	u, err := NewUploader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := u.httpClient
+	u.httpClient = client
+	t.Cleanup(func() { u.httpClient = orig })
+}
+
+// deleteRecorder is a holder that only answers the cleanup DELETEs the chunk
+// loop sends, recording each fid; uploads never reach it in these tests.
+type deleteRecorder struct {
+	srv  *httptest.Server
+	mu   sync.Mutex
+	fids []string
+}
+
+func newDeleteRecorder(t *testing.T) *deleteRecorder {
+	d := &deleteRecorder{}
+	d.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			d.mu.Lock()
+			d.fids = append(d.fids, strings.TrimPrefix(r.URL.Path, "/"))
+			d.mu.Unlock()
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(d.srv.Close)
+	return d
+}
+
+func (d *deleteRecorder) host() string { return strings.TrimPrefix(d.srv.URL, "http://") }
+
+func (d *deleteRecorder) deleted() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.fids...)
+}
+
+// A holder whose link crawls below the body deadline's rate on every attempt
+// is back-pressure, like an overload: the chunk gets one fresh assignment, no
+// same-holder retry under it, and then the stall reaches the caller (S3 maps
+// it to SlowDown) — not three reassigns of three attempts each.
+func TestUploadReaderInChunksReassignsOnceOnBodyDeadline(t *testing.T) {
+	setUploadBodyMinWait(t, 100*time.Millisecond)
+
+	for _, tc := range []struct {
+		name    string
+		holders int
+	}{
+		{name: "relay", holders: 1},
+		{name: "fan-out", holders: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &hostCountingClient{inner: &tricklingHTTPClient{chunk: 1 << 10, interval: 20 * time.Millisecond}}
+			useGlobalUploaderClient(t, client)
+			var holders []*deleteRecorder
+			for i := 0; i < tc.holders; i++ {
+				holders = append(holders, newDeleteRecorder(t))
+			}
+
+			var assigns int32
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			start := time.Now()
+			_, err := UploadReaderInChunks(ctx, bytes.NewReader(incompressibleBytes(t, 64<<10)), &ChunkedUploadOption{
+				ChunkSize:  128 << 10,
+				Collection: "test",
+				AssignFunc: func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+					n := atomic.AddInt32(&assigns, 1)
+					result := &AssignResult{Fid: fmt.Sprintf("%d,0a0b0c0d", n), Url: holders[0].host(), Count: 1}
+					for _, h := range holders[1:] {
+						result.Replicas = append(result.Replicas, Location{Url: h.host()})
+					}
+					return nil, result, nil
+				},
+			})
+			elapsed := time.Since(start)
+			if !errors.Is(err, ErrUploadStalled) || !IsUploadBackpressure(err) {
+				t.Fatalf("expected the body deadline stall to reach the caller, got %v after %v", err, elapsed)
+			}
+			if got := atomic.LoadInt32(&assigns); got != 2 {
+				t.Fatalf("expected 2 assignments, got %d", got)
+			}
+			for i, h := range holders {
+				if got := client.callsTo(h.host()); got < 1 || got > 2 {
+					t.Fatalf("holder %d saw %d uploads over 2 assignments, want at most one per assignment", i, got)
+				}
+			}
+			if elapsed >= 5*time.Second {
+				t.Fatalf("two deadline cuts took %v", elapsed)
+			}
+		})
+	}
+}
