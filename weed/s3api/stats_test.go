@@ -105,7 +105,7 @@ func TestPutStagesRecordEachStage(t *testing.T) {
 
 	r = timeBodyReads(r)
 	stages := newPutStages(r)
-	result, err := stages.upload(context.Background(), r.Body, stagedUploadOption(20*time.Millisecond, nil))
+	result, err := stages.upload(context.Background(), io.LimitReader(r.Body, 8), stagedUploadOption(20*time.Millisecond, nil))
 	require.NoError(t, err)
 	require.Len(t, result.FileChunks, 2)
 	time.Sleep(5 * time.Millisecond)
