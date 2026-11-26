@@ -9,6 +9,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // A write that replaces one name of a hard-linked file unlinks that name and
@@ -254,5 +256,82 @@ func TestAtomicRenameEntryOverLastHardLinkDeletesItsChunks(t *testing.T) {
 	checkDeletions(t, f, replacedChunk)
 	if _, found := store.kv[string(id)]; found {
 		t.Fatal("hard link record kept after its last link was replaced")
+	}
+}
+
+// Two clients link a file at the same moment, each from an entry that had no
+// link yet, so each gives the name a link id of its own. The file has the
+// first one's when the second arrives. Taken, the second would move the name
+// to its id and leave the first client's new name alone on the other: one
+// file's chunks under two link ids, each deleting them under the other with
+// its last name. The update is refused, nothing changes, and the client links
+// under the id the file has.
+func TestUpdateEntryRefusesAFileASecondLinkId(t *testing.T) {
+	server, f, store, id := hardLinkChunkServer(t, 2)
+	second := filer.HardLinkId("hl-chunks-test-02")
+
+	_, err := server.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+		Directory: "/dir", Entry: dstEntry(second, 2, written(replacedChunk, 1)),
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("update with a second link id: %v, want FailedPrecondition", err)
+	}
+	checkDeletions(t, f)
+	checkOtherLink(t, f, replacedChunk, 2)
+	dst, err := f.FindEntry(context.Background(), "/dir/dst.txt")
+	if err != nil {
+		t.Fatalf("find dst: %v", err)
+	}
+	if string(dst.HardLinkId) != string(id) {
+		t.Fatalf("dst has link id %q, want the file's %q", dst.HardLinkId, id)
+	}
+	if _, found := store.kv[string(second)]; found {
+		t.Fatal("the refused link id got a record")
+	}
+
+	updateDst(t, server, dstEntry(id, 3, written(replacedChunk, 1)))
+	checkDeletions(t, f)
+}
+
+// filer.sync sends the other cluster's link id without its record: taken.
+func TestUpdateEntryFromOtherClusterTakesItsLinkId(t *testing.T) {
+	server, f, _, _ := hardLinkChunkServer(t, 2)
+	other := filer.HardLinkId("hl-chunks-test-02")
+
+	if _, err := server.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+		Directory: "/dir", Entry: dstEntry(other, 2, written(replacedChunk, 1)), IsFromOtherCluster: true,
+	}); err != nil {
+		t.Fatalf("replicated update with another link id: %v", err)
+	}
+	dst, err := f.FindEntry(context.Background(), "/dir/dst.txt")
+	if err != nil {
+		t.Fatalf("find dst: %v", err)
+	}
+	if string(dst.HardLinkId) != string(other) {
+		t.Fatalf("dst has link id %q, want the replicated %q", dst.HardLinkId, other)
+	}
+}
+
+// A link id that has a record is another file's, not a second one for this
+// file: an update that carries it puts that file at the name, which leaves
+// the old file as a create over the name does.
+func TestUpdateEntryWithAnotherFilesLinkIdReplacesTheName(t *testing.T) {
+	server, f, store, id := hardLinkChunkServer(t, 2)
+	another := filer.HardLinkId("hl-chunks-test-03")
+	shared := fileEntryWithChunk("/dir/third.txt", 505, writtenChunk)
+	shared.HardLinkId, shared.HardLinkCounter = another, 1
+	blob, err := shared.EncodeAttributesAndChunks()
+	if err != nil {
+		t.Fatalf("encode hard link: %v", err)
+	}
+	store.kv[string(another)] = blob
+	store.entries["/dir/third.txt"] = shared
+
+	updateDst(t, server, dstEntry(another, 2, written(writtenChunk, 2)))
+
+	checkDeletions(t, f)
+	checkOtherLink(t, f, replacedChunk, 1)
+	if _, found := store.kv[string(id)]; !found {
+		t.Fatal("hard link record deleted while a link remains")
 	}
 }

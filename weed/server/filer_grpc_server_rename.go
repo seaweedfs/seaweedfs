@@ -588,7 +588,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 	if inPlace {
 		var createdParents []*filer.Entry
 		fs.filer.StampEntryCommitTsNs(newEntry)
-		replaceErr := fs.filer.ReplaceFileForRename(filer.WithCreatedParents(ctx, &createdParents), newEntry, fs.filer.MaxFilenameLength)
+		replaceErr := fs.filer.ReplaceFileForRename(filer.WithCreatedParents(filer.WithMovedLink(ctx), &createdParents), newEntry, fs.filer.MaxFilenameLength)
 		// as for a create below: a parent the write had to create again
 		// reaches peers through its own event, published before the move
 		for _, parent := range createdParents {
@@ -603,13 +603,13 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 			return filer_pb.ErrEntryNameTooLong
 		}
 		fs.filer.StampEntryCommitTsNs(newEntry)
-		if createErr := fs.filer.Store.InsertEntryKnownAbsent(filer.WithSuppressedMetadataEvents(ctx), newEntry); createErr != nil {
+		if createErr := fs.filer.Store.InsertEntryKnownAbsent(filer.WithSuppressedMetadataEvents(filer.WithMovedLink(ctx)), newEntry); createErr != nil {
 			fs.filer.ReleaseEntryCommitTsNs(newEntry.CommitTsNs)
 			return fmt.Errorf("insert entry %s: %v", newEntry.FullPath, createErr)
 		}
 	} else {
 		var createdParents []*filer.Entry
-		createErr := fs.filer.CreateEntry(filer.WithCreatedParents(ctx, &createdParents), newEntry, nil, false, false, signatures, false, fs.filer.MaxFilenameLength)
+		createErr := fs.filer.CreateEntry(filer.WithCreatedParents(filer.WithMovedLink(ctx), &createdParents), newEntry, nil, false, false, signatures, false, fs.filer.MaxFilenameLength)
 		// Peers replay events into their own store, so a new parent only
 		// reaches them through its own create event, published before the move.
 		for _, parent := range createdParents {

@@ -15,36 +15,350 @@ import (
 // handleUpdateToHardLinks saves the shared record of entry, a file a write is
 // about to store, and returns the hard link of the name at entry's path when
 // the write replaces that name with another file. The caller drops that link
-// once the write has gone through (dropLink), not before.
-func (fsw *FilerStoreWrapper) handleUpdateToHardLinks(ctx context.Context, entry *Entry) (replaced HardLinkId, err error) {
+// once the write has gone through (dropLink), not before. The name is looked
+// up with findCtx. names is for the caller to record before it stores entry
+// (recordLinkNames).
+func (fsw *FilerStoreWrapper) handleUpdateToHardLinks(ctx, findCtx context.Context, entry *Entry) (replaced HardLinkId, names *linkNames, err error) {
 
 	if entry.IsDirectory() {
-		return nil, nil
-	}
-
-	if len(entry.HardLinkId) > 0 {
-		// handle hard links
-		glog.V(4).InfofCtx(ctx, "handleUpdateToHardLinks %s HardLinkId %x counter=%d chunks=%d",
-			entry.FullPath, entry.HardLinkId, entry.HardLinkCounter, len(entry.GetChunks()))
-		if err := fsw.setHardLink(ctx, entry); err != nil {
-			return nil, fmt.Errorf("setHardLink %d: %v", entry.HardLinkId, err)
-		}
+		return nil, nil, nil
 	}
 
 	// check what is existing entry
 	// glog.V(4).Infof("handleUpdateToHardLinks FindEntry %s", entry.FullPath)
 	actualStore := fsw.getActualStore(entry.FullPath)
-	existingEntry, err := actualStore.FindEntry(ctx, entry.FullPath)
+	existingEntry, err := actualStore.FindEntry(findCtx, entry.FullPath)
 	if err != nil && err != filer_pb.ErrNotFound {
-		return nil, fmt.Errorf("update existing entry %s: %v", entry.FullPath, err)
+		return nil, nil, fmt.Errorf("update existing entry %s: %v", entry.FullPath, err)
+	}
+	// the name at entry's path is one of the file's names already
+	held := err == nil && bytes.Equal(existingEntry.HardLinkId, entry.HardLinkId)
+
+	if len(entry.HardLinkId) > 0 {
+		// handle hard links
+		glog.V(4).InfofCtx(ctx, "handleUpdateToHardLinks %s HardLinkId %x counter=%d chunks=%d",
+			entry.FullPath, entry.HardLinkId, entry.HardLinkCounter, len(entry.GetChunks()))
+		var saveErr error
+		if names, saveErr = fsw.saveHardLink(ctx, entry, !held); saveErr != nil {
+			return nil, nil, fmt.Errorf("setHardLink %d: %v", entry.HardLinkId, saveErr)
+		}
 	}
 
 	// the old hard link, dropped after the write
-	if err == nil && len(existingEntry.HardLinkId) != 0 && !bytes.Equal(existingEntry.HardLinkId, entry.HardLinkId) {
-		return existingEntry.HardLinkId, nil
+	if err == nil && len(existingEntry.HardLinkId) != 0 && !held {
+		return existingEntry.HardLinkId, names, nil
 	}
-	return nil, nil
+	return nil, names, nil
 }
+
+// writeWithHardLink saves entry's shared record, if it has one, and stores
+// entry with write. It returns the hard link the name at entry's path had
+// before, for the caller to drop, when the write put another file there.
+//
+// A filer's own store looks the name up, counts it, saves the record, records
+// the name and stores it as one change of the record (changeLinkRecord):
+// another filer that deletes the name in between would otherwise leave it
+// stored and not counted.
+func (fsw *FilerStoreWrapper) writeWithHardLink(ctx context.Context, entry *Entry, write func(context.Context, *Entry) error) (replaced HardLinkId, err error) {
+	// A name in a path-specific store is outside the record's transaction: a
+	// change run again would find the name its first run stored and count it
+	// as one the file already had. It is stored once the count is settled.
+	// Two filers that store the same such name at the same moment both find
+	// it absent and both count it: the count is one too high from then on,
+	// and the file's record and chunks outlive its last name.
+	together := fsw.getActualStore(entry.FullPath) == fsw.defaultStore
+	var names *linkNames
+	storeName := func(ctx context.Context) error { return write(ctx, entry) }
+	var store func(context.Context) error
+	if !together {
+		store = func(ctx context.Context) error {
+			return fsw.storeCountedName(ctx, entry, names, false, storeName)
+		}
+	}
+	err = fsw.changeLinkRecord(ctx, entry, func(txCtx context.Context) error {
+		// A store of the same kind would read the name through the
+		// default store's transaction, from the default store.
+		findCtx := txCtx
+		if !together {
+			findCtx = ctx
+		}
+		var err error
+		if replaced, names, err = fsw.handleUpdateToHardLinks(txCtx, findCtx, entry); err != nil {
+			return err
+		}
+		if err = fsw.recordLinkNames(txCtx, names); err != nil || !together {
+			return err
+		}
+		return fsw.storeCountedName(txCtx, entry, names, true, storeName)
+	}, store)
+	return replaced, err
+}
+
+// saveHardLink saves the shared record of entry, whose name joins the file's
+// names with this write or is one of them already. A filer's own store
+// (countsLinks) first raises entry's count to the names it counts itself
+// (countLink); the caller is inside changeLinkRecord, and records the names
+// it gets back before it stores the name.
+func (fsw *FilerStoreWrapper) saveHardLink(ctx context.Context, entry *Entry, joins bool) (names *linkNames, err error) {
+	if fsw.countsLinks {
+		if names, err = fsw.countLink(ctx, entry, joins); err != nil {
+			return nil, err
+		}
+	}
+	return names, fsw.setHardLink(ctx, entry)
+}
+
+type movedLinkKey struct{}
+
+// WithMovedLink marks the context of the write that stores a renamed entry
+// under its new name. The name brings its hard link along: it is not counted
+// as a new one, as the delete of its old name (OP "MV") does not count it off.
+func WithMovedLink(ctx context.Context) context.Context {
+	return context.WithValue(ctx, movedLinkKey{}, true)
+}
+
+// linkNames is the number of names a filer's own store counts for a
+// hard-linked file, kept next to the file's shared record under linkNamesKey.
+//
+// The count in the record is the clients': each works it out from the entry
+// it last read, one more for the name it is about to make, and its write
+// replaces the whole record. Two mounts that each add a name to a file with
+// two both send three, and one that only changes the mode sends the count it
+// had before another added a name. The record then counted fewer names than
+// the file had, the delete of the last counted one deleted the record and
+// the chunks (lastLinkDropped), and the names left over read chunks that
+// were gone.
+//
+// So the filer counts as well: one more for each name stored that did not
+// hold the link before, one less for each deleted. The record gets whichever
+// is higher, the count a client sends or the names counted here. It is never
+// lower than what the client alone would have left, which still has the name
+// of a link in the making in it while only the source's update has arrived,
+// and never lower than the names the file has.
+type linkNames struct {
+	id       HardLinkId
+	count    int32 // the names once the write is stored
+	joined   bool  // the write adds one
+	recorded int32 // the names recorded now; -1: none
+}
+
+// linkNamesKey does not start with the random link id, which may start as a
+// directory's entry keys do in a store keyed by path (etcd, leveldb) and be
+// listed there. The prefix is short: the id stays in the first 8 bytes that
+// SQL and Cassandra split off as the key's directory.
+func linkNamesKey(hardLinkId HardLinkId) []byte {
+	return append([]byte("names."), hardLinkId...)
+}
+
+// readLinkNames reads the names counted for hardLinkId; known is false where
+// none were counted yet (a record from before the filer counted).
+func (fsw *FilerStoreWrapper) readLinkNames(ctx context.Context, hardLinkId HardLinkId) (count int32, known bool, err error) {
+	value, err := fsw.KvGet(ctx, linkNamesKey(hardLinkId))
+	if errors.Is(err, ErrKvNotFound) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if len(value) != 4 {
+		return 0, false, nil
+	}
+	return int32(util.BytesToUint32(value)), true, nil
+}
+
+func (fsw *FilerStoreWrapper) writeLinkNames(ctx context.Context, hardLinkId HardLinkId, count int32) error {
+	value := make([]byte, 4)
+	util.Uint32toBytes(value, uint32(count))
+	return fsw.KvPut(ctx, linkNamesKey(hardLinkId), value)
+}
+
+// countLink raises entry's link count to the names the file has once this
+// write is stored, and returns them for recordLinkNames. The caller is inside
+// changeLinkRecord.
+func (fsw *FilerStoreWrapper) countLink(ctx context.Context, entry *Entry, joins bool) (*linkNames, error) {
+	names := &linkNames{id: entry.HardLinkId, joined: joins && ctx.Value(movedLinkKey{}) == nil, recorded: -1}
+	count, known, err := fsw.readLinkNames(ctx, entry.HardLinkId)
+	if err != nil {
+		return nil, err
+	}
+	if known {
+		names.count, names.recorded = count, count
+	} else if value, err := fsw.KvGet(ctx, entry.HardLinkId); err == nil {
+		// A record from before the filer counted: its count stands in, and is
+		// recorded now. Read again after a write the store refused, the record
+		// would have that write's count in it.
+		shared := &Entry{}
+		if err = shared.DecodeAttributesAndChunks(value); err != nil {
+			return nil, err
+		}
+		names.count, names.recorded = shared.HardLinkCounter, shared.HardLinkCounter
+		if err = fsw.writeLinkNames(ctx, entry.HardLinkId, names.recorded); err != nil {
+			return nil, err
+		}
+	} else if !errors.Is(err, ErrKvNotFound) {
+		return nil, err
+	}
+	if names.joined {
+		names.count++
+	}
+	if names.count < 1 {
+		names.count = 1 // the name being written
+	}
+	if entry.HardLinkCounter < names.count {
+		entry.HardLinkCounter = names.count
+	}
+	return names, nil
+}
+
+// recordLinkNames records the names counted for a hard link, inside the
+// change of the record that counted them and before the name that was counted
+// is stored. storeCountedName takes the name off them again when the store
+// does not take it, so a write the store refused counts once when it is sent
+// again.
+//
+// Where one of the two fails halfway on a store without transactions, the
+// names recorded are one above the names stored, and the file is leaked.
+// Recorded after the name, they were left one below: sent again, the write
+// found its name stored and did not count it, and a count below the names is
+// what deletes a file under one of them.
+func (fsw *FilerStoreWrapper) recordLinkNames(ctx context.Context, names *linkNames) error {
+	if names == nil || names.recorded == names.count {
+		return nil
+	}
+	return fsw.writeLinkNames(ctx, names.id, names.count)
+}
+
+// storeCountedName stores, with write, entry's name, which recordLinkNames
+// has counted. A name the store does not take is counted off again, from what
+// is recorded by then: a caller past the change that counted (inChange false,
+// under the record's lock still) may find another filer has changed it.
+func (fsw *FilerStoreWrapper) storeCountedName(ctx context.Context, entry *Entry, names *linkNames, inChange bool, write func(context.Context) error) error {
+	err := write(ctx)
+	if err == nil || names == nil || names.recorded == names.count || fsw.nameStoredAnyway(ctx, entry) {
+		return err
+	}
+	unrecord := func(ctx context.Context) error {
+		count, known, readErr := fsw.readLinkNames(ctx, names.id)
+		if readErr != nil || !known {
+			return readErr
+		}
+		added := names.count
+		if names.recorded > 0 {
+			added -= names.recorded
+		}
+		if count -= added; count <= 0 && names.recorded < 0 {
+			return fsw.KvDelete(ctx, linkNamesKey(names.id)) // none were recorded before
+		}
+		if count < 0 {
+			count = 0
+		}
+		return fsw.writeLinkNames(ctx, names.id, count)
+	}
+	var unrecordErr error
+	if inChange {
+		unrecordErr = unrecord(ctx)
+	} else {
+		unrecordErr = fsw.commitLinkRecord(ctx, names.id, unrecord)
+	}
+	if unrecordErr != nil {
+		glog.ErrorfCtx(ctx, "hard link %x counts a name that was not stored: %v", names.id, unrecordErr)
+	}
+	return err
+}
+
+// nameStoredAnyway tells whether a write that returned an error stored
+// entry's name all the same, as one whose deadline passed after the store
+// took it does. Where that cannot be told, the name stays counted.
+func (fsw *FilerStoreWrapper) nameStoredAnyway(ctx context.Context, entry *Entry) bool {
+	stored, err := fsw.getActualStore(entry.FullPath).FindEntry(ctx, entry.FullPath)
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return false
+	}
+	return err != nil || bytes.Equal(stored.HardLinkId, entry.HardLinkId)
+}
+
+// changeLinkRecord runs change, which reads the shared record of entry's hard
+// link and writes it back, so that no other change of the record comes
+// between the two. Entries without a hard link, and stores that take the
+// count as it is sent, just run it. store, if any, stores a name the record's
+// transaction does not hold once change is saved, before this filer changes
+// the record again: the next change finds the name.
+//
+// On this filer the record's lock sees to that. Another filer on the same
+// store is kept out by a transaction, where the store refuses to commit one
+// over a change made since it began (ConflictRefusingStore); change then runs
+// again, with the count the client sent. A caller that has a transaction open
+// already leaves the refusal to it. Other stores shared by several filers have
+// no such guard, nor has a change inside a transaction of a store that does
+// not refuse such commits (the SQL stores).
+func (fsw *FilerStoreWrapper) changeLinkRecord(ctx context.Context, entry *Entry, change, store func(ctx context.Context) error) error {
+	if !fsw.countsLinks || len(entry.HardLinkId) == 0 || entry.IsDirectory() {
+		if err := change(ctx); err != nil || store == nil {
+			return err
+		}
+		return store(ctx)
+	}
+	sent := entry.HardLinkCounter
+	return fsw.lockLinkRecord(ctx, entry.HardLinkId, func(ctx context.Context) error {
+		entry.HardLinkCounter = sent
+		return change(ctx)
+	}, store)
+}
+
+func (fsw *FilerStoreWrapper) lockLinkRecord(ctx context.Context, hardLinkId HardLinkId, change, store func(ctx context.Context) error) error {
+	inTransaction := ctx.Value(storeTransactionKey{}) != nil
+	// A real transaction keeps its connection until it commits, and the
+	// holder of the lock may be waiting for one (as for lockDirectoryCreate):
+	// inside one the lock is not taken, and the change is as safe from the
+	// others as the store's transactions make it.
+	isolating, _ := fsw.defaultStore.(IsolatingTransactionStore)
+	if !inTransaction || isolating == nil || !isolating.IsolatesTransactions() {
+		var h uint32
+		for _, b := range hardLinkId {
+			h = h*31 + uint32(b)
+		}
+		lock := &fsw.linkLocks[h%uint32(len(fsw.linkLocks))]
+		lock.Lock()
+		defer lock.Unlock()
+	}
+	if err := fsw.commitLinkRecord(ctx, hardLinkId, change); err != nil || store == nil {
+		return err
+	}
+	return store(ctx)
+}
+
+// commitLinkRecord runs change in a transaction of its own where the store
+// refuses conflicting commits, and again while it does; the caller holds the
+// record's lock.
+func (fsw *FilerStoreWrapper) commitLinkRecord(ctx context.Context, hardLinkId HardLinkId, change func(ctx context.Context) error) error {
+	refusing, ok := fsw.defaultStore.(ConflictRefusingStore)
+	if !ok || !refusing.RefusesConflictingCommits() || ctx.Value(storeTransactionKey{}) != nil {
+		return change(ctx)
+	}
+	for attempt := 1; ; attempt++ {
+		txCtx, err := fsw.BeginTransaction(ctx)
+		if err != nil {
+			return err
+		}
+		if err = change(txCtx); err != nil {
+			fsw.RollbackTransaction(txCtx)
+			return err
+		}
+		if err = fsw.CommitTransaction(txCtx); err == nil {
+			return nil
+		}
+		fsw.RollbackTransaction(txCtx)
+		if !errors.Is(err, ErrTransactionConflict) || attempt == linkRecordAttempts {
+			return err
+		}
+		glog.V(1).InfofCtx(ctx, "hard link %x: changing its record again (%d of %d): %v", hardLinkId, attempt+1, linkRecordAttempts, err)
+		time.Sleep(time.Duration(attempt) * 10 * time.Millisecond)
+	}
+}
+
+// linkRecordAttempts bounds how often a change of a hard link's record runs
+// its transaction while the store refuses the commit.
+const linkRecordAttempts = 5
 
 // dropLink takes the name at p off its file's hard link once the store no
 // longer holds the name: deleted, or replaced by a write of another file.
@@ -114,6 +428,15 @@ func (fsw *FilerStoreWrapper) maybeReadHardLink(ctx context.Context, entry *Entr
 }
 
 func (fsw *FilerStoreWrapper) DeleteHardLink(ctx context.Context, hardLinkId HardLinkId) error {
+	if !fsw.countsLinks {
+		return fsw.deleteHardLink(ctx, hardLinkId)
+	}
+	return fsw.lockLinkRecord(ctx, hardLinkId, func(ctx context.Context) error {
+		return fsw.deleteHardLink(ctx, hardLinkId)
+	}, nil)
+}
+
+func (fsw *FilerStoreWrapper) deleteHardLink(ctx context.Context, hardLinkId HardLinkId) error {
 	key := hardLinkId
 	glog.V(4).InfofCtx(ctx, "DeleteHardLink HardLinkId %x", key)
 	value, err := fsw.KvGet(ctx, key)
@@ -131,10 +454,33 @@ func (fsw *FilerStoreWrapper) DeleteHardLink(ctx context.Context, hardLinkId Har
 	}
 
 	entry.HardLinkCounter--
+	names, counted := int32(0), false
+	if fsw.countsLinks {
+		if names, counted, err = fsw.readLinkNames(ctx, hardLinkId); err != nil {
+			return err
+		}
+		if names--; counted && entry.HardLinkCounter < names {
+			// the names counted here outlast a count a client left too low
+			entry.HardLinkCounter = names
+		}
+	}
 	if entry.HardLinkCounter <= 0 {
 		glog.V(4).InfofCtx(ctx, "DeleteHardLink KvDelete HardLinkId %x counter reached %d",
 			key, entry.HardLinkCounter)
+		if counted {
+			if err = fsw.KvDelete(ctx, linkNamesKey(hardLinkId)); err != nil {
+				return err
+			}
+		}
 		return fsw.KvDelete(ctx, key)
+	}
+	if counted {
+		if names < 0 {
+			names = 0
+		}
+		if err = fsw.writeLinkNames(ctx, hardLinkId, names); err != nil {
+			return err
+		}
 	}
 
 	// POSIX: update ctime when nlink changes (a hard link was removed).

@@ -1027,6 +1027,11 @@ func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		if observed != nil && !clauseSatisfied(observed, entry) {
 			refusal = status.Errorf(codes.FailedPrecondition, "entry changed during update: %s", fullpath)
 		}
+		if refusal == nil && !req.IsFromOtherCluster {
+			if refusal, err = fs.refuseSecondHardLink(ctx, fullpath, entry, req.Entry); err != nil {
+				return err
+			}
+		}
 		if transactional && observed == nil {
 			observed = &filer_pb.WriteCondition_Clause{
 				Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
@@ -1154,6 +1159,35 @@ func (fs *FilerServer) runEntryTransaction(ctx context.Context, path util.FullPa
 		glog.V(0).InfofCtx(ctx, "update %s: running it again (%d of %d) after a concurrent write: %v", path, n+1, entryUpdateAttempts, commitErr)
 		time.Sleep(time.Duration(n) * 10 * time.Millisecond)
 	}
+}
+
+// refuseSecondHardLink refuses an update that gives a name which already
+// holds a hard link another link id, one no file has yet.
+//
+// A client that links a file gives the file's name a link id first, a new one
+// when the entry it read had none. Two clients that both read the entry
+// before either wrote each bring an id of their own. Taken, the second would
+// move the name to its id: the name the first client makes next would be
+// alone on the first id, the second client's alone with the old name on the
+// other, and the same chunks would belong to two files, each deleting them
+// under the other when its last name goes. Refused, the client reads the
+// entry again and links under the id the file has.
+//
+// An id that has a record belongs to a file already: writing it over a name
+// of another file replaces that name, as before. A replicated update is not
+// refused: the other cluster's link ids never get records here.
+func (fs *FilerServer) refuseSecondHardLink(ctx context.Context, fullpath string, stored *filer.Entry, requested *filer_pb.Entry) (refusal, err error) {
+	if len(stored.HardLinkId) == 0 || len(requested.GetHardLinkId()) == 0 || bytes.Equal(stored.HardLinkId, requested.GetHardLinkId()) {
+		return nil, nil
+	}
+	if _, err := fs.filer.Store.KvGet(ctx, requested.GetHardLinkId()); !errors.Is(err, filer.ErrKvNotFound) {
+		if err != nil {
+			return nil, fmt.Errorf("read hard link %x of %s: %w", requested.GetHardLinkId(), fullpath, err)
+		}
+		return nil, nil
+	}
+	glog.V(1).InfofCtx(ctx, "UpdateEntry %s: is hard link %x already, not given %x", fullpath, stored.HardLinkId, requested.GetHardLinkId())
+	return status.Errorf(codes.FailedPrecondition, "already a hard link: %s", fullpath), nil
 }
 
 func validateUpdateEntryPreconditions(entry *filer.Entry, expectedExtended map[string][]byte) error {

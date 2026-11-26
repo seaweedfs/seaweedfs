@@ -472,7 +472,10 @@ func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*m
 }
 
 func (f *Filer) SetStore(store FilerStore) (isFresh bool) {
-	f.Store = NewFilerStoreWrapper(store)
+	wrapper := NewFilerStoreWrapper(store)
+	// this store holds every name of a hard-linked file: it counts them
+	wrapper.countsLinks = true
+	f.Store = wrapper
 
 	isFresh = f.setOrLoadFilerStoreSignature(store)
 
