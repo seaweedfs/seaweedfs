@@ -58,7 +58,11 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	}
 	inode := possibleInode
 	if name == "." {
-		if !sameFile(inode, fullFilePath, localEntry) || !wfs.inodeToPath.LookupHandle(fullFilePath, inode, localEntry.IsDirectory()) {
+		if !sameFile(inode, fullFilePath, localEntry) {
+			return fuse.Status(syscall.ESTALE)
+		}
+		wfs.inodeToPath.RememberForgotten(inode, fullFilePath)
+		if !wfs.inodeToPath.LookupHandle(fullFilePath, inode, localEntry.IsDirectory()) {
 			return fuse.Status(syscall.ESTALE)
 		}
 	} else {
@@ -103,7 +107,6 @@ func (wfs *WFS) resolveDotName(ctx context.Context, nodeId uint64, name string) 
 			if !forgotten.IsUnder(util.FullPath(wfs.option.FilerMountRootPath)) {
 				return "", 0, fuse.Status(syscall.ESTALE)
 			}
-			wfs.inodeToPath.RememberForgotten(nodeId, forgotten)
 		}
 		if inode, known := wfs.inodeToPath.GetInode(forgotten); known && inode != nodeId {
 			return "", 0, fuse.Status(syscall.ESTALE)
