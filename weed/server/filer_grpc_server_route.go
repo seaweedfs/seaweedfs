@@ -57,7 +57,7 @@ func (fs *FilerServer) forwardDeleteEntry(ctx context.Context, req *filer_pb.Del
 		glog.V(2).InfofCtx(ctx, "DeleteEntry %s: forwarding to owner %s", fullpath, owner)
 		req.IsMoved = true
 		return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			forwarded, e := client.DeleteEntry(ctx, req)
+			forwarded, e := client.DeleteEntry(withCallerAuthContext(ctx), req)
 			if e != nil {
 				return e
 			}

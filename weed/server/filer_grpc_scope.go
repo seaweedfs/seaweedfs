@@ -60,7 +60,9 @@ type scopeBackend interface {
 type scopeConfig struct {
 	signingKey        func() security.SigningKey
 	verificationKeys  func() (security.SigningKey, security.SigningKey)
+	adminKeys         func() (security.SigningKey, security.SigningKey)
 	subscriptionScope func(context.Context, string) (*security.MetadataSubscriptionScope, error)
+	requireToken      func() bool
 	leeway            func() time.Duration
 	assignLifetime    func() time.Duration
 }
@@ -162,6 +164,22 @@ func (s *filerGrpcScope) verificationKeys() (security.SigningKey, security.Signi
 	return nil, nil
 }
 
+// isFilerAdminTokenWithLeeway applies the scope verifier's clock policy to the
+// shared filer-admin fallback. Keep the claim-shape checks here instead of
+// changing security.IsFilerAdminToken, whose callers intentionally use strict
+// JWT time validation.
+func isFilerAdminTokenWithLeeway(signingKey, previousKey security.SigningKey, token security.EncodedJwt, leeway time.Duration) bool {
+	if len(signingKey) == 0 || token == "" {
+		return false
+	}
+	claims := &security.SeaweedFilerAdminClaims{}
+	parsed, err := security.DecodeJwtWith(signingKey, previousKey, token, claims, leeway)
+	if err != nil || parsed == nil || !parsed.Valid {
+		return false
+	}
+	return claims.SessionId == "" && len(claims.AllowedPrefixes) == 0 && len(claims.AllowedMethods) == 0 && len(claims.ReadPrefixes) == 0
+}
+
 func (s *filerGrpcScope) proven(sc *scope, chunkAuth map[string]string, fid, collection string) bool {
 	raw := chunkAuth[fid]
 	if raw == "" {
@@ -190,8 +208,12 @@ func (s *filerGrpcScope) proofVerifier(ctx context.Context, sc *scope, chunkAuth
 // resolve authenticates the call. It returns (nil, nil) for an unscoped call,
 // a *scope for a scoped token, and an error that refuses the call.
 func (s *filerGrpcScope) resolve(ctx context.Context) (*scope, error) {
+	requireToken := s.cfg.requireToken != nil && s.cfg.requireToken()
 	key, previous := s.verificationKeys()
 	if len(key) == 0 {
+		if requireToken {
+			return nil, status.Error(codes.Unauthenticated, "filer: gRPC token authentication is required")
+		}
 		return nil, nil
 	}
 	raw, authErr := bearerFromMetadata(ctx)
@@ -199,6 +221,9 @@ func (s *filerGrpcScope) resolve(ctx context.Context) (*scope, error) {
 		return nil, authErr
 	}
 	if raw == "" {
+		if requireToken {
+			return nil, status.Error(codes.Unauthenticated, "filer: gRPC token authentication is required")
+		}
 		return nil, nil
 	}
 	leeway := time.Duration(0)
@@ -210,6 +235,14 @@ func (s *filerGrpcScope) resolve(ctx context.Context) (*scope, error) {
 	}
 	claims := &security.SeaweedFilerClaims{}
 	token, err := security.DecodeJwtWith(key, previous, security.EncodedJwt(raw), claims, leeway)
+	// Filer-owned RPCs use the shared admin key even when scoped callers have
+	// a dedicated gRPC key. Only an unscoped admin token can cross that boundary.
+	if (err != nil || token == nil || !token.Valid) && s.cfg.adminKeys != nil {
+		adminKey, previousAdminKey := s.cfg.adminKeys()
+		if isFilerAdminTokenWithLeeway(adminKey, previousAdminKey, security.EncodedJwt(raw), leeway) {
+			return nil, nil
+		}
+	}
 	if errors.Is(err, jwt.ErrTokenExpired) {
 		// The claims are parsed before validation, so the id names the holder.
 		glog.V(1).Infof("filer grpc: token %s (%s) expired", claims.ID, scopePeer(ctx))

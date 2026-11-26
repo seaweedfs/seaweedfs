@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -224,7 +223,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 			glog.V(2).InfofCtx(ctx, "CreateEntry %s: forwarding to owner %s", fullpath, owner)
 			req.IsMoved = true
 			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-				forwarded, e := client.CreateEntry(ctx, req)
+				forwarded, e := client.CreateEntry(withCallerAuthContext(ctx), req)
 				if e != nil {
 					return e
 				}
@@ -394,7 +393,7 @@ func (fs *FilerServer) ObjectTransaction(ctx context.Context, req *filer_pb.Obje
 			glog.V(2).InfofCtx(ctx, "ObjectTransaction %s: forwarding to owner %s", req.LockKey, owner)
 			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 				var e error
-				resp, e = client.ObjectTransaction(ctx, forwarded)
+				resp, e = client.ObjectTransaction(withCallerAuthContext(ctx), forwarded)
 				return e
 			})
 		})
@@ -961,7 +960,7 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 			glog.V(2).InfofCtx(ctx, "UpdateEntry %s: forwarding to owner %s", fullpath, owner)
 			req.IsMoved = true
 			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-				forwarded, e := client.UpdateEntry(ctx, req)
+				forwarded, e := client.UpdateEntry(withCallerAuthContext(ctx), req)
 				if e != nil {
 					return e
 				}
@@ -1263,7 +1262,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	glog.V(4).InfofCtx(ctx, "AppendToEntry %s/%s", req.GetDirectory(), req.GetEntryName())
 	fullpath := util.NewFullPath(req.Directory, req.EntryName)
 
-	lockClient := cluster.NewLockClient(fs.grpcDialOption, fs.option.Host)
+	lockClient := fs.newLockClient()
 	lock := lockClient.NewBlockingLongLivedLock(string(fullpath), string(fs.option.Host), 0)
 	if lock == nil {
 		return nil, fmt.Errorf("failed to acquire lock for %s", fullpath)

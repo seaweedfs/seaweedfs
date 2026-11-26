@@ -25,6 +25,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/constants"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -278,7 +280,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	// when it is an append
 	if isAppend || isOffsetWrite {
 		if fs.filer.Dlm != nil && len(fs.filer.Dlm.LockRing.GetSnapshot()) > 1 {
-			lockClient := cluster.NewLockClient(fs.grpcDialOption, fs.option.Host)
+			lockClient := fs.newLockClient()
 			distributedLock = lockClient.NewBlockingLongLivedLock(path, string(fs.option.Host), 0)
 			if distributedLock == nil {
 				replyerr = fmt.Errorf("failed to acquire lock for %s; retry the request", path)
@@ -458,6 +460,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	}
 
 	// maybe compact entry chunks
+	unmanifested := mergedChunks
 	mergedChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), fs.filer.DeleteChunksNotRecursive, mergedChunks)
 	if replyerr != nil {
 		glog.V(0).InfofCtx(ctx, "manifestize %s: %v", r.RequestURI, replyerr)
@@ -530,7 +533,8 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		routed, dbErr = fs.forwardToWriteOwner(ctx, entryRouteKey(util.FullPath(path)), func(owner pb.ServerAddress) error {
 			return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 				dir, _ := entry.FullPath.DirAndName()
-				return filer_pb.CreateEntry(context.WithoutCancel(ctx), client, &filer_pb.CreateEntryRequest{
+				forwardCtx := fs.withHTTPForwardAuthContext(context.WithoutCancel(ctx), r)
+				return filer_pb.CreateEntry(forwardCtx, client, &filer_pb.CreateEntryRequest{
 					Directory:                dir,
 					Entry:                    entry.ToProtoEntry(),
 					IsMoved:                  true,
@@ -554,6 +558,12 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		switch {
 		case routed && errors.Is(dbErr, filer_pb.ErrPreconditionFailed):
 			replyerr = fmt.Errorf("entry %s changed during append; retry the request", path)
+		case routed && status.Code(dbErr) == codes.Unauthenticated:
+			// The owner refused the call before running it. A new manifest can
+			// list committed chunks, so only its own blob is deleted.
+			if !inlineAppendConverted {
+				fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunks(mergedChunks, unmanifested))
+			}
 		case routed:
 			// The owner may have committed before the reply was lost, and a
 			// separate local store may not hold that commit yet.

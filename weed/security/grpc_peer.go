@@ -114,6 +114,18 @@ func GrpcAdminPeerCredentials(signingKey SigningKey, expiresAfterSec int) metada
 	return metadata.Pairs("authorization", "Bearer "+string(token))
 }
 
+// WithFilerPeerCredentials authenticates one filer-owned RPC attempt. The caller
+// resolves the current key for each attempt; the connection carries no authority.
+func WithFilerPeerCredentials(ctx context.Context, signingKey SigningKey) context.Context {
+	md, _ := metadata.FromOutgoingContext(ctx)
+	md = md.Copy()
+	md.Delete("authorization")
+	if auth := GrpcAdminPeerCredentials(signingKey, 10); auth != nil {
+		md.Set("authorization", auth.Get("authorization")...)
+	}
+	return metadata.NewOutgoingContext(ctx, md)
+}
+
 func isMtlsVerifiedPeer(ctx context.Context) bool {
 	pr, ok := peer.FromContext(ctx)
 	if !ok {
