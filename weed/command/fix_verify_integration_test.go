@@ -89,7 +89,7 @@ func TestIssue5674ZeroFilledHead(t *testing.T) {
 // needle behind it; `weed fix.recover` recovers them.
 func TestIssue12914LegacyFixDropsNeedlesAfterDamage(t *testing.T) {
 	dir := t.TempDir()
-	base, offsets := writeFixTestVolume(t, dir, 8)
+	base, offsets := writeFixTestVolume(t, dir, 8, needle.Version3)
 	// A huge size field in the header of needle 5 makes the record run past EOF.
 	patchDat(t, base+".dat", offsets[4]+types.NeedleIdSize+types.CookieSize, []byte{0x7f, 0xff, 0xff, 0xf0})
 
@@ -116,7 +116,7 @@ func TestIssue12914LegacyFixDropsNeedlesAfterDamage(t *testing.T) {
 // record is skipped and the rebuild indexes the later copy at its real offset.
 func TestIssue12914RewrittenNeedleBehindDamage(t *testing.T) {
 	dir := t.TempDir()
-	base, offsets := writeFixTestVolume(t, dir, 8)
+	base, offsets := writeFixTestVolume(t, dir, 8, needle.Version3)
 
 	// Rewrite needle 5 at the end of the .dat, then destroy the original record.
 	f, err := os.OpenFile(base+".dat", os.O_RDWR, 0644)
@@ -126,7 +126,7 @@ func TestIssue12914RewrittenNeedleBehindDamage(t *testing.T) {
 	datBackend := backend.NewDiskFile(f)
 	rewritten := &needle.Needle{Id: types.Uint64ToNeedleId(5), Data: bytes.Repeat([]byte{0x77}, 4321)}
 	rewritten.Checksum = needle.NewCRC(rewritten.Data)
-	newOffset, _, _, err := rewritten.Append(datBackend, needle.GetCurrentVersion())
+	newOffset, _, _, err := rewritten.Append(datBackend, needle.Version3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func buildVerifyFixtureVersion(t *testing.T, count int, version needle.Version) 
 // clear, scriptable error.
 func TestFixRefusesPendingCompactMarker(t *testing.T) {
 	dir := t.TempDir()
-	base, _ := writeFixTestVolume(t, dir, 3)
+	base, _ := writeFixTestVolume(t, dir, 3, needle.GetCurrentVersion())
 	if err := os.WriteFile(base+".cpc", nil, 0644); err != nil {
 		t.Fatal(err)
 	}

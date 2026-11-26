@@ -162,7 +162,7 @@ func withVerifyFlags(t *testing.T, ignoreError bool) {
 // server rebuilds it from the new index.
 func TestFixVerifyStagesIndexAndDropsLevelDb(t *testing.T) {
 	dir := t.TempDir()
-	base, _ := writeFixTestVolume(t, dir, 3)
+	base, _ := writeFixTestVolume(t, dir, 3, needle.Version3)
 	if err := os.WriteFile(base+".idx", []byte("old index, 16 b"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestFixVerifyIgnoreErrorContinues(t *testing.T) {
 // .idx, so a local .dat next to it must not replace that index.
 func TestFixVerifyRefusesRemoteTier(t *testing.T) {
 	dir := t.TempDir()
-	base, _ := writeFixTestVolume(t, dir, 3)
+	base, _ := writeFixTestVolume(t, dir, 3, needle.GetCurrentVersion())
 	if err := os.WriteFile(base+".idx", []byte("old index, 16 b"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestFixVerifyRefusesRemoteTier(t *testing.T) {
 // An unparsable .vif may hide a remote tier, so it is refused the same way.
 func TestFixVerifyRefusesUnreadableVolumeInfo(t *testing.T) {
 	dir := t.TempDir()
-	base, _ := writeFixTestVolume(t, dir, 3)
+	base, _ := writeFixTestVolume(t, dir, 3, needle.GetCurrentVersion())
 	if err := os.WriteFile(base+".idx", []byte("old index, 16 b"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestVerifyStrayBytesDoNotDeleteLiveFiles(t *testing.T) {
 // script knows to restore from a replica; a clean volume exits 0.
 func TestFixVerifyExitStatusReportsDamage(t *testing.T) {
 	dir := t.TempDir()
-	base, offsets := writeFixTestVolume(t, dir, 4)
+	base, offsets := writeFixTestVolume(t, dir, 4, needle.Version3)
 	withVerifyFlags(t, false)
 	doRecoverOneVolume(dir, "fix_7", 7)
 	if CommandExitStatus() != 0 {
@@ -316,7 +316,7 @@ func TestFixVerifyExitStatusReportsDamage(t *testing.T) {
 // reported and the run goes on with the other volumes.
 func TestRunFixIgnoreErrorSkipsBadVolumeId(t *testing.T) {
 	dir := t.TempDir()
-	writeFixTestVolume(t, dir, 2)
+	writeFixTestVolume(t, dir, 2, needle.GetCurrentVersion())
 	if err := os.WriteFile(filepath.Join(dir, "c_4294967296.dat"), nil, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +375,7 @@ func TestVerifyResyncedDeleteRecordGuards(t *testing.T) {
 
 func TestRunFixVolumeIdFilterSkipsOutOfRangeName(t *testing.T) {
 	dir := t.TempDir()
-	writeFixTestVolume(t, dir, 2)
+	writeFixTestVolume(t, dir, 2, needle.GetCurrentVersion())
 	if err := os.WriteFile(filepath.Join(dir, "fix_4294967296.dat"), nil, 0644); err != nil {
 		t.Fatal(err)
 	}

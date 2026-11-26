@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
@@ -49,7 +50,7 @@ func TestRunFixRecoverNeedsAPath(t *testing.T) {
 
 func TestRunFixRecoverRebuildsIndex(t *testing.T) {
 	dir := t.TempDir()
-	base, offsets := writeFixTestVolume(t, dir, 6)
+	base, offsets := writeFixTestVolume(t, dir, 6, needle.Version3)
 	patchDat(t, base+".dat", offsets[2], bytes.Repeat([]byte{0xA5}, types.NeedleHeaderSize))
 	withVerifyFlags(t, false)
 
@@ -68,11 +69,11 @@ func TestRunFixRecoverRebuildsIndex(t *testing.T) {
 
 func TestRunFixRecoverVolumeIdFilter(t *testing.T) {
 	dir := t.TempDir()
-	writeFixTestVolume(t, dir, 2)
+	writeFixTestVolume(t, dir, 2, needle.Version3)
 	if err := os.Rename(filepath.Join(dir, "fix_7.dat"), filepath.Join(dir, "fix_8.dat")); err != nil {
 		t.Fatal(err)
 	}
-	writeFixTestVolume(t, dir, 3)
+	writeFixTestVolume(t, dir, 3, needle.Version3)
 	withVerifyFlags(t, false)
 	saved := *fixRecoverVolumeId
 	*fixRecoverVolumeId = 7
