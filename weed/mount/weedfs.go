@@ -315,16 +315,16 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.attrValidSec = 10
 	}
 
-	if option.NfsExport {
-		wfs.inodeToPath.RetainForgotten(nfsExportForgottenInodes)
-		wfs.exportedHandles = wfs.newExportedHandles()
-	}
-
 	if option.EnableDistributedLock && !option.WritebackCache && len(option.FilerAddresses) > 0 {
 		wfs.lockClient = cluster.NewLockClient(option.GrpcDialOption, option.FilerAddresses[0])
 		glog.V(0).Infof("distributed lock manager enabled for mount")
 	} else if option.EnableDistributedLock && option.WritebackCache {
 		glog.V(0).Infof("distributed lock manager disabled: writeback cache implies single-writer mode")
+	}
+
+	if option.NfsExport {
+		wfs.inodeToPath.RetainForgotten(nfsExportForgottenInodes)
+		wfs.exportedHandles = wfs.newExportedHandles()
 	}
 
 	if option.AccessReport {

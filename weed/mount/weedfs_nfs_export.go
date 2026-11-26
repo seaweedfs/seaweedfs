@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"syscall"
@@ -52,9 +53,10 @@ type exportedHandles struct {
 	wake     chan struct{}
 	put      func(key, value []byte) error
 	get      func(ctx context.Context, key []byte) ([]byte, error)
+	lock     func(inode uint64) (unlock func())
 }
 
-func newExportedHandles(owner uint32, put func(key, value []byte) error, get func(ctx context.Context, key []byte) ([]byte, error)) *exportedHandles {
+func newExportedHandles(owner uint32, put func(key, value []byte) error, get func(ctx context.Context, key []byte) ([]byte, error), lock func(inode uint64) (unlock func())) *exportedHandles {
 	h := &exportedHandles{
 		owner:    owner,
 		paths:    make(map[uint64]util.FullPath),
@@ -65,6 +67,7 @@ func newExportedHandles(owner uint32, put func(key, value []byte) error, get fun
 		wake:     make(chan struct{}, 1),
 		put:      put,
 		get:      get,
+		lock:     lock,
 	}
 	go h.loop()
 	return h
@@ -110,10 +113,12 @@ func (h *exportedHandles) loop() {
 }
 
 // write replaces this mount's registration of the inode with path, or drops
-// it when path is empty, keeping those of other mounts. Mounts that update the
-// same inode at the same moment can still overwrite each other's: the filer KV
-// has no compare-and-swap.
+// it when path is empty, keeping those of other mounts. The filer KV has no
+// compare-and-swap, so mounts take turns on a record through the lock manager
+// under -dlm; without it, mounts that update the same inode at the same moment
+// can still overwrite each other's.
 func (h *exportedHandles) write(inode uint64, path util.FullPath) error {
+	defer h.lock(inode)()
 	key := exportedHandleKey(inode)
 	value, err := h.get(context.Background(), key)
 	if err != nil {
@@ -282,5 +287,14 @@ func (wfs *WFS) newExportedHandles() *exportedHandles {
 			return nil
 		})
 		return
+	}, func(inode uint64) func() {
+		if wfs.lockClient == nil {
+			return func() {}
+		}
+		lock := wfs.lockClient.NewShortLivedLock(fmt.Sprintf("%s%d", exportedHandleKeyPrefix, inode), fmt.Sprintf("mount-%d", wfs.signature))
+		if lock == nil {
+			return func() {}
+		}
+		return func() { lock.StopShortLivedLock() }
 	})
 }

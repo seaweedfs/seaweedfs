@@ -17,8 +17,15 @@ import (
 
 type fakeKv struct {
 	sync.Mutex
-	values map[string][]byte
-	err    error
+	values   map[string][]byte
+	err      error
+	getDelay time.Duration
+	turn     sync.Mutex
+}
+
+func (kv *fakeKv) lock(uint64) func() {
+	kv.turn.Lock()
+	return kv.turn.Unlock
 }
 
 func (kv *fakeKv) put(key, value []byte) error {
@@ -34,8 +41,10 @@ func (kv *fakeKv) put(key, value []byte) error {
 
 func (kv *fakeKv) get(_ context.Context, key []byte) ([]byte, error) {
 	kv.Lock()
-	defer kv.Unlock()
-	return kv.values[string(key)], kv.err
+	value, err := kv.values[string(key)], kv.err
+	kv.Unlock()
+	time.Sleep(kv.getDelay)
+	return value, err
 }
 
 // waitFor waits until the inode's record holds only a registration of want,
@@ -71,7 +80,7 @@ func (kv *fakeKv) waitUntil(t *testing.T, inode uint64, want any, done func([]ex
 }
 
 func newExportedHandlesForTest(kv *fakeKv, owner uint32, delay time.Duration) *exportedHandles {
-	h := newExportedHandles(owner, kv.put, kv.get)
+	h := newExportedHandles(owner, kv.put, kv.get, kv.lock)
 	h.delay = delay
 	return h
 }
@@ -138,6 +147,17 @@ func TestExportedHandlesRemovalKeepsAnotherMountsRegistration(t *testing.T) {
 	kv.waitForRegistrations(t, 8, exportedHandleRegistration{1, "/buckets/b.txt"}, exportedHandleRegistration{2, "/buckets/b.txt"})
 	first.ReleaseHandle(8)
 	kv.waitForRegistrations(t, 8, exportedHandleRegistration{2, "/buckets/b.txt"})
+}
+
+func TestExportedHandlesConcurrentMountsKeepBothRegistrations(t *testing.T) {
+	kv := &fakeKv{values: map[string][]byte{}, getDelay: 20 * time.Millisecond}
+	first := newExportedHandlesForTest(kv, 1, time.Minute)
+	second := newExportedHandlesForTest(kv, 2, time.Minute)
+	first.AcquireHandle(7, "/buckets/a.txt")
+	second.AcquireHandle(7, "/buckets/a.txt")
+	kv.waitUntil(t, 7, "registrations of both mounts", func(got []exportedHandleRegistration) bool {
+		return len(got) == 2
+	})
 }
 
 func TestExportedHandlesRestartedMountTakesOverItsRegistration(t *testing.T) {
