@@ -618,7 +618,7 @@ func eventDataSize(resp *filer_pb.SubscribeMetadataResponse) (size int64) {
 	}
 	newChunks := message.NewEntry.GetChunks()
 	if message.OldEntry != nil {
-		newChunks = filer.DoMinusChunks(newChunks, message.OldEntry.GetChunks())
+		newChunks = filer.DoMinusChunks(newChunks, message.OldEntry.GetChunks(), false)
 	}
 	for _, chunk := range newChunks {
 		size += int64(chunk.Size)

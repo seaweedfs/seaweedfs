@@ -393,13 +393,13 @@ func TestDoMinusChunksWithResolvedManifests(t *testing.T) {
 	}
 
 	// DoMinusChunks: data sub-chunks in old but not in new
-	deltaData := DoMinusChunks(oldResolved, newData)
+	deltaData := DoMinusChunks(oldResolved, newData, false)
 	if len(deltaData) != 3 {
 		t.Fatalf("expected 3 old data chunks as garbage, got %d", len(deltaData))
 	}
 
 	// DoMinusChunks: manifest chunks in old but not in new
-	deltaMeta := DoMinusChunks(oldMeta, nil)
+	deltaMeta := DoMinusChunks(oldMeta, nil, false)
 	if len(deltaMeta) != 1 {
 		t.Fatalf("expected 1 old manifest chunk as garbage, got %d", len(deltaMeta))
 	}

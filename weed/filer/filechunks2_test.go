@@ -36,7 +36,7 @@ func TestDoMinusChunks(t *testing.T) {
 
 	// clusterA received the first one event, gonna empty the whole chunk, according the code in filer_sink 194
 	// we can get the deleted chunks and newChunks
-	firstDeletedChunks := DoMinusChunks(firstOldEntry, firstNewEntry)
+	firstDeletedChunks := DoMinusChunks(firstOldEntry, firstNewEntry, false)
 	log.Println("first deleted chunks:", firstDeletedChunks)
 	//firstNewEntry := DoMinusChunks(firstNewEntry, firstOldEntry)
 
@@ -48,7 +48,7 @@ func TestDoMinusChunks(t *testing.T) {
 	assert.Equalf(t, firstNewEntry, emptiedChunksInA, "empty")
 }
 
-func TestDoMinusChunksByNeedleIdentity(t *testing.T) {
+func TestDoMinusChunksByNeedle(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		old         *filer_pb.FileChunk
@@ -91,7 +91,7 @@ func TestDoMinusChunksByNeedleIdentity(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := DoMinusChunksByNeedleIdentity([]*filer_pb.FileChunk{tc.old}, []*filer_pb.FileChunk{tc.new})
+			got := DoMinusChunks([]*filer_pb.FileChunk{tc.old}, []*filer_pb.FileChunk{tc.new}, true)
 			if tc.wantGarbage {
 				if assert.Len(t, got, 1) {
 					assert.Equal(t, tc.old.GetFileIdString(), got[0].GetFileIdString())
