@@ -27,6 +27,7 @@ type createEntryTestServer struct {
 	lastUID       uint32
 	lastGID       uint32
 	lastMode      uint32
+	cachedRemote  *filer_pb.Entry
 }
 
 type createEntrySnapshot struct {
