@@ -736,29 +736,15 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	// Create assign function for chunked upload
 	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*operation.VolumeAssignRequest, *operation.AssignResult, error) {
-		var assignResult *filer_pb.AssignVolumeResponse
-		// ctx follows the client now, so bound the call itself too.
-		assignCtx, assignCancel := context.WithTimeout(ctx, s3AssignVolumeTimeout)
-		defer assignCancel()
-		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			resp, err := client.AssignVolume(assignCtx, &filer_pb.AssignVolumeRequest{
-				Count:            int32(count),
-				Replication:      "",
-				Collection:       collection,
-				DiskType:         "",
-				DataCenter:       s3a.option.DataCenter,
-				Path:             assignPath,
-				ExpectedDataSize: expectedDataSize,
-				TtlSec:           lifecycleTTLSec,
-			})
-			if err != nil {
-				return fmt.Errorf("assign volume: %w", err)
-			}
-			if err := filer_pb.AssignVolumeResponseError(resp); err != nil {
-				return fmt.Errorf("assign volume: %w", err)
-			}
-			assignResult = resp
-			return nil
+		assignResult, err := s3a.assignUploadVolume(ctx, &filer_pb.AssignVolumeRequest{
+			Count:            int32(count),
+			Replication:      "",
+			Collection:       collection,
+			DiskType:         "",
+			DataCenter:       s3a.option.DataCenter,
+			Path:             assignPath,
+			ExpectedDataSize: expectedDataSize,
+			TtlSec:           lifecycleTTLSec,
 		})
 		if err != nil {
 			return nil, nil, err
@@ -1906,6 +1892,28 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 // s3AssignVolumeTimeout bounds one AssignVolume RPC; it mirrors operation's
 // unexported assignVolumeTimeout.
 const s3AssignVolumeTimeout = 30 * time.Second
+
+// assignUploadVolume asks a filer for a volume for one upload chunk. ctx follows
+// the client, so the call is bounded by s3AssignVolumeTimeout too, and the filer
+// walk gets the same context: a client that went away is not evidence against
+// the filer that was answering, and the next filer is not asked on its behalf.
+func (s3a *S3ApiServer) assignUploadVolume(ctx context.Context, req *filer_pb.AssignVolumeRequest) (*filer_pb.AssignVolumeResponse, error) {
+	assignCtx, cancel := context.WithTimeout(ctx, s3AssignVolumeTimeout)
+	defer cancel()
+	var assignResult *filer_pb.AssignVolumeResponse
+	err := s3a.withFilerClient(assignCtx, false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.AssignVolume(assignCtx, req)
+		if err != nil {
+			return fmt.Errorf("assign volume: %w", err)
+		}
+		if err := filer_pb.AssignVolumeResponseError(resp); err != nil {
+			return fmt.Errorf("assign volume: %w", err)
+		}
+		assignResult = resp
+		return nil
+	})
+	return assignResult, err
+}
 
 // mapChunkedUploadErrorToS3Error classifies a failed streaming upload. A truncated
 // request body (client abort or reverse-proxy timeout) is a request error, so report
