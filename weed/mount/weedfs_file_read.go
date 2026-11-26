@@ -52,7 +52,7 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 
 	offset := int64(in.Offset)
 	totalRead, err := readDataByFileHandleWithContext(ctx, buff, fh, offset)
-	if err != nil && err != errNativeSSES3Read && err != errSSES3Permission && ctx.Err() == nil {
+	if err != nil && err != errNativeSSERead && err != errSSES3Permission && ctx.Err() == nil {
 		// The chunk views a read resolves can name data a concurrent overwrite
 		// already replaced: the filer queues replaced file ids for deletion at
 		// commit while this handle only learns the new list when the metadata
@@ -66,7 +66,7 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 		}
 	}
 	if err != nil {
-		if err == errNativeSSES3Read {
+		if err == errNativeSSERead {
 			return nil, fuse.ENOTSUP
 		}
 		if err == errSSES3Permission {
