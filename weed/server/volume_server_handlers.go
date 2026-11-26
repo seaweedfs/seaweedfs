@@ -250,8 +250,18 @@ func (vs *VolumeServer) waitForUploadSlot(w http.ResponseWriter, r *http.Request
 		return false
 	}
 	w.Header().Set("Retry-After", "1")
-	if r.ProtoMajor == 1 && (r.ContentLength < 0 || r.ContentLength > uploadRejectCloseThreshold) {
-		w.Header().Set("Connection", "close")
+	if r.ProtoMajor == 1 {
+		if r.ContentLength < 0 || r.ContentLength > uploadRejectCloseThreshold {
+			w.Header().Set("Connection", "close")
+		} else if r.ContentLength > 0 {
+			// net/http drains an unread body before it writes the reply's
+			// headers, so a client withholding a small body would hold this
+			// 503 back until it sent one. Full duplex skips that drain: the
+			// reply goes out now, and the body is drained after it, which
+			// keeps the connection once the body arrives. Only net/http's own
+			// writer drains, so a writer without full duplex needs nothing.
+			_ = http.NewResponseController(w).EnableFullDuplex()
+		}
 	}
 	if err != errUploadUncountable {
 		err = fmt.Errorf("reject because inflight upload data %d + %d > %d, and wait timeout",

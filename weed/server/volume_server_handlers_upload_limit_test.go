@@ -1,10 +1,13 @@
 package weed_server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -333,4 +336,34 @@ func TestHandleUploadRequestReleasesItsCharge(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, w.Code, "limit %d: the request must reach PostHandler", limit)
 		require.Equal(t, int64(3), atomic.LoadInt64(&vs.inFlightUploadDataSize), "limit %d", limit)
 	}
+}
+
+// A rejected HTTP/1 upload with a small body keeps its pooled connection, so
+// net/http would drain that body before writing the 503's headers. A client
+// that declares a few bytes and withholds them must still get the 503 once the
+// admission wait ends, not when it gets round to sending the body.
+func TestUploadLimitAnswersAWithheldSmallBodyAtOnce(t *testing.T) {
+	vs := newUploadLimitVolumeServer(10, 10, 50*time.Millisecond)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w = stats.NewStatusResponseWriter(w)
+		if ok, charged := admitUpload(vs, w, r); ok {
+			vs.releaseUploadSlot(charged)
+			w.WriteHeader(http.StatusCreated)
+		}
+	}))
+	defer srv.Close()
+
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	require.NoError(t, err)
+	defer conn.Close()
+	start := time.Now()
+	_, err = fmt.Fprintf(conn, "POST /1,0123456789abcdef HTTP/1.1\r\nHost: volume\r\nContent-Length: 4\r\n\r\n")
+	require.NoError(t, err)
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(3*time.Second)))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	require.NoError(t, err, "no reply while the body was withheld")
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	require.Less(t, time.Since(start), 2*time.Second)
+	require.Empty(t, resp.Header.Get("Connection"), "a small body keeps the connection")
 }
