@@ -729,12 +729,13 @@ func (fs *SftpServer) applyBucketDefaultRetention(absPath string, header http.He
 	if fs.bucketsDir == "" {
 		return nil
 	}
-	rel, inBuckets := strings.CutPrefix(absPath, strings.TrimSuffix(fs.bucketsDir, "/")+"/")
+	root := strings.TrimSuffix(path.Clean("/"+fs.bucketsDir), "/")
+	rel, inBuckets := strings.CutPrefix(absPath, root+"/")
 	bucket, _, isObject := strings.Cut(rel, "/")
 	if !inBuckets || !isObject || bucket == "" {
 		return nil
 	}
-	bucketEntry, err := fs.getEntry(path.Join(fs.bucketsDir, bucket))
+	bucketEntry, err := fs.getEntry(root + "/" + bucket)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
