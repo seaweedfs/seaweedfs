@@ -4,7 +4,6 @@ package util
 
 import (
 	"os"
-	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"golang.org/x/sys/unix"
@@ -54,17 +53,6 @@ func ReadTransparentHugePages() *TransparentHugePages {
 	}
 }
 
-// goHeapHugePagesDisabled reports whether GODEBUG=disablethp=1 is in effect,
-// which makes the runtime map the heap with MADV_NOHUGEPAGE instead.
-func goHeapHugePagesDisabled() bool {
-	for _, setting := range strings.Split(os.Getenv("GODEBUG"), ",") {
-		if strings.TrimSpace(setting) == "disablethp=1" {
-			return true
-		}
-	}
-	return false
-}
-
 // processHugePagesDisabled reports whether prctl(PR_SET_THP_DISABLE), which
 // a launcher such as systemd can set and children inherit, turned THP off for
 // this process. Its except-advised variant still covers the unadvised heap.
@@ -89,7 +77,7 @@ func LogTransparentHugePages() {
 	}
 	// The runtime advises only GC metadata with MADV_HUGEPAGE, so the heap
 	// itself gets huge pages only under "always".
-	goHeapTHP := status.Enabled == "always" && !goHeapHugePagesDisabled() && !processHugePagesDisabled()
+	goHeapTHP := status.Enabled == "always" && !goHeapHugePagesDisabled(os.Getenv("GODEBUG")) && !processHugePagesDisabled()
 	glog.V(0).Infof("transparent huge pages: enabled=%s defrag=%s khugepaged.max_ptes_none=%s go_heap_thp=%t; see https://go.dev/doc/gc-guide#Linux_transparent_huge_pages",
 		status.Enabled, status.Defrag, status.MaxPtesNone, goHeapTHP)
 }

@@ -34,3 +34,25 @@ func TestParseTHPValue(t *testing.T) {
 		t.Errorf("parseTHPValue of empty content: got %q, want empty", got)
 	}
 }
+
+func TestGoHeapHugePagesDisabled(t *testing.T) {
+	tests := []struct {
+		godebug string
+		want    bool
+	}{
+		{godebug: "", want: false},
+		{godebug: "disablethp=1", want: true},
+		{godebug: "disablethp=0", want: false},
+		{godebug: "disablethp=2", want: true},
+		{godebug: "gctrace=1,disablethp=1", want: true},
+		{godebug: "disablethp=1,disablethp=0", want: false},
+		{godebug: "disablethp=0,disablethp=1", want: true},
+		{godebug: "disablethp=1,disablethp=on", want: true},
+		{godebug: "gctrace=1, disablethp=1", want: false},
+	}
+	for _, tc := range tests {
+		if got := goHeapHugePagesDisabled(tc.godebug); got != tc.want {
+			t.Errorf("goHeapHugePagesDisabled(%q) = %t, want %t", tc.godebug, got, tc.want)
+		}
+	}
+}
