@@ -124,6 +124,10 @@ type IdentityAccessManagement struct {
 	// snapshot through commit) so an older snapshot cannot overwrite a newer
 	// one
 	reloadMu sync.Mutex
+
+	// inFlight tracks the authorized requests being served, so a change that
+	// revokes their access aborts them.
+	inFlight *inFlightRequests
 }
 
 type Identity struct {
@@ -377,6 +381,8 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 	iam.stopChan = make(chan struct{})
 	iam.reloadCh = make(chan struct{}, 1)
 	go iam.reloadRetryLoop()
+	iam.inFlight = newInFlightRequests()
+	go iam.revalidateLoop()
 	iam.grpcDialOption = option.GrpcDialOption
 
 	// First, try to load configurations from file or filer
@@ -1016,6 +1022,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 		iam.m.RUnlock()
 	}
 
+	iam.revalidateInFlight()
 	return nil
 }
 
@@ -1333,11 +1340,13 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 		}
 	}
 
+	iam.revalidateInFlight()
 	return nil
 }
 
 func (iam *IdentityAccessManagement) RemoveIdentity(name string) {
 	glog.V(1).Infof("IAM: remove identity %s", name)
+	defer iam.revalidateInFlight()
 	iam.m.Lock()
 	defer iam.m.Unlock()
 
@@ -1765,13 +1774,14 @@ func (iam *IdentityAccessManagement) Auth(f http.HandlerFunc, action Action) htt
 		// authRequestWithAuthType keeps the resolved identity when authN
 		// succeeds but authZ denies, so the denied request still audits its
 		// requester; a failed authN resolves no identity at all.
+		since := iam.inFlightGeneration()
 		identity, errCode, _ := iam.authRequestWithAuthType(r, action)
 		errCode = refineDenialForBucketName(r, identity, errCode)
 		if errCode != s3err.ErrNone {
 			glog.V(3).Infof("auth error: %v", errCode)
 		}
 
-		iam.handleAuthResult(w, r, identity, errCode, f)
+		iam.handleAuthResult(w, r, identity, errCode, iam.abortWhenRevoked(f, identity, action, since))
 	}
 }
 
@@ -2048,14 +2058,21 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	if s3Err != s3err.ErrNone {
 		return identity, s3Err, reqAuthType
 	}
+	return identity, iam.authorizeRequest(r, identity, action), reqAuthType
+}
 
+// authorizeRequest decides whether an authenticated identity may perform action
+// on the request's bucket and object. A request in flight is checked with it
+// again when its access changes.
+func (iam *IdentityAccessManagement) authorizeRequest(r *http.Request, identity *Identity, action Action) s3err.ErrorCode {
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	// Verify the original signature first, then evaluate policies against the
-	// effective PUT ACL, including signed query parameters hoisted by presigners.
+	// The signature was verified on the original request; evaluate policies
+	// against the effective PUT ACL, including signed query parameters hoisted
+	// by presigners.
 	originalRequest := r
-	r, s3Err = putObjectACLPolicyRequest(r, action, bucket, object)
+	r, s3Err := putObjectACLPolicyRequest(r, action, bucket, object)
 	if s3Err != s3err.ErrNone {
-		return identity, s3Err, reqAuthType
+		return s3Err
 	}
 	prefix := s3_constants.GetPrefix(r)
 
@@ -2075,7 +2092,7 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	if action == s3_constants.ACTION_WRITE && r.Method == http.MethodPost &&
 		object == "" && r.URL.Query().Has("delete") {
 		r.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
-		return identity, s3err.ErrNone, reqAuthType
+		return s3err.ErrNone
 	}
 
 	// For ListBuckets, authorization is performed in the handler by iterating
@@ -2119,7 +2136,7 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 				// SECURITY: Fail-close on policy evaluation errors
 				// If we can't evaluate the policy, deny access rather than falling through to IAM
 				glog.Errorf("Error evaluating bucket policy for %s/%s: %v - denying access", bucket, object, err)
-				return identity, s3err.ErrAccessDenied, reqAuthType
+				return s3err.ErrAccessDenied
 			} else if evaluated {
 				// A bucket policy exists and was evaluated with a matching statement
 				if allowed {
@@ -2129,7 +2146,7 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 					// group, or session policy.
 					if iam.isActionExplicitlyDeniedByApplicablePolicies(r, identity, action, bucket, object) {
 						glog.V(3).Infof("identity policy explicitly denies %s to %s on %s/%s despite bucket policy allow", identity.Name, action, bucket, object)
-						return identity, s3err.ErrAccessDenied, reqAuthType
+						return s3err.ErrAccessDenied
 					}
 					glog.V(3).Infof("Bucket policy allows %s to %s on %s/%s (bypassing IAM)", identity.Name, action, bucket, object)
 					policyAllows = true
@@ -2137,7 +2154,7 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 					// Policy explicitly denies this action - deny access immediately
 					// Note: Explicit Deny in bucket policy overrides all other permissions
 					glog.V(3).Infof("Bucket policy explicitly denies %s to %s on %s/%s", identity.Name, action, bucket, object)
-					return identity, s3err.ErrAccessDenied, reqAuthType
+					return s3err.ErrAccessDenied
 				}
 			}
 			// If not evaluated (no policy or no matching statements), fall through to IAM/identity checks
@@ -2147,14 +2164,14 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 		if !policyAllows {
 			// Use centralized permission check
 			if errCode := iam.VerifyActionPermission(r, identity, action, bucket, object); errCode != s3err.ErrNone {
-				return identity, errCode, reqAuthType
+				return errCode
 			}
 		}
 	}
 
 	originalRequest.Header.Set(s3_constants.AmzAccountId, identity.Account.Id)
 
-	return identity, s3err.ErrNone, reqAuthType
+	return s3err.ErrNone
 
 }
 
@@ -2537,6 +2554,7 @@ func (iam *IdentityAccessManagement) resyncIAMManagerPolicies() {
 	if err := iam.syncRuntimePoliciesToIAMManager(context.Background(), policies); err != nil {
 		glog.Warningf("Failed to sync runtime policies to IAM Manager: %v", err)
 	}
+	iam.revalidateInFlight()
 }
 
 // PruneBucketFromConfiguration removes any identity actions scoped to the given
@@ -3500,12 +3518,14 @@ func (iam *IdentityAccessManagement) PutGroup(group *iam_pb.Group) error {
 	if len(inlinePolicies) > 0 {
 		iam.resyncIAMManagerPolicies()
 	}
+	iam.revalidateInFlight()
 	return nil
 }
 
 func (iam *IdentityAccessManagement) RemoveGroup(groupName string) {
 	glog.V(1).Infof("IAM: remove group %s", groupName)
 
+	defer iam.revalidateInFlight()
 	iam.m.Lock()
 	defer iam.m.Unlock()
 

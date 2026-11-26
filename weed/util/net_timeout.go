@@ -168,6 +168,15 @@ func ClientGone(ctx context.Context) bool {
 	return tc != nil && ctx.Err() == context.Canceled && !tc.readEndedByServer.Load()
 }
 
+// ConnFromContext returns the connection serving a request, as ConnContext
+// recorded it, or nil.
+func ConnFromContext(ctx context.Context) net.Conn {
+	if tc, ok := ctx.Value(connContextKey{}).(*Conn); ok {
+		return tc
+	}
+	return nil
+}
+
 func NewListener(addr string, timeout time.Duration) (ipListener net.Listener, err error) {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {

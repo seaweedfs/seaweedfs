@@ -1,6 +1,7 @@
 package policy_engine
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"net/http"
@@ -436,18 +437,31 @@ func (engine *PolicyEngine) ExtractConditionValuesFromRequest(r *http.Request) m
 	return values
 }
 
+type requestTimeKey struct{}
+
+// WithRequestTime makes aws:CurrentTime and aws:RequestTime read t instead of
+// the current time, so a request checked again while it runs is judged as of
+// when it was admitted.
+func WithRequestTime(ctx context.Context, t time.Time) context.Context {
+	return context.WithValue(ctx, requestTimeKey{}, t)
+}
+
 // RequestConditionValues returns the condition keys read from the request
 // itself, leaving out aws:SourceIp and the bucket-listing keys, which depend
 // on the caller's proxy and listing handling.
 func RequestConditionValues(r *http.Request) map[string][]string {
 	values := make(map[string][]string)
 
+	now := time.Now()
+	if t, ok := r.Context().Value(requestTimeKey{}).(time.Time); ok {
+		now = t
+	}
 	// AWS condition keys
 	values["aws:SecureTransport"] = []string{fmt.Sprintf("%t", r.TLS != nil)}
 	// Use AWS standard condition key for current time
-	values["aws:CurrentTime"] = []string{time.Now().Format(time.RFC3339)}
+	values["aws:CurrentTime"] = []string{now.Format(time.RFC3339)}
 	// Keep RequestTime for backward compatibility
-	values["aws:RequestTime"] = []string{time.Now().Format(time.RFC3339)}
+	values["aws:RequestTime"] = []string{now.Format(time.RFC3339)}
 
 	// S3 specific condition keys
 	if userAgent := r.Header.Get("User-Agent"); userAgent != "" {
