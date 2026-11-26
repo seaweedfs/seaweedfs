@@ -71,9 +71,10 @@ func ReadTransparentHugePages() *TransparentHugePages {
 // processHugePagesDisabled reports whether prctl(PR_SET_THP_DISABLE), which
 // a launcher such as systemd can set and children inherit, turned THP off for
 // this process. Its except-advised variant still covers the unadvised heap.
-func processHugePagesDisabled() bool {
-	disabled, err := unix.PrctlRetInt(unix.PR_GET_THP_DISABLE, 0, 0, 0, 0)
-	return err == nil && disabled != 0
+// known is false when the kernel refuses to answer.
+func processHugePagesDisabled() (disabled, known bool) {
+	value, err := unix.PrctlRetInt(unix.PR_GET_THP_DISABLE, 0, 0, 0, 0)
+	return value != 0, err == nil
 }
 
 // LogTransparentHugePages writes the host THP policy to the log once at
@@ -91,7 +92,15 @@ func LogTransparentHugePages() {
 		glog.V(0).Infof("transparent huge pages: disabled by the host; the Go heap will not use them")
 		return
 	}
-	goHeapTHP := hostAllowsHeap && !goHeapHugePagesDisabled(os.Getenv("GODEBUG")) && !processHugePagesDisabled()
-	glog.V(0).Infof("transparent huge pages: enabled=%s defrag=%s khugepaged.max_ptes_none=%s go_heap_thp=%t; see https://go.dev/doc/gc-guide#Linux_transparent_huge_pages",
+	goHeapTHP := "false"
+	if hostAllowsHeap && !goHeapHugePagesDisabled(os.Getenv("GODEBUG")) {
+		switch disabled, known := processHugePagesDisabled(); {
+		case !known:
+			goHeapTHP = "unknown"
+		case !disabled:
+			goHeapTHP = "true"
+		}
+	}
+	glog.V(0).Infof("transparent huge pages: enabled=%s defrag=%s khugepaged.max_ptes_none=%s go_heap_thp=%s; see https://go.dev/doc/gc-guide#Linux_transparent_huge_pages",
 		status.Enabled, status.Defrag, status.MaxPtesNone, goHeapTHP)
 }

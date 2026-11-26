@@ -17,13 +17,13 @@ func TestProcessHugePagesDisabled(t *testing.T) {
 	if err := unix.Prctl(unix.PR_SET_THP_DISABLE, 1, 0, 0, 0); err != nil {
 		t.Skipf("PR_SET_THP_DISABLE: %v", err)
 	}
-	if !processHugePagesDisabled() {
-		t.Error("processHugePagesDisabled() = false after PR_SET_THP_DISABLE=1")
+	if disabled, known := processHugePagesDisabled(); !disabled || !known {
+		t.Errorf("processHugePagesDisabled() = %t, %t after PR_SET_THP_DISABLE=1", disabled, known)
 	}
 	if err := unix.Prctl(unix.PR_SET_THP_DISABLE, 0, 0, 0, 0); err != nil {
 		t.Fatalf("clear PR_SET_THP_DISABLE: %v", err)
 	}
-	if processHugePagesDisabled() {
-		t.Error("processHugePagesDisabled() = true after PR_SET_THP_DISABLE=0")
+	if disabled, known := processHugePagesDisabled(); disabled || !known {
+		t.Errorf("processHugePagesDisabled() = %t, %t after PR_SET_THP_DISABLE=0", disabled, known)
 	}
 }
