@@ -1,10 +1,15 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -13,6 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -194,5 +200,95 @@ func TestGetObjectAnswersRequestCanceledBeforeFirstByte(t *testing.T) {
 	}
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d with %d body bytes, want %d", w.Code, w.Body.Len(), http.StatusInternalServerError)
+	}
+}
+
+type volumeLookupFiler struct {
+	anonymousReadFiler
+	volumeServer string
+}
+
+func (f *volumeLookupFiler) LookupVolume(_ context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
+	locations := make(map[string]*filer_pb.Locations, len(req.VolumeIds))
+	for _, volumeID := range req.VolumeIds {
+		locations[volumeID] = &filer_pb.Locations{Locations: []*filer_pb.Location{{Url: f.volumeServer}}}
+	}
+	return &filer_pb.LookupVolumeResponse{LocationsMap: locations}, nil
+}
+
+// A client that hangs up mid-download fails the next write with a broken pipe
+// or a connection reset; that is the client leaving, not a server error.
+func TestGetObjectClientHangupIsNotAnError(t *testing.T) {
+	const chunkSize = 4 << 20
+	chunkData := bytes.Repeat([]byte("v"), chunkSize)
+	volumeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(chunkData)
+	}))
+	t.Cleanup(volumeServer.Close)
+
+	const chunkCount = 16
+	chunks := make([]*filer_pb.FileChunk, chunkCount)
+	for i := range chunks {
+		chunks[i] = &filer_pb.FileChunk{FileId: fmt.Sprintf("%d,01637037d6", i+1), Offset: int64(i) * chunkSize, Size: chunkSize, ModifiedTsNs: 1}
+	}
+	f := &volumeLookupFiler{volumeServer: strings.TrimPrefix(volumeServer.URL, "http://")}
+	f.entries = map[string]*filer_pb.Entry{"/buckets/b/o": {
+		Name:       "o",
+		Attributes: &filer_pb.FuseAttributes{FileSize: chunkCount * chunkSize, Mtime: 1700000000},
+		Chunks:     chunks,
+	}}
+	s3a := newPutTestServer(t, startFakeFiler(t, f))
+	s3a.readerCache = filer.NewReaderCache(8, (*chunk_cache.TieredChunkCache)(nil), s3a.filerClient.GetLookupFileIdFunction(), s3a.filerClient)
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b"})
+
+	done := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(done)
+		s3a.GetObjectHandler(w, mux.SetURLVars(r, map[string]string{"bucket": "b", "object": "o"}))
+	}))
+	t.Cleanup(server.Close)
+
+	errorsBefore := glog.Stats.Error.Lines()
+	resp, err := server.Client().Get(server.URL + "/b/o")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if _, err := io.ReadFull(resp.Body, make([]byte, 64*1024)); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the handler kept streaming after the client hung up")
+	}
+	if n := glog.Stats.Error.Lines() - errorsBefore; n != 0 {
+		t.Fatalf("a client hang-up logged %d ERROR lines", n)
+	}
+}
+
+func TestStreamCanceled(t *testing.T) {
+	live := context.Background()
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	brokenPipe := &net.OpError{Op: "write", Net: "tcp", Err: syscall.EPIPE}
+	for _, tt := range []struct {
+		name string
+		ctx  context.Context
+		err  error
+		want bool
+	}{
+		{"volume server failure under a live request", live, brokenPipe, false},
+		{"client write failed and net/http canceled the request", canceled, brokenPipe, true},
+		{"shared work canceled under a live request", live, context.Canceled, true},
+		{"server-side deadline", live, context.DeadlineExceeded, false},
+	} {
+		if got := streamCanceled(tt.ctx, tt.err); got != tt.want {
+			t.Errorf("%s: streamCanceled = %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }

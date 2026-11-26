@@ -5,6 +5,7 @@ import (
 	"crypto/fips140"
 	"crypto/md5"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -197,6 +198,67 @@ func TestFIPS140OnlySHA1ChunkedTrailer(t *testing.T) {
 			}
 			if _, code := iam.newChunkedReader(newRequest()); code != want {
 				t.Errorf("got %v, want %v", code, want)
+			}
+		})
+	}
+}
+
+// policyV4Form is a POST policy form signed with SigV4 by cred.
+func policyV4Form(cred *Credential) http.Header {
+	now := time.Now().UTC()
+	policy := base64.StdEncoding.EncodeToString([]byte(`{"expiration":"2099-01-01T00:00:00Z","conditions":[]}`))
+	form := http.Header{}
+	form.Set("X-Amz-Credential", fmt.Sprintf("%s/%s/us-east-1/s3/aws4_request", cred.AccessKey, now.Format(yyyymmdd)))
+	form.Set("X-Amz-Date", now.Format(iso8601Format))
+	form.Set("Policy", policy)
+	form.Set("X-Amz-Signature", getSignature(getSigningKey(cred.SecretKey, now.Format(yyyymmdd), "us-east-1", "s3"), policy))
+	return form
+}
+
+func TestFIPS140OnlyShortSecret(t *testing.T) {
+	if fips140.Enforced() {
+		t.Skip("GODEBUG=fips140=only panics signing the fixtures with a 9-character secret")
+	}
+	short := &Credential{AccessKey: "AKIASHORTSECRET0001", SecretKey: "abcd12345"}
+	ten := &Credential{AccessKey: "AKIATENSECRET000001", SecretKey: "abcd123456"}
+	iam := &IdentityAccessManagement{accessKeyIdent: map[string]*Identity{}}
+	for _, cred := range []*Credential{short, ten} {
+		ident := &Identity{Name: cred.AccessKey, Credentials: []*Credential{cred}, Actions: []Action{s3_constants.ACTION_ADMIN}}
+		iam.identities = append(iam.identities, ident)
+		iam.accessKeyIdent[cred.AccessKey] = ident
+	}
+	signed := func(cred *Credential) *http.Request {
+		req := mustNewRequest(http.MethodGet, "http://example.com/bucket/object", 0, nil, t)
+		if err := signRequestV4(req, cred.AccessKey, cred.SecretKey); err != nil {
+			t.Fatal(err)
+		}
+		return req
+	}
+	presigned := func(cred *Credential) *http.Request {
+		req := mustNewRequest(http.MethodGet, "http://example.com/bucket/object", 0, nil, t)
+		if err := preSignV4(iam, req, cred.AccessKey, cred.SecretKey, 600); err != nil {
+			t.Fatal(err)
+		}
+		return req
+	}
+
+	for _, enforced := range []bool{false, true} {
+		t.Run("enforced="+strconv.FormatBool(enforced), func(t *testing.T) {
+			setFIPS140Enforced(t, enforced)
+			for _, cred := range []*Credential{short, ten} {
+				want := s3err.ErrNone
+				if enforced && cred == short {
+					want = s3err.ErrSignatureDoesNotMatch
+				}
+				if _, _, code := iam.doesSignatureMatch(signed(cred)); code != want {
+					t.Errorf("header SigV4 with a %d-character secret: got %v, want %v", len(cred.SecretKey), code, want)
+				}
+				if _, _, code := iam.doesSignatureMatch(presigned(cred)); code != want {
+					t.Errorf("presigned SigV4 with a %d-character secret: got %v, want %v", len(cred.SecretKey), code, want)
+				}
+				if _, code := iam.doesPolicySignatureV4Match(t.Context(), policyV4Form(cred)); code != want {
+					t.Errorf("POST policy SigV4 with a %d-character secret: got %v, want %v", len(cred.SecretKey), code, want)
+				}
 			}
 		})
 	}

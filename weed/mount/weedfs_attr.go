@@ -133,6 +133,15 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		// Invalidate the open-mtime cache so the next Open does not set
 		// FOPEN_KEEP_CACHE with stale kernel page cache data.
 		wfs.invalidateOpenMtimeCache(input.NodeId)
+		// Content inside the entry is cut to the new size, or stored as a
+		// chunk when the file grows past it.
+		if chunked, err := resizeInlineContent(entry, size, time.Now().UnixNano(), wfs.option.ChunkSizeLimit, wfs.saveDataAsChunk(path)); err != nil {
+			glog.Errorf("setattr %v size=%v: %v", path, size, err)
+			return writeErrorToFuseStatus(err)
+		} else if chunked && fh != nil {
+			fh.wfs.readAuth.Track(fh.FullPath(), entry.Chunks)
+			fh.entryChunkGroup.SetChunks(entry.Chunks)
+		}
 		oldFileSize := filer.FileSize(entry)
 		if size < oldFileSize {
 			if fh != nil {

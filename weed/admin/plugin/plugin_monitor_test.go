@@ -232,6 +232,147 @@ func TestHandleJobProgressUpdateCarriesWorkerIDInActivities(t *testing.T) {
 	}
 }
 
+func TestAdminScriptRunningActivityKeepsOnlyCommandName(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.handleJobProgressUpdate("worker-a", &plugin_pb.JobProgressUpdate{
+		JobId:   "job-admin-script",
+		JobType: "admin_script",
+		State:   plugin_pb.JobState_JOB_STATE_RUNNING,
+		Stage:   "running",
+		Message: "executed 1/1 command(s)",
+		Activities: []*plugin_pb.ActivityEvent{
+			{
+				Source:  plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR,
+				Stage:   "running",
+				Message: "s3.configure -secret_key hidden",
+			},
+		},
+	})
+
+	messages := map[string]string{}
+	for _, activity := range pluginSvc.ListJobActivities("job-admin-script", 0) {
+		messages[activity.Source] = activity.Message
+	}
+	if got := messages["activity_source_executor"]; got != "s3.configure" {
+		t.Fatalf("executor activity message = %q, want %q", got, "s3.configure")
+	}
+	if got := messages["worker_progress"]; got != "executed 1/1 command(s)" {
+		t.Fatalf("progress activity message = %q", got)
+	}
+
+	pluginSvc.handleJobProgressUpdate("worker-a", &plugin_pb.JobProgressUpdate{
+		JobId: "job-admin-script",
+		State: plugin_pb.JobState_JOB_STATE_RUNNING,
+		Stage: "running",
+		Activities: []*plugin_pb.ActivityEvent{
+			{
+				Source:  plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR,
+				Stage:   "running",
+				Message: "s3.bucket.create -access_key other",
+			},
+		},
+	})
+	found := false
+	for _, activity := range pluginSvc.ListJobActivities("job-admin-script", 0) {
+		if activity.Message == "s3.bucket.create -access_key other" {
+			t.Fatalf("report without a job type kept the command arguments: %q", activity.Message)
+		}
+		found = found || activity.Message == "s3.bucket.create"
+	}
+	if !found {
+		t.Fatalf("report without a job type was not recorded")
+	}
+}
+
+func TestAdminScriptRunningActivityTypedByPendingExecution(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.pendingExecutionMu.Lock()
+	pluginSvc.pendingExecution["req-admin-script"] = &pendingExecutionState{
+		completed: make(chan *plugin_pb.JobCompleted, 1),
+		jobID:     "job-untracked",
+		jobType:   "admin_script",
+	}
+	pluginSvc.pendingExecutionMu.Unlock()
+
+	pluginSvc.handleJobProgressUpdate("worker-a", &plugin_pb.JobProgressUpdate{
+		RequestId: "req-admin-script",
+		State:     plugin_pb.JobState_JOB_STATE_RUNNING,
+		Stage:     "running",
+		Activities: []*plugin_pb.ActivityEvent{
+			{
+				Source:  plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR,
+				Stage:   "running",
+				Message: "s3.configure -secret_key hidden",
+			},
+		},
+	})
+
+	executorActivities := 0
+	for _, activity := range pluginSvc.ListActivities("", 0) {
+		if activity.Source != "activity_source_executor" {
+			continue
+		}
+		executorActivities++
+		if activity.JobType != "admin_script" || activity.Message != "s3.configure" {
+			t.Fatalf("activity = %+v, want an admin_script activity with message %q", activity, "s3.configure")
+		}
+	}
+	if executorActivities != 1 {
+		t.Fatalf("executor activities = %d, want 1", executorActivities)
+	}
+}
+
+func TestUntypedRunningActivityAfterCancellationKeepsOnlyCommandName(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.handleJobProgressUpdate("worker-a", &plugin_pb.JobProgressUpdate{
+		RequestId: "req-cancelled",
+		State:     plugin_pb.JobState_JOB_STATE_RUNNING,
+		Stage:     "running",
+		Activities: []*plugin_pb.ActivityEvent{
+			{
+				Source:  plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR,
+				Stage:   "running",
+				Message: "s3.configure -secret_key hidden",
+			},
+		},
+	})
+
+	executorActivities := 0
+	for _, activity := range pluginSvc.ListActivities("", 0) {
+		if activity.Source != "activity_source_executor" {
+			continue
+		}
+		executorActivities++
+		if activity.Message != "s3.configure" {
+			t.Fatalf("activity message = %q, want %q", activity.Message, "s3.configure")
+		}
+	}
+	if executorActivities != 1 {
+		t.Fatalf("executor activities = %d, want 1", executorActivities)
+	}
+}
+
 // A worker that leaves the state out of its progress (as seaweed-worker did)
 // must still have its completion applied.
 func TestProgressWithoutStateKeepsJobRunningUntilCompleted(t *testing.T) {

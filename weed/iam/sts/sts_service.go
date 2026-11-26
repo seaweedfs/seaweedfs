@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -624,6 +625,9 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	// claim-mode the IDP is the sole authority for both authentication and
 	// authorization, so there is no role definition to consult.
 	if !claimMode {
+		if roleMappingRefuses(provider, request.RoleArn, externalIdentity) {
+			return nil, fmt.Errorf("role assumption denied: the provider's role mapping does not assign %s to this token", request.RoleArn)
+		}
 		if err := s.validateRoleAssumptionForWebIdentity(ctx, request.RoleArn, request.WebIdentityToken, request.DurationSeconds); err != nil {
 			return nil, fmt.Errorf("role assumption denied: %w", err)
 		}
@@ -1091,6 +1095,34 @@ func (s *STSService) extractIssuerFromJWT(token string) (string, error) {
 	}
 
 	return issuer, nil
+}
+
+// roleMappingRefuses reports whether the provider's role mapping names the
+// role and did not map this identity to it, the role set Bearer auth uses.
+// Roles the mapping does not name are left to the trust policy.
+func roleMappingRefuses(provider providers.IdentityProvider, roleArn string, identity *providers.ExternalIdentity) bool {
+	p, ok := provider.(interface{ GetRoleMapping() *providers.RoleMapping })
+	if !ok {
+		return false
+	}
+	mapping := p.GetRoleMapping()
+	roleName := utils.ExtractRoleNameFromArn(roleArn)
+	if mapping == nil || roleName == "" {
+		return false
+	}
+	named := utils.ExtractRoleNameFromArn(strings.TrimSpace(mapping.DefaultRole)) == roleName
+	for _, rule := range mapping.Rules {
+		named = named || utils.ExtractRoleNameFromArn(strings.TrimSpace(rule.Role)) == roleName
+	}
+	if !named {
+		return false
+	}
+	for _, mapped := range identity.MappedRoles {
+		if utils.ExtractRoleNameFromArn(strings.TrimSpace(mapped)) == roleName {
+			return false
+		}
+	}
+	return true
 }
 
 // validateRoleAssumptionForWebIdentity validates role assumption for web identity tokens

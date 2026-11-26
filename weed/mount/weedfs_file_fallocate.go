@@ -54,12 +54,18 @@ func (wfs *WFS) Fallocate(cancel <-chan struct{}, in *fuse.FallocateIn) (code fu
 
 	glog.V(4).Infof("Fallocate %s fh %d grow to %d", fh.FullPath(), fh.fh, newFileSize)
 
+	// Content inside the entry reads no further than itself: it becomes a
+	// write of the handle's, before the file grows past it.
+	now := time.Now()
+	if err := fh.bufferInlineContent(entry, now.UnixNano()); err != nil {
+		glog.Errorf("%v", err)
+		return writeErrorToFuseStatus(err)
+	}
 	entry.Attributes.FileSize = newFileSize
 	// The writes that fill the range will not grow the file, so they charge
 	// nothing; the growth is counted here or the quota never sees it.
 	wfs.AddUncommittedBytes(int64(newFileSize - oldFileSize))
 
-	now := time.Now()
 	entry.Attributes.Mtime = now.Unix()
 	entry.Attributes.MtimeNs = int32(now.Nanosecond())
 	entry.Attributes.Ctime = now.Unix()

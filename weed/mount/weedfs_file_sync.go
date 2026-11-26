@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"sort"
 	"syscall"
@@ -850,25 +849,26 @@ func (wfs *WFS) maybeMergeChunks(fileFullPath util.FullPath, compactedChunks []*
 		chunkSize = int64(fileSize)
 	}
 
+	// The reader ends at a hole, so read each run of data on its own and
+	// leave the holes between runs unwritten.
 	var newChunks []*filer_pb.FileChunk
-	var offset int64
 	buf := make([]byte, chunkSize)
-
-	for {
-		n, readErr := io.ReadFull(reader, buf)
-		if n > 0 {
+	for i := 0; i < len(visibles); {
+		start, stop := visibles[i].StartOffset, visibles[i].StopOffset
+		for i++; i < len(visibles) && visibles[i].StartOffset == stop; i++ {
+			stop = visibles[i].StopOffset
+		}
+		for offset := start; offset < stop; {
+			n := int(min(int64(len(buf)), stop-offset))
+			if _, readErr := reader.ReadAt(buf[:n], offset); readErr != nil {
+				return nil, fmt.Errorf("read [%d,%d): %w", offset, offset+int64(n), readErr)
+			}
 			chunk, uploadErr := saveFunc(bytes.NewReader(buf[:n]), "", offset, oldestVisibleTsNs(visibles, offset, offset+int64(n)), uint64(n))
 			if uploadErr != nil {
 				return nil, uploadErr
 			}
 			newChunks = append(newChunks, chunk)
 			offset += int64(n)
-		}
-		if readErr != nil {
-			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-				break
-			}
-			return nil, readErr
 		}
 	}
 

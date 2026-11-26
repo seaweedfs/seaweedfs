@@ -1814,8 +1814,8 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 // statement is not a denial. Used to enforce AWS deny-always-wins when the allow
 // is granted elsewhere (e.g. a role trust policy for sts:AssumeRole).
 //
-// A chained session that fails validation or has been revoked yields an error so
-// callers fail closed. Raw OIDC tokens are skipped here — they are validated on
+// A chained session that fails validation, has been revoked, or outlived its
+// role yields an error so callers fail closed. Raw OIDC tokens are skipped here — they are validated on
 // the JWT path, not by the STS service.
 func (m *IAMManager) IsPrincipalActionExplicitlyDenied(ctx context.Context, principal, action, resource string, policyNames []string, sessionToken string, requestContext map[string]interface{}) (bool, error) {
 	if !m.initialized {
@@ -1863,6 +1863,9 @@ func (m *IAMManager) IsPrincipalActionExplicitlyDenied(ctx context.Context, prin
 			if revoked {
 				return false, fmt.Errorf("session has been revoked")
 			}
+		}
+		if _, err := m.checkSessionRoleBinding(ctx, sessionInfo); err != nil {
+			return false, err
 		}
 		if sessionInfo != nil && sessionInfo.SessionPolicy != "" {
 			var sessionPolicy policy.PolicyDocument

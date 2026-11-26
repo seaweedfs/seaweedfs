@@ -33,9 +33,25 @@ type Configuration interface {
 	SetDefault(key string, value interface{})
 }
 
+// securityConfigFile names the security.toml that LoadConfiguration read, or
+// "security.toml" when the settings came from the environment only.
+func securityConfigFile() string {
+	if f := viper.ConfigFileUsed(); f != "" {
+		return f
+	}
+	return "security.toml"
+}
+
+// LoadSecurityConfiguration merges security.toml once per process and exits
+// when a JWT signing key is too short for GODEBUG=fips140=only; outside that
+// mode it warns about such a key.
 func LoadSecurityConfiguration() {
 	loadSecurityConfigOnce.Do(func() {
 		LoadConfiguration("security", false)
+		if err := CheckFips140SigningKeys(securityConfigFile(), GetViper()); err != nil {
+			glog.Fatalf("%s: this process runs with GODEBUG=fips140=only, and stops because %v; replace them on every server that uses them, with or without downtime, see %s",
+				securityConfigFile(), err, JwtSigningKeysWiki)
+		}
 	})
 }
 

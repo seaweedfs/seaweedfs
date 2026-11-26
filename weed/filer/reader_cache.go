@@ -141,7 +141,11 @@ func (rc *ReaderCache) MaybeCache(chunkViews *Interval[*ChunkView], count int) {
 func (rc *ReaderCache) fetchChunkRange(ctx context.Context, buffer []byte, chunkView *ChunkView, offset int64) (int, error) {
 	urlStrings, err := rc.lookupFileIdFn(ctx, chunkView.FileId)
 	if err != nil {
-		glog.ErrorfCtx(ctx, "operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
+		if ctx.Err() == context.Canceled {
+			glog.V(3).InfofCtx(ctx, "operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
+		} else {
+			glog.ErrorfCtx(ctx, "operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
+		}
 		return 0, err
 	}
 	if rc.budget != nil {

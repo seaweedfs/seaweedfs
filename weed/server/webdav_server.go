@@ -110,20 +110,36 @@ func (h basicAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.next.ServeHTTP(w, r)
 }
 
-// putOutcomeKey carries the flag WebDavFileSystem.OpenFile sets when a PUT
-// replaced an existing entry, so the PUT can answer 204 instead of 201
+// putOutcomeKey carries the putOutcome a PUT's WebDavFileSystem calls fill
 type putOutcomeKey struct{}
 
-// putOutcomeWriter turns the 201 of a PUT that replaced a file into 204
-// and swallows the status text webdav.Handler writes after it
+// putOutcome records whether OpenFile replaced an existing entry, so the PUT
+// can answer 204 instead of 201, and the ETag of what Close committed:
+// webdav.Handler takes the ETag from a Stat made before Close
+type putOutcome struct {
+	replaced  bool
+	committed bool
+	etag      string
+}
+
+// putOutcomeWriter turns the 201 of a PUT that replaced a file into 204,
+// swallows the status text webdav.Handler writes after it, and sends the
+// committed content's ETag
 type putOutcomeWriter struct {
 	http.ResponseWriter
-	replaced  *bool
+	outcome   *putOutcome
 	noContent bool
 }
 
 func (w *putOutcomeWriter) WriteHeader(code int) {
-	if code == http.StatusCreated && *w.replaced {
+	if code == http.StatusCreated && w.outcome.committed {
+		if w.outcome.etag != "" {
+			w.Header().Set("ETag", `"`+w.outcome.etag+`"`)
+		} else {
+			w.Header().Del("ETag")
+		}
+	}
+	if code == http.StatusCreated && w.outcome.replaced {
 		code = http.StatusNoContent
 		w.noContent = true
 	}
@@ -271,9 +287,9 @@ func (h copyMoveGuardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	// always answers 201, so OpenFile reports a replace on the request
 	// context and the writer rewrites the status it sends
 	if r.Method == "PUT" {
-		replaced := new(bool)
-		w = &putOutcomeWriter{ResponseWriter: w, replaced: replaced}
-		r = r.WithContext(context.WithValue(r.Context(), putOutcomeKey{}, replaced))
+		outcome := &putOutcome{}
+		w = &putOutcomeWriter{ResponseWriter: w, outcome: outcome}
+		r = r.WithContext(context.WithValue(r.Context(), putOutcomeKey{}, outcome))
 	}
 	// RFC 4918 10.6: a missing Overwrite header means T, but webdav.Handler
 	// only overwrites on MOVE when it is set (golang/go#66059)
@@ -376,7 +392,7 @@ func (fi *FileInfo) ETag(ctx context.Context) (string, error) {
 		// an empty DAV:getetag is not a valid entity-tag; let webdav derive one
 		return "", webdav.ErrNotImplemented
 	}
-	return fi.etag, nil
+	return `"` + fi.etag + `"`, nil
 }
 
 type WebDavFile struct {
@@ -566,8 +582,8 @@ func (fs *WebDavFileSystem) OpenFile(ctx context.Context, fullFilePath string, f
 		// outcome matches what the write did even against racing writers: a
 		// PUT that landed on an entry answers 204, a fresh create answers 201
 		if resp.GetMetadataEvent().GetEventNotification().GetOldEntry() != nil {
-			if replaced, ok := ctx.Value(putOutcomeKey{}).(*bool); ok {
-				*replaced = true
+			if outcome, ok := ctx.Value(putOutcomeKey{}).(*putOutcome); ok {
+				outcome.replaced = true
 			}
 		}
 		return &WebDavFile{
@@ -736,6 +752,34 @@ func (fs *WebDavFileSystem) stat(ctx context.Context, fullFilePath string) (os.F
 	return toFileInfo(fullpath, entry), nil
 }
 
+// contentETag is the filer ETag when it tells contents apart: one built from
+// chunks stored without a digest is shared by every file with as many chunks,
+// and one for inline content by every inline file, so those are tagged by the
+// inline bytes or by where the chunks are stored.
+func contentETag(entry *filer_pb.Entry) string {
+	if entry.Attributes == nil || entry.Attributes.Md5 == nil {
+		if len(entry.Content) > 0 {
+			return util.Md5String(entry.Content)
+		}
+		for _, chunk := range entry.GetChunks() {
+			if chunk.ETag == "" {
+				return chunkLayoutETag(entry.GetChunks())
+			}
+		}
+	}
+	return filer.ETag(entry)
+}
+
+// chunkLayoutETag tags chunks by their file ids and placement: rewritten
+// content is stored in new chunks, and entries sharing chunks share content.
+func chunkLayoutETag(chunks []*filer_pb.FileChunk) string {
+	h := util.NewMd5()
+	for _, chunk := range chunks {
+		fmt.Fprintf(h, "%s,%d,%d,%d;", chunk.GetFileIdString(), chunk.Offset, chunk.Size, chunk.ModifiedTsNs)
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
 func toFileInfo(fullpath util.FullPath, entry *filer_pb.Entry) *FileInfo {
 	// Name is what WebDAV publishes as DAV:displayname; clients that build a
 	// child URL from it reach nothing when it carries the whole path.
@@ -745,7 +789,7 @@ func toFileInfo(fullpath util.FullPath, entry *filer_pb.Entry) *FileInfo {
 		name:         fp.Name(),
 		mode:         os.FileMode(entry.Attributes.FileMode),
 		modifiedTime: time.Unix(entry.Attributes.Mtime, 0),
-		etag:         filer.ETag(entry),
+		etag:         contentETag(entry),
 		isDirectory:  entry.IsDirectory,
 	}
 
@@ -881,6 +925,10 @@ func (f *WebDavFile) Close() error {
 	err := f.bufWriter.Close()
 
 	if f.entry != nil {
+		if outcome, ok := f.requestContext().Value(putOutcomeKey{}).(*putOutcome); ok && err == nil {
+			outcome.committed = true
+			outcome.etag = contentETag(f.entry)
+		}
 		f.entry = nil
 		f.visibleIntervals = nil
 	}

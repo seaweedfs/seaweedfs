@@ -2,6 +2,7 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"syscall"
 	"time"
@@ -52,6 +53,10 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 		return code
 	}
 
+	// An exclusive create goes to the filer at open, so a name another mount
+	// holds fails here rather than at close. Writeback assumes one writer.
+	deferCreate := !wfs.option.EagerFilerCreate && (in.Flags&syscall.O_EXCL == 0 || wfs.option.WritebackCache)
+
 	// Acquire the DLM lock before the filer create: a lock failure after an
 	// eager create would return EAGAIN while the file stays persisted.
 	var dlmLock *cluster.LiveLock
@@ -65,7 +70,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 		}
 		// A deferred create does not ask the filer, so find a file the
 		// previous lock holder created while this create waited.
-		if !wfs.option.EagerFilerCreate {
+		if deferCreate {
 			if peerEntry, _, err := wfs.lookupFilerEntry(ctx, entryFullPath); err == nil {
 				dlmLock.Stop()
 				return wfs.openExistingForCreate(ctx, in, entryFullPath, peerEntry, out)
@@ -73,7 +78,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 		}
 	}
 
-	inode, newEntry, code = wfs.createRegularFile(ctx, dirFullPath, name, in.Mode, in.Uid, in.Gid, 0, !wfs.option.EagerFilerCreate, true)
+	inode, newEntry, code = wfs.createRegularFile(ctx, dirFullPath, name, in.Mode, in.Uid, in.Gid, 0, deferCreate, true)
 	if code == fuse.Status(syscall.EEXIST) && in.Flags&syscall.O_EXCL == 0 {
 		// Race: another process created the file between our check and create.
 		// Reopen the winner's entry; AcquireHandle takes its own lock.
@@ -122,8 +127,8 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	// Mark dirty so the deferred filer create happens on Flush, even if the
 	// file is closed without any writes. An eager create has already
 	// persisted the entry, so its handle starts clean.
-	fileHandle.dirtyMetadata = !wfs.option.EagerFilerCreate
-	if !wfs.option.EagerFilerCreate {
+	fileHandle.dirtyMetadata = deferCreate
+	if deferCreate {
 		// This is a local placeholder, not an acknowledged filer base.
 		fileHandle.baseEntry.Store(nil)
 	} else {
@@ -469,6 +474,9 @@ func (wfs *WFS) createRegularFile(ctx context.Context, dirFullPath util.FullPath
 		Entry:                    newEntry,
 		Signatures:               []int32{wfs.signature},
 		SkipCheckParentDirectory: true,
+		// Without OExcl the filer stores a duplicate as an update of the
+		// existing file, so a name another mount holds would be replaced.
+		OExcl: true,
 	}
 
 	glog.V(1).Infof("createFile: %s", entryFullPath)
@@ -491,6 +499,11 @@ func (wfs *WFS) createRegularFile(ctx context.Context, dirFullPath util.FullPath
 	glog.V(3).Infof("createFile %s: %v", entryFullPath, err)
 
 	if err != nil {
+		if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+			// See Mkdir: the next lookup must fetch the winner's entry.
+			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
+			return 0, nil, fuse.Status(syscall.EEXIST)
+		}
 		return 0, nil, grpcErrorToFuseStatus(err)
 	}
 

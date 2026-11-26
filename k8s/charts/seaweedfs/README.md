@@ -122,6 +122,18 @@ https://github.com/rancher/local-path-provisioner
 you can use ANY storage class you like, just update the correct storage-class
 for your deployment.
 
+Every claim the chart creates also takes an optional `volumeAttributesClassName`
+next to its `storageClass` (for example `master.data.volumeAttributesClassName`
+or `volume.dataDirs[].volumeAttributesClassName`), to set provisioned
+performance such as IOPS and throughput through a
+[VolumeAttributesClass](https://kubernetes.io/docs/concepts/storage/volume-attributes-classes/).
+It needs Kubernetes 1.34+, or 1.31+ with the `VolumeAttributesClass` feature gate.
+`volumeClaimTemplates` cannot be changed on an existing StatefulSet, and a new
+template only reaches claims created after it. To set it on a release that
+already exists, patch `spec.volumeAttributesClassName` on each existing claim,
+and delete the StatefulSet with `--cascade=orphan` before the upgrade so the
+upgrade can apply the new template.
+
 ### Master data: hostPath vs a claim
 
 The master's `-mdir` holds its Raft log and snapshots, and with them the

@@ -30,9 +30,11 @@ var ErrorWriteRefused = errors.New("write refused before append")
 // ReplicatedWrite writes a needle to the local volume and fans it out to all
 // remote replica locations. When type=replicate is set, the request is itself
 // a forwarded replication and no further remote lookups are performed.
+// contentMd5 and contentCrc32c are the checked client digests replicas verify
+// again; empty sends none.
 // Returns isUnchanged=true when the local write determined the needle content
 // was already present.
-func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request, contentMd5 string) (isUnchanged bool, err error) {
+func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption, s *storage.Store, volumeId needle.VolumeId, n *needle.Needle, r *http.Request, contentMd5, contentCrc32c string) (isUnchanged bool, err error) {
 
 	//check JWT
 	jwt := security.GetJwt(r)
@@ -168,6 +170,7 @@ func ReplicatedWrite(ctx context.Context, masterFn operation.GetMasterFn, grpcDi
 					PairMap:           replicaPairMap,
 					Jwt:               jwt,
 					Md5:               contentMd5,
+					ContentCrc32c:     contentCrc32c,
 					BytesBuffer:       bytesBuffer,
 					MaxAttempts:       1, // fail fast on a dead replica; the client write retries
 				}

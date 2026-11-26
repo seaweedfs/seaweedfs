@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
+	"github.com/seaweedfs/seaweedfs/weed/remote_storage/yandex"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
 )
@@ -45,6 +46,9 @@ func (c *commandRemoteConfigure) Help() string {
 	remote.configure -name=cloud6 -type=wasabi -wasabi.access_key=xxx -wasabi.secret_key=yyy -wasabi.endpoint=s3.us-west-1.wasabisys.com -wasabi.region=us-west-1
 	remote.configure -name=cloud7 -type=storj -storj.access_key=xxx -storj.secret_key=yyy -storj.endpoint=https://gateway.us1.storjshare.io
 	remote.configure -name=cloud8 -type=filebase -filebase.access_key=xxx -filebase.secret_key=yyy -filebase.endpoint=https://s3.filebase.com
+	remote.configure -name=disk -type=yandex -yandex.token=xxx -yandex.root=/seaweedfs
+	remote.configure -name=disk -type=yandex -yandex.client_id=xxx -yandex.client_secret=yyy -yandex.oauth_url
+	remote.configure -name=disk -yandex.code=zzz
 
 	# tune transfer concurrency (applies to s3-compatible and azure storage)
 	remote.configure -name=cloud1 -upload_concurrency=4 -download_concurrency=8
@@ -67,7 +71,7 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 
 	conf := &remote_pb.RemoteConf{}
 
-	fs, isDelete, uploadConcurrency, downloadConcurrency := c.configureFlagSet(conf, false)
+	fs, isDelete, uploadConcurrency, downloadConcurrency, yandexCode, yandexOAuthURL := c.configureFlagSet(conf, false)
 	if err = fs.Parse(args); err != nil {
 		return err
 	}
@@ -108,7 +112,7 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 			conf.Type = requestedType
 			c.applyTypeDefaults(conf)
 		}
-		fs, isDelete, uploadConcurrency, downloadConcurrency = c.configureFlagSet(conf, true)
+		fs, isDelete, uploadConcurrency, downloadConcurrency, yandexCode, yandexOAuthURL = c.configureFlagSet(conf, true)
 		if err = fs.Parse(args); err != nil {
 			return err
 		}
@@ -116,6 +120,33 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 
 	if err = applyConcurrency(conf, *uploadConcurrency, *downloadConcurrency); err != nil {
 		return err
+	}
+
+	if *yandexOAuthURL {
+		if conf.Type != "yandex" {
+			return fmt.Errorf("-yandex.oauth_url needs -type=yandex")
+		}
+		if conf.YandexClientId == "" {
+			return fmt.Errorf("-yandex.oauth_url needs -yandex.client_id")
+		}
+		// keep the app credentials, so the code exchange below finds them
+		if err = c.saveRemoteStorage(commandEnv, writer, conf); err != nil {
+			return err
+		}
+		fmt.Fprintf(writer, "authorize the app in a browser and copy the code it shows:\n\n  %s\n\n", yandex.AuthCodeURL(conf.YandexClientId))
+		fmt.Fprintf(writer, "then store the token:\n\n  remote.configure -name=%s -yandex.code=<code>\n\n", conf.Name)
+		return nil
+	}
+	if *yandexCode != "" {
+		if conf.Type != "yandex" {
+			return fmt.Errorf("-yandex.code needs -type=yandex")
+		}
+		token, exchangeErr := yandex.ExchangeCode(context.Background(), conf.YandexClientId, conf.YandexClientSecret, *yandexCode, nil, "")
+		if exchangeErr != nil {
+			return exchangeErr
+		}
+		conf.YandexToken = token
+		fmt.Fprintf(writer, "stored a yandex oauth token for %s\n", conf.Name)
 	}
 
 	if conf.Type != "s3" {
@@ -130,7 +161,7 @@ func (c *commandRemoteConfigure) Do(args []string, commandEnv *CommandEnv, write
 // configureFlagSet builds the remote.configure flag set bound to conf. When
 // existing is true, flag defaults are taken from conf so omitted flags preserve
 // prior values instead of being reset to the hard-coded new-config defaults.
-func (c *commandRemoteConfigure) configureFlagSet(conf *remote_pb.RemoteConf, existing bool) (fs *flag.FlagSet, isDelete *bool, uploadConcurrency *int, downloadConcurrency *int) {
+func (c *commandRemoteConfigure) configureFlagSet(conf *remote_pb.RemoteConf, existing bool) (fs *flag.FlagSet, isDelete *bool, uploadConcurrency *int, downloadConcurrency *int, yandexCode *string, yandexOAuthURL *bool) {
 	fs = flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	isDelete = fs.Bool("delete", false, "delete one remote storage by its name")
 
@@ -209,6 +240,20 @@ func (c *commandRemoteConfigure) configureFlagSet(conf *remote_pb.RemoteConf, ex
 	fs.StringVar(&conf.StorjSecretKey, "storj.secret_key", conf.StorjSecretKey, "Storj secret key")
 	fs.StringVar(&conf.StorjEndpoint, "storj.endpoint", conf.StorjEndpoint, "Storj endpoint")
 
+	fs.StringVar(&conf.YandexToken, "yandex.token", conf.YandexToken, "yandex oauth token json (access_token, refresh_token, token_type, expiry, as rclone stores it) or a bare access token")
+	fs.StringVar(&conf.YandexClientId, "yandex.client_id", conf.YandexClientId, "yandex oauth app client id, needed to refresh the token and for -yandex.oauth_url")
+	fs.StringVar(&conf.YandexClientSecret, "yandex.client_secret", conf.YandexClientSecret, "yandex oauth app client secret, needed to refresh the token and for -yandex.code")
+	fs.StringVar(&conf.YandexEndpoint, "yandex.endpoint", conf.YandexEndpoint, "yandex disk api endpoint, default https://cloud-api.yandex.net/v1/disk")
+	yandexRootDefault := "/"
+	if existing && conf.YandexRoot != "" {
+		yandexRootDefault = conf.YandexRoot
+	}
+	fs.StringVar(&conf.YandexRoot, "yandex.root", yandexRootDefault, "folder on the disk under which bucket names are created")
+	fs.BoolVar(&conf.YandexTrash, "yandex.trash", conf.YandexTrash, "move deleted files to the trash instead of deleting them permanently")
+	fs.BoolVar(&conf.YandexAppFolder, "yandex.app_folder", conf.YandexAppFolder, "the oauth token only reaches the app folder: address paths under app: instead of disk:")
+	yandexCode = fs.String("yandex.code", "", "one-time yandex authorization code to exchange for a token and store, see -yandex.oauth_url")
+	yandexOAuthURL = fs.Bool("yandex.oauth_url", false, "print the yandex authorization url for -yandex.client_id and exit")
+
 	return
 }
 
@@ -230,6 +275,8 @@ func (c *commandRemoteConfigure) applyTypeDefaults(conf *remote_pb.RemoteConf) {
 		conf.S3SupportTagging = true
 	} else if conf.Type == "b2" {
 		conf.BackblazeRegion = "us-west-002"
+	} else if conf.Type == "yandex" {
+		conf.YandexRoot = "/"
 	}
 }
 
@@ -335,6 +382,8 @@ func maskRemoteConfSecrets(conf *remote_pb.RemoteConf) {
 		&conf.FilebaseSecretKey,
 		&conf.StorjSecretKey,
 		&conf.ContaboSecretKey,
+		&conf.YandexToken,
+		&conf.YandexClientSecret,
 	} {
 		*secret = strings.Repeat("*", len(*secret))
 	}

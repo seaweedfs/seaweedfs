@@ -320,7 +320,7 @@ func (h *AdminScriptHandler) Execute(ctx context.Context, request *plugin_pb.Exe
 			Stage:           "running",
 			Message:         fmt.Sprintf("executed %d/%d command(s)", executed, len(execCommands)),
 			Activities: []*plugin_pb.ActivityEvent{
-				BuildExecutorActivity("running", commandLine),
+				BuildExecutorActivity("running", cmd.Name),
 			},
 		}); sendErr != nil {
 			break

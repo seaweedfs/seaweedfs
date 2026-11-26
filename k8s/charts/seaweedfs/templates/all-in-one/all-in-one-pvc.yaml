@@ -22,6 +22,9 @@ spec:
   {{- if .Values.allInOne.data.storageClass }}
   storageClassName: {{ .Values.allInOne.data.storageClass }}
   {{- end }}
+  {{- with .Values.allInOne.data.volumeAttributesClassName }}
+  volumeAttributesClassName: {{ . | quote }}
+  {{- end }}
   resources:
     requests:
       storage: {{ .Values.allInOne.data.size | default "10Gi" }}

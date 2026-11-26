@@ -29,6 +29,7 @@ type createEntryTestServer struct {
 	lastGID       uint32
 	lastMode      uint32
 	lastEntry     *filer_pb.Entry
+	cachedRemote  *filer_pb.Entry
 	// updateEntry and lookupEntry answer those calls when set
 	updateEntry func(*filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error)
 	lookupEntry func(*filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error)

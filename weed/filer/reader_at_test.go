@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 type mockChunkCache struct {
@@ -256,4 +258,27 @@ func TestReaderAtParallelFailureReturnsContiguousPrefix(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, 4, n, "only the bytes before the failed chunk are readable")
 	assert.Equal(t, []byte{1, 1, 1, 1}, buf[:n])
+}
+
+// A read whose caller went away (an S3 client hanging up mid-GET) is canceled,
+// not failed, and stays out of the error log.
+func TestReaderAtCanceledReadIsNotAnError(t *testing.T) {
+	visibles := NewIntervalList[*VisibleInterval]()
+	addVisibleInterval(visibles, &VisibleInterval{start: 0, stop: 8, fileId: "1", chunkSize: 8})
+	readerAt := &ChunkReadAt{
+		ctx:        context.Background(),
+		chunkViews: ViewFromVisibleIntervals(visibles, 2, 4),
+		fileSize:   8,
+		readerCache: NewReaderCache(3, &holeChunkCache{missingFileId: "1"}, func(ctx context.Context, fileId string) ([]string, error) {
+			return nil, ctx.Err()
+		}, nil),
+		readerPattern: NewReaderPattern(),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	errorsBefore := glog.Stats.Error.Lines()
+	_, _, err := readerAt.ReadAtWithTime(ctx, make([]byte, 4), 2)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, int64(0), glog.Stats.Error.Lines()-errorsBefore, "ERROR lines logged for a canceled read")
 }

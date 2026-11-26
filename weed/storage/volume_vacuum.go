@@ -1,12 +1,14 @@
 package storage
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -38,10 +40,73 @@ func isSkippableNeedleReadError(err error) bool {
 		errors.Is(err, needle.ErrorCorrupted)
 }
 
+// isVacuumTtlExpired applies the volume TTL when the volume has one, and
+// otherwise the needle's own TTL the way reads do.
+func isVacuumTtlExpired(n *needle.Needle, volumeTtl *needle.TTL, now time.Time) bool {
+	if !n.HasTtl() {
+		return false
+	}
+	if volumeTtl == nil || volumeTtl.Minutes() == 0 {
+		return isNeedleTtlExpired(n, now)
+	}
+	return uint64(now.Unix()) >= n.LastModified+uint64(volumeTtl.Minutes())*60
+}
+
 // exceedsExpectedCompactedSize reports whether the compacted .dat is short of
 // the live bytes the pre-compaction index snapshot expected.
 func exceedsExpectedCompactedSize(expectedLiveBytes uint64, dstDatSize int64) bool {
 	return expectedLiveBytes > uint64(dstDatSize)
+}
+
+type liveTally struct {
+	count int
+	bytes uint64
+}
+
+func (t *liveTally) add(size Size) {
+	t.count++
+	t.bytes += uint64(size)
+}
+
+func isLiveIndexEntry(offset Offset, size Size) bool {
+	return !offset.IsZero() && !size.IsDeleted()
+}
+
+// loadIdxSnapshot loads idxPath into nm and tallies its live entries by
+// replaying the rows, independently of any later traversal of nm.
+func loadIdxSnapshot(nm *needle_map.MemDb, idxPath string) (live liveTally, err error) {
+	idxFile, err := os.Open(idxPath)
+	if err != nil {
+		return live, err
+	}
+	defer idxFile.Close()
+	err = idx2.WalkIndexFile(idxFile, 0, func(key NeedleId, offset Offset, size Size) error {
+		if prior, found := nm.Get(key); found && isLiveIndexEntry(prior.Offset, prior.Size) {
+			live.count--
+			live.bytes -= uint64(prior.Size)
+		}
+		if !isLiveIndexEntry(offset, size) {
+			return nm.Delete(key)
+		}
+		live.add(size)
+		return nm.Set(key, offset, size)
+	})
+	return live, err
+}
+
+// checkCompactedAgainstSnapshot fails when the copy did not account for
+// every live entry of the snapshot, or the compacted .dat is short of them.
+func checkCompactedAgainstSnapshot(vid needle.VolumeId, snapshot, copied, expired, unreadable liveTally, dstDatSize int64) error {
+	if copied.count+expired.count+unreadable.count != snapshot.count || expired.bytes+unreadable.bytes > snapshot.bytes {
+		return fmt.Errorf("volume %s compaction accounted for %d of %d live index entries (%d copied, %d expired, %d unreadable)",
+			vid, copied.count+expired.count+unreadable.count, snapshot.count, copied.count, expired.count, unreadable.count)
+	}
+	expectedLiveBytes := snapshot.bytes - expired.bytes - unreadable.bytes
+	if exceedsExpectedCompactedSize(expectedLiveBytes, dstDatSize) {
+		return fmt.Errorf("volume %s unexpected new data size: %d does not match expected live content size %d from the pre-compaction snapshot",
+			vid, dstDatSize, expectedLiveBytes)
+	}
+	return nil
 }
 
 type ProgressFunc func(processed int64) bool
@@ -644,6 +709,9 @@ type VolumeFileScanner4Vacuum struct {
 	newOffset      int64
 	now            uint64
 	writeThrottler *util.WriteThrottler
+	dropped        map[int64]bool
+	resumed        map[int64]bool
+	datSize        int64
 }
 
 func (scanner *VolumeFileScanner4Vacuum) VisitSuperBlock(superBlock super_block.SuperBlock) error {
@@ -655,15 +723,65 @@ func (scanner *VolumeFileScanner4Vacuum) VisitSuperBlock(superBlock super_block.
 
 }
 func (scanner *VolumeFileScanner4Vacuum) ReadNeedleBody() bool {
-	return true
+	return false
+}
+
+// reached reports whether the scan already copied or dropped the live record
+// at offset.
+func (scanner *VolumeFileScanner4Vacuum) reached(key NeedleId, offset int64) bool {
+	_, copied := scanner.nm.Get(key)
+	return copied || scanner.dropped[offset]
+}
+
+// checkRecordEnd fails a record whose header size runs past the end of the
+// .dat, before that size is used to allocate the read buffer.
+func (scanner *VolumeFileScanner4Vacuum) checkRecordEnd(offset int64, size Size) error {
+	end := offset + needle.GetActualSize(size, scanner.v.Version())
+	if end <= scanner.datSize {
+		return nil
+	}
+	datSize, _, err := scanner.v.DataBackend.GetStat()
+	if err != nil {
+		return err
+	}
+	scanner.datSize = datSize
+	if end > datSize {
+		return fmt.Errorf("record of size %d at offset %d ends past the %d-byte file: %w", size, offset, datSize, io.ErrUnexpectedEOF)
+	}
+	return nil
 }
 
 func (scanner *VolumeFileScanner4Vacuum) VisitNeedle(n *needle.Needle, offset int64, needleHeader, needleBody []byte) error {
-	if n.HasTtl() && scanner.now >= n.LastModified+uint64(scanner.v.Ttl.Minutes()*60) {
-		return nil
+	if scanner.resumed != nil {
+		if scanner.resumed[offset] {
+			return io.EOF
+		}
+		scanner.resumed[offset] = true
 	}
 	nv, ok := scanner.v.nm.Get(n.Id)
 	glog.V(4).Infoln("needle expected offset ", offset, "ok", ok, "nv", nv)
+	if !ok || nv.Offset.ToActualOffset() != offset {
+		return nil
+	}
+	if scanner.reached(n.Id, offset) {
+		return io.EOF
+	}
+	err := scanner.checkRecordEnd(offset, n.Size)
+	if err == nil {
+		err = n.ReadData(scanner.v.DataBackend, offset, n.Size, scanner.v.Version())
+	}
+	if err != nil {
+		if !isSkippableNeedleReadError(err) {
+			return fmt.Errorf("read needle %d at offset %d: %w", n.Id, offset, err)
+		}
+		glog.Errorf("compact volume %d: dropping unreadable needle key=%d offset=%d size=%d: %v", scanner.v.Id, n.Id, offset, n.Size, err)
+		scanner.dropped[offset] = true
+		return nil
+	}
+	if isVacuumTtlExpired(n, scanner.v.Ttl, time.Unix(int64(scanner.now), 0)) {
+		scanner.dropped[offset] = true
+		return nil
+	}
 	if ok && nv.Offset.ToActualOffset() == offset && nv.Size > 0 && nv.Size.IsValid() {
 		if err := scanner.nm.Set(n.Id, ToOffset(scanner.newOffset), n.Size); err != nil {
 			return fmt.Errorf("cannot put needle: %s", err)
@@ -693,10 +811,14 @@ func (v *Volume) copyDataAndGenerateIndexFile(opts *CompactOptions) (err error) 
 		v:              v,
 		now:            uint64(time.Now().Unix()),
 		nm:             nm,
+		dropped:        make(map[int64]bool),
 		dstBackend:     dst,
 		writeThrottler: util.NewWriteThrottler(opts.MaxBytesPerSecond),
 	}
 	err = ScanVolumeFile(v.dir, v.Collection, v.Id, v.needleMapKind, scanner)
+	if scanner.newOffset > 0 {
+		err = v.copyPastUnreadableRecords(scanner, err)
+	}
 	if err != nil {
 		v.checkReadWriteError(err)
 		return err
@@ -708,11 +830,65 @@ func (v *Volume) copyDataAndGenerateIndexFile(opts *CompactOptions) (err error) 
 	return v.loadTmpNeedleMap(opts.destIdxPath)
 }
 
+// copyPastUnreadableRecords resumes the scan at each live record it did not
+// reach. The scan follows record headers, so a corrupt one ends it early or
+// makes it jump over records; compacting by index copies past such a record,
+// and so does this. A read error still fails the compaction.
+func (v *Volume) copyPastUnreadableRecords(scanner *VolumeFileScanner4Vacuum, scanErr error) error {
+	if scanErr != nil {
+		if !errors.Is(scanErr, needle.ErrorCorrupted) {
+			return scanErr
+		}
+		glog.Warningf("compact volume %d: %v", v.Id, scanErr)
+	}
+	missed, err := v.liveRecordsNotReached(scanner)
+	if err != nil {
+		return err
+	}
+	scanner.resumed = make(map[int64]bool)
+	for _, record := range missed {
+		offset := record.Offset.ToActualOffset()
+		if scanner.reached(record.Key, offset) || scanner.resumed[offset] {
+			continue
+		}
+		glog.Warningf("compact volume %d: scan did not reach live record %d at offset %d, resuming there", v.Id, record.Key, offset)
+		if err := ScanVolumeFileFrom(v.Version(), v.DataBackend, offset, scanner); err != nil {
+			if !errors.Is(err, needle.ErrorCorrupted) {
+				return err
+			}
+			glog.Warningf("compact volume %d: %v", v.Id, err)
+		}
+	}
+	return nil
+}
+
+// liveRecordsNotReached returns, in .dat order, the live records of the index
+// the scan has not reached.
+func (v *Volume) liveRecordsNotReached(scanner *VolumeFileScanner4Vacuum) ([]needle_map.NeedleValue, error) {
+	indexFile, err := os.Open(v.FileName(".idx"))
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", v.FileName(".idx"), err)
+	}
+	defer indexFile.Close()
+	var records []needle_map.NeedleValue
+	err = idx2.WalkIndexFile(indexFile, 0, func(key NeedleId, offset Offset, size Size) error {
+		if nv, ok := v.nm.Get(key); ok && nv.Offset == offset && nv.Size > 0 && nv.Size.IsValid() && !scanner.reached(key, offset.ToActualOffset()) {
+			records = append(records, *nv)
+		}
+		return nil
+	})
+	slices.SortFunc(records, func(a, b needle_map.NeedleValue) int {
+		return cmp.Compare(a.Offset.ToActualOffset(), b.Offset.ToActualOffset())
+	})
+	return records, err
+}
+
 func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	var (
 		srcDatBackend, dstDatBackend backend.BackendStorageFile
 		dataFile                     *os.File
-		skippedNeedles               int
+		snapshot                     liveTally
+		copied, expired, unreadable  liveTally
 	)
 	if dstDatBackend, err = backend.CreateVolumeFile(opts.destDatPath, opts.PreallocateBytes, 0); err != nil {
 		return err
@@ -725,8 +901,8 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 		if closeErr := dstDatBackend.Close(); closeErr != nil && err == nil {
 			err = fmt.Errorf("close compacted dat %s: %v", opts.destDatPath, closeErr)
 		}
-		if err == nil && skippedNeedles > 0 {
-			stats.VolumeServerVacuumingDroppedNeedlesCounter.WithLabelValues(v.Collection).Add(float64(skippedNeedles))
+		if err == nil && unreadable.count > 0 {
+			stats.VolumeServerVacuumingDroppedNeedlesCounter.WithLabelValues(v.Collection).Add(float64(unreadable.count))
 		}
 	}()
 
@@ -734,7 +910,7 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	defer oldNm.Close()
 	newNm := needle_map.NewMemDb()
 	defer newNm.Close()
-	if err = oldNm.LoadFromIdx(opts.srcIdxPath); err != nil {
+	if snapshot, err = loadIdxSnapshot(oldNm, opts.srcIdxPath); err != nil {
 		return err
 	}
 	if dataFile, err = os.Open(opts.srcDatPath); err != nil {
@@ -743,7 +919,7 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	srcDatBackend = backend.NewDiskFile(dataFile)
 	defer srcDatBackend.Close()
 
-	now := uint64(time.Now().Unix())
+	now := time.Now()
 
 	opts.superBlock.CompactionRevision++
 	newOffset := int64(opts.superBlock.BlockSize())
@@ -752,15 +928,11 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	}
 
 	writeThrottler := util.NewWriteThrottler(opts.MaxBytesPerSecond)
-	var (
-		skippedDataBytes  uint64
-		expectedLiveBytes uint64
-	)
 	err = oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
 
 		offset, size := value.Offset, value.Size
 
-		if offset.IsZero() || size.IsDeleted() {
+		if !isLiveIndexEntry(offset, size) {
 			return nil
 		}
 
@@ -781,20 +953,19 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 			if !isSkippableNeedleReadError(err) {
 				return fmt.Errorf("cannot hydrate needle from file: %w", err)
 			}
-			skippedNeedles++
-			if size.IsValid() {
-				skippedDataBytes += uint64(size)
-			}
+			unreadable.add(size)
 			glog.Errorf("vacuum volume %d: dropping unreadable needle key=%d offset=%d size=%d: %v",
 				v.Id, value.Key, offset.ToActualOffset(), size, err)
 			return nil
 		}
 
-		if n.HasTtl() && now >= n.LastModified+uint64(opts.superBlock.Ttl.Minutes()*60) {
+		if isVacuumTtlExpired(n, opts.superBlock.Ttl, now) {
+			expired.add(size)
+			glog.V(1).Infof("vacuum volume %d: dropping TTL-expired needle key=%d offset=%d size=%d",
+				v.Id, value.Key, offset.ToActualOffset(), size)
 			return nil
 		}
-
-		expectedLiveBytes += uint64(size)
+		copied.add(size)
 
 		if err = newNm.Set(n.Id, ToOffset(newOffset), n.Size); err != nil {
 			return fmt.Errorf("cannot put needle: %s", err)
@@ -812,22 +983,19 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	if err != nil {
 		return err
 	}
-	if skippedNeedles > 0 {
+	if unreadable.count > 0 {
 		glog.Warningf("vacuum volume %d: dropped %d unreadable index entries (%d data bytes) during compaction",
-			v.Id, skippedNeedles, skippedDataBytes)
+			v.Id, unreadable.count, unreadable.bytes)
 	}
-	if v.Ttl.String() == "" {
-		dstDatSize, _, err := dstDatBackend.GetStat()
-		if err != nil {
-			return err
-		}
-		// expectedLiveBytes is tallied from oldNm (the frozen snapshot this
-		// loop copied from), not the live v.nm; unreadable needles already
-		// return before the tally, so no further skipped-byte adjustment.
-		if exceedsExpectedCompactedSize(expectedLiveBytes, dstDatSize) {
-			return fmt.Errorf("volume %s unexpected new data size: %d does not match expected live content size %d from the pre-compaction snapshot",
-				v.Id.String(), dstDatSize, expectedLiveBytes)
-		}
+	if expired.count > 0 {
+		glog.V(1).Infof("vacuum volume %d: dropped %d TTL-expired needles (%d data bytes)", v.Id, expired.count, expired.bytes)
+	}
+	dstDatSize, _, err := dstDatBackend.GetStat()
+	if err != nil {
+		return err
+	}
+	if err = checkCompactedAgainstSnapshot(v.Id, snapshot, copied, expired, unreadable, dstDatSize); err != nil {
+		return err
 	}
 	err = newNm.SaveToIdx(opts.destIdxPath)
 	if err != nil {

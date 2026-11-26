@@ -72,6 +72,9 @@ type ExternalIdentity struct {
 	// policy mode or the claim was absent.
 	ClaimPolicies []string `json:"claimPolicies,omitempty"`
 
+	// MappedRoles are the roles the provider's role mapping assigned.
+	MappedRoles []string `json:"mappedRoles,omitempty"`
+
 	// TokenExpiration is the expiration time of the source identity token
 	// This is used to limit session duration to not exceed the token's exp claim
 	TokenExpiration *time.Time `json:"tokenExpiration,omitempty"`

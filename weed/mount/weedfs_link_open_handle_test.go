@@ -532,3 +532,44 @@ func TestAdoptLinkChangeSkipsOlderVersion(t *testing.T) {
 		t.Fatalf("a link change from another filer's clock was not adopted: %v", got)
 	}
 }
+
+// CacheRemoteObjectToLocalCluster gives a remote-only entry one local chunk.
+func (s *hardLinkFiler) CacheRemoteObjectToLocalCluster(ctx context.Context, r *filer_pb.CacheRemoteObjectToLocalClusterRequest) (*filer_pb.CacheRemoteObjectToLocalClusterResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry := s.resolve(r.Name)
+	if entry == nil {
+		return nil, status.Error(codes.NotFound, r.Name)
+	}
+	if entry.IsInRemoteOnly() {
+		entry.Chunks = []*filer_pb.FileChunk{linkHandleChunk(1, 0)}
+		entry = s.store(entry)
+	}
+	return &filer_pb.CacheRemoteObjectToLocalClusterResponse{Entry: entry, LogTsNs: entry.CommitTsNs}, nil
+}
+
+// A remote-only file open on a handle gets a second name. The link caches the
+// file through the handle, so a write through it still publishes.
+func TestLinkCachesARemoteOnlyFileThroughItsOpenHandle(t *testing.T) {
+	wfs := newInvalidateTestWFS(t)
+	wfs.option.FilerMountRootPath = "/"
+	fake := &hardLinkFiler{records: map[string]*filer_pb.Entry{}, blobs: map[string]*filer_pb.Entry{}}
+	startFakeFiler(t, wfs, fake)
+	stored := fake.store(&filer_pb.Entry{
+		Name:        "tmp",
+		RemoteEntry: &filer_pb.RemoteEntry{StorageName: "cloud1", RemoteMtime: 1, RemoteSize: 100},
+		Attributes:  &filer_pb.FuseAttributes{Inode: 42, FileMode: 0o600, Uid: 2000, Gid: 20, FileSize: 100, Crtime: 1, Mtime: 1, Ctime: 1},
+	})
+	inode := wfs.inodeToPath.Lookup("/tmp", 1, false, false, 42, true)
+	wfs.mapPbIdFromFilerToLocal(stored)
+	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, stored, stored.CommitTsNs, 0)
+	t.Cleanup(func() { fh.dirtyPages.Destroy() })
+	fh.RememberPath("/tmp")
+
+	linkInRoot(t, wfs, inode, "final")
+	if code := appendAndFlush(t, wfs, fh, 2); code != fuse.OK {
+		t.Fatalf("flush after link: %v", code)
+	}
+	wantStored(t, fake, "tmp", 2, 2)
+	wantStored(t, fake, "final", 2, 2)
+}

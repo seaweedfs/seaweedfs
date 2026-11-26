@@ -289,6 +289,14 @@ func isCanceledStreamingError(err error) bool {
 	return errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled
 }
 
+// streamCanceled reports whether a stream failed because its request was
+// canceled. net/http cancels the request context once a write to the client
+// fails, so a client hanging up mid-body surfaces in err as a broken pipe or a
+// connection reset rather than as context.Canceled.
+func streamCanceled(ctx context.Context, err error) bool {
+	return isCanceledStreamingError(err) || ctx.Err() == context.Canceled
+}
+
 // writeStreamErrorResponse answers a stream failure unless the stream already
 // wrote a response. A canceled error is answered too: the idle timeout and a
 // shared lookup canceled by another request both cancel it while the client is
@@ -551,7 +559,7 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 	if r.Method != http.MethodHead && len(entry.Content) == 0 && len(entry.Chunks) > 0 {
 		sseType := s3a.detectPrimarySSEType(entry)
 		if err := s3a.streamFromVolumeServersWithSSE(w, r, entry, sseType, bucket, object, ""); err != nil {
-			if isCanceledStreamingError(err) {
+			if streamCanceled(r.Context(), err) {
 				logCanceledStream(r, "serveDirectoryContent", bucket, object, err)
 			} else {
 				glog.Errorf("serveDirectoryContent: failed to stream %s/%s: %v", bucket, object, err)
@@ -1189,7 +1197,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	streamTime = time.Since(tStream)
 	if err != nil {
 		switch {
-		case isCanceledStreamingError(err):
+		case streamCanceled(r.Context(), err):
 			logCanceledStream(r, "GetObjectHandler", bucket, object, err)
 		case errors.Is(err, context.DeadlineExceeded):
 			glog.Warningf("GetObjectHandler: deadline exceeded while streaming %s/%s: %v", bucket, object, err)
@@ -1490,7 +1498,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			return newStreamErrorWithResponse(err)
 		}
 		switch {
-		case isCanceledStreamingError(err):
+		case streamCanceled(r.Context(), err):
 			// Client disconnected mid-stream (e.g. Nginx upstream timeout, browser cancel) - expected
 			glog.V(3).Infof("streamFromVolumeServers: client disconnected after writing %d bytes: %v", written, err)
 		case errors.Is(err, context.DeadlineExceeded):
@@ -1921,7 +1929,9 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 		BucketTrafficSent(copied, r)
 	}
 	if copyErr != nil {
-		glog.Errorf("Failed to copy full object: copied %d bytes: %v", copied, copyErr)
+		if !streamCanceled(r.Context(), copyErr) {
+			glog.Errorf("Failed to copy full object: copied %d bytes: %v", copied, copyErr)
+		}
 		if !body.committed {
 			// nothing written yet -- the caller writes the S3 error response
 			return copyErr
@@ -2006,7 +2016,9 @@ func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io
 			}
 		}
 		if copyErr != nil {
-			glog.Errorf("streamDecryptedRangeFromChunks: copy error after writing %d bytes (expected %d): %v", written, chunkView.ViewSize, copyErr)
+			if !streamCanceled(ctx, copyErr) {
+				glog.Errorf("streamDecryptedRangeFromChunks: copy error after writing %d bytes (expected %d): %v", written, chunkView.ViewSize, copyErr)
+			}
 			return totalWritten, fmt.Errorf("failed to copy decrypted chunk data: %w", copyErr)
 		}
 

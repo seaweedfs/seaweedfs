@@ -1,6 +1,7 @@
 package iam
 
 import (
+	"crypto/fips140"
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -24,9 +25,25 @@ func ValidateCallerSuppliedAccessKeyId(accessKeyId string) error {
 	return nil
 }
 
+// Fips140MinSecretAccessKeyLength is the shortest SecretAccessKey SigV4 can
+// use under GODEBUG=fips140=only. The SigV4 signing key starts as an HMAC keyed
+// with "AWS4"+secret, and hmac.New panics there on keys under 14 bytes.
+const Fips140MinSecretAccessKeyLength = 10
+
+// fips140Enforced is a variable so tests can apply the fips140=only minimum
+// without running the test binary under fips140=only.
+var fips140Enforced = fips140.Enforced
+
 // ValidateCallerSuppliedSecretAccessKey checks that a caller-supplied
-// SecretAccessKey is 8 to 128 characters. Returns nil if valid.
+// SecretAccessKey is 8 to 128 characters, or 10 to 128 under
+// GODEBUG=fips140=only. Returns nil if valid.
 func ValidateCallerSuppliedSecretAccessKey(secretAccessKey string) error {
+	if fips140Enforced() {
+		if len(secretAccessKey) < Fips140MinSecretAccessKeyLength || len(secretAccessKey) > 128 {
+			return fmt.Errorf("SecretAccessKey must be between %d and 128 characters under GODEBUG=fips140=only", Fips140MinSecretAccessKeyLength)
+		}
+		return nil
+	}
 	if len(secretAccessKey) < 8 || len(secretAccessKey) > 128 {
 		return fmt.Errorf("SecretAccessKey must be between 8 and 128 characters")
 	}

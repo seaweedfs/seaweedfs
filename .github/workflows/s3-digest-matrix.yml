@@ -1,0 +1,220 @@
+name: "S3 digest and FIPS matrix"
+
+# Runs the S3 suites in every digest mode with both volume servers and JWT
+# signing on, so the sha256 digest and GODEBUG=fips140=only stay working:
+#   md5          GODEBUG=fips140=off, the default digest
+#   sha256       GODEBUG=fips140=on with the filer's -digest=sha256
+#   fips140only  GODEBUG=fips140=only, built with GOFIPS140=v1.0.0
+# test/s3/digest_matrix/start_cluster.sh starts each cell's cluster.
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/**'
+      - 'weed/server/**'
+      - 'weed/operation/**'
+      - 'weed/storage/**'
+      - 'weed/security/**'
+      - 'weed/util/**'
+      - 'weed/command/**'
+      - 'weed/pb/**'
+      - 'seaweed-volume/**'
+      - 'seaweed-common/**'
+      - 'test/s3/digest_matrix/**'
+      - 'test/s3/compatibility/**'
+      - 'test/s3/etag/**'
+      - 'test/s3/checksum/**'
+      - 'docker/compose/s3.json'
+      - 'docker/compose/s3tests.conf'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/s3-digest-matrix.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'weed/s3api/**'
+      - 'weed/filer/**'
+      - 'weed/server/**'
+      - 'weed/operation/**'
+      - 'weed/storage/**'
+      - 'weed/security/**'
+      - 'weed/util/**'
+      - 'weed/command/**'
+      - 'weed/pb/**'
+      - 'seaweed-volume/**'
+      - 'seaweed-common/**'
+      - 'test/s3/digest_matrix/**'
+      - 'test/s3/compatibility/**'
+      - 'test/s3/etag/**'
+      - 'test/s3/checksum/**'
+      - 'docker/compose/s3.json'
+      - 'docker/compose/s3tests.conf'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/s3-digest-matrix.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build weed (GOFIPS140) and weed-volume
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Fingerprint build toolchain
+        id: toolchain
+        run: echo "fingerprint=$(getconf GNU_LIBC_VERSION | tr ' ' '-')-rustc-$(rustc -V | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo registry and target
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-volume/target
+          key: rust-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('seaweed-volume/Cargo.lock', 'seaweed-common/Cargo.lock') }}
+          restore-keys: |
+            rust-${{ steps.toolchain.outputs.fingerprint }}-
+
+      # GOFIPS140=v1.0.0 links the frozen Go Cryptographic Module, which the
+      # fips140only cells need; the other cells set GODEBUG to off or on.
+      - name: Build weed
+        run: |
+          cd weed
+          CGO_ENABLED=0 GOFIPS140=v1.0.0 go build -tags s3tests -buildvcs=false -o weed .
+          go version -m weed | grep GOFIPS140
+
+      - name: Build weed-volume
+        run: cd seaweed-volume && cargo build --release
+
+      - name: Package binaries
+        run: tar cf digest-matrix-binaries.tar weed/weed seaweed-volume/target/release/weed-volume
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digest-matrix-binaries
+          if-no-files-found: error
+          retention-days: 1
+          path: digest-matrix-binaries.tar
+
+  suites:
+    name: S3 suites (${{ matrix.digest }}, ${{ matrix.volume }} volume server)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        digest: [ md5, sha256, fips140only ]
+        volume: [ go, rust ]
+        # s3_digest names the ETag digest for the Go suites. ceph_deselect
+        # drops ceph tests whose answer the mode changes on purpose:
+        # test_object_write_check_etag expects MD5("bar") as the ETag, and
+        # under fips140=only SSE-C is refused with 501 before its headers are
+        # compared, so the SSE-C conflict tests get 501 where they expect 400.
+        include:
+          - digest: md5
+            s3_digest: md5
+          - digest: sha256
+            s3_digest: sha256
+            ceph_deselect: --deselect s3tests/functional/test_s3.py::test_object_write_check_etag
+          - digest: fips140only
+            s3_digest: sha256
+            ceph_deselect: >-
+              --deselect s3tests/functional/test_s3.py::test_object_write_check_etag
+              --deselect s3tests/functional/test_s3.py::test_put_obj_enc_conflict_c_s3
+              --deselect s3tests/functional/test_s3.py::test_put_obj_enc_conflict_c_kms
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: ${{ runner.environment == 'github-hosted' }}
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+
+      # The same s3-tests checkout and fixes as the "Ceph S3 tests" workflow.
+      - name: Clone s3-tests
+        run: |
+          git clone https://github.com/ceph/s3-tests.git
+          cd s3-tests
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxml2-dev libxslt1-dev zlib1g-dev
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install tox
+          python3 -m pip install -e .
+          cd ..
+          S3_TESTS_PATH=s3-tests python3 test/s3/compatibility/fix_s3_tests_bucket_conflicts.py
+          sed -i "s/assert prefixes == \['foo%2B1\/', 'foo\/', 'quux%20ab\/'\]/assert prefixes == \['foo\/', 'foo%2B1\/', 'quux%20ab\/'\]/" s3-tests/s3tests/functional/test_s3.py
+          sed -i "/# request PartNumber out of range/,+4{s/assert status == 400/assert status == 416/; s/assert error_code == 'InvalidPart'/assert error_code == 'InvalidPartNumber'/}" s3-tests/s3tests/functional/test_s3.py
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: digest-matrix-binaries
+
+      - name: Restore binaries
+        run: |
+          tar xf digest-matrix-binaries.tar
+          chmod +x weed/weed seaweed-volume/target/release/weed-volume
+
+      - name: Start the cluster
+        env:
+          DIGEST_MODE: ${{ matrix.digest }}
+          VOLUME_SERVER: ${{ matrix.volume }}
+          WEED: ${{ github.workspace }}/weed/weed
+          WEED_VOLUME: ${{ github.workspace }}/seaweed-volume/target/release/weed-volume
+          WORK_DIR: /tmp/digest-matrix
+          S3_CONFIG: ${{ github.workspace }}/docker/compose/s3.json
+        run: bash test/s3/digest_matrix/start_cluster.sh
+
+      - name: Run the basic ceph s3-tests
+        working-directory: s3-tests
+        env:
+          S3TEST_CONF: ${{ github.workspace }}/docker/compose/s3tests.conf
+        run: |
+          mapfile -t tests < <(grep -v '^[[:space:]]*#' "$GITHUB_WORKSPACE/test/s3/compatibility/s3tests_basic.txt")
+          # shellcheck disable=SC2086 # the deselect list is separate arguments
+          tox -- "${tests[@]}" ${{ matrix.ceph_deselect }}
+
+      - name: Run the etag and checksum Go suites
+        env:
+          S3_ENDPOINT: http://127.0.0.1:8000
+          S3_DIGEST: ${{ matrix.s3_digest }}
+          S3_FIPS140_ONLY: ${{ matrix.digest == 'fips140only' && '1' || '0' }}
+          S3_ACCESS_KEY: some_access_key1
+          S3_SECRET_KEY: some_secret_key1
+        run: go test -count=1 -timeout 10m ./test/s3/etag/ ./test/s3/checksum/
+
+      - name: Stop the cluster
+        if: always()
+        run: xargs kill < /tmp/digest-matrix/pids 2>/dev/null || true
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: digest-matrix-logs-${{ matrix.digest }}-${{ matrix.volume }}
+          path: /tmp/digest-matrix/*.log
+          retention-days: 3
+

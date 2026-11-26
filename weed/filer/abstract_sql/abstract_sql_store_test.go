@@ -3,7 +3,9 @@ package abstract_sql
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
+	"io"
 	"reflect"
 	"testing"
 	"time"
@@ -280,5 +282,87 @@ func TestWritesUnderATransactionGoThroughIt(t *testing.T) {
 	}
 	if err := kvMock.ExpectationsWereMet(); err != nil {
 		t.Error(err)
+	}
+}
+
+// busyDriver serves canned rows per query on connections that, like pgx's,
+// refuse a query while the rows of another are still open.
+type busyDriver map[string][][]driver.Value
+
+func (d busyDriver) Connect(context.Context) (driver.Conn, error) { return &busyConn{rows: d}, nil }
+func (d busyDriver) Driver() driver.Driver                        { return nil }
+
+type busyConn struct {
+	rows busyDriver
+	busy bool
+}
+
+func (c *busyConn) Prepare(string) (driver.Stmt, error) { return nil, driver.ErrSkip }
+func (c *busyConn) Close() error                        { return nil }
+func (c *busyConn) Begin() (driver.Tx, error)           { return c, nil }
+func (c *busyConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
+	return c, nil
+}
+func (c *busyConn) Commit() error   { return nil }
+func (c *busyConn) Rollback() error { return nil }
+func (c *busyConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	if c.busy {
+		return nil, errors.New("conn busy")
+	}
+	c.busy = true
+	return &busyRows{conn: c, rows: c.rows[query]}, nil
+}
+
+type busyRows struct {
+	conn *busyConn
+	rows [][]driver.Value
+}
+
+func (r *busyRows) Columns() []string { return make([]string, len(r.rows[0])) }
+func (r *busyRows) Close() error      { r.conn.busy = false; return nil }
+func (r *busyRows) Next(dest []driver.Value) error {
+	if len(r.rows) == 0 {
+		return io.EOF
+	}
+	copy(dest, r.rows[0])
+	r.rows = r.rows[1:]
+	return nil
+}
+
+type findGen struct{ listGen }
+
+func (findGen) GetSqlFind(string) string { return "SELECT meta" }
+
+// A transaction has one connection, so a listing in one (a directory rename)
+// must close its rows before the callback reads a hard link on it.
+func TestListDirectoryEntriesInTransactionClosesRowsBeforeCallback(t *testing.T) {
+	meta, err := (&filer.Entry{}).EncodeAttributesAndChunks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := sql.OpenDB(busyDriver{
+		"SELECT name, meta": {{"a.txt", meta}, {"b.txt", meta}},
+		"SELECT meta":       {{[]byte("record")}},
+	})
+	defer db.Close()
+
+	store := &AbstractSqlStore{SqlGenerator: findGen{}, DB: db}
+	ctx, err := store.BeginTransaction(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.RollbackTransaction(ctx)
+
+	var listed []string
+	_, err = store.ListDirectoryEntries(ctx, "/dir", "", true, 100, func(entry *filer.Entry) (bool, error) {
+		listed = append(listed, entry.Name())
+		_, err := store.KvGet(ctx, []byte("hard-link-id"))
+		return true, err
+	})
+	if err != nil {
+		t.Fatalf("ListDirectoryEntries: %v", err)
+	}
+	if want := []string{"a.txt", "b.txt"}; !reflect.DeepEqual(listed, want) {
+		t.Errorf("listed %v, want %v", listed, want)
 	}
 }

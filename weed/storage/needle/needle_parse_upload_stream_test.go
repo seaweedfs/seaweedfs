@@ -29,9 +29,11 @@ func TestParseUpload_GzipStreamCount(t *testing.T) {
 		name       string
 		md5OnPart  string
 		md5OnReq   string
+		crcOnReq   string
 		wantStream bool
 	}{
 		{name: "no MD5: stream-count", wantStream: true},
+		{name: "CRC32C only: stream-count", crcOnReq: ContentCrc32c(uncompressed), wantStream: true},
 		{name: "MD5 on part: materialize", md5OnPart: uncompressedMD5},
 		{name: "MD5 on request: materialize", md5OnReq: uncompressedMD5},
 	}
@@ -44,6 +46,9 @@ func TestParseUpload_GzipStreamCount(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			req := buildGzipReq(t, gzipped, c.md5OnPart, c.md5OnReq)
+			if c.crcOnReq != "" {
+				req.Header.Set(ContentCrc32cHeader, c.crcOnReq)
+			}
 
 			runtime.GC()
 			var before, after runtime.MemStats

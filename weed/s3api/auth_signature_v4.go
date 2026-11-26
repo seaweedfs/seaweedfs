@@ -336,6 +336,10 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	// 6. Get the query string for the canonical request
 	queryStr := getCanonicalQueryString(r, authInfo.IsPresigned)
 
+	if errCode = refuseFips140ShortSecret(r.Context(), s3err.RemoteIP(r), identity, cred); errCode != s3err.ErrNone {
+		return nil, nil, "", nil, errCode
+	}
+
 	// 7. Define a closure for the core verification logic to avoid repetition
 	verify := func(urlPath string) (string, s3err.ErrorCode) {
 		return calculateAndVerifySignature(
@@ -917,6 +921,10 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(ctx context.Cont
 		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
 			credHeader.accessKey, cred.Expiration, time.Now().Unix())
 		return nil, s3err.ErrAccessDenied
+	}
+
+	if errCode := refuseFips140ShortSecret(ctx, "", identity, cred); errCode != s3err.ErrNone {
+		return nil, errCode
 	}
 
 	// Get signing key.

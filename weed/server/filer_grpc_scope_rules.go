@@ -179,7 +179,9 @@ var scopeUnaryMethods = map[string]reflect.Type{
 
 // Each admitted stream has a request/response rule in the stream interceptor.
 var scopeStreamMethods = map[string]bool{
-	"ListEntries":       true,
-	"StreamRenameEntry": true,
-	"StreamMutateEntry": true,
+	"ListEntries":            true,
+	"StreamRenameEntry":      true,
+	"StreamMutateEntry":      true,
+	"SubscribeMetadata":      true,
+	"SubscribeLocalMetadata": true,
 }

@@ -168,7 +168,7 @@ func TestScopeSubscriptionWithoutSubscribeKeyIgnoresForeignBearer(t *testing.T) 
 	}
 }
 
-func TestScopeRejectsGeneralFilerScopesOnSubscriptionsWithOrWithoutVerifier(t *testing.T) {
+func TestScopeAdmitsGeneralFilerScopesOnSubscriptionsWithOrWithoutVerifier(t *testing.T) {
 	token := string(security.GenJwtForFilerScope(
 		security.SigningKey(subscriptionFilerKey),
 		time.Minute,
@@ -186,8 +186,8 @@ func TestScopeRejectsGeneralFilerScopesOnSubscriptionsWithOrWithoutVerifier(t *t
 				t.Run(method, func(t *testing.T) {
 					called := false
 					err := callSubscriptionStream(t, scope, method, subscriptionStreamContext(token), func() { called = true })
-					if status.Code(err) != codes.PermissionDenied || called {
-						t.Fatalf("general scoped subscription err=%v called=%v, want PermissionDenied before dispatch", err, called)
+					if err != nil || !called {
+						t.Fatalf("general scoped subscription err=%v called=%v, want scoped handler dispatch", err, called)
 					}
 				})
 			}
@@ -254,8 +254,8 @@ func TestScopeSubscriptionKeyOverlapCompatibilityMatrix(t *testing.T) {
 					for _, method := range []string{security.MethodSubscribeMetadata, security.MethodSubscribeLocalMetadata} {
 						t.Run(method, func(t *testing.T) {
 							// The existing dedicated verifier accepts every token in this matrix,
-							// including the overlapping-key+jti case. That case is ambiguous:
-							// resolve treats it as a general scoped filer token first.
+							// including overlapping keys with jti. That case now uses
+							// the general filer scope's bounded subscription path.
 							dedicatedScope, dedicatedErr := security.CheckGrpcMetadataSubscription(
 								subscriptionStreamContext(token),
 								tc.subscribeKey,
@@ -269,12 +269,6 @@ func TestScopeSubscriptionKeyOverlapCompatibilityMatrix(t *testing.T) {
 
 							called := false
 							err := callSubscriptionStream(t, scope, method, subscriptionStreamContext(token), func() { called = true })
-							if withJTI && tc.name != "separate subscription key" {
-								if status.Code(err) != codes.PermissionDenied || called {
-									t.Fatalf("overlapping-key+jti err=%v called=%v, want PermissionDenied before dispatch", err, called)
-								}
-								return
-							}
 							if err != nil || !called {
 								t.Fatalf("subscription token err=%v called=%v, want handler dispatch", err, called)
 							}
