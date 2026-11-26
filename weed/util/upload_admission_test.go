@@ -1,6 +1,7 @@
 package util
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -18,6 +19,9 @@ func TestUploadAdmits(t *testing.T) {
 		{"oversized alone", 0, 100, 10, true},
 		{"oversized behind others", 1, 100, 10, false},
 		{"zero size at limit", 10, 0, 10, true},
+		{"size that would wrap the sum", 11, math.MaxInt64, 10, false},
+		{"max size behind a small upload", 1, math.MaxInt64, 10, false},
+		{"already over the limit", 11, 0, 10, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

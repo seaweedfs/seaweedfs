@@ -6,12 +6,13 @@ package util
 // A limit of 0 means unlimited. A request is always admitted when nothing
 // else is in flight (inFlight == 0), even if size alone exceeds limit;
 // otherwise an oversized request would never start. Otherwise the request
-// is admitted only if inFlight+size stays within limit.
+// is admitted only if inFlight+size stays within limit. The sum is never
+// formed, so a huge size cannot wrap around and pass the check.
 func UploadAdmits(inFlight, size, limit int64) bool {
 	if limit == 0 || inFlight == 0 {
 		return true
 	}
-	return inFlight+size <= limit
+	return inFlight <= limit && size <= limit-inFlight
 }
 
 // CountedUploadSize returns the number of bytes an upload charges against
