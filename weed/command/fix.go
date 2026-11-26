@@ -317,7 +317,8 @@ func doFixOneVolume(basepath string, baseFileName string, collection string, vol
 	indexFileName := path.Join(basepath, baseFileName+".idx")
 
 	if *fixVerify {
-		if err := doFixOneVolumeVerified(basepath, baseFileName, volumeId, indexFileName); err != nil {
+		if err := recoverOneVolume(basepath, baseFileName, volumeId, indexFileName, recoverOptions{
+			includeDeleted: fixIncludeDeleted, dryRun: *fixDryRun, truncateTail: *fixTruncateTail, maxNeedleSizeMB: *fixMaxNeedleMB}); err != nil {
 			if *fixIgnoreError {
 				glog.Error(err)
 				SetCommandExitStatus(1)

@@ -240,9 +240,9 @@ func TestFixVerifyLoadsWritable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	*fixVerify, *fixTruncateTail, *fixDryRun = true, true, false
-	t.Cleanup(func() { *fixVerify, *fixTruncateTail = false, false })
-	doFixOneVolumeVerified(dir, "1", 1, filepath.Join(dir, "1.idx"))
+	if err := recoverOneVolume(dir, "1", 1, filepath.Join(dir, "1.idx"), recoverOptions{includeDeleted: true, truncateTail: true, maxNeedleSizeMB: 64}); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := os.Stat(filepath.Join(dir, "1.idx.bak")); err != nil {
 		t.Errorf("old index should have been kept: %v", err)

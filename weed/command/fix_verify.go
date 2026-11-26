@@ -655,10 +655,18 @@ func truncateDatTail(datName string, cleanEnd int64) error {
 	return f.Truncate(cleanEnd)
 }
 
-// doFixOneVolumeVerified rebuilds the .idx of one volume from the needles that
+// recoverOptions are the settings of one recovery run.
+type recoverOptions struct {
+	includeDeleted  bool
+	dryRun          bool
+	truncateTail    bool
+	maxNeedleSizeMB int
+}
+
+// recoverOneVolume rebuilds the .idx of one volume from the needles that
 // verify, resynchronising past damaged regions. Errors are returned so the
 // caller can honour -ignoreError and move on to the next volume.
-func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64, indexFileName string) error {
+func recoverOneVolume(basepath string, baseFileName string, volumeId int64, indexFileName string, o recoverOptions) error {
 	vid, err := needle.NewVolumeId(strconv.FormatInt(volumeId, 10))
 	if err != nil {
 		return fmt.Errorf("volume ID out of range: %d", volumeId)
@@ -677,16 +685,16 @@ func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64
 		return fmt.Errorf("volume %d: cannot tell whether the volume is on a remote tier: %w", volumeId, err)
 	}
 	if hasRemoteFile {
-		return fmt.Errorf("volume %d: -verify needs the local .dat, the volume is read from a remote tier", volumeId)
+		return fmt.Errorf("volume %d: fix.recover needs the local .dat, the volume is read from a remote tier", volumeId)
 	}
 
 	nm := needle_map.NewMemDb()
 	nmDeleted := needle_map.NewMemDb()
 	defer nm.Close()
 	defer nmDeleted.Close()
-	scanner := &VolumeFileScanner4Fix{nm: nm, nmDeleted: nmDeleted, includeDeleted: *fixIncludeDeleted}
+	scanner := &VolumeFileScanner4Fix{nm: nm, nmDeleted: nmDeleted, includeDeleted: o.includeDeleted}
 
-	opts := datVerifyOptions{maxNeedleSize: int64(*fixMaxNeedleMB) << 20, window: 8 << 20, zeroWindow: 4096, Progress: newProgressPrinter(volumeId)}
+	opts := datVerifyOptions{maxNeedleSize: int64(o.maxNeedleSizeMB) << 20, window: 8 << 20, zeroWindow: 4096, Progress: newProgressPrinter(volumeId)}
 	visitor := &datVisitor{needle: func(n *needle.Needle, offset int64, header, body []byte) error {
 		// the version only matters for DiskSize in a debug log line
 		return scanner.VisitNeedle(n, offset, nil, nil)
@@ -707,11 +715,11 @@ func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64
 		SetCommandExitStatus(1)
 	}
 
-	if *fixDryRun {
+	if o.dryRun {
 		return nil
 	}
 	if sum.TailGarbage {
-		if *fixTruncateTail {
+		if o.truncateTail {
 			if err := truncateDatTail(datName, sum.CleanEnd); err != nil {
 				return fmt.Errorf("truncate %s: %w", datName, err)
 			}

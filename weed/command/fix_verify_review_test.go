@@ -229,7 +229,7 @@ func TestFixVerifyRefusesRemoteTier(t *testing.T) {
 	}
 	withVerifyFlags(t, false)
 
-	err := doFixOneVolumeVerified(dir, "fix_7", 7, base+".idx")
+	err := recoverOneVolume(dir, "fix_7", 7, base+".idx", recoverOptions{includeDeleted: true, maxNeedleSizeMB: 64})
 	if err == nil || !strings.Contains(err.Error(), "remote tier") {
 		t.Fatalf("error %v, want a remote tier refusal", err)
 	}
@@ -250,7 +250,7 @@ func TestFixVerifyRefusesUnreadableVolumeInfo(t *testing.T) {
 	}
 	withVerifyFlags(t, false)
 
-	err := doFixOneVolumeVerified(dir, "fix_7", 7, base+".idx")
+	err := recoverOneVolume(dir, "fix_7", 7, base+".idx", recoverOptions{includeDeleted: true, maxNeedleSizeMB: 64})
 	if err == nil || !strings.Contains(err.Error(), "cannot tell") {
 		t.Fatalf("error %v, want a volume info refusal", err)
 	}
