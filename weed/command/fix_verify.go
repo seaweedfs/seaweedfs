@@ -636,8 +636,14 @@ func truncateDatTail(datName string, cleanEnd int64) error {
 			return fmt.Errorf("create tail backup %s: %w", bak, err)
 		}
 		_, err = io.Copy(out, io.NewSectionReader(f, cleanEnd, st.Size()-cleanEnd))
+		if err == nil {
+			err = out.Sync()
+		}
 		if cerr := out.Close(); err == nil {
 			err = cerr
+		}
+		if err == nil {
+			err = util.FsyncDir(path.Dir(bak))
 		}
 		if err != nil {
 			os.Remove(bak)
