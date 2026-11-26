@@ -98,6 +98,16 @@ func TestBuildWriteCondition(t *testing.T) {
 			t.Fatalf("clause = %+v", c)
 		}
 	})
+	t.Run("If-None-Match compares weakly", func(t *testing.T) {
+		cond, ok := buildWriteCondition(reqWith(map[string]string{s3_constants.IfNoneMatch: `W/"abc"`}))
+		if !ok {
+			t.Fatal("want ok")
+		}
+		c := oneClause(t, cond)
+		if c.Kind != filer_pb.WriteCondition_IF_ETAG_NOT_MATCH || len(c.Etags) != 1 || c.Etags[0] != `W/"abc"` || !c.AllowWeak {
+			t.Fatalf("clause = %+v", c)
+		}
+	})
 	t.Run("etag list reduces", func(t *testing.T) {
 		cond, ok := buildWriteCondition(reqWith(map[string]string{s3_constants.IfMatch: `"a", "b"`}))
 		if !ok {

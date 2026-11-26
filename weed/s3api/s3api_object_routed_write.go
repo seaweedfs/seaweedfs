@@ -79,8 +79,8 @@ func routeWriteCondition(r *http.Request, uniqueWritePath bool) (*filer_pb.Write
 
 // buildWriteCondition reduces the request's conditional headers to a
 // WriteCondition evaluated under the owner's object-path lock. Every header
-// form reduces to clauses (ETag lists and weak ETags compare through the same
-// canonicalization the gateway applies; time conditions become unix bounds),
+// form reduces to clauses (ETag lists compare as the gateway does: weakly for
+// If-None-Match, strongly for If-Match; time conditions become unix bounds),
 // composed per RFC 7232 precedence: If-Unmodified-Since is ignored when
 // If-Match is present, If-Modified-Since when If-None-Match is. ok=false only
 // when the headers cannot even parse; a nil condition with ok=true means
@@ -105,7 +105,7 @@ func buildWriteCondition(r *http.Request) (*filer_pb.WriteCondition, bool) {
 	if headers.ifNoneMatch == "*" {
 		clauses = append(clauses, &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS})
 	} else if headers.ifNoneMatch != "" {
-		clauses = append(clauses, &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ETAG_NOT_MATCH, Etags: etagList(headers.ifNoneMatch)})
+		clauses = append(clauses, &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ETAG_NOT_MATCH, Etags: etagList(headers.ifNoneMatch), AllowWeak: true})
 	}
 	if !headers.ifModifiedSince.IsZero() && headers.ifNoneMatch == "" {
 		clauses = append(clauses, &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_MODIFIED_SINCE, UnixTime: headers.ifModifiedSince.Unix()})

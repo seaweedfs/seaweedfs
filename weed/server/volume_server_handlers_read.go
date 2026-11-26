@@ -196,7 +196,7 @@ func (vs *VolumeServer) proxyReqToTargetServer(w http.ResponseWriter, r *http.Re
 // (RFC 9110 13.2.2).
 func notModified(r *http.Request, etag string, lastModified uint64) bool {
 	if inm := r.Header.Values("If-None-Match"); len(inm) != 0 {
-		return etagListMatches(strings.Join(inm, ","), etag, true)
+		return util.ETagListMatches(strings.Join(inm, ","), etag, true)
 	}
 	ims := r.Header.Get("If-Modified-Since")
 	if ims == "" || lastModified == 0 {

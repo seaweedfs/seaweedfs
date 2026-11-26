@@ -55,3 +55,31 @@ func TestParseHostPort(t *testing.T) {
 		})
 	}
 }
+
+func TestETagListMatches(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+		etag   string
+		weak   bool
+		want   bool
+	}{
+		{"star", "*", `"abc"`, false, true},
+		{"quoted", `"abc"`, `"abc"`, false, true},
+		{"unquoted", "abc", `"abc"`, false, true},
+		{"list", `"x", "abc"`, `"abc"`, false, true},
+		{"miss", `"x", "y"`, `"abc"`, false, false},
+		{"weak tag, weak comparison", `W/"abc"`, `"abc"`, true, true},
+		{"weak tag, strong comparison", `W/"abc"`, `"abc"`, false, false},
+		{"strong tag after weak tag, strong comparison", `W/"x", "abc"`, `"abc"`, false, true},
+		{"comma inside a quoted tag", `"a,b"`, `"a,b"`, false, true},
+		{"trailing comma against an empty etag", `"x",`, `""`, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ETagListMatches(tt.header, tt.etag, tt.weak); got != tt.want {
+				t.Errorf("ETagListMatches(%q, %q, %v) = %v, want %v", tt.header, tt.etag, tt.weak, got, tt.want)
+			}
+		})
+	}
+}

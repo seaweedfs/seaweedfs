@@ -95,7 +95,7 @@ func (s3a *S3ApiServer) validateDeleteIfMatch(entry *filer_pb.Entry, ifMatch str
 	if ifMatch == "*" {
 		return s3err.ErrNone
 	}
-	if !s3a.etagMatches(ifMatch, s3a.getObjectETag(entry)) {
+	if !s3a.etagMatches(ifMatch, s3a.getObjectETag(entry), false) {
 		return s3err.ErrPreconditionFailed
 	}
 	return s3err.ErrNone

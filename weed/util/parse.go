@@ -79,3 +79,49 @@ func CanonicalizeETag(etag string) string {
 	canonicalETag := strings.TrimPrefix(etag, "\"")
 	return strings.TrimSuffix(canonicalETag, "\"")
 }
+
+// ETagListMatches reports whether an If-Match or If-None-Match value, "*" or a
+// list of entity tags, matches etag (RFC 9110 13.1.1, 13.1.2). If-Match uses the
+// strong comparison, so a weak tag never matches; If-None-Match the weak one.
+func ETagListMatches(header, etag string, weak bool) bool {
+	if strings.TrimSpace(header) == "*" {
+		return true
+	}
+	for _, tag := range splitETagList(header) {
+		tag = strings.TrimSpace(tag)
+		if strings.HasPrefix(tag, "W/") {
+			if !weak {
+				continue
+			}
+			tag = tag[len("W/"):]
+		}
+		// Empty list elements are ignored, so padding like a trailing
+		// comma cannot match an empty opaque tag.
+		if tag == "" {
+			continue
+		}
+		if CanonicalizeETag(tag) == CanonicalizeETag(etag) {
+			return true
+		}
+	}
+	return false
+}
+
+// splitETagList splits an entity-tag list on the commas between tags; a comma
+// inside a quoted opaque tag does not split.
+func splitETagList(header string) []string {
+	var tags []string
+	start, quoted := 0, false
+	for i := 0; i < len(header); i++ {
+		switch header[i] {
+		case '"':
+			quoted = !quoted
+		case ',':
+			if !quoted {
+				tags = append(tags, header[start:i])
+				start = i + 1
+			}
+		}
+	}
+	return append(tags, header[start:])
+}

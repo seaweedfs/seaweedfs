@@ -2912,20 +2912,10 @@ func objectETag(entry *filer_pb.Entry) string {
 	return quoteETag(filer.ETagChunks(entry.Chunks))
 }
 
-func (s3a *S3ApiServer) etagMatches(headerValue, objectETag string) bool {
-	// Clean the object ETag
-	objectETag = strings.Trim(objectETag, `"`)
-
-	// Split header value by commas to handle multiple ETags
-	etags := strings.Split(headerValue, ",")
-	for _, etag := range etags {
-		etag = strings.TrimSpace(etag)
-		etag = strings.Trim(etag, `"`)
-		if etag == objectETag {
-			return true
-		}
-	}
-	return false
+// etagMatches reports whether an If-Match (weak=false) or If-None-Match
+// (weak=true) value matches the object's ETag.
+func (s3a *S3ApiServer) etagMatches(headerValue, objectETag string, weak bool) bool {
+	return util.ETagListMatches(headerValue, objectETag, weak)
 }
 
 func normalizeConditionalTargetEntry(entry *filer_pb.Entry) *filer_pb.Entry {
@@ -2968,7 +2958,7 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 			// Use production getObjectETag method
 			objectETag := s3a.getObjectETag(entry)
 			// Use production etagMatches method
-			if !s3a.etagMatches(headers.ifMatch, objectETag) {
+			if !s3a.etagMatches(headers.ifMatch, objectETag, false) {
 				return s3err.ErrPreconditionFailed
 			}
 		}
@@ -3001,7 +2991,7 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 			// Use production getObjectETag method
 			objectETag := s3a.getObjectETag(entry)
 			// Use production etagMatches method
-			if s3a.etagMatches(headers.ifNoneMatch, objectETag) {
+			if s3a.etagMatches(headers.ifNoneMatch, objectETag, true) {
 				glog.V(3).Infof("validateConditionalHeaders: If-None-Match failed - ETag matches %s", objectETag)
 				return s3err.ErrPreconditionFailed
 			}
@@ -3097,7 +3087,7 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 			// Use production getObjectETag method
 			objectETag := s3a.getObjectETag(entry)
 			// Use production etagMatches method
-			if !s3a.etagMatches(headers.ifMatch, objectETag) {
+			if !s3a.etagMatches(headers.ifMatch, objectETag, false) {
 				glog.V(3).Infof("validateConditionalHeadersForReads: If-Match failed for object %s/%s - header If-Match: [%s], object ETag: [%s]", bucket, object, headers.ifMatch, objectETag)
 				return ConditionalHeaderResult{ErrorCode: s3err.ErrPreconditionFailed, Entry: entry}
 			}
@@ -3127,7 +3117,7 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 			return ConditionalHeaderResult{ErrorCode: s3err.ErrNotModified, ETag: objectETag, Entry: entry}
 		}
 		// Use production etagMatches method
-		if s3a.etagMatches(headers.ifNoneMatch, objectETag) {
+		if s3a.etagMatches(headers.ifNoneMatch, objectETag, true) {
 			glog.V(3).Infof("validateConditionalHeadersForReads: If-None-Match failed - ETag matches %s", objectETag)
 			return ConditionalHeaderResult{ErrorCode: s3err.ErrNotModified, ETag: objectETag, Entry: entry}
 		}

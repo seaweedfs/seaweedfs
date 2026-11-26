@@ -60,6 +60,47 @@ func TestValidateConditionalHeadersForReadsMissingObject(t *testing.T) {
 	}
 }
 
+// If-None-Match uses the weak comparison and If-Match the strong one (RFC 9110
+// 13.1.1, 13.1.2): a W/ tag revalidates to 304 but never satisfies If-Match.
+func TestValidateConditionalHeadersForReadsWeakETags(t *testing.T) {
+	s3a := &S3ApiServer{}
+
+	entry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix()},
+		Extended:   map[string][]byte{s3_constants.ExtETagKey: []byte("d41d8cd98f00b204e9800998ecf8427e")},
+	}
+
+	testCases := []struct {
+		name   string
+		header string
+		value  string
+		entry  *filer_pb.Entry
+		want   s3err.ErrorCode
+	}{
+		{"if-none-match weak hit", s3_constants.IfNoneMatch, `W/"d41d8cd98f00b204e9800998ecf8427e"`, entry, s3err.ErrNotModified},
+		{"if-none-match weak hit in list", s3_constants.IfNoneMatch, `"0000", W/"d41d8cd98f00b204e9800998ecf8427e"`, entry, s3err.ErrNotModified},
+		{"if-none-match weak miss", s3_constants.IfNoneMatch, `W/"0000"`, entry, s3err.ErrNone},
+		{"if-none-match strong hit", s3_constants.IfNoneMatch, `"d41d8cd98f00b204e9800998ecf8427e"`, entry, s3err.ErrNotModified},
+		{"if-match weak tag", s3_constants.IfMatch, `W/"d41d8cd98f00b204e9800998ecf8427e"`, entry, s3err.ErrPreconditionFailed},
+		{"if-match strong hit after weak tag", s3_constants.IfMatch, `W/"0000", "d41d8cd98f00b204e9800998ecf8427e"`, entry, s3err.ErrNone},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/bucket/object", nil)
+			r.Header.Set(tc.header, tc.value)
+			headers, errCode := parseConditionalHeaders(r)
+			if errCode != s3err.ErrNone {
+				t.Fatalf("parseConditionalHeaders: %v", errCode)
+			}
+			result := s3a.validateConditionalHeadersForReads(r, headers, tc.entry, "bucket", "object")
+			if result.ErrorCode != tc.want {
+				t.Errorf("got %v, want %v", result.ErrorCode, tc.want)
+			}
+		})
+	}
+}
+
 func TestRemoteObjectETagAcrossCacheFill(t *testing.T) {
 	s3a := &S3ApiServer{}
 	entry := &filer_pb.Entry{
