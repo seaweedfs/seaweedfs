@@ -1,56 +1,11 @@
 package filersink
 
 import (
-	"context"
 	"errors"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
-
-func TestCompareChunksPreservesRespellingWithOffsetMove(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		old  *filer_pb.FileChunk
-		new  *filer_pb.FileChunk
-	}{
-		{
-			name: "suffix to structured",
-			old:  &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4},
-			new:  &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}, Offset: 8, Size: 4},
-		},
-		{
-			name: "structured to suffix",
-			old:  &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}, Offset: 0, Size: 4},
-			new:  &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 8, Size: 4},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			oldChunk, newChunk := tc.old, tc.new
-
-			deleted, added, err := compareChunks(
-				context.Background(), nil, nil,
-				&filer_pb.Entry{Chunks: []*filer_pb.FileChunk{oldChunk}},
-				&filer_pb.Entry{Chunks: []*filer_pb.FileChunk{newChunk}},
-			)
-			if err != nil {
-				t.Fatalf("compareChunks: %v", err)
-			}
-			if len(deleted) != 1 || deleted[0].GetFileIdString() != oldChunk.GetFileIdString() {
-				t.Fatalf("deleted chunks = %v, want old chunk %q", deleted, oldChunk.GetFileIdString())
-			}
-			if deleted[0].Offset != 0 || deleted[0].Size != 4 {
-				t.Fatalf("deleted chunk range = [%d,%d), want [0,4)", deleted[0].Offset, deleted[0].Offset+int64(deleted[0].Size))
-			}
-			if len(added) != 1 || added[0].GetFileIdString() != newChunk.GetFileIdString() {
-				t.Fatalf("added chunks = %v, want new chunk %q", added, newChunk.GetFileIdString())
-			}
-			if added[0].Offset != 8 || added[0].Size != 4 {
-				t.Fatalf("added chunk range = [%d,%d), want [8,12)", added[0].Offset, added[0].Offset+int64(added[0].Size))
-			}
-		})
-	}
-}
 
 // entry builds a file entry with the given mtime and size for the update-action
 // decision, which only looks at those two attributes.

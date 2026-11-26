@@ -106,7 +106,7 @@ func SeparateGarbageChunks(visibles *IntervalList[*VisibleInterval], chunks []*f
 		}
 	}
 	if len(garbage) > 0 {
-		garbage = DoMinusChunks(garbage, compacted, true)
+		garbage = DoMinusChunks(garbage, compacted)
 	}
 	return compacted, garbage
 }
@@ -134,46 +134,42 @@ func MinusChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFuncti
 		return nil, bErr
 	}
 
-	delta = append(delta, DoMinusChunks(aData, bData, true)...)
-	delta = append(delta, DoMinusChunks(aMeta, bMeta, true)...)
+	delta = append(delta, DoMinusChunks(aData, bData)...)
+	delta = append(delta, DoMinusChunks(aMeta, bMeta)...)
 	return
 }
 
-// DoMinusChunks returns the chunks of as that bs does not reference. With
-// byNeedle, equivalent spellings of one needle's file ID match, which garbage
-// decisions need; source diffs pass false so a respelling stays observable.
-func DoMinusChunks(as, bs []*filer_pb.FileChunk, byNeedle bool) (delta []*filer_pb.FileChunk) {
-	key := func(chunk *filer_pb.FileChunk) string {
-		fileId := chunk.GetFileIdString()
-		if !byNeedle {
-			return fileId
-		}
-		volume, path, ok := strings.Cut(fileId, ",")
-		if !ok {
-			return fileId
-		}
-		volumeId, err := needle.NewVolumeId(volume)
-		if err != nil {
-			return fileId
-		}
-		var n needle.Needle
-		if err := n.ParsePath(path); err != nil {
-			return fileId
-		}
-		return needle.NewFileIdFromNeedle(volumeId, &n).String()
-	}
+func DoMinusChunks(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {
 
 	fileIds := make(map[string]bool)
 	for _, chunk := range bs {
-		fileIds[key(chunk)] = true
+		fileIds[ChunkIdentity(chunk.GetFileIdString())] = true
 	}
 	for _, chunk := range as {
-		if _, found := fileIds[key(chunk)]; !found {
+		if _, found := fileIds[ChunkIdentity(chunk.GetFileIdString())]; !found {
 			delta = append(delta, chunk)
 		}
 	}
 
 	return
+}
+
+// ChunkIdentity names the needle a file ID reads, so equivalent spellings
+// compare equal. Malformed IDs are returned unchanged.
+func ChunkIdentity(fid string) string {
+	volume, path, ok := strings.Cut(fid, ",")
+	if !ok {
+		return fid
+	}
+	vid, err := needle.NewVolumeId(volume)
+	if err != nil {
+		return fid
+	}
+	var n needle.Needle
+	if err := n.ParsePath(path); err != nil {
+		return fid
+	}
+	return (&needle.FileId{VolumeId: vid, Key: n.Id, Cookie: n.Cookie}).String()
 }
 
 func DoMinusChunksBySourceFileId(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {

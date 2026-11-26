@@ -1397,8 +1397,8 @@ func isSuperseded(filerClient filer_pb.FilerClient, dir string, entry *filer_pb.
 	if len(entry.Content) > 0 || len(current.Content) > 0 {
 		return !bytes.Equal(entry.Content, current.Content), nil
 	}
-	return len(filer.DoMinusChunks(entry.GetChunks(), current.GetChunks(), false)) > 0 ||
-		len(filer.DoMinusChunks(current.GetChunks(), entry.GetChunks(), false)) > 0, nil
+	return len(filer.DoMinusChunks(entry.GetChunks(), current.GetChunks())) > 0 ||
+		len(filer.DoMinusChunks(current.GetChunks(), entry.GetChunks())) > 0, nil
 }
 
 // remoteUploadChunkCache is one per process: a chunk cache runs a worker

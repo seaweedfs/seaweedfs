@@ -530,11 +530,11 @@ func compareChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunc
 		return nil, nil, bErr
 	}
 
-	deletedChunks = append(deletedChunks, filer.DoMinusChunks(aData, bData, false)...)
-	deletedChunks = append(deletedChunks, filer.DoMinusChunks(aMeta, bMeta, false)...)
+	deletedChunks = append(deletedChunks, filer.DoMinusChunks(aData, bData)...)
+	deletedChunks = append(deletedChunks, filer.DoMinusChunks(aMeta, bMeta)...)
 
-	newChunks = append(newChunks, filer.DoMinusChunks(bData, aData, false)...)
-	newChunks = append(newChunks, filer.DoMinusChunks(bMeta, aMeta, false)...)
+	newChunks = append(newChunks, filer.DoMinusChunks(bData, aData)...)
+	newChunks = append(newChunks, filer.DoMinusChunks(bMeta, aMeta)...)
 
 	return
 }
