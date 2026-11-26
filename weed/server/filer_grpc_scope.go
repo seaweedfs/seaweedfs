@@ -288,6 +288,20 @@ func scopeEntryEqualRefusal(ctx context.Context, condition *filer_pb.WriteCondit
 	return nil
 }
 
+// scopeNamesRemoteRenameSource reports a condition or expected attribute that
+// compares against the hidden remote rename source.
+func scopeNamesRemoteRenameSource(condition *filer_pb.WriteCondition, expectedExtended map[string][]byte) bool {
+	if _, ok := expectedExtended[filer.ExtRemoteRenameSourceKey]; ok {
+		return true
+	}
+	for _, clause := range condition.GetClauses() {
+		if clause.GetExtKey() == filer.ExtRemoteRenameSourceKey {
+			return true
+		}
+	}
+	return false
+}
+
 func scopeHasEntryEqual(condition *filer_pb.WriteCondition) bool {
 	for _, clause := range condition.GetClauses() {
 		if clause != nil && clause.GetKind() == filer_pb.WriteCondition_IF_ENTRY_EQUAL {
@@ -385,6 +399,9 @@ func (s *filerGrpcScope) checkCreate(ctx context.Context, sc *scope, m string, r
 	if req.GetIsFromOtherCluster() || req.GetIsMoved() {
 		return sc.deny(m, "is_from_other_cluster and is_moved are not allowed")
 	}
+	if scopeNamesRemoteRenameSource(req.GetCondition(), nil) {
+		return sc.deny(m, "remote rename source is filer-owned")
+	}
 	p, err := sc.checkPath(m, req.GetDirectory(), req.GetEntry().GetName(), true)
 	if err != nil {
 		return err
@@ -406,6 +423,9 @@ func (s *filerGrpcScope) checkUpdate(ctx context.Context, sc *scope, m string, r
 	}
 	if req.GetIsFromOtherCluster() || req.GetIsMoved() {
 		return sc.deny(m, "is_from_other_cluster and is_moved are not allowed")
+	}
+	if scopeNamesRemoteRenameSource(req.GetCondition(), req.GetExpectedExtended()) {
+		return sc.deny(m, "remote rename source is filer-owned")
 	}
 	p, err := sc.checkPath(m, req.GetDirectory(), req.GetEntry().GetName(), true)
 	if err != nil {
@@ -450,6 +470,9 @@ func (s *filerGrpcScope) checkAncestors(ctx context.Context, sc *scope, m, p str
 func (sc *scope) checkDelete(m string, req *filer_pb.DeleteEntryRequest) error {
 	if req.GetIsFromOtherCluster() || req.GetIsMoved() {
 		return sc.deny(m, "is_from_other_cluster and is_moved are not allowed")
+	}
+	if scopeNamesRemoteRenameSource(nil, req.GetExpectedExtended()) {
+		return sc.deny(m, "remote rename source is filer-owned")
 	}
 	p, err := sc.checkPath(m, req.GetDirectory(), req.GetName(), true)
 	if err != nil {
