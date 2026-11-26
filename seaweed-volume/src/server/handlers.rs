@@ -2818,6 +2818,22 @@ fn upload_admits(in_flight: i64, size: i64, limit: i64) -> bool {
     limit == 0 || in_flight == 0 || in_flight.saturating_add(size) <= limit
 }
 
+/// Go's VolumeServer.uploadCharge: a known length is charged as-is; an
+/// unknown one (chunked transfer) counts as one file, at most half the limit
+/// and at least 1 byte, so it is still admitted while half the budget is in use.
+fn upload_charge(content_length: Option<u64>, file_size_limit: i64, limit: i64) -> i64 {
+    if let Some(len) = content_length {
+        return i64::try_from(len).unwrap_or(i64::MAX);
+    }
+    let half = (limit / 2).max(1);
+    match (file_size_limit > 0, limit > 0) {
+        (true, true) => file_size_limit.min(half),
+        (true, false) => file_size_limit,
+        (false, true) => half,
+        (false, false) => 0,
+    }
+}
+
 /// Store an uploaded needle on the local volume — durable (fsync) uploads
 /// through the per-volume write queue, the rest synchronously — and then
 /// replicate it if the volume's placement calls for more copies.
@@ -2896,14 +2912,13 @@ pub async fn post_handler(
             .iter()
             .find(|(name, _)| name == "src")
             .is_some_and(|(_, value)| value == "client");
-    let content_length = headers
+    let limit = state.concurrent_upload_limit;
+    let declared_length = headers
         .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<i64>().ok())
-        .unwrap_or(0);
-
-    let charged = content_length;
-    let limit = state.concurrent_upload_limit;
+        .and_then(|s| s.parse::<u64>().ok())
+        .or_else(|| http_body::Body::size_hint(request.body()).exact());
+    let charged = upload_charge(declared_length, state.file_size_limit_bytes, limit);
     if !is_replica_forward && limit > 0 {
         let deadline =
             tokio::time::Instant::now() + client_upload_wait(state.inflight_upload_data_timeout);
@@ -6871,6 +6886,43 @@ mod tests {
         .await;
         assert_ne!(forward.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(state.inflight_upload_bytes.load(Ordering::Relaxed), 11);
+    }
+
+    #[test]
+    fn upload_charge_matches_go() {
+        assert_eq!(upload_charge(Some(0), 8 << 20, 10), 0);
+        assert_eq!(upload_charge(Some(123), 8 << 20, 10), 123);
+        assert_eq!(upload_charge(None, 8 << 20, 100 << 20), 8 << 20);
+        assert_eq!(upload_charge(None, 8 << 20, 10 << 20), 5 << 20);
+        assert_eq!(upload_charge(None, 8 << 20, 1), 1);
+        assert_eq!(upload_charge(None, 8 << 20, 0), 8 << 20);
+        assert_eq!(upload_charge(None, 0, 10), 5);
+    }
+
+    /// A chunked upload without Content-Length still reserves upload budget.
+    #[tokio::test]
+    async fn upload_limit_charges_an_unknown_length_upload() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.concurrent_upload_limit = 10;
+            s.inflight_upload_data_timeout = std::time::Duration::from_millis(50);
+        }
+        state.inflight_upload_bytes.store(6, Ordering::Relaxed);
+
+        let body = Body::from_stream(futures::stream::iter(vec![Ok::<_, std::io::Error>(
+            bytes::Bytes::from_static(b"abcd"),
+        )]));
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/1,0123456789abcdef")
+            .body(body)
+            .unwrap();
+        let resp = post_handler(State(state.clone()), request).await;
+
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(state.inflight_upload_bytes.load(Ordering::Relaxed), 6);
     }
 
     #[test]
