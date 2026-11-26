@@ -9,10 +9,25 @@ func ScrubCipherKeys(entry *Entry) *Entry {
 		return nil
 	}
 	clone := proto.Clone(entry).(*Entry)
-	for _, chunk := range clone.Chunks {
+	clearCipherKeys(clone)
+	return clone
+}
+
+// ScrubEventCipherKeys is ScrubCipherKeys for both entries of an event.
+func ScrubEventCipherKeys(event *EventNotification) *EventNotification {
+	if event == nil {
+		return nil
+	}
+	clone := proto.Clone(event).(*EventNotification)
+	clearCipherKeys(clone.OldEntry)
+	clearCipherKeys(clone.NewEntry)
+	return clone
+}
+
+func clearCipherKeys(entry *Entry) {
+	for _, chunk := range entry.GetChunks() {
 		if chunk != nil {
 			chunk.CipherKey = nil
 		}
 	}
-	return clone
 }
