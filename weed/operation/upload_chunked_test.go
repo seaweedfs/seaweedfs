@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/stretchr/testify/require"
 )
 
 // TestUploadReaderInChunksReturnsPartialResultsOnError verifies that when
@@ -767,4 +769,53 @@ func TestDeleteChunkFromHoldersRenewsPerHolder(t *testing.T) {
 	if atomic.LoadInt32(&acceptedDeletes) != 1 {
 		t.Fatalf("expected the second holder's retried delete to land, got %d", acceptedDeletes)
 	}
+}
+
+// TestUploadChunkToHoldersMarksClientSource verifies that the gateway's own
+// fan-out writes are tagged as client traffic, so a volume server can tell
+// them apart from a primary-to-replica forward.
+func TestUploadChunkToHoldersMarksClientSource(t *testing.T) {
+	var mu sync.Mutex
+	var queries []url.Values
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		queries = append(queries, r.URL.Query())
+		mu.Unlock()
+		fmt.Fprintf(w, `{"name":"f","size":11}`)
+	})
+	h1 := httptest.NewServer(handler)
+	defer h1.Close()
+	h2 := httptest.NewServer(handler)
+	defer h2.Close()
+
+	assignResult := &AssignResult{
+		Fid:      "3,01abcdef",
+		Url:      strings.TrimPrefix(h1.URL, "http://"),
+		Replicas: []Location{{Url: strings.TrimPrefix(h2.URL, "http://")}},
+	}
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+		return nil, assignResult, nil
+	}
+	_, err := UploadReaderInChunks(context.Background(), strings.NewReader("hello world"), &ChunkedUploadOption{
+		ChunkSize:  1024,
+		AssignFunc: assignFunc,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, queries, 2)
+	for _, q := range queries {
+		require.Equal(t, "replicate", q.Get("type"))
+		require.Equal(t, ReplicateSourceClient, q.Get(ReplicateSourceParam))
+		require.False(t, IsReplicaForward(q))
+	}
+}
+
+func TestIsReplicaForward(t *testing.T) {
+	require.True(t, IsReplicaForward(url.Values{"type": {"replicate"}}))
+	require.False(t, IsReplicaForward(url.Values{"type": {"replicate"}, "src": {"client"}}))
+	require.False(t, IsReplicaForward(url.Values{}))
 }

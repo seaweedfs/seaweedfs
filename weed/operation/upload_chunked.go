@@ -394,7 +394,7 @@ func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, prepa
 	outcomes := make(chan outcome, len(hosts))
 	for _, host := range hosts {
 		go func(host string) {
-			uploadUrl := fmt.Sprintf("http://%s/%s?type=replicate", host, fid)
+			uploadUrl := fmt.Sprintf("http://%s/%s?type=replicate&%s=%s", host, fid, ReplicateSourceParam, ReplicateSourceClient)
 			if fsync {
 				uploadUrl += "&fsync=true"
 			}
@@ -453,7 +453,7 @@ func deleteChunkFromHolders(hosts []string, fid string, jwt security.EncodedJwt,
 	// outlives the renewed token can still trigger another renewal.
 	deleteJwt := jwt
 	for _, host := range hosts {
-		deleteUrl := fmt.Sprintf("http://%s/%s?type=replicate", host, fid)
+		deleteUrl := fmt.Sprintf("http://%s/%s?type=replicate&%s=%s", host, fid, ReplicateSourceParam, ReplicateSourceClient)
 		body, status, err := util_http.DeleteProxied(deleteUrl, string(deleteJwt))
 		if status == http.StatusUnauthorized && opt.LookupJwtFunc != nil {
 			lookupCtx, cancel := context.WithTimeout(context.Background(), cleanupJwtLookupTimeout)
