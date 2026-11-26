@@ -132,6 +132,9 @@ func (locks *AdminLocks) deleteLockLocked(lockName string) {
 
 func (ms *MasterServer) LeaseAdminToken(ctx context.Context, req *master_pb.LeaseAdminTokenRequest) (*master_pb.LeaseAdminTokenResponse, error) {
 	resp := &master_pb.LeaseAdminTokenResponse{}
+	if err := ms.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
 
 	if !ms.Topo.IsLeader() {
 		return resp, raft.NotLeaderError
@@ -158,6 +161,9 @@ func (ms *MasterServer) LeaseAdminToken(ctx context.Context, req *master_pb.Leas
 
 func (ms *MasterServer) ReleaseAdminToken(ctx context.Context, req *master_pb.ReleaseAdminTokenRequest) (*master_pb.ReleaseAdminTokenResponse, error) {
 	resp := &master_pb.ReleaseAdminTokenResponse{}
+	if err := ms.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
 	// a follower holds no lock state; answering success here would fake a
 	// release while the leader keeps the lock until it expires
 	if !ms.Topo.IsLeader() {

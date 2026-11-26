@@ -16,21 +16,23 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
-// checkGrpcAdminAuth authorizes the raft membership RPCs that mutate cluster
-// quorum. It mirrors the volume server's gate: the caller's peer IP is matched
+// checkGrpcAdminAuth authorizes the management RPCs that operator tooling
+// calls. It mirrors the volume server's gate: the caller's peer IP is matched
 // against the master's -whiteList. With no whitelist configured IsWhiteListed
 // allows everyone, so default and single-master deployments are unaffected;
-// operators who set a whitelist get these RPCs locked down to it. The cluster's
-// own dead-peer eviction no longer dials these RPCs (it uses the local raft
-// handle), so the only remaining callers are operator tooling.
+// operators who set a whitelist get these RPCs locked down to it. Callers on
+// the local gRPC socket of weed server/mini are processes on this host.
 func (ms *MasterServer) checkGrpcAdminAuth(ctx context.Context) error {
 	if ms.guard == nil {
 		return nil
 	}
 	pr, ok := peer.FromContext(ctx)
 	if !ok {
-		glog.V(0).Infof("gRPC raft admin auth failed: no peer info")
+		glog.V(0).Infof("gRPC master admin auth failed: no peer info")
 		return status.Error(codes.PermissionDenied, "no peer info")
+	}
+	if _, ok := pr.Addr.(*net.UnixAddr); ok {
+		return nil
 	}
 	addr := pr.Addr.String()
 	var host string
@@ -42,7 +44,7 @@ func (ms *MasterServer) checkGrpcAdminAuth(ctx context.Context) error {
 		host = addr
 	}
 	if !ms.guard.IsWhiteListed(host) {
-		glog.V(0).Infof("gRPC raft admin auth failed: %s is not whitelisted (remote: %s)", host, addr)
+		glog.V(0).Infof("gRPC master admin auth failed: %s is not whitelisted (remote: %s)", host, addr)
 		return status.Errorf(codes.PermissionDenied, "not authorized: %s", host)
 	}
 	return nil
