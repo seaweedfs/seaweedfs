@@ -19,18 +19,29 @@ import (
 
 func newTestClient(t *testing.T, disk *fakeDisk) (*yandexRemoteStorageClient, *httptest.Server) {
 	t.Helper()
+	return newTestClientWith(t, disk, nil)
+}
+
+// newTestClientWith is newTestClient with a hook that adjusts the
+// configuration before the client is built.
+func newTestClientWith(t *testing.T, disk *fakeDisk, adjust func(*remote_pb.RemoteConf)) (*yandexRemoteStorageClient, *httptest.Server) {
+	t.Helper()
 	ResetTokenSources()
 	t.Cleanup(ResetTokenSources)
 	server := disk.server()
 	t.Cleanup(server.Close)
 
-	client, err := makeClient(&remote_pb.RemoteConf{
+	conf := &remote_pb.RemoteConf{
 		Name:           "yd",
 		Type:           "yandex",
 		YandexToken:    `{"access_token":"test-token","token_type":"bearer"}`,
 		YandexEndpoint: server.URL + "/v1/disk",
 		YandexRoot:     "/root",
-	}, server.Client(), server.URL+"/token")
+	}
+	if adjust != nil {
+		adjust(conf)
+	}
+	client, err := makeClient(conf, server.Client(), server.URL+"/token")
 	if err != nil {
 		t.Fatalf("make client: %v", err)
 	}
@@ -547,6 +558,9 @@ func TestUpdateFileMetadata(t *testing.T) {
 	}
 }
 
+// TestTraverseVisitsNestedFolders: Traverse reports the objects of a tree,
+// like the s3, gcs and azure clients, each with a stamp; remote.cache and
+// remote.copy.local read the stamp of every entry they get.
 func TestTraverseVisitsNestedFolders(t *testing.T) {
 	disk := newFakeDisk(t)
 	disk.put("/root/bucket/a.txt", &fakeNode{data: []byte("a")})
@@ -556,13 +570,16 @@ func TestTraverseVisitsNestedFolders(t *testing.T) {
 
 	visited := map[string]bool{}
 	err := client.Traverse(testLocation("bucket", "/"), func(dir, name string, isDirectory bool, remoteEntry *filer_pb.RemoteEntry) error {
+		if remoteEntry == nil {
+			t.Errorf("%s/%s visited without a stamp", dir, name)
+		}
 		visited[strings.TrimSuffix(dir, "/")+"/"+name] = isDirectory
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("traverse: %v", err)
 	}
-	want := map[string]bool{"/a.txt": false, "/dir": true, "/dir/b.txt": false, "/dir/empty": true}
+	want := map[string]bool{"/a.txt": false, "/dir/b.txt": false}
 	for path, isDir := range want {
 		if got, found := visited[path]; !found || got != isDir {
 			t.Errorf("%s: visited=%v isDir=%v, want isDir=%v", path, found, got, isDir)
@@ -610,8 +627,19 @@ func TestCreateAndDeleteBucket(t *testing.T) {
 	if err := client.CreateBucket("fresh"); err != nil {
 		t.Fatalf("create twice: %v", err)
 	}
+	disk.put("/root/fresh/kept.txt", &fakeNode{data: []byte("x")})
+	if err := client.DeleteBucket("fresh"); err == nil {
+		t.Fatal("deleted a bucket folder that still holds files")
+	}
+	if disk.nodes["/root/fresh/kept.txt"] == nil {
+		t.Fatal("a refused bucket delete removed the folder's files")
+	}
+	delete(disk.nodes, "/root/fresh/kept.txt")
 	if err := client.DeleteBucket("fresh"); err != nil {
 		t.Fatalf("delete: %v", err)
+	}
+	if disk.nodes["/root/fresh"] != nil {
+		t.Fatal("the empty bucket folder was not deleted")
 	}
 	if err := client.DeleteBucket("fresh"); err != nil {
 		t.Fatalf("delete twice: %v", err)
@@ -721,5 +749,225 @@ func TestWriteFileRetriesALockedResource(t *testing.T) {
 	}
 	if !util.IsTransientError(err) {
 		t.Fatalf("a 423 is not transient for the sync: %v", err)
+	}
+}
+
+// TestDeleteFileKeepsAFolder: a folder that took a file's place on the remote
+// is not removed by the file's delete (a Disk API delete is recursive).
+func TestDeleteFileKeepsAFolder(t *testing.T) {
+	disk := newFakeDisk(t)
+	disk.put("/root/bucket/a.txt/inner.txt", &fakeNode{data: []byte("x")})
+	client, _ := newTestClient(t, disk)
+
+	if err := client.DeleteFile(testLocation("bucket", "/a.txt")); !errors.Is(err, remote_storage.ErrRemoteObjectNotFound) {
+		t.Fatalf("err = %v, want ErrRemoteObjectNotFound", err)
+	}
+	if disk.nodes["/root/bucket/a.txt/inner.txt"] == nil {
+		t.Fatal("the folder's contents were deleted")
+	}
+}
+
+func TestCopyFileOntoItself(t *testing.T) {
+	disk := newFakeDisk(t)
+	disk.put("/root/bucket/a.txt", &fakeNode{data: []byte("hello"), props: map[string]string{propModified: "2024-01-02T03:04:05Z"}})
+	client, _ := newTestClient(t, disk)
+
+	stamp, err := client.CopyFile(testLocation("bucket", "/a.txt"), testLocation("bucket", "/a.txt"))
+	if err != nil {
+		t.Fatalf("copy onto itself: %v", err)
+	}
+	if stamp.RemoteMtime != 1704164645 || stamp.RemoteSize != 5 {
+		t.Fatalf("stamp = %+v", stamp)
+	}
+	if node := disk.nodes["/root/bucket/a.txt"]; node == nil || string(node.data) != "hello" {
+		t.Fatalf("the object = %+v", node)
+	}
+}
+
+func TestCopyFileRefusesToReplaceAFolder(t *testing.T) {
+	disk := newFakeDisk(t)
+	disk.put("/root/bucket/a.txt", &fakeNode{data: []byte("hello")})
+	disk.put("/root/bucket/b/inner.txt", &fakeNode{data: []byte("x")})
+	client, _ := newTestClient(t, disk)
+
+	if _, err := client.CopyFile(testLocation("bucket", "/a.txt"), testLocation("bucket", "/b")); !errors.Is(err, ErrDirectory) {
+		t.Fatalf("err = %v, want ErrDirectory", err)
+	}
+	if disk.nodes["/root/bucket/b/inner.txt"] == nil {
+		t.Fatal("the destination folder's contents were deleted")
+	}
+}
+
+// TestCopyFileKeepsTheDestinationWhenTheCopyFails: the destination is not
+// removed before its replacement exists.
+func TestCopyFileKeepsTheDestinationWhenTheCopyFails(t *testing.T) {
+	disk := newFakeDisk(t)
+	disk.put("/root/bucket/a.txt", &fakeNode{data: []byte("new")})
+	disk.put("/root/bucket/b.txt", &fakeNode{data: []byte("old")})
+	disk.failCopy = true
+	client, _ := newTestClient(t, disk)
+
+	if _, err := client.CopyFile(testLocation("bucket", "/a.txt"), testLocation("bucket", "/b.txt")); err == nil {
+		t.Fatal("a failed copy reported success")
+	}
+	if data, err := client.ReadFile(testLocation("bucket", "/b.txt"), 0, 0); err != nil || string(data) != "old" {
+		t.Fatalf("destination after a failed copy = %q, %v", data, err)
+	}
+}
+
+// TestCopyFileReplacesADestinationTheServiceKept: when the service reports
+// the copy done but kept the old destination, the destination is removed
+// (to the trash when configured) and the copy repeated.
+func TestCopyFileReplacesADestinationTheServiceKept(t *testing.T) {
+	for _, trash := range []bool{false, true} {
+		disk := newFakeDisk(t)
+		disk.put("/root/bucket/a.txt", &fakeNode{data: []byte("new")})
+		disk.put("/root/bucket/b.txt", &fakeNode{data: []byte("old")})
+		disk.copyKeepsDestination = true
+		client, _ := newTestClientWith(t, disk, func(conf *remote_pb.RemoteConf) { conf.YandexTrash = trash })
+
+		if _, err := client.CopyFile(testLocation("bucket", "/a.txt"), testLocation("bucket", "/b.txt")); err != nil {
+			t.Fatalf("copy (trash=%v): %v", trash, err)
+		}
+		if node := disk.nodes["/root/bucket/b.txt"]; node == nil || string(node.data) != "new" {
+			t.Fatalf("destination = %+v (trash=%v)", node, trash)
+		}
+		wantQuery := "permanently=" + map[bool]string{false: "true", true: "false"}[trash]
+		removed := false
+		for _, request := range disk.requests {
+			if request.method == http.MethodDelete && strings.Contains(request.query, wantQuery) {
+				removed = true
+			}
+		}
+		if !removed {
+			t.Fatalf("no delete with %s (trash=%v): %+v", wantQuery, trash, disk.requests)
+		}
+	}
+}
+
+// TestCopyFileCarriesAFallbackMtime: a source without seaweedfs_modified
+// (an rclone upload, a file put on the disk directly) keeps its modification
+// time on the copy, whose own service time is the copy's.
+func TestCopyFileCarriesAFallbackMtime(t *testing.T) {
+	serviceTime := time.Date(2023, 5, 6, 7, 8, 9, 0, time.UTC)
+	for name, node := range map[string]*fakeNode{
+		"rclone":  {data: []byte("hello"), props: map[string]string{propRcloneModified: "2024-01-02T03:04:05.5Z"}},
+		"service": {data: []byte("hello"), modified: serviceTime},
+	} {
+		disk := newFakeDisk(t)
+		disk.put("/root/bucket/a.txt", node)
+		client, _ := newTestClient(t, disk)
+
+		source, err := client.StatFile(testLocation("bucket", "/a.txt"))
+		if err != nil {
+			t.Fatalf("%s: stat source: %v", name, err)
+		}
+		stamp, err := client.CopyFile(testLocation("bucket", "/a.txt"), testLocation("bucket", "/b.txt"))
+		if err != nil {
+			t.Fatalf("%s: copy: %v", name, err)
+		}
+		if stamp.RemoteMtime != source.RemoteMtime {
+			t.Errorf("%s: copy mtime = %d, want the source's %d", name, stamp.RemoteMtime, source.RemoteMtime)
+		}
+	}
+}
+
+func TestDeleteReportsA202WithoutAnOperation(t *testing.T) {
+	disk := newFakeDisk(t)
+	disk.put("/root/bucket/a.txt", &fakeNode{data: []byte("hello")})
+	disk.acceptedWithoutLink = true
+	client, _ := newTestClient(t, disk)
+
+	if err := client.DeleteFile(testLocation("bucket", "/a.txt")); err == nil {
+		t.Fatal("a 202 with no operation link was reported as a finished delete")
+	}
+}
+
+func TestReadFileHonorsAnOffsetWithoutASize(t *testing.T) {
+	disk := newFakeDisk(t)
+	disk.put("/root/bucket/a.txt", &fakeNode{data: []byte("0123456789")})
+	client, _ := newTestClient(t, disk)
+
+	data, err := client.ReadFile(testLocation("bucket", "/a.txt"), 4, 0)
+	if err != nil || string(data) != "456789" {
+		t.Fatalf("read from offset 4 = %q, %v", data, err)
+	}
+	stream, err := client.ReadFileAsStream(context.Background(), testLocation("bucket", "/a.txt"), 7, -1)
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	defer stream.Close()
+	if data, _ = io.ReadAll(stream); string(data) != "789" {
+		t.Fatalf("stream from offset 7 = %q", data)
+	}
+
+	disk.ignoreRange = true
+	if _, err = client.ReadFile(testLocation("bucket", "/a.txt"), 4, 0); err == nil {
+		t.Fatal("a download that ignored the offset was accepted")
+	}
+}
+
+// TestMetadataRequestsHaveADeadline: a stalled API answer ends with the
+// request deadline instead of blocking the caller.
+func TestMetadataRequestsHaveADeadline(t *testing.T) {
+	disk := newFakeDisk(t)
+	disk.put("/root/bucket/a.txt", &fakeNode{data: []byte("hello")})
+	client, _ := newTestClient(t, disk)
+	client.api.requestTimeout = 50 * time.Millisecond
+	client.api.maxRetries = 0
+	disk.stallResources = 10 * time.Second
+
+	started := time.Now()
+	if _, err := client.StatFile(testLocation("bucket", "/a.txt")); err == nil {
+		t.Fatal("a stalled stat succeeded")
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("a stalled stat took %v", elapsed)
+	}
+}
+
+func TestEndpointMustNotCarryTheTokenInPlainText(t *testing.T) {
+	for endpoint, ok := range map[string]bool{
+		"":                                     true,
+		"https://cloud-api.yandex.net/v1/disk": true,
+		"http://127.0.0.1:8080/v1/disk":        true,
+		"http://localhost:8080/v1/disk":        true,
+		"http://[::1]:8080/v1/disk":            true,
+		"http://proxy.example.com/v1/disk":     false,
+		"http://10.0.0.5/v1/disk":              false,
+		"ftp://cloud-api.yandex.net/v1/disk":   false,
+	} {
+		ResetTokenSources()
+		_, err := MakeWithHTTPClient(&remote_pb.RemoteConf{Name: "yd", Type: "yandex", YandexToken: "t", YandexEndpoint: endpoint}, nil)
+		if (err == nil) != ok {
+			t.Errorf("endpoint %q: err = %v, want accepted=%v", endpoint, err, ok)
+		}
+	}
+	ResetTokenSources()
+}
+
+// TestRedirectsAreChecked: a transfer link that redirects to plain http from
+// an https configuration is refused, and the client's own redirect policy
+// still runs.
+func TestRedirectsAreChecked(t *testing.T) {
+	previousCalled := false
+	api := newAPIClient("https://cloud-api.yandex.net/v1/disk", &http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			previousCalled = true
+			return nil
+		},
+	}, nil)
+	redirect := func(target string) error {
+		req, _ := http.NewRequest(http.MethodGet, target, nil)
+		return api.httpClient.CheckRedirect(req, nil)
+	}
+	if err := redirect("http://downloader.disk.yandex.ru/file"); err == nil {
+		t.Fatal("a redirect to plain http was followed")
+	}
+	if err := redirect("https://downloader.disk.yandex.ru/file"); err != nil {
+		t.Fatalf("an https redirect was refused: %v", err)
+	}
+	if !previousCalled {
+		t.Fatal("the client's own redirect policy was not applied")
 	}
 }

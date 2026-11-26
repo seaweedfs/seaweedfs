@@ -53,6 +53,10 @@ type fakeDisk struct {
 	missingParentNotFound bool
 	unauthorizedOps       bool // operation polls answer 401
 	lockedUploadLinks     int  // upload-link requests answered 423 before success
+	copyKeepsDestination  bool // a copy onto an existing file reports success but keeps it
+	failCopy              bool // copies answer 500
+	acceptedWithoutLink   bool // deletes answer 202 with no operation link
+	stallResources        time.Duration
 }
 
 type recordedRequest struct {
@@ -217,6 +221,15 @@ func (d *fakeDisk) handleResources(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusUnauthorized, "UnauthorizedError", "Invalid token.")
 		return
 	}
+	if stall := d.stallResources; stall > 0 {
+		// the service stops answering; the client's request deadline ends it
+		d.mu.Unlock()
+		select {
+		case <-r.Context().Done():
+		case <-time.After(stall):
+		}
+		d.mu.Lock()
+	}
 	path := cleanPath(r.URL.Query().Get("path"))
 
 	switch r.Method {
@@ -288,6 +301,10 @@ func (d *fakeDisk) handleResources(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		d.remove(path)
+		if d.acceptedWithoutLink {
+			writeJSON(w, http.StatusAccepted, map[string]any{})
+			return
+		}
 		if d.deleteAccepted {
 			href := fmt.Sprintf("http://%s/v1/disk/operations/del", r.Host)
 			writeJSON(w, http.StatusAccepted, map[string]any{"href": href, "method": "GET"})
@@ -421,8 +438,15 @@ func (d *fakeDisk) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rangeHeader := r.Header.Get("Range"); rangeHeader != "" && !ignoreRange {
-		var start, end int
-		if _, err := fmt.Sscanf(rangeHeader, "bytes=%d-%d", &start, &end); err == nil {
+		start, end := 0, len(data)-1
+		spec := strings.TrimPrefix(rangeHeader, "bytes=")
+		first, last, _ := strings.Cut(spec, "-")
+		var err error
+		if start, err = strconv.Atoi(first); err == nil && last != "" {
+			// "bytes=N-" is the rest of the object from N
+			end, err = strconv.Atoi(last)
+		}
+		if err == nil {
 			if start > len(data) {
 				start = len(data)
 			}
@@ -445,6 +469,10 @@ func (d *fakeDisk) handleDownload(w http.ResponseWriter, r *http.Request) {
 func (d *fakeDisk) handleCopy(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.failCopy {
+		writeAPIError(w, http.StatusInternalServerError, "InternalServerError", "Copy failed.")
+		return
+	}
 	from := cleanPath(r.URL.Query().Get("from"))
 	to := cleanPath(r.URL.Query().Get("path"))
 	node, found := d.nodes[from]
@@ -458,6 +486,11 @@ func (d *fakeDisk) handleCopy(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, exists := d.nodes[to]; exists && r.URL.Query().Get("overwrite") != "true" {
 		writeAPIError(w, http.StatusConflict, "DiskPathPointsToExistentFileError", "Destination exists.")
+		return
+	}
+	if existing, exists := d.nodes[to]; exists && !existing.isDir && d.copyKeepsDestination {
+		href := fmt.Sprintf("http://%s/v1/disk/operations/copy", r.Host)
+		writeJSON(w, http.StatusAccepted, map[string]any{"href": href, "method": "GET"})
 		return
 	}
 	copied := &fakeNode{isDir: node.isDir, modified: time.Now()}

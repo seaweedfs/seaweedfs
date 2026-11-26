@@ -388,3 +388,44 @@ func TestAuthCodeURL(t *testing.T) {
 		t.Fatalf("authorize url lacks the redirect: %q", url)
 	}
 }
+
+// TestTokenRefreshHasADeadline: a token endpoint that stops answering ends the
+// refresh with the token request timeout; Token holds the source's lock while
+// it refreshes, so an unbounded refresh would block every client.
+func TestTokenRefreshHasADeadline(t *testing.T) {
+	release := make(chan struct{})
+	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(stalled.Close)
+	t.Cleanup(func() { close(release) })
+	ResetTokenSources()
+	t.Cleanup(ResetTokenSources)
+	previous := tokenRequestTimeout
+	tokenRequestTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { tokenRequestTimeout = previous })
+
+	expired := tokenConf{
+		token:        `{"access_token":"old","refresh_token":"refresh-0","token_type":"bearer","expiry":"2000-01-01T00:00:00Z"}`,
+		clientID:     "app",
+		clientSecret: "secret",
+	}
+	source, err := newTokenSource(expired.conf(""), nil, stalled.URL)
+	if err != nil {
+		t.Fatalf("token source: %v", err)
+	}
+	started := time.Now()
+	if _, err = source.Token(); err == nil {
+		t.Fatal("a refresh against a stalled endpoint succeeded")
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("the refresh took %v", elapsed)
+	}
+
+	if _, err = ExchangeCode(context.Background(), "app", "secret", "code", nil, stalled.URL); err == nil {
+		t.Fatal("a code exchange against a stalled endpoint succeeded")
+	}
+}

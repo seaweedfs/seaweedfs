@@ -96,7 +96,7 @@ remote.configure -name=disk -type=yandex -yandex.token=<token> [-yandex.root=/se
 | `-yandex.root` | folder that holds the buckets, default `/` |
 | `-yandex.app_folder` | the token only reaches the app folder: paths are addressed under `app:` |
 | `-yandex.trash` | move deleted files to the trash instead of deleting them permanently (the trash keeps occupying quota) |
-| `-yandex.endpoint` | override the API endpoint, e.g. for a proxy (default `https://cloud-api.yandex.net/v1/disk`) |
+| `-yandex.endpoint` | override the API endpoint, e.g. for a proxy (default `https://cloud-api.yandex.net/v1/disk`); it must be `https`, plain `http` is accepted on a loopback host only, since every request carries the OAuth token |
 
 A dedicated root (`-yandex.root=/seaweedfs`) is recommended: with the default
 `/`, `remote.mount.buckets` treats every top-level folder of the disk,
@@ -120,6 +120,10 @@ weed filer.remote.gateway -filer=<filer host>:<filer port> -createBucketAt=disk
 
 `weed filer.remote.sync -filer=... -dir=/buckets` uploads changes made under
 the mounted directories.
+
+Deleting a local bucket deletes its remote folder only when that folder is
+empty, the same rule S3 and GCS apply to a bucket: a Disk API delete is
+recursive, and the folder may hold files SeaweedFS never saw.
 
 ## Token lifetime and refresh
 

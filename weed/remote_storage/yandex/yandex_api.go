@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -29,6 +30,11 @@ const statusBandwidthLimitExceeded = 509
 // operationWait bounds an asynchronous operation (a large delete or copy) that
 // the API reports as 202. The caller's context still ends it earlier.
 const operationWait = 30 * time.Minute
+
+// defaultRequestTimeout bounds one metadata exchange with the API, from the
+// request to the decoded answer. Object transfers on the upload and download
+// links are not bounded by it: a large object may take much longer.
+const defaultRequestTimeout = time.Minute
 
 // resource is a file or folder as the API describes it.
 type resource struct {
@@ -126,9 +132,10 @@ type apiClient struct {
 	tokens     *tokenSource
 
 	// knobs a test shortens
-	maxRetries int
-	retryBase  time.Duration
-	pollEvery  time.Duration
+	requestTimeout time.Duration
+	maxRetries     int
+	retryBase      time.Duration
+	pollEvery      time.Duration
 	// statTries bounds the stat that follows an upload while the service
 	// finalizes it.
 	statTries int
@@ -141,15 +148,66 @@ func newAPIClient(baseURL string, httpClient *http.Client, tokens *tokenSource) 
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	return &apiClient{
-		baseURL:    strings.TrimSuffix(baseURL, "/"),
-		httpClient: httpClient,
-		tokens:     tokens,
-		maxRetries: 3,
-		retryBase:  200 * time.Millisecond,
-		pollEvery:  time.Second,
-		statTries:  5,
+	c := &apiClient{
+		baseURL:        strings.TrimSuffix(baseURL, "/"),
+		tokens:         tokens,
+		requestTimeout: defaultRequestTimeout,
+		maxRetries:     3,
+		retryBase:      200 * time.Millisecond,
+		pollEvery:      time.Second,
+		statTries:      5,
 	}
+	c.httpClient = c.checkingRedirects(httpClient)
+	return c
+}
+
+// checkingRedirects returns a copy of the client that validates every
+// redirect target with checkHref, so a transfer link that redirects cannot
+// downgrade to plain http. The client's own redirect policy, if any, still
+// applies; the transport is shared.
+func (c *apiClient) checkingRedirects(httpClient *http.Client) *http.Client {
+	checked := *httpClient
+	previous := httpClient.CheckRedirect
+	checked.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := c.checkHref(req.URL.String()); err != nil {
+			return err
+		}
+		if previous != nil {
+			return previous(req, via)
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &checked
+}
+
+// checkEndpoint refuses an API endpoint that would carry the OAuth token in
+// plain text: http is accepted only on a loopback host (a local proxy or a
+// test service).
+func checkEndpoint(endpoint string) error {
+	if endpoint == "" {
+		return nil
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("parse yandex endpoint %q: %w", endpoint, err)
+	}
+	switch parsed.Scheme {
+	case "https":
+		return nil
+	case "http":
+		host := parsed.Hostname()
+		if host == "localhost" {
+			return nil
+		}
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			return nil
+		}
+		return fmt.Errorf("yandex endpoint %q would send the oauth token in plain text; use https (http is accepted on a loopback host only)", endpoint)
+	}
+	return fmt.Errorf("yandex endpoint %q is not http(s)", endpoint)
 }
 
 // retryableStatus reports an answer worth repeating: throttling, a server
@@ -186,6 +244,14 @@ func isMissingParent(err error) bool {
 		return false
 	}
 	return apiErr.Status == http.StatusNotFound || apiErr.Name == "DiskPathDoesntExistsError"
+}
+
+// isExistingResource reports a copy the service refused because the
+// destination exists, whatever overwrite asked for.
+func isExistingResource(err error) bool {
+	var apiErr *apiError
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusConflict &&
+		(apiErr.Name == "DiskResourceAlreadyExistsError" || apiErr.Name == "DiskPathPointsToExistentFileError")
 }
 
 func isExistingDirectory(err error) bool {
@@ -228,8 +294,12 @@ func (c *apiClient) doJSON(ctx context.Context, method, methodPath string, query
 		if body != nil {
 			reader = bytes.NewReader(body)
 		}
-		req, err := http.NewRequestWithContext(ctx, method, c.url(methodPath, query), reader)
+		// each attempt has its own deadline, which also covers reading the
+		// answer: the caller closes the body, and closing ends the attempt
+		attemptCtx, cancel := context.WithTimeout(ctx, c.requestTimeout)
+		req, err := http.NewRequestWithContext(attemptCtx, method, c.url(methodPath, query), reader)
 		if err != nil {
+			cancel()
 			return nil, fmt.Errorf("build yandex request: %w", err)
 		}
 		req.Header.Set("Accept", "application/json")
@@ -238,12 +308,14 @@ func (c *apiClient) doJSON(ctx context.Context, method, methodPath string, query
 		}
 		token, tokenErr := c.tokens.Token()
 		if tokenErr != nil {
+			cancel()
 			return nil, tokenErr
 		}
 		req.Header.Set("Authorization", authTokenPrefix+token)
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			cancel()
 			if ctx.Err() != nil || !retryableMethod(method) || retries >= c.maxRetries {
 				return nil, fmt.Errorf("yandex %s %s: %w", method, methodPath, err)
 			}
@@ -255,14 +327,17 @@ func (c *apiClient) doJSON(ctx context.Context, method, methodPath string, query
 		}
 		if resp.StatusCode == http.StatusUnauthorized && !refreshed {
 			resp.Body.Close()
+			cancel()
 			c.tokens.Invalidate()
 			refreshed = true
 			continue
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
 			return resp, nil
 		}
 		apiErr := decodeAPIError(resp)
+		cancel()
 		if retryableStatus(resp.StatusCode) && retryableMethod(method) && retries < c.maxRetries {
 			retries++
 			if sleepErr := sleep(ctx, c.backoff(retries)); sleepErr != nil {
@@ -272,6 +347,18 @@ func (c *apiClient) doJSON(ctx context.Context, method, methodPath string, query
 		}
 		return nil, apiErr
 	}
+}
+
+// cancelOnClose ends a request's context once its body is closed.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *cancelOnClose) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
 }
 
 func (c *apiClient) backoff(attempt int) time.Duration {
@@ -495,15 +582,19 @@ func (c *apiClient) openRange(ctx context.Context, path string, offset, size int
 	if err != nil {
 		return nil, fmt.Errorf("build yandex download request: %w", err)
 	}
-	if size > 0 {
+	switch {
+	case size > 0:
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+size-1))
+	case offset > 0:
+		// no size: the rest of the object from offset
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("download from yandex: %w", err)
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		if size > 0 && offset > 0 && resp.StatusCode != http.StatusPartialContent {
+		if offset > 0 && resp.StatusCode != http.StatusPartialContent {
 			resp.Body.Close()
 			return nil, fmt.Errorf("yandex download for %s ignored the byte range (status %d)", path, resp.StatusCode)
 		}
@@ -545,8 +636,9 @@ func (c *apiClient) waitOperationResponse(ctx context.Context, resp *http.Respon
 	}
 	op := &link{}
 	if err = json.Unmarshal(body, op); err != nil || op.Href == "" {
-		// no operation link: the service completed the request synchronously
-		return nil
+		// a 202 promises an operation to follow; without its link the outcome
+		// is unknown, so the request is not reported done
+		return fmt.Errorf("yandex answered 202 without an operation link: %q", strings.TrimSpace(string(body)))
 	}
 	return c.waitOperation(ctx, op.Href)
 }
@@ -560,48 +652,74 @@ func (c *apiClient) waitOperation(ctx context.Context, href string) error {
 	defer cancel()
 	refreshed := false
 	for {
-		req, err := http.NewRequestWithContext(waitCtx, http.MethodGet, href, nil)
-		if err != nil {
-			return fmt.Errorf("build yandex operation request: %w", err)
+		if err := c.pollOperation(waitCtx, href, &refreshed); err != errOperationPending {
+			return err
 		}
-		req.Header.Set("Accept", "application/json")
-		token, tokenErr := c.tokens.Token()
-		if tokenErr != nil {
-			return tokenErr
-		}
-		req.Header.Set("Authorization", authTokenPrefix+token)
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			return fmt.Errorf("poll yandex operation: %w", err)
-		}
-		// a 401 refreshes the token once, as doJSON does; a token the API
-		// keeps rejecting ends the wait instead of polling without a pause
-		if resp.StatusCode == http.StatusUnauthorized && !refreshed {
-			resp.Body.Close()
-			c.tokens.Invalidate()
-			refreshed = true
-			continue
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return decodeAPIError(resp)
-		}
-		refreshed = false
-		status := &operationStatus{}
-		err = json.NewDecoder(resp.Body).Decode(status)
-		resp.Body.Close()
-		if err != nil {
-			return fmt.Errorf("decode yandex operation status: %w", err)
-		}
-		switch status.Status {
-		case "success":
-			return nil
-		case "failure", "failed":
-			return fmt.Errorf("yandex operation %s failed", href)
-		}
-		if err = sleep(waitCtx, c.pollEvery); err != nil {
+		if err := sleep(waitCtx, c.pollEvery); err != nil {
 			return fmt.Errorf("wait for yandex operation: %w", err)
 		}
 	}
+}
+
+// errOperationPending is pollOperation's answer for an operation that has not
+// finished yet.
+var errOperationPending = errors.New("yandex operation in progress")
+
+// pollOperation asks once for an operation's status, within one request
+// deadline. A 401 refreshes the token once per wait, as doJSON does; a token
+// the API keeps rejecting ends the wait instead of polling without a pause.
+func (c *apiClient) pollOperation(waitCtx context.Context, href string, refreshed *bool) error {
+	for {
+		pollCtx, cancel := context.WithTimeout(waitCtx, c.requestTimeout)
+		err := c.pollOnce(pollCtx, href, refreshed)
+		cancel()
+		if err != errRetryPoll {
+			return err
+		}
+	}
+}
+
+// errRetryPoll asks pollOperation to poll again at once, after a refresh.
+var errRetryPoll = errors.New("retry the yandex operation poll")
+
+func (c *apiClient) pollOnce(ctx context.Context, href string, refreshed *bool) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, href, nil)
+	if err != nil {
+		return fmt.Errorf("build yandex operation request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	token, tokenErr := c.tokens.Token()
+	if tokenErr != nil {
+		return tokenErr
+	}
+	req.Header.Set("Authorization", authTokenPrefix+token)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("poll yandex operation: %w", err)
+	}
+	if resp.StatusCode == http.StatusUnauthorized && !*refreshed {
+		resp.Body.Close()
+		c.tokens.Invalidate()
+		*refreshed = true
+		return errRetryPoll
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return decodeAPIError(resp)
+	}
+	*refreshed = false
+	status := &operationStatus{}
+	err = json.NewDecoder(resp.Body).Decode(status)
+	resp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("decode yandex operation status: %w", err)
+	}
+	switch status.Status {
+	case "success":
+		return nil
+	case "failure", "failed":
+		return fmt.Errorf("yandex operation %s failed", href)
+	}
+	return errOperationPending
 }
 
 // statAfterWrite reads the object the service just finalized, retrying while

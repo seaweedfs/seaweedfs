@@ -37,6 +37,27 @@ const (
 	authTokenPrefix = "OAuth "
 )
 
+// tokenRequestTimeout bounds one token request (a refresh or a code
+// exchange). Token holds the source's lock while it refreshes, so a token
+// endpoint that stops answering must not block every client of the
+// configuration. It is a variable so a test can shorten it.
+var tokenRequestTimeout = 30 * time.Second
+
+// tokenHTTPClient is the client a token request goes through: the given one
+// (or the default) with a per-request timeout. The timeout lives on the
+// client, not on a context, because the oauth2 token source keeps its context
+// for every later refresh.
+func tokenHTTPClient(httpClient *http.Client) *http.Client {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	bounded := *httpClient
+	if bounded.Timeout == 0 || bounded.Timeout > tokenRequestTimeout {
+		bounded.Timeout = tokenRequestTimeout
+	}
+	return &bounded
+}
+
 // yandexOAuthEndpoint is the token exchange endpoint. AuthStyleInParams sends
 // the client id and secret in the request body, the documented form; the
 // default auto-detection would probe the Basic form first and cost an extra
@@ -101,9 +122,7 @@ func ExchangeCode(ctx context.Context, clientID, clientSecret, code string, http
 	if tokenURL == "" {
 		tokenURL = yandexTokenURL
 	}
-	if httpClient != nil {
-		ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
-	}
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, tokenHTTPClient(httpClient))
 	conf := &oauth2.Config{
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
@@ -142,17 +161,13 @@ func newTokenSource(conf *remote_pb.RemoteConf, httpClient *http.Client, tokenUR
 	if tokenURL == "" {
 		tokenURL = yandexTokenURL
 	}
-	ctx := context.Background()
-	if httpClient != nil {
-		ctx = context.WithValue(ctx, oauth2.HTTPClient, httpClient)
-	}
-	ts.ctx = ctx
+	ts.ctx = context.WithValue(context.Background(), oauth2.HTTPClient, tokenHTTPClient(httpClient))
 	ts.conf = &oauth2.Config{
 		ClientID:     conf.GetYandexClientId(),
 		ClientSecret: conf.GetYandexClientSecret(),
 		Endpoint:     oauth2.Endpoint{TokenURL: tokenURL, AuthStyle: oauth2.AuthStyleInParams},
 	}
-	ts.src = ts.conf.TokenSource(ctx, token)
+	ts.src = ts.conf.TokenSource(ts.ctx, token)
 	return ts, nil
 }
 

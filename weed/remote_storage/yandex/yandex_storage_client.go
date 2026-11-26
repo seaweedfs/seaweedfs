@@ -57,6 +57,9 @@ func makeClient(conf *remote_pb.RemoteConf, httpClient *http.Client, tokenURL st
 	if conf.GetYandexToken() == "" {
 		return nil, fmt.Errorf("yandex token is not configured: remote.configure -name=%s -type=yandex -yandex.token=<token>", conf.GetName())
 	}
+	if err := checkEndpoint(conf.GetYandexEndpoint()); err != nil {
+		return nil, err
+	}
 	tokens, err := sharedTokenSource(conf, httpClient, tokenURL)
 	if err != nil {
 		return nil, err
@@ -136,17 +139,27 @@ func (y *yandexRemoteStorageClient) stampOf(res *resource) *filer_pb.RemoteEntry
 // mtimeOf reads the modification time the upload recorded. Falling back to the
 // service's "modified" keeps objects written by other clients usable.
 func mtimeOf(res *resource) int64 {
+	if _, t, found := resolvedModified(res); found {
+		return t.Unix()
+	}
+	return 0
+}
+
+// resolvedModified is the modification time mtimeOf reads, with the text it
+// was parsed from: seaweedfs_modified, then rclone_modified, then the
+// service's own "modified".
+func resolvedModified(res *resource) (string, time.Time, bool) {
 	for _, key := range []string{propModified, propRcloneModified} {
 		if value, found := stringProperty(res, key); found {
 			if t, err := time.Parse(time.RFC3339Nano, value); err == nil {
-				return t.Unix()
+				return value, t, true
 			}
 		}
 	}
 	if t, err := time.Parse(time.RFC3339Nano, res.Modified); err == nil {
-		return t.Unix()
+		return res.Modified, t, true
 	}
-	return 0
+	return "", time.Time{}, false
 }
 
 func stringProperty(res *resource, key string) (string, bool) {
@@ -168,8 +181,10 @@ func (y *yandexRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocatio
 	return y.walkTree(context.Background(), y.resourcePath(loc), y.relativeDir(loc), visitFn)
 }
 
-// walkTree visits every file and folder under dirPath, depth first. The Disk
-// API lists one folder at a time, so a deep tree costs one request per folder.
+// walkTree visits every file under dirPath, depth first. Like the s3, gcs and
+// azure clients, Traverse reports objects only: its callers (remote.cache,
+// remote.copy.local) read a stamp for every entry they get. The Disk API lists
+// one folder at a time, so a deep tree costs one request per folder.
 func (y *yandexRemoteStorageClient) walkTree(ctx context.Context, dirPath, relDir string, visitFn remote_storage.VisitFunc) error {
 	var offset uint64
 	for {
@@ -180,19 +195,15 @@ func (y *yandexRemoteStorageClient) walkTree(ctx context.Context, dirPath, relDi
 		items := page.items()
 		for i := range items {
 			item := &items[i]
-			isDirectory := item.Type == "dir"
-			var stamp *filer_pb.RemoteEntry
-			if !isDirectory {
-				stamp = y.stampOf(item)
-			}
-			if err = visitFn(relDir, item.Name, isDirectory, stamp); err != nil {
-				return err
-			}
-			if isDirectory {
+			if item.Type == "dir" {
 				childRel := strings.TrimSuffix(relDir, "/") + "/" + item.Name
 				if err = y.walkTree(ctx, dirPath+"/"+item.Name, childRel, visitFn); err != nil {
 					return err
 				}
+				continue
+			}
+			if err = visitFn(relDir, item.Name, false, y.stampOf(item)); err != nil {
+				return err
 			}
 		}
 		offset += uint64(len(items))
@@ -458,22 +469,41 @@ func (y *yandexRemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStor
 	return y.statFile(context.Background(), loc)
 }
 
+// DeleteFile removes one object. A Disk API delete is recursive, so the path
+// is checked first: a folder that has taken the file's place on the remote
+// (created there before a metadata sync reached the filer) is not the file,
+// and it is kept.
 func (y *yandexRemoteStorageClient) DeleteFile(loc *remote_pb.RemoteStorageLocation) error {
-	err := y.api.remove(context.Background(), y.resourcePath(loc), y.conf.GetYandexTrash())
+	ctx := context.Background()
+	path := y.resourcePath(loc)
+	res, err := y.api.stat(ctx, path)
 	if isNotFound(err) {
 		return remote_storage.ErrRemoteObjectNotFound
 	}
 	if err != nil {
-		return fmt.Errorf("delete yandex %s: %w", y.resourcePath(loc), err)
+		return fmt.Errorf("delete yandex %s: %w", path, err)
+	}
+	if res.Type == "dir" {
+		glog.Warningf("yandex %s: a folder took the deleted file's place on the remote, keep it", path)
+		return remote_storage.ErrRemoteObjectNotFound
+	}
+	err = y.api.remove(ctx, path, y.conf.GetYandexTrash())
+	if isNotFound(err) {
+		return remote_storage.ErrRemoteObjectNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("delete yandex %s: %w", path, err)
 	}
 	return nil
 }
 
 // CopyFile copies a remote-only object within the remote, so a rename does not
-// have to move the bytes through the client. Yandex does not reliably honor
-// overwrite on a server-side copy, so an existing destination is removed
-// first, and the source's properties are re-applied: a copy keeps the content,
-// not the custom properties that carry its modification time.
+// have to move the bytes through the client. The destination is kept until
+// its replacement exists: the copy overwrites it in place, and only when the
+// service kept the old object anyway is it removed (honoring yandex_trash)
+// and the copy repeated. A folder at the destination is never replaced. The
+// source's modification time and content encoding are re-applied, since a
+// copy keeps the content, not the custom properties.
 func (y *yandexRemoteStorageClient) CopyFile(src *remote_pb.RemoteStorageLocation, dst *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
 	ctx := context.Background()
 	srcPath := y.resourcePath(src)
@@ -486,24 +516,50 @@ func (y *yandexRemoteStorageClient) CopyFile(src *remote_pb.RemoteStorageLocatio
 		}
 		return nil, fmt.Errorf("stat yandex %s: %w", srcPath, err)
 	}
+	if source.Type == "dir" {
+		return nil, fmt.Errorf("copy yandex %s: %w", srcPath, ErrDirectory)
+	}
+	if srcPath == dstPath {
+		// copying an object onto itself keeps its content
+		return y.stampOf(source), nil
+	}
 	properties := map[string]string{}
-	for _, key := range []string{propModified, propContentEncoding} {
-		if value, found := stringProperty(source, key); found {
-			properties[key] = value
-		}
+	if modified, _, found := resolvedModified(source); found {
+		// rclone_modified or the service's own time are carried over as well:
+		// the copy gets a new service time and keeps no custom properties
+		properties[propModified] = modified
+	}
+	if encoding, found := stringProperty(source, propContentEncoding); found {
+		properties[propContentEncoding] = encoding
 	}
 
-	if err = y.api.remove(ctx, dstPath, false); err != nil && !isNotFound(err) {
-		return nil, fmt.Errorf("clear yandex copy destination %s: %w", dstPath, err)
+	existing, err := y.api.stat(ctx, dstPath)
+	switch {
+	case err == nil && existing.Type == "dir":
+		return nil, fmt.Errorf("copy yandex %s to %s: the destination is a folder: %w", srcPath, dstPath, ErrDirectory)
+	case err != nil && !isNotFound(err):
+		return nil, fmt.Errorf("stat yandex copy destination %s: %w", dstPath, err)
 	}
-	err = y.api.copyResource(ctx, srcPath, dstPath, true)
-	if isMissingParent(err) {
-		// a rename into a folder the remote does not have yet: the sync may
-		// not have created it, or may not run at all
-		if mkErr := y.mkdirAll(ctx, parentPath(dstPath)); mkErr != nil {
-			return nil, mkErr
+	destinationExisted := err == nil
+
+	err = y.copyCreatingParents(ctx, srcPath, dstPath)
+	if destinationExisted && (err == nil || isExistingResource(err)) {
+		replaced := err == nil
+		if replaced {
+			copied, statErr := y.api.stat(ctx, dstPath)
+			if statErr != nil {
+				return nil, fmt.Errorf("stat yandex copy %s: %w", dstPath, statErr)
+			}
+			replaced = copied.Md5 == source.Md5 && copied.Size == source.Size
 		}
-		err = y.api.copyResource(ctx, srcPath, dstPath, true)
+		if !replaced {
+			// the service kept the old destination despite overwrite
+			glog.V(1).Infof("yandex %s: the copy did not replace the destination, remove it and copy again", dstPath)
+			if err = y.api.remove(ctx, dstPath, y.conf.GetYandexTrash()); err != nil && !isNotFound(err) {
+				return nil, fmt.Errorf("clear yandex copy destination %s: %w", dstPath, err)
+			}
+			err = y.copyCreatingParents(ctx, srcPath, dstPath)
+		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("copy yandex %s to %s: %w", srcPath, dstPath, err)
@@ -514,6 +570,20 @@ func (y *yandexRemoteStorageClient) CopyFile(src *remote_pb.RemoteStorageLocatio
 		}
 	}
 	return y.statFile(ctx, dst)
+}
+
+// copyCreatingParents copies with overwrite and creates the destination's
+// folders when the service reports them missing: a rename into a folder the
+// remote does not have yet (the sync may not have created it, or may not run).
+func (y *yandexRemoteStorageClient) copyCreatingParents(ctx context.Context, srcPath, dstPath string) error {
+	err := y.api.copyResource(ctx, srcPath, dstPath, true)
+	if isMissingParent(err) {
+		if mkErr := y.mkdirAll(ctx, parentPath(dstPath)); mkErr != nil {
+			return mkErr
+		}
+		err = y.api.copyResource(ctx, srcPath, dstPath, true)
+	}
+	return err
 }
 
 func (y *yandexRemoteStorageClient) ListBuckets() ([]*remote_storage.Bucket, error) {
@@ -560,8 +630,28 @@ func (y *yandexRemoteStorageClient) CreateBucket(name string) error {
 	return nil
 }
 
+// DeleteBucket removes an empty bucket folder. A Disk API delete is
+// recursive, while S3 and GCS refuse to delete a bucket that still holds
+// objects; the same rule keeps a folder that holds files SeaweedFS never saw
+// (a mount of one of its subfolders, files put there directly) from being
+// wiped by a local bucket delete.
 func (y *yandexRemoteStorageClient) DeleteBucket(name string) error {
-	err := y.api.remove(context.Background(), y.bucketPath(name), y.conf.GetYandexTrash())
+	ctx := context.Background()
+	path := y.bucketPath(name)
+	page, err := y.api.list(ctx, path, 0)
+	if isNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("delete yandex bucket %s: %w", name, err)
+	}
+	if page.Type != "dir" {
+		return fmt.Errorf("delete yandex bucket %s: %s is not a folder", name, path)
+	}
+	if len(page.items()) > 0 {
+		return fmt.Errorf("delete yandex bucket %s: the folder %s is not empty", name, path)
+	}
+	err = y.api.remove(ctx, path, y.conf.GetYandexTrash())
 	if err == nil || isNotFound(err) {
 		return nil
 	}
