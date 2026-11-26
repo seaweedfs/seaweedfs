@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -171,5 +172,75 @@ func TestFilerUploadChargeClampsNonPositiveMaxMB(t *testing.T) {
 	req.ContentLength = -1
 	if got := fs.uploadCharge(req); got != filerMaxChunkSizeMB<<20 {
 		t.Fatalf("huge maxMB: charge %d, want %d", got, int64(filerMaxChunkSizeMB)<<20)
+	}
+}
+
+// A request's ?maxMB sets the chunk the upload loop cuts, so it sets the charge
+// too: four 64 MiB buffers are not four 4 MiB ones.
+func TestFilerUploadChargeFollowsRequestMaxMB(t *testing.T) {
+	fs := newLimitedFiler(1<<30, 0)
+	req := httptest.NewRequest(http.MethodPut, "/dir/file?maxMB=64", strings.NewReader("data"))
+	req.ContentLength = 256 << 20
+	if got := fs.uploadCharge(req); got != 4*64<<20 {
+		t.Fatalf("256 MiB with maxMB=64: charge %d, want %d", got, 4*64<<20)
+	}
+	req.ContentLength = -1
+	if got := fs.uploadCharge(req); got != 64<<20 {
+		t.Fatalf("unknown length with maxMB=64: charge %d, want %d", got, 64<<20)
+	}
+}
+
+// An upload stored inside the filer entry is buffered whole, so it reserves its
+// whole length; two such uploads that together exceed the budget do not run
+// side by side.
+func TestFilerUploadChargeCoversInlineUploads(t *testing.T) {
+	const limit = 64 << 20
+	for _, target := range []string{"/dir/file?saveInside=true", "/etc/config.toml"} {
+		t.Run(target, func(t *testing.T) {
+			fs := newLimitedFiler(limit, 0)
+			req := httptest.NewRequest(http.MethodPost, target, strings.NewReader("data"))
+			req.ContentLength = 80 << 20
+			// The whole body, capped at the whole budget: over the budget it
+			// runs only on an idle filer either way.
+			if got := fs.uploadCharge(req); got != limit {
+				t.Fatalf("80 MiB inline: charge %d, want the whole budget %d", got, limit)
+			}
+			req.ContentLength = 40 << 20
+			if got := fs.uploadCharge(req); got != 40<<20 {
+				t.Fatalf("40 MiB inline: charge %d, want the whole body", got)
+			}
+			req.ContentLength = 80 << 20
+			// Alone it is admitted, as any oversized request is on an idle filer.
+			if !fs.waitForUploadSlot(httptest.NewRecorder(), req, fs.uploadCharge(req)) {
+				t.Fatal("an oversized inline upload was refused on an idle filer")
+			}
+			second := httptest.NewRequest(http.MethodPost, target, strings.NewReader("data"))
+			second.ContentLength = 80 << 20
+			if fs.waitForUploadSlot(httptest.NewRecorder(), second, fs.uploadCharge(second)) {
+				t.Fatal("a second 80 MiB inline upload was admitted beside the first")
+			}
+
+			req.ContentLength = -1
+			if got := fs.uploadCharge(req); got != limit {
+				t.Fatalf("unknown-length inline: charge %d, want the whole budget %d", got, limit)
+			}
+			// A size near MaxInt64 is charged the whole budget, so the
+			// in-flight counter cannot wrap.
+			req.ContentLength = math.MaxInt64
+			if got := fs.uploadCharge(req); got != limit {
+				t.Fatalf("huge inline: charge %d, want the whole budget %d", got, limit)
+			}
+		})
+	}
+}
+
+// A PUT to an inline path still goes through the chunk loop, so it is charged by
+// chunks: charged its whole body it would only run on an idle filer.
+func TestFilerUploadChargeKeepsChunksForInlinePut(t *testing.T) {
+	fs := newLimitedFiler(64<<20, 0)
+	req := httptest.NewRequest(http.MethodPut, "/etc/config.toml", strings.NewReader("data"))
+	req.ContentLength = 1 << 30
+	if got := fs.uploadCharge(req); got != 4*4<<20 {
+		t.Fatalf("1 GiB PUT under /etc: charge %d, want four 4 MiB chunks", got)
 	}
 }

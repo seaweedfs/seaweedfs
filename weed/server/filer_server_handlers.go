@@ -141,16 +141,35 @@ const (
 	filerMaxChunkSizeMB = math.MaxInt32 / (1024 * 1024) // 2047
 )
 
-// uploadCharge is the bytes r reserves against the in-flight upload budget; see
-// util.GatewayUploadCharge. The chunk is -maxMB, what the filer cuts per chunk,
-// clamped as S3's uploadChunkSize does so the charge never collapses to 0.
+// uploadCharge is the bytes r reserves against the in-flight upload budget.
+//
+// A chunked upload holds at most its chunk buffers; see util.GatewayUploadCharge.
+// The chunk is the one the upload loop will cut: the request's ?maxMB, else
+// -maxMB, as requestChunkSize resolves it, and the filer default when neither is
+// positive, so the charge never collapses to 0.
+//
+// A POST stored inside the filer entry (?saveInside=true, or under /etc) is
+// read into memory whole (doPostAutoChunk), so with a limit set it is charged
+// its whole declared length, at most the whole budget, and an unknown length is
+// charged the whole budget: it then runs only on an idle filer, the one place a
+// body of any size can be buffered without overshooting. A PUT there still goes
+// through the chunk loop and is charged by chunks. With no limit the charge
+// only feeds the gauge, so the chunk-based one is kept.
 func (fs *FilerServer) uploadCharge(r *http.Request) int64 {
-	sizeMB := fs.option.MaxMB
-	if sizeMB <= 0 {
-		sizeMB = filerDefaultChunkSizeMB
+	limit := fs.option.ConcurrentUploadLimit
+	query := r.URL.Query()
+	chunk := int64(fs.requestChunkSize(query))
+	if chunk <= 0 {
+		chunk = filerDefaultChunkSizeMB << 20
 	}
-	sizeMB = min(sizeMB, filerMaxChunkSizeMB)
-	return util.GatewayUploadCharge(r.ContentLength, int64(sizeMB)<<20, fs.option.ConcurrentUploadLimit)
+	chunk = min(chunk, filerMaxChunkSizeMB<<20)
+	if limit > 0 && r.Method == http.MethodPost && (query.Get("saveInside") == "true" || strings.HasPrefix(r.URL.Path, "/etc")) {
+		if r.ContentLength >= 0 {
+			return min(r.ContentLength, limit)
+		}
+		return limit
+	}
+	return util.GatewayUploadCharge(r.ContentLength, chunk, limit)
 }
 
 // waitForUploadSlot reserves charged bytes and one upload slot, or writes the
