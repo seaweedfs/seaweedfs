@@ -798,12 +798,15 @@ struct ReplicaJwt {
     file_id: String,
 }
 
-/// `query` without the raw `jwt=` fields `extract_jwt` would read before the
-/// Authorization header.
+/// `query` without its `jwt` fields, which replicas read before the
+/// Authorization header (Go's `GetJwt` decodes the name first).
 fn without_query_jwt(query: &str) -> String {
     query
         .split('&')
-        .filter(|field| !field.starts_with("jwt="))
+        .filter(|field| {
+            !serde_urlencoded::from_str::<Vec<(String, String)>>(field)
+                .is_ok_and(|decoded| decoded.iter().any(|(name, _)| name == "jwt"))
+        })
         .collect::<Vec<_>>()
         .join("&")
 }
@@ -5444,7 +5447,7 @@ mod tests {
         assert!(claims.exp.is_some());
         assert_eq!(
             without_query_jwt("jwt=stale&%6Awt=x&ts=1&xjwt=y"),
-            "%6Awt=x&ts=1&xjwt=y"
+            "ts=1&xjwt=y"
         );
     }
 
@@ -9516,6 +9519,8 @@ mod tests {
             "%6Awt=expired&tag=a%2Fb+%2B&tag=x%20y&bare&ts=1700000000&%74ype=client&type=old";
         let expected_query =
             "%6Awt=expired&tag=a%2Fb+%2B&tag=x%20y&bare&ts=1700000000&type=replicate";
+        // A write forward carries a fresh JWT, so it drops the query token.
+        let expected_write_query = "tag=a%2Fb+%2B&tag=x%20y&bare&ts=1700000000&type=replicate";
         let payload = b"authenticated replica bytes";
         for method in [Method::POST, Method::DELETE] {
             let response = tokio::time::timeout(
@@ -9559,7 +9564,10 @@ mod tests {
                 }
             }
         }
-        assert_eq!(*queries.lock().unwrap(), [expected_query, expected_query]);
+        assert_eq!(
+            *queries.lock().unwrap(),
+            [expected_write_query, expected_query]
+        );
         peer_server.abort();
     }
 
