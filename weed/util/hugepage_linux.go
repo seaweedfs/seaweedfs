@@ -4,6 +4,7 @@ package util
 
 import (
 	"os"
+	"path/filepath"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"golang.org/x/sys/unix"
@@ -13,14 +14,16 @@ const (
 	thpEnabledPath = "/sys/kernel/mm/transparent_hugepage/enabled"
 	thpDefragPath  = "/sys/kernel/mm/transparent_hugepage/defrag"
 	thpMaxPtesPath = "/sys/kernel/mm/transparent_hugepage/khugepaged/max_ptes_none"
+	thpSizesGlob   = "/sys/kernel/mm/transparent_hugepage/hugepages-*kB/enabled"
 )
 
 // TransparentHugePages is the host's transparent huge page policy as the
 // kernel reports it.
 type TransparentHugePages struct {
-	Enabled     string // always, madvise or never
-	Defrag      string // always, defer, defer+madvise or madvise
-	MaxPtesNone string // khugepaged/max_ptes_none, empty when unreadable
+	Enabled     string   // always, madvise or never
+	Defrag      string   // always, defer, defer+madvise or madvise
+	MaxPtesNone string   // khugepaged/max_ptes_none, empty when unreadable
+	SizeModes   []string // hugepages-<size>kB/enabled, Linux 6.8+
 }
 
 func readTHPMode(path string) string {
@@ -39,6 +42,17 @@ func readTHPValue(path string) string {
 	return parseTHPValue(string(content))
 }
 
+func readTHPSizeModes() []string {
+	paths, _ := filepath.Glob(thpSizesGlob)
+	var modes []string
+	for _, path := range paths {
+		if mode := readTHPMode(path); mode != "" {
+			modes = append(modes, mode)
+		}
+	}
+	return modes
+}
+
 // ReadTransparentHugePages reports the host THP policy, or nil when the kernel
 // does not expose it (non-Linux kernels and some sandboxes).
 func ReadTransparentHugePages() *TransparentHugePages {
@@ -50,6 +64,7 @@ func ReadTransparentHugePages() *TransparentHugePages {
 		Enabled:     enabled,
 		Defrag:      readTHPMode(thpDefragPath),
 		MaxPtesNone: readTHPValue(thpMaxPtesPath),
+		SizeModes:   readTHPSizeModes(),
 	}
 }
 
@@ -71,13 +86,12 @@ func LogTransparentHugePages() {
 	if status == nil {
 		return
 	}
-	if status.Enabled == "never" {
+	hostAllowsHeap := anonHugePagesAlways(status.Enabled, status.SizeModes)
+	if status.Enabled == "never" && !hostAllowsHeap {
 		glog.V(0).Infof("transparent huge pages: disabled by the host; the Go heap will not use them")
 		return
 	}
-	// The runtime advises only GC metadata with MADV_HUGEPAGE, so the heap
-	// itself gets huge pages only under "always".
-	goHeapTHP := status.Enabled == "always" && !goHeapHugePagesDisabled(os.Getenv("GODEBUG")) && !processHugePagesDisabled()
+	goHeapTHP := hostAllowsHeap && !goHeapHugePagesDisabled(os.Getenv("GODEBUG")) && !processHugePagesDisabled()
 	glog.V(0).Infof("transparent huge pages: enabled=%s defrag=%s khugepaged.max_ptes_none=%s go_heap_thp=%t; see https://go.dev/doc/gc-guide#Linux_transparent_huge_pages",
 		status.Enabled, status.Defrag, status.MaxPtesNone, goHeapTHP)
 }
