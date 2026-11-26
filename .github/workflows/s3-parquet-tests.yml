@@ -45,7 +45,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: ^1.26
+          go-version-file: 'go.mod'
           cache: ${{ runner.environment == 'github-hosted' }}
       
       - name: Set up Python ${{ matrix.python-version }}
@@ -153,7 +153,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: ^1.26
+          go-version-file: 'go.mod'
           cache: ${{ runner.environment == 'github-hosted' }}
       
       - name: Run Go unit tests

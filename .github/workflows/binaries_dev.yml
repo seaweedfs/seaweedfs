@@ -56,6 +56,7 @@ jobs:
       - name: Go Release Binaries Large Disk
         uses: wangyoucao577/go-release-action@279495102627de7960cbc33434ab01a12bae144b # v1.22
         with:
+          goversion: go.mod  # reads the go directive, so releases build with the toolchain go.mod declares
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}
@@ -72,6 +73,7 @@ jobs:
       - name: Go Release Binaries Normal Volume Size
         uses: wangyoucao577/go-release-action@279495102627de7960cbc33434ab01a12bae144b # v1.22
         with:
+          goversion: go.mod  # reads the go directive, so releases build with the toolchain go.mod declares
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}
@@ -105,6 +107,7 @@ jobs:
       - name: Go Release Binaries Large Disk
         uses: wangyoucao577/go-release-action@279495102627de7960cbc33434ab01a12bae144b # v1.22
         with:
+          goversion: go.mod  # reads the go directive, so releases build with the toolchain go.mod declares
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}
@@ -121,6 +124,7 @@ jobs:
       - name: Go Release Binaries Normal Volume Size
         uses: wangyoucao577/go-release-action@279495102627de7960cbc33434ab01a12bae144b # v1.22
         with:
+          goversion: go.mod  # reads the go directive, so releases build with the toolchain go.mod declares
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}

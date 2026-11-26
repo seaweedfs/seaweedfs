@@ -1,6 +1,6 @@
 module seaweedfs-sftp-tests
 
-go 1.26.6
+go 1.27.4
 
 require (
 	github.com/pkg/sftp v1.13.7

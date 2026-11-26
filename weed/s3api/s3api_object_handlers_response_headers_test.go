@@ -23,17 +23,17 @@ func TestSetResponseHeadersFiltersInternalExtendedKeys(t *testing.T) {
 		Extended: map[string][]byte{
 			s3_constants.AmzObjectTaggingPrefix + "project": []byte("alpha"),
 			s3_constants.AmzObjectTaggingPrefix + "owner":   []byte("y"),
-			"x-amz-tagging-sneaky":                        []byte("z"),
-			"seaweed-x-amz-acl":                           []byte("z"),
+			"x-amz-tagging-sneaky":                          []byte("z"),
+			"seaweed-x-amz-acl":                             []byte("z"),
 			s3_constants.ExtAmzAclKey:                       []byte(`[{"Permission":"FULL_CONTROL"}]`),
 			s3_constants.ExtAmzOwnerKey:                     []byte("admin"),
 			s3_constants.ExtVersionIdKey:                    []byte("version-1"),
 			s3_constants.ExtObjectLockModeKey:               []byte("COMPLIANCE"),
 			s3_constants.ExtETagKey:                         []byte("d41d8cd98f00b204e9800998ecf8427e"),
 			s3_constants.SeaweedFSWriteId:                   []byte("write-id"),
-			"X-Amz-Meta-Foo":                               []byte("bar"),
-			"Cache-Control":                                []byte("no-cache"),
-			"xattr-user.note":                              []byte("n"),
+			"X-Amz-Meta-Foo":                                []byte("bar"),
+			"Cache-Control":                                 []byte("no-cache"),
+			"xattr-user.note":                               []byte("n"),
 		},
 	}
 
