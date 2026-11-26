@@ -124,7 +124,7 @@ func (iam *IdentityAccessManagement) abortWhenRevoked(f http.HandlerFunc, identi
 		tracked.add(req)
 		defer tracked.remove(req)
 		if tracked.generation.Load() != since {
-			iam.scheduleRevalidation(bucket)
+			iam.scheduleRevalidation(bucket, false)
 		}
 		f(w, r)
 	}
@@ -182,17 +182,20 @@ func (iam *IdentityAccessManagement) currentIdentity(req *inFlightRequest) *Iden
 
 // revalidateInFlight schedules a re-check of every request in flight.
 func (iam *IdentityAccessManagement) revalidateInFlight() {
-	iam.scheduleRevalidation("")
+	iam.scheduleRevalidation("", true)
 }
 
 // revalidateBucketInFlight schedules a re-check of the requests on bucket.
 func (iam *IdentityAccessManagement) revalidateBucketInFlight(bucket string) {
 	if bucket != "" {
-		iam.scheduleRevalidation(bucket)
+		iam.scheduleRevalidation(bucket, true)
 	}
 }
 
-func (iam *IdentityAccessManagement) scheduleRevalidation(bucket string) {
+// scheduleRevalidation re-checks the requests on bucket, or all of them. Only
+// an access change advances the generation: a catch-up for a request tracked
+// late must not, or overlapping admissions would keep scheduling each other.
+func (iam *IdentityAccessManagement) scheduleRevalidation(bucket string, changed bool) {
 	if iam == nil || iam.inFlight == nil {
 		return
 	}
@@ -208,7 +211,9 @@ func (iam *IdentityAccessManagement) scheduleRevalidation(bucket string) {
 	}
 	// Bumped before pending can take this scope, so a request tracked after
 	// that pass sees the change.
-	t.generation.Add(1)
+	if changed {
+		t.generation.Add(1)
+	}
 	t.mu.Unlock()
 	select {
 	case t.kick <- struct{}{}:

@@ -251,6 +251,23 @@ func TestAbortRequestRevokedBeforeItIsTracked(t *testing.T) {
 	assert.Error(t, downloadResult(t, done, time.Second))
 }
 
+// A catch-up re-check of a request that authenticated before a change is not
+// a change itself, so it leaves the generation as it is.
+func TestCatchUpRecheckKeepsTheGeneration(t *testing.T) {
+	iam := newRevokeIAM(t, revokeIdentity("bob", revokeKeyB, revokeSecretB, "Read:bkt"))
+	bob := iam.lookupByIdentityName("bob")
+	since := iam.inFlightGeneration()
+	iam.revalidateInFlight()
+	changed := iam.inFlightGeneration()
+	require.NotEqual(t, since, changed)
+
+	r := httptest.NewRequest(http.MethodGet, "/bkt/object", nil)
+	r.Header.Set(s3_constants.AmzAuthType, "SigV4")
+	r = r.WithContext(s3_constants.SetAccessKeyIdInContext(r.Context(), revokeKeyB))
+	iam.abortWhenRevoked(func(http.ResponseWriter, *http.Request) {}, bob, s3_constants.ACTION_READ, since)(httptest.NewRecorder(), r)
+	assert.Equal(t, changed, iam.inFlightGeneration())
+}
+
 // A bucket policy that starts denying aborts the requests on its bucket only.
 func TestAbortRequestsDeniedByBucketPolicy(t *testing.T) {
 	iam := newRevokeIAM(t, revokeIdentity("bob", revokeKeyB, revokeSecretB, "Read"))
