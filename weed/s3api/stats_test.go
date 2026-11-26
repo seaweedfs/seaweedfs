@@ -66,8 +66,11 @@ type slowReader struct {
 }
 
 func (s slowReader) Read(b []byte) (int, error) {
-	time.Sleep(s.delay)
-	return s.Reader.Read(b)
+	n, err := s.Reader.Read(b)
+	if n > 0 {
+		time.Sleep(s.delay)
+	}
+	return n, err
 }
 
 func putStageSamples(t *testing.T, operation, stage string) (uint64, float64) {
