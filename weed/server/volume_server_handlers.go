@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
@@ -136,74 +137,126 @@ func (vs *VolumeServer) waitForDownloadSlot(w http.ResponseWriter, r *http.Reque
 	return false
 }
 
-// checkUploadLimit handles upload concurrency limiting with timeout.
+// volumeClientUploadWaitCap bounds how long a client write (anything except a
+// volume server's own primary-to-replica forward) waits for upload budget,
+// whatever -inflightUploadDataTimeout says.
 //
-// This function implements upload throttling to prevent overwhelming the volume server
-// with too many concurrent uploads. It excludes replication traffic from limits.
-//
-// Returns:
-//   - true:  Request should proceed with upload processing (no limit, within limit,
-//     or successfully waited for capacity)
-//   - false: Request failed (timeout or cancellation), error response already sent
-//
-// Special Handling:
-//   - Replication requests (type=replicate) bypass upload limits
-//   - No upload limit configured (concurrentUploadLimit=0) allows all uploads
-func (vs *VolumeServer) checkUploadLimit(w http.ResponseWriter, r *http.Request) bool {
-	// exclude the replication from the concurrentUploadLimitMB
-	if vs.concurrentUploadLimit == 0 || r.URL.Query().Get("type") == "replicate" {
-		return true
+// Invariant: it stays below operation.uploadBodyMinWait (10s), so the volume
+// server answers 503 before the uploading client's body deadline cuts the
+// request off as a stall.
+const volumeClientUploadWaitCap = 5 * time.Second
+
+// uploadRejectCloseThreshold is the body size above which a rejected HTTP/1
+// upload is answered with Connection: close. Smaller bodies are cheaper to
+// drain than a new connection is to dial, so they keep the pooled connection.
+const uploadRejectCloseThreshold = 256 << 10
+
+// uploadCharge returns the bytes an upload reserves against
+// concurrentUploadLimit. A known length is charged as-is; an unknown length
+// (chunked transfer) counts as one chunk, fileSizeLimitBytes, capped at the
+// limit itself so one request is never charged more than the whole budget.
+func (vs *VolumeServer) uploadCharge(r *http.Request) int64 {
+	unknownCharge := vs.fileSizeLimitBytes
+	if vs.concurrentUploadLimit > 0 && unknownCharge > vs.concurrentUploadLimit {
+		unknownCharge = vs.concurrentUploadLimit
 	}
-
-	inFlightUploadDataSize := atomic.LoadInt64(&vs.inFlightUploadDataSize)
-	stats.VolumeServerInFlightUploadSize.Set(float64(inFlightUploadDataSize))
-
-	if inFlightUploadDataSize <= vs.concurrentUploadLimit {
-		return true
-	}
-
-	return vs.waitForUploadSlot(w, r)
+	return util.CountedUploadSize(r.ContentLength, unknownCharge)
 }
 
-// waitForUploadSlot waits for available upload capacity with timeout.
+// clientUploadWait is how long a client write waits for upload budget:
+// -inflightUploadDataTimeout, at most volumeClientUploadWaitCap (also when
+// the timeout is 0).
+func (vs *VolumeServer) clientUploadWait() time.Duration {
+	if vs.inflightUploadDataTimeout > 0 && vs.inflightUploadDataTimeout < volumeClientUploadWaitCap {
+		return vs.inflightUploadDataTimeout
+	}
+	return volumeClientUploadWaitCap
+}
+
+// waitForUploadSlot reserves charged bytes of upload budget for r.
 //
 // Returns:
-//   - true:  Upload capacity became available, request should proceed
-//   - false: Request failed (timeout or cancellation), error response already sent
+//   - true:  charged bytes were added to inFlightUploadDataSize; the caller
+//     owns them and must give them back with releaseUploadSlot(charged).
+//   - false: nothing was reserved and the response was already written.
+//
+// Admission:
+//   - concurrentUploadLimit == 0: counted without a lock, never refused.
+//   - Primary-to-replica forwards (operation.IsReplicaForward): counted under
+//     the lock, never refused, so a write the primary already accepted always
+//     reaches its replicas.
+//   - Everything else, including a gateway's ?type=replicate&src=client
+//     fan-out: waits up to clientUploadWait until util.UploadAdmits, then
+//     reserves before the lock is released.
 //
 // HTTP Status Codes:
-//   - 429 Too Many Requests: Wait timeout exceeded
-//   - 499 Client Closed Request: Request cancelled by client
-func (vs *VolumeServer) waitForUploadSlot(w http.ResponseWriter, r *http.Request) bool {
-	var timerUpload *time.Timer
-	inFlightUploadDataSize := atomic.LoadInt64(&vs.inFlightUploadDataSize)
-
-	for inFlightUploadDataSize > vs.concurrentUploadLimit {
-		if timerUpload == nil {
-			timerUpload = time.NewTimer(vs.inflightUploadDataTimeout)
-			defer timerUpload.Stop()
-		}
-
-		glog.V(4).Infof("wait because inflight upload data %d > %d", inFlightUploadDataSize, vs.concurrentUploadLimit)
-		stats.VolumeServerHandlerCounter.WithLabelValues(stats.UploadLimitCond).Inc()
-
-		switch util.WaitWithTimeout(r.Context(), vs.inFlightUploadDataLimitCond, timerUpload) {
-		case http.StatusTooManyRequests:
-			err := fmt.Errorf("reject because inflight upload data %d > %d, and wait timeout",
-				inFlightUploadDataSize, vs.concurrentUploadLimit)
-			glog.V(1).Infof("too many requests: %v", err)
-			writeJsonError(w, r, http.StatusTooManyRequests, err)
-			return false
-		case util.HttpStatusCancelled:
-			glog.V(1).Infof("request cancelled from %s: %v", r.RemoteAddr, r.Context().Err())
-			writeJsonError(w, r, util.HttpStatusCancelled, r.Context().Err())
-			return false
-		}
-
-		inFlightUploadDataSize = atomic.LoadInt64(&vs.inFlightUploadDataSize)
-		stats.VolumeServerInFlightUploadSize.Set(float64(inFlightUploadDataSize))
+//   - 503 Service Unavailable with Retry-After: no budget within the wait.
+//     The body is never read; an HTTP/1 connection carrying a large or
+//     unknown-length body is closed rather than drained.
+//   - 499 Client Closed Request: the client went away while waiting.
+func (vs *VolumeServer) waitForUploadSlot(w http.ResponseWriter, r *http.Request, charged int64) bool {
+	if vs.concurrentUploadLimit == 0 {
+		inFlight := atomic.AddInt64(&vs.inFlightUploadDataSize, charged)
+		stats.VolumeServerInFlightUploadSize.Set(float64(inFlight))
+		return true
 	}
-	return true
+
+	limit := vs.concurrentUploadLimit
+	var inFlight int64
+	var err error
+	vs.inFlightUploadDataLimitCond.L.Lock()
+	if !operation.IsReplicaForward(r.URL.Query()) {
+		admits := func() bool {
+			inFlight = atomic.LoadInt64(&vs.inFlightUploadDataSize)
+			return util.UploadAdmits(inFlight, charged, limit)
+		}
+		if !admits() {
+			glog.V(4).Infof("wait because inflight upload data %d + %d > %d", inFlight, charged, limit)
+			stats.VolumeServerHandlerCounter.WithLabelValues(stats.UploadLimitCond).Inc()
+			err = util.WaitUntil(r.Context(), vs.inFlightUploadDataLimitCond, vs.clientUploadWait(), admits)
+		}
+	}
+	if err == nil {
+		inFlight = atomic.AddInt64(&vs.inFlightUploadDataSize, charged)
+	}
+	vs.inFlightUploadDataLimitCond.L.Unlock()
+	stats.VolumeServerInFlightUploadSize.Set(float64(inFlight))
+
+	if err == nil {
+		return true
+	}
+
+	// The body of a rejected upload is never read.
+	r.Body = http.NoBody
+	if r.Context().Err() != nil {
+		glog.V(1).Infof("request cancelled from %s: %v", r.RemoteAddr, r.Context().Err())
+		writeJsonError(w, r, util.HttpStatusCancelled, r.Context().Err())
+		return false
+	}
+	w.Header().Set("Retry-After", "1")
+	if r.ProtoMajor == 1 && (r.ContentLength < 0 || r.ContentLength > uploadRejectCloseThreshold) {
+		w.Header().Set("Connection", "close")
+	}
+	err = fmt.Errorf("reject because inflight upload data %d + %d > %d, and wait timeout",
+		inFlight, charged, limit)
+	glog.V(1).Infof("too many requests: %v", err)
+	writeJsonError(w, r, http.StatusServiceUnavailable, err)
+	return false
+}
+
+// releaseUploadSlot gives back charged bytes reserved by waitForUploadSlot
+// and wakes the uploads waiting for budget.
+func (vs *VolumeServer) releaseUploadSlot(charged int64) {
+	if vs.concurrentUploadLimit == 0 {
+		inFlight := atomic.AddInt64(&vs.inFlightUploadDataSize, -charged)
+		stats.VolumeServerInFlightUploadSize.Set(float64(inFlight))
+		return
+	}
+	vs.inFlightUploadDataLimitCond.L.Lock()
+	inFlight := atomic.AddInt64(&vs.inFlightUploadDataSize, -charged)
+	vs.inFlightUploadDataLimitCond.Broadcast()
+	vs.inFlightUploadDataLimitCond.L.Unlock()
+	stats.VolumeServerInFlightUploadSize.Set(float64(inFlight))
 }
 
 // handleGetRequest processes GET/HEAD requests with download limiting.
@@ -224,29 +277,16 @@ func (vs *VolumeServer) handleGetRequest(w http.ResponseWriter, r *http.Request)
 
 // handleUploadRequest processes PUT/POST requests with upload limiting.
 //
-// This function manages the complete upload request workflow:
-// 1. Extracts content length from request headers
-// 2. Applies upload concurrency limits with timeout handling
-// 3. Tracks in-flight upload data size for monitoring
-// 4. Delegates to PostHandler for actual file processing
-// 5. Ensures proper cleanup of in-flight counters
-//
-// The upload limiting logic may reject the request with appropriate HTTP
-// status codes (429 for timeout, 499 for cancellation).
+// It reserves the request's charge (see uploadCharge) with
+// waitForUploadSlot, hands the request to PostHandler, and releases the
+// charge when PostHandler returns. A request that gets no budget is answered
+// by waitForUploadSlot (503 on timeout, 499 on cancellation).
 func (vs *VolumeServer) handleUploadRequest(w http.ResponseWriter, r *http.Request) {
-	contentLength := getContentLength(r)
-
-	if !vs.checkUploadLimit(w, r) {
+	charged := vs.uploadCharge(r)
+	if !vs.waitForUploadSlot(w, r, charged) {
 		return
 	}
-
-	atomic.AddInt64(&vs.inFlightUploadDataSize, contentLength)
-	defer func() {
-		atomic.AddInt64(&vs.inFlightUploadDataSize, -contentLength)
-		if vs.concurrentUploadLimit != 0 {
-			vs.inFlightUploadDataLimitCond.Broadcast()
-		}
-	}()
+	defer vs.releaseUploadSlot(charged)
 
 	// processes uploads
 	stats.WriteRequest()

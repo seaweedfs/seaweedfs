@@ -2896,11 +2896,15 @@ pub async fn post_handler(
                 .await
                 .is_err()
             {
-                return json_error_with_query(
-                    StatusCode::TOO_MANY_REQUESTS,
+                let mut response = json_error_with_query(
+                    StatusCode::SERVICE_UNAVAILABLE,
                     "upload limit exceeded",
                     Some(&query),
                 );
+                response
+                    .headers_mut()
+                    .insert(header::RETRY_AFTER, header::HeaderValue::from_static("1"));
+                return response;
             }
         }
         let new_val = state
@@ -6774,6 +6778,35 @@ mod tests {
             .add_volume(VolumeId(1), DiskType::HardDrive, &VolumeSpec::default())
             .unwrap();
         test_state_with_store(store)
+    }
+
+    /// An upload that finds no budget within the wait answers 503 with
+    /// Retry-After, the same as the Go volume server.
+    #[tokio::test]
+    async fn upload_limit_timeout_answers_503_with_retry_after() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.concurrent_upload_limit = 10;
+            s.inflight_upload_data_timeout = std::time::Duration::from_millis(50);
+        }
+        state.inflight_upload_bytes.store(11, Ordering::Relaxed);
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/1,0123456789abcdef")
+            .header(header::CONTENT_LENGTH, "4")
+            .body(Body::from("abcd"))
+            .unwrap();
+        let resp = post_handler(State(state.clone()), request).await;
+
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            resp.headers().get(header::RETRY_AFTER).unwrap(),
+            &header::HeaderValue::from_static("1")
+        );
+        assert_eq!(state.inflight_upload_bytes.load(Ordering::Relaxed), 11);
     }
 
     #[tokio::test]
