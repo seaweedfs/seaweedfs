@@ -271,11 +271,37 @@ func (sc *scope) checkProtectedPath(method, p string, descendants bool) error {
 	return nil
 }
 
+// scopeEntryEqualRefusal keeps a scoped client from guessing the hidden
+// filer-owned state of a pending remote rename. The caller supplies the
+// stored extended attributes so admission and the locked handler check can
+// share the same rule without changing the global comparator.
+func scopeEntryEqualRefusal(ctx context.Context, condition *filer_pb.WriteCondition, extended map[string][]byte) error {
+	if !scopeKeepOnly(ctx) {
+		return nil
+	}
+	if _, marked := extended[filer.ExtRemoteRenameSourceKey]; !marked {
+		return nil
+	}
+	if scopeHasEntryEqual(condition) {
+		return status.Error(codes.FailedPrecondition, "filer: scoped IF_ENTRY_EQUAL cannot be used while a remote rename is pending")
+	}
+	return nil
+}
+
+func scopeHasEntryEqual(condition *filer_pb.WriteCondition) bool {
+	for _, clause := range condition.GetClauses() {
+		if clause != nil && clause.GetKind() == filer_pb.WriteCondition_IF_ENTRY_EQUAL {
+			return true
+		}
+	}
+	return false
+}
+
 // checkClientEntry admits retained chunks or chunks with valid assignment proofs.
 // A hard-link id may be retained there, or a fresh id may be introduced by an
 // update of an existing unlinked entry. Attaching another path's id is refused.
 // Client signatures stay allowed so mounts can filter their own events.
-func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method, p string, e *filer_pb.Entry, chunkAuth map[string]string, allowNewHardLink bool) error {
+func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method, p string, e *filer_pb.Entry, condition *filer_pb.WriteCondition, chunkAuth map[string]string, allowNewHardLink bool) error {
 	if err := scopeCheckEntryShape(e); err != nil {
 		return sc.deny(method, err.Error())
 	}
@@ -300,6 +326,9 @@ func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method
 		if err := scopeWritesSharedHardLink(stored, e); err != nil {
 			return sc.deny(method, err.Error())
 		}
+		if err := scopeEntryEqualRefusal(ctx, condition, stored.GetExtended()); err != nil {
+			return err
+		}
 		return nil
 	}
 	// Keep ordinary mount creates lookup-free at admission. The handlers
@@ -319,6 +348,11 @@ func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method
 			if err := scopeCheckAppendState(stored, e.GetChunks()); err != nil {
 				return sc.deny(method, err.Error())
 			}
+		}
+	}
+	if scopeHasEntryEqual(condition) {
+		if err := load(); err != nil {
+			return err
 		}
 	}
 
@@ -360,7 +394,7 @@ func (s *filerGrpcScope) checkCreate(ctx context.Context, sc *scope, m string, r
 			return err
 		}
 	}
-	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), req.GetChunkAuth(), false)
+	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), req.GetCondition(), req.GetChunkAuth(), false)
 }
 
 func (s *filerGrpcScope) checkUpdate(ctx context.Context, sc *scope, m string, req *filer_pb.UpdateEntryRequest) error {
@@ -374,7 +408,7 @@ func (s *filerGrpcScope) checkUpdate(ctx context.Context, sc *scope, m string, r
 	if err != nil {
 		return err
 	}
-	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), req.GetChunkAuth(), true)
+	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), req.GetCondition(), req.GetChunkAuth(), true)
 }
 
 func (s *filerGrpcScope) checkAppend(ctx context.Context, sc *scope, m string, req *filer_pb.AppendToEntryRequest) error {
@@ -385,7 +419,7 @@ func (s *filerGrpcScope) checkAppend(ctx context.Context, sc *scope, m string, r
 	if err := s.checkAncestors(ctx, sc, m, p); err != nil {
 		return err
 	}
-	return s.checkClientEntry(ctx, sc, m, p, &filer_pb.Entry{Name: req.GetEntryName(), Chunks: req.GetChunks()}, req.GetChunkAuth(), false)
+	return s.checkClientEntry(ctx, sc, m, p, &filer_pb.Entry{Name: req.GetEntryName(), Chunks: req.GetChunks()}, nil, req.GetChunkAuth(), false)
 }
 
 // checkAncestors refuses a write at p that would make an ancestor outside the
