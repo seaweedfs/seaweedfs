@@ -75,6 +75,16 @@ func TestScopeRejectsConditionsOnRemoteRenameSource(t *testing.T) {
 		})
 		return err
 	})
+	expectScopeDenied(t, h, "UpdateEntry", "update gated on the marker", func() error {
+		_, err := c.UpdateEntry(scopeCtx(t), &filer_pb.UpdateEntryRequest{
+			Directory: aliceWS, Entry: &filer_pb.Entry{Name: "file"},
+			Condition: &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+				Kind: filer_pb.WriteCondition_IF_EXTENDED_TIME_ELAPSED, ExtKey: "client.expiry",
+				GateKey: filer.ExtRemoteRenameSourceKey, GateValue: string(guess),
+			}}},
+		})
+		return err
+	})
 	expectScopeDenied(t, h, "UpdateEntry", "update expecting the marker", func() error {
 		_, err := c.UpdateEntry(scopeCtx(t), &filer_pb.UpdateEntryRequest{
 			Directory: aliceWS, Entry: &filer_pb.Entry{Name: "file"},

@@ -295,7 +295,7 @@ func scopeNamesRemoteRenameSource(condition *filer_pb.WriteCondition, expectedEx
 		return true
 	}
 	for _, clause := range condition.GetClauses() {
-		if clause.GetExtKey() == filer.ExtRemoteRenameSourceKey {
+		if clause.GetExtKey() == filer.ExtRemoteRenameSourceKey || clause.GetGateKey() == filer.ExtRemoteRenameSourceKey {
 			return true
 		}
 	}
