@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path"
 	"sort"
@@ -34,7 +35,7 @@ var cmdFix = &Command{
 	Long: `Fix runs the SeaweedFS fix command on local dat files ( or remote files) or whole folders to re-create the index .idx file. If fixing remote files, you need to synchronize master.toml to the same directory on the current node as on the master node.
   You Need to stop the volume server when running this command.
   Use -ecx to rebuild a lost EC index (.ecx) — and the .vif when missing — from the local .ec## shards.
-  On a damaged .dat, fix indexes only the needles before the first unreadable header or a record cut off by the end of the file, and exits non-zero; repair from a replica, or run fix on a copy, before compacting or loading the volume.
+  On a damaged .dat, fix indexes only the needles before the first unreadable header or a record cut off by the end of the file, and exits non-zero; repair from a replica, or run fix on a copy, before compacting or loading the volume. To recover the needles after the damage, use "weed fix.recover".
   With -ignoreError, fix keeps going and writes what it could index, but still exits non-zero if any volume failed.
   With -verifyCrc, fix also reads every needle, indexes the ones whose data fails its CRC check as deleted, and exits non-zero if it found any.
 `,
@@ -112,27 +113,10 @@ func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64
 
 func runFix(cmd *Command, args []string) bool {
 	for _, arg := range args {
-		basePath, f := path.Split(util.ResolvePath(arg))
-		if util.FolderExists(arg) {
-			basePath = arg
-			f = ""
-		}
-
-		files := []fs.DirEntry{}
-		if f == "" {
-			fileInfo, err := os.ReadDir(basePath)
-			if err != nil {
-				fmt.Println(err)
-				return false
-			}
-			files = fileInfo
-		} else {
-			fileInfo, err := os.Stat(arg)
-			if err != nil {
-				fmt.Println(err)
-				return false
-			}
-			files = []fs.DirEntry{fs.FileInfoToDirEntry(fileInfo)}
+		basePath, files, err := listVolumeFiles(arg)
+		if err != nil {
+			fmt.Println(err)
+			return false
 		}
 
 		ext := ".dat"
@@ -143,29 +127,19 @@ func runFix(cmd *Command, args []string) bool {
 		}
 
 		for _, file := range files {
-			if !strings.HasSuffix(file.Name(), ext) {
-				continue
-			}
-			if *fixVolumeCollection != "" {
-				if !strings.HasPrefix(file.Name(), *fixVolumeCollection+"_") {
+			vf, ok, parseErr := selectVolumeFile(file.Name(), ext, *fixVolumeCollection, *fixVolumeId)
+			if parseErr != nil {
+				fmt.Printf("Failed to parse volume id from %s: %v\n", vf.baseFileName, parseErr)
+				if *fixIgnoreError {
+					SetCommandExitStatus(1)
 					continue
 				}
-			}
-			baseFileName := file.Name()[:len(file.Name())-4]
-			collection, volumeIdStr := "", baseFileName
-			if sepIndex := strings.LastIndex(baseFileName, "_"); sepIndex > 0 {
-				collection = baseFileName[:sepIndex]
-				volumeIdStr = baseFileName[sepIndex+1:]
-			}
-			volumeId, parseErr := strconv.ParseInt(volumeIdStr, 10, 64)
-			if parseErr != nil {
-				fmt.Printf("Failed to parse volume id from %s: %v\n", baseFileName, parseErr)
 				return false
 			}
-			if *fixVolumeId != 0 && *fixVolumeId != volumeId {
+			if !ok {
 				continue
 			}
-			doFixOneVolume(basePath, baseFileName, collection, volumeId, *fixIncludeDeleted)
+			doFixOneVolume(basePath, vf.baseFileName, vf.collection, vf.volumeId, *fixIncludeDeleted)
 		}
 
 		if *fixGenerateEcx {
@@ -175,6 +149,64 @@ func runFix(cmd *Command, args []string) bool {
 		}
 	}
 	return true
+}
+
+// listVolumeFiles returns the folder and the entries one command line
+// argument names: every entry of a folder, or the single file given.
+func listVolumeFiles(arg string) (basePath string, files []fs.DirEntry, err error) {
+	basePath, f := path.Split(util.ResolvePath(arg))
+	if util.FolderExists(arg) {
+		files, err = os.ReadDir(arg)
+		return arg, files, err
+	}
+	if f == "" {
+		files, err = os.ReadDir(basePath)
+		return basePath, files, err
+	}
+	fileInfo, err := os.Stat(arg)
+	if err != nil {
+		return basePath, nil, err
+	}
+	return basePath, []fs.DirEntry{fs.FileInfoToDirEntry(fileInfo)}, nil
+}
+
+// volumeFile is a volume file name split into its parts.
+type volumeFile struct {
+	baseFileName string
+	collection   string
+	volumeId     int64
+}
+
+// selectVolumeFile parses a [collection_]id<ext> file name. ok is false when
+// the name does not end in ext or the collection or volumeId filter (when
+// set) excludes it; the filter applies before the range check, so a file it
+// excludes is never an error. An id that is not a number or does not fit a
+// uint32 is an error.
+func selectVolumeFile(name, ext, collection string, volumeId int64) (vf volumeFile, ok bool, err error) {
+	if !strings.HasSuffix(name, ext) {
+		return vf, false, nil
+	}
+	if collection != "" && !strings.HasPrefix(name, collection+"_") {
+		return vf, false, nil
+	}
+	vf.baseFileName = name[:len(name)-len(ext)]
+	idStr := vf.baseFileName
+	if sepIndex := strings.LastIndex(vf.baseFileName, "_"); sepIndex > 0 {
+		vf.collection = vf.baseFileName[:sepIndex]
+		idStr = vf.baseFileName[sepIndex+1:]
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err == nil && volumeId != 0 && volumeId != id {
+		return vf, false, nil
+	}
+	if err == nil && (id < 0 || id > math.MaxUint32) {
+		err = fmt.Errorf("volume id %d out of range", id)
+	}
+	if err != nil {
+		return vf, false, err
+	}
+	vf.volumeId = id
+	return vf, true, nil
 }
 
 // fixEcxFromShardsInDir finds EC volumes in files (identified by their .ec00

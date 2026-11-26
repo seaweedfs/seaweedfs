@@ -86,10 +86,9 @@ func TestSaveToIdxWritesOffsetOrder(t *testing.T) {
 
 // writeFixTestVolume writes a .dat holding needles 1..count and returns its
 // base path and the offset of each needle, in key order.
-func writeFixTestVolume(t *testing.T, dir string, count int) (string, []int64) {
+func writeFixTestVolume(t *testing.T, dir string, count int, version needle.Version) (string, []int64) {
 	t.Helper()
 	base := filepath.Join(dir, "fix_7")
-	version := needle.GetCurrentVersion()
 	f, err := os.OpenFile(base+".dat", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		t.Fatal(err)
@@ -161,7 +160,7 @@ func TestFixSkipsRecordPastEndOfDat(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			base, offsets := writeFixTestVolume(t, dir, 5)
+			base, offsets := writeFixTestVolume(t, dir, 5, needle.GetCurrentVersion())
 			tc.corrupt(t, base+".dat", offsets[4])
 			commandExitStatus = 0
 			doFixOneVolume(dir, "fix_7", "fix", 7, true)
@@ -182,7 +181,7 @@ func TestFixIgnoreErrorReportsIncompleteScan(t *testing.T) {
 
 	t.Run("bad header", func(t *testing.T) {
 		dir := t.TempDir()
-		base, offsets := writeFixTestVolume(t, dir, 5)
+		base, offsets := writeFixTestVolume(t, dir, 5, needle.GetCurrentVersion())
 		overwriteAt(t, base+".dat", offsets[2], bytes.Repeat([]byte{0xa5}, 16))
 		commandExitStatus = 0
 		doFixOneVolume(dir, "fix_7", "fix", 7, false)
@@ -196,7 +195,7 @@ func TestFixIgnoreErrorReportsIncompleteScan(t *testing.T) {
 
 	t.Run("bad super block keeps the existing index", func(t *testing.T) {
 		dir := t.TempDir()
-		base, _ := writeFixTestVolume(t, dir, 3)
+		base, _ := writeFixTestVolume(t, dir, 3, needle.GetCurrentVersion())
 		overwriteAt(t, base+".dat", 0, bytes.Repeat([]byte{0xa5}, 8))
 		if err := os.WriteFile(base+".idx", []byte("previous index"), 0644); err != nil {
 			t.Fatal(err)
@@ -245,7 +244,7 @@ func TestFixVerifyCrcIndexesDamagedNeedlesAsDeleted(t *testing.T) {
 	savedVerify, savedStatus := *fixVerifyCrc, commandExitStatus
 	defer func() { *fixVerifyCrc, commandExitStatus = savedVerify, savedStatus }()
 	dir := t.TempDir()
-	base, offsets := writeFixTestVolume(t, dir, 5)
+	base, offsets := writeFixTestVolume(t, dir, 5, needle.GetCurrentVersion())
 	f, err := os.OpenFile(base+".dat", os.O_RDWR, 0644)
 	if err != nil {
 		t.Fatal(err)
@@ -353,7 +352,7 @@ func (f failingReadAt) ReadAt(p []byte, off int64) (int, error) {
 // A needle -verifyCrc cannot read fails the scan instead of being dropped.
 func TestFixVerifyCrcFailsOnReadError(t *testing.T) {
 	dir := t.TempDir()
-	base, offsets := writeFixTestVolume(t, dir, 3)
+	base, offsets := writeFixTestVolume(t, dir, 3, needle.GetCurrentVersion())
 	f, err := os.Open(base + ".dat")
 	if err != nil {
 		t.Fatal(err)
@@ -371,7 +370,7 @@ func TestFixVerifyCrcFailsOnReadError(t *testing.T) {
 
 func TestLocalDatSizeIgnoresRemoteTier(t *testing.T) {
 	dir := t.TempDir()
-	base, _ := writeFixTestVolume(t, dir, 2)
+	base, _ := writeFixTestVolume(t, dir, 2, needle.GetCurrentVersion())
 	info, err := os.Stat(base + ".dat")
 	if err != nil {
 		t.Fatal(err)
@@ -392,7 +391,7 @@ func TestFixTruncatedDeleteKeepsKeyDeleted(t *testing.T) {
 	savedStatus := commandExitStatus
 	defer func() { commandExitStatus = savedStatus }()
 	dir := t.TempDir()
-	base, _ := writeFixTestVolume(t, dir, 3)
+	base, _ := writeFixTestVolume(t, dir, 3, needle.GetCurrentVersion())
 	f, err := os.OpenFile(base+".dat", os.O_RDWR, 0644)
 	if err != nil {
 		t.Fatal(err)
