@@ -738,15 +738,18 @@ async fn batch_delete_file_ids(
 }
 
 /// `query` with the fields named in `overrides` replaced by their values.
-fn override_query_fields(query: &str, overrides: &[(&str, String)]) -> Result<String, String> {
+fn override_query_fields(
+    query: &str,
+    overrides: &[(&str, String)],
+    removed: &[&str],
+) -> Result<String, String> {
     let mut fields = Vec::new();
     for field in query.split('&').filter(|field| !field.is_empty()) {
         let decoded: Vec<(String, String)> = serde_urlencoded::from_str(field)
             .map_err(|e| format!("parse replication query: {e}"))?;
-        if !decoded
-            .iter()
-            .any(|(name, _)| overrides.iter().any(|(o, _)| o == name))
-        {
+        if !decoded.iter().any(|(name, _)| {
+            overrides.iter().any(|(o, _)| o == name) || removed.contains(&name.as_str())
+        }) {
             fields.push(field);
         }
     }
@@ -848,7 +851,7 @@ async fn do_replicated_request(
         return Ok(());
     }
 
-    let new_query = override_query_fields(query, &[("type", "replicate".to_string())])?;
+    let new_query = override_query_fields(query, &[("type", "replicate".to_string())], &["src"])?;
 
     let mut futures = Vec::new();
     for loc in remote_locations {
@@ -3494,7 +3497,7 @@ pub async fn post_handler(
                 vid.0,
                 Method::POST,
                 &path_clone,
-                &override_query_fields(&query_clone, &overrides)?,
+                &override_query_fields(&query_clone, &overrides, &[])?,
                 &replica_headers,
                 Some(replica_body),
             )
@@ -5523,6 +5526,17 @@ mod tests {
                 .map(|(_, v)| v.as_str()),
             Some("true")
         );
+    }
+
+    #[test]
+    fn test_override_query_fields_removes_src() {
+        let q = override_query_fields(
+            "%73rc=client&fsync=true&type=x",
+            &[("type", "replicate".to_string())],
+            &["src"],
+        )
+        .unwrap();
+        assert_eq!(q, "fsync=true&type=replicate");
     }
 
     /// Every URL form the volume server accepts, against what Go's
