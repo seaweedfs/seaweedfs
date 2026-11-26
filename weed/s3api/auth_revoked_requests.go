@@ -100,6 +100,12 @@ func (iam *IdentityAccessManagement) abortWhenRevoked(f http.HandlerFunc, identi
 	if tracked == nil || identity == nil {
 		return f
 	}
+	switch action {
+	case s3_constants.ACTION_PUT_BUCKET_POLICY, s3_constants.ACTION_DELETE_BUCKET_POLICY, s3_constants.ACTION_DELETE_BUCKET:
+		// Its re-check would judge it by the policy change it makes itself,
+		// and aborting it once that change is stored only hides its success.
+		return f
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		source, cred := iam.identitySource(r, identity)
 		if source == fromSession {

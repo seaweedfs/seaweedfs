@@ -286,6 +286,30 @@ func TestAbortRequestsDeniedByBucketPolicy(t *testing.T) {
 	assert.NoError(t, downloadResult(t, other, 5*time.Second), "no policy covers other")
 }
 
+// A request that changes a bucket policy is not aborted by its own change,
+// while a read on the same bucket that the new policy denies is.
+func TestBucketPolicyChangeKeepsItsOwnRequest(t *testing.T) {
+	iam := newRevokeIAM(t, revokeIdentity("bob", revokeKeyB, revokeSecretB, "Admin"))
+	iam.policyEngine = NewBucketPolicyEngine()
+	started := make(chan struct{}, 4)
+	read := download(t, serveRevokeS3(t, started, authRead(iam))+"/bkt/object", revokeKeyB, revokeSecretB)
+	var changes []<-chan error
+	for _, action := range []Action{s3_constants.ACTION_PUT_BUCKET_POLICY, s3_constants.ACTION_DELETE_BUCKET_POLICY, s3_constants.ACTION_DELETE_BUCKET} {
+		base := serveRevokeS3(t, started, func(f http.HandlerFunc) http.HandlerFunc { return iam.Auth(f, action) })
+		changes = append(changes, download(t, base+"/bkt/object", revokeKeyB, revokeSecretB))
+	}
+	waitStarted(t, started, 4)
+
+	require.NoError(t, iam.policyEngine.engine.SetBucketPolicy("bkt",
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3:*","Resource":["arn:aws:s3:::bkt","arn:aws:s3:::bkt/*"]}]}`))
+	iam.revalidateBucketInFlight("bkt")
+
+	assert.Error(t, downloadResult(t, read, time.Second), "the bucket policy denies the read")
+	for i, done := range changes {
+		assert.NoError(t, downloadResult(t, done, 5*time.Second), "change %d", i)
+	}
+}
+
 // A re-check judges time conditions as of when the request was admitted, so a
 // grant that expires while the request runs does not abort it.
 func TestAbortRevokedRequestsJudgesTimeAsOfAdmission(t *testing.T) {
