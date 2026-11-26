@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // A zero fill that erases a live record's payload length and flags but keeps
@@ -321,6 +322,37 @@ func TestVerifyResyncedDeleteRecordGuards(t *testing.T) {
 				}
 			}); err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestRunFixRejectsVerifyFlagCombinations(t *testing.T) {
+	dir := t.TempDir()
+	writeFixTestVolume(t, dir, 2)
+	idx := filepath.Join(dir, "fix_7.idx")
+	for _, tc := range []struct {
+		name                                     string
+		verify, remote, dryRun, truncate, genEcx bool
+	}{
+		{name: "verify+remoteFile", verify: true, remote: true},
+		{name: "dryRun without verify", dryRun: true},
+		{name: "truncateTail without verify", truncate: true},
+		{name: "verify+dryRun+ecx", verify: true, dryRun: true, genEcx: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			saved := []bool{*fixVerify, *fixRemoteFile, *fixDryRun, *fixTruncateTail, *fixGenerateEcx}
+			*fixVerify, *fixRemoteFile, *fixDryRun, *fixTruncateTail, *fixGenerateEcx = tc.verify, tc.remote, tc.dryRun, tc.truncate, tc.genEcx
+			t.Cleanup(func() {
+				*fixVerify, *fixRemoteFile, *fixDryRun, *fixTruncateTail, *fixGenerateEcx = saved[0], saved[1], saved[2], saved[3], saved[4]
+			})
+			captureStdout(t, func() {
+				if runFix(cmdFix, []string{filepath.Join(dir, "fix_7.dat")}) {
+					t.Errorf("runFix accepted %s", tc.name)
+				}
+			})
+			if util.FileExists(idx) {
+				t.Fatalf("%s wrote an index", tc.name)
 			}
 		})
 	}

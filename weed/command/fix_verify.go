@@ -621,9 +621,6 @@ func truncateDatTail(datName string, cleanEnd int64) error {
 // verify, resynchronising past damaged regions. Errors are returned so the
 // caller can honour -ignoreError and move on to the next volume.
 func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64, indexFileName string) error {
-	if *fixRemoteFile {
-		return fmt.Errorf("-verify reads the local .dat and cannot be combined with -remoteFile")
-	}
 	vid, err := needle.NewVolumeId(strconv.FormatInt(volumeId, 10))
 	if err != nil {
 		return fmt.Errorf("volume ID out of range: %d", volumeId)

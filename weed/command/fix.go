@@ -113,6 +113,18 @@ func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64
 }
 
 func runFix(cmd *Command, args []string) bool {
+	if *fixVerify && *fixRemoteFile {
+		fmt.Println("-verify reads the local .dat and cannot be combined with -remoteFile")
+		return false
+	}
+	if (*fixDryRun || *fixTruncateTail) && !*fixVerify {
+		fmt.Println("-dryRun and -truncateTail only apply with -verify")
+		return false
+	}
+	if *fixDryRun && *fixGenerateEcx {
+		fmt.Println("-dryRun cannot be combined with -ecx, which writes the .ecx")
+		return false
+	}
 	for _, arg := range args {
 		basePath, f := path.Split(util.ResolvePath(arg))
 		if util.FolderExists(arg) {
