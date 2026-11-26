@@ -124,7 +124,7 @@ run-suite: build-suite
 		$(CURDIR)/$(SUITE_BINARY) -test.v -test.run '^TestIntegration$$' -test.timeout 20m -remote swfs:; \
 		echo $$? > $(CURDIR)/suite.exit; } 2>&1 | \
 		go tool test2json -p rclone > $(CURDIR)/results.jsonl || true
-	python3 check_results.py results.jsonl expected_failures.txt suite.exit
+	python3 check_results.py results.jsonl expected_failures.txt --skips expected_skips.txt --exit-code suite.exit
 
 test-with-server:
 	@$(MAKE) start-server || exit $$?; \

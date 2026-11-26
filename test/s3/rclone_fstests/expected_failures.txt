@@ -26,3 +26,8 @@ TestIntegration/FsMkdir/FsEncoding/trailing_VT  # name with a vertical tab liste
 # BucketAlreadyOwnedByYou, which rclone expects only with use_already_exists set;
 # the SeaweedFS provider defaults it to false and rclone.conf keeps that (see there).
 TestIntegration/FsMkdir/FsPutFiles/Internal/Versions/Mkdir  # rclone provider quirk use_already_exists=false
+
+# The test itself, not its subtests: FsMkdir ends by removing the test bucket,
+# and DeleteBucket answers 409 BucketNotEmpty although no keys are left -
+# leftover empty directories (#5442) or FsEncoding objects that were not deleted.
+TestIntegration/FsMkdir  # DeleteBucket returns BucketNotEmpty at the end of the run

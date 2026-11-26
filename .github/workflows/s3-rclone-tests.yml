@@ -5,16 +5,22 @@ on:
     branches: [ master ]
     paths:
       - 'weed/s3api/**'
-      - 'weed/server/filer_server_handlers_*.go'
-      - 'weed/filer/empty_folder_cleanup/**'
+      - 'weed/filer/**'
+      - 'weed/server/**'
+      - 'weed/command/mini.go'
+      - 'go.mod'
+      - 'go.sum'
       - 'test/s3/rclone_fstests/**'
       - '.github/workflows/s3-rclone-tests.yml'
   pull_request:
     branches: [ master ]
     paths:
       - 'weed/s3api/**'
-      - 'weed/server/filer_server_handlers_*.go'
-      - 'weed/filer/empty_folder_cleanup/**'
+      - 'weed/filer/**'
+      - 'weed/server/**'
+      - 'weed/command/mini.go'
+      - 'go.mod'
+      - 'go.sum'
       - 'test/s3/rclone_fstests/**'
       - '.github/workflows/s3-rclone-tests.yml'
 

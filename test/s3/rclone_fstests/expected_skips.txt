@@ -1,0 +1,23 @@
+# rclone fstests (TestIntegration, S3 backend) that are expected to be skipped.
+# check_results.py fails CI on any other skip, so a feature that silently turns
+# into a skip (e.g. Object Lock or versioning setup failing) is noticed, and on
+# any test listed here that runs, so remove an entry once it does.
+# These skips come from rclone itself: features the S3 backend does not have or
+# that the remote does not advertise.
+# Format: <full test name>
+TestIntegration/FsCheckWrap
+TestIntegration/FsMkdir/FsOpenWriterAt
+TestIntegration/FsMkdir/FsChangeNotify
+TestIntegration/FsMkdir/FsPutFiles/FsNewObjectCaseInsensitive
+TestIntegration/FsMkdir/FsPutFiles/FsMove
+TestIntegration/FsMkdir/FsPutFiles/FsDirMove
+TestIntegration/FsMkdir/FsPutFiles/ObjectSetMetadata
+TestIntegration/FsMkdir/FsPutFiles/SetTier
+TestIntegration/FsMkdir/FsPutFiles/ObjectCheckWrap
+TestIntegration/FsMkdir/FsPutFiles/Bucket
+TestIntegration/FsMkdir/FsPutFiles/ObjectAbout
+TestIntegration/FsMkdir/FsPutFiles/Internal/RmdirRoot
+TestIntegration/FsMkdir/FsDirSetModTime
+TestIntegration/FsMkdir/FsMkdirMetadata
+TestIntegration/FsMkdir/FsDirectory
+TestIntegration/FsShutdown

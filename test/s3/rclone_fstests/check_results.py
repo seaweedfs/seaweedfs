@@ -1,16 +1,27 @@
 #!/usr/bin/env python3
-"""Compare rclone fstests results (go test2json events) with expected_failures.txt.
+"""Compare rclone fstests results (go test2json events) with the expected lists.
 
-Only leaf subtests are judged: a parent test fails whenever one of its children
-does, so its own status says nothing new. Fails on any leaf failure that is not
-listed, on any listed test that passed, was skipped or did not run, on a test
-that started but never finished, and on a failure outside any test (panic,
--test.timeout), so the list only ever shrinks.
+A test fails CI when its result differs from what the lists say:
+- a leaf subtest that failed must be in expected_failures.txt;
+- a parent test fails whenever one of its children does, so its status alone
+  says nothing new. It counts as failing on its own when it has no failed
+  subtest or when testify reported an assertion under it ("Error Trace:" in
+  the output test2json attributes to it, e.g. a deferred cleanup check), and
+  then it must be listed too;
+- a skipped test must be in expected_skips.txt, so a feature that silently
+  turns into a skip (Object Lock, versioning) is noticed;
+- a listed test that passed, was skipped instead of failing, ran instead of
+  being skipped, or did not run at all fails CI as well, so the lists only
+  ever shrink together with fixes.
+Tests that started but never finished, and a test binary exit code other than
+0 or 1 (panic, -test.timeout), fail CI too.
 """
+import argparse
 import json
 import sys
 
 FINAL_ACTIONS = ("pass", "fail", "skip")
+OWN_ASSERTION_MARKER = "Error Trace:"
 
 
 def load_expected(path):
@@ -34,8 +45,9 @@ def load_events(path):
     return events
 
 
-def evaluate(events, expected, exit_code=None):
-    started, status = set(), {}
+def evaluate(events, expected, exit_code=None, expected_skips=None):
+    """Return the problems found; skips are only checked when expected_skips is given."""
+    started, status, asserted = set(), {}, set()
     package_failed = False
     for e in events:
         action, test = e.get("Action"), e.get("Test")
@@ -46,6 +58,8 @@ def evaluate(events, expected, exit_code=None):
             started.add(test)
         elif action in FINAL_ACTIONS:
             status[test] = action
+        elif action == "output" and OWN_ASSERTION_MARKER in e.get("Output", ""):
+            asserted.add(test)
 
     names = started | set(status)
     if not names:
@@ -63,43 +77,63 @@ def evaluate(events, expected, exit_code=None):
     if exit_code not in (None, 0, 1):
         problems.append(f"the test binary ended with exit code {exit_code} (panic or -test.timeout?); later tests did not run")
 
-    leaves = {n for n in names if not any(o.startswith(n + "/") for o in names)}
-    for name in sorted(leaves):
-        if status.get(name) == "fail" and name not in expected:
-            problems.append(f"{name}: unexpected failure")
-    # A parent fails whenever a child does; one with no failed descendant failed on
-    # its own (an assertion after its subtests, its cleanup).
-    for name in sorted(names - leaves):
-        if status.get(name) == "fail" and not any(
-            o.startswith(name + "/") and status.get(o) == "fail" for o in names
-        ):
-            problems.append(f"{name}: unexpected failure (no failed subtest)")
+    def has_children(name):
+        return any(o.startswith(name + "/") for o in names)
+
+    def failed_on_its_own(name):
+        if status.get(name) != "fail":
+            return False
+        if name in asserted or not has_children(name):
+            return True
+        return not any(o.startswith(name + "/") and status.get(o) == "fail" for o in names)
+
+    for name in sorted(names):
+        if failed_on_its_own(name) and name not in expected:
+            kind = "unexpected failure" if not has_children(name) else "unexpected failure of the test itself, not of its subtests"
+            problems.append(f"{name}: {kind}")
     for name in sorted(expected):
         result = status.get(name)
         if result == "pass":
             problems.append(f"{name}: XPASS, remove it from expected_failures.txt")
+        elif result == "fail" and not failed_on_its_own(name):
+            problems.append(f"{name}: now fails only through its subtests, remove it from expected_failures.txt")
         elif result != "fail":
             problems.append(f"{name}: listed as an expected failure but did not fail ({result or 'not run'})")
+
+    if expected_skips is not None:
+        for name in sorted(n for n in names if status.get(n) == "skip" and n not in expected_skips):
+            problems.append(f"{name}: unexpected skip")
+        for name in sorted(expected_skips):
+            result = status.get(name)
+            if result != "skip":
+                problems.append(f"{name}: listed as an expected skip but {result or 'did not run'}")
     return problems
 
 
 def main():
-    if len(sys.argv) not in (3, 4):
-        sys.exit("usage: check_results.py <results.jsonl> <expected_failures.txt> [<exit code file>]")
-    events = load_events(sys.argv[1])
-    expected = load_expected(sys.argv[2])
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("results", help="test2json output (JSON lines)")
+    ap.add_argument("expected_failures")
+    ap.add_argument("--skips", help="expected_skips.txt; without it skips are not checked")
+    ap.add_argument("--exit-code", help="file holding the test binary's exit status")
+    args = ap.parse_args()
+
+    events = load_events(args.results)
+    expected = load_expected(args.expected_failures)
+    skips = load_expected(args.skips) if args.skips else None
     exit_code = None
-    if len(sys.argv) == 4:
-        with open(sys.argv[3]) as f:
+    if args.exit_code:
+        with open(args.exit_code) as f:
             exit_code = int(f.read().strip())
-    problems = evaluate(events, expected, exit_code)
+    problems = evaluate(events, expected, exit_code, skips)
     if problems:
-        print("rclone fstests do not match expected_failures.txt:", file=sys.stderr)
+        print("rclone fstests do not match the expected lists:", file=sys.stderr)
         for p in problems:
             print("  " + p, file=sys.stderr)
         sys.exit(1)
-    leaves = sum(1 for e in events if e.get("Action") == "pass" and e.get("Test"))
-    print(f"rclone fstests OK: {leaves} passed tests, {len(expected)} expected failures still fail")
+    passed = sum(1 for e in events if e.get("Action") == "pass" and e.get("Test"))
+    print(f"rclone fstests OK: {passed} passed (parents included), "
+          f"{len(expected)} expected failures still fail, {len(skips or ())} expected skips")
 
 
 if __name__ == "__main__":

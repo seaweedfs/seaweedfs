@@ -18,6 +18,21 @@ def finished(test, action):
     return [ev("run", test), ev(action, test)]
 
 
+def output(test, text):
+    event = ev("output", test)
+    event["Output"] = text
+    return event
+
+
+def own_assertion_run():
+    """T/P/A fails, then T/P fails its own deferred assertion."""
+    return (
+        [ev("run", "T"), ev("run", "T/P"), ev("run", "T/P/A"), ev("fail", "T/P/A")]
+        + [output("T/P", "        \tError Trace:\tx_test.go:1\n"), ev("fail", "T/P")]
+        + [ev("fail", "T"), ev("fail")]
+    )
+
+
 class EvaluateTest(unittest.TestCase):
     def test_all_pass_ok(self):
         events = finished("TestIntegration", "pass") + finished("TestIntegration/A", "pass")
@@ -84,6 +99,39 @@ class EvaluateTest(unittest.TestCase):
     def test_failing_run_exit_code_one_ok(self):
         events = finished("T/A", "fail") + finished("T", "fail") + [ev("fail")]
         self.assertEqual(check_results.evaluate(events, {"T/A"}, exit_code=1), [])
+
+    def test_parent_own_assertion_with_failed_child_fails(self):
+        # testify prints "Error Trace:" under the test that asserted; test2json
+        # attributes that output to the parent, not to the expected child.
+        events = own_assertion_run()
+        problems = check_results.evaluate(events, {"T/P/A"})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("T/P:", problems[0])
+
+    def test_expected_parent_own_failure_ok(self):
+        self.assertEqual(check_results.evaluate(own_assertion_run(), {"T/P/A", "T/P"}), [])
+
+    def test_expected_parent_failing_only_through_child_fails(self):
+        events = finished("T/P/A", "fail") + finished("T/P", "fail") + finished("T", "fail") + [ev("fail")]
+        problems = check_results.evaluate(events, {"T/P/A", "T/P"})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("T/P:", problems[0])
+
+    def test_unlisted_skip_fails_with_skip_list(self):
+        events = finished("T", "pass") + finished("T/A", "skip")
+        problems = check_results.evaluate(events, set(), expected_skips=set())
+        self.assertEqual(len(problems), 1)
+        self.assertIn("T/A", problems[0])
+
+    def test_listed_skip_ok(self):
+        events = finished("T", "pass") + finished("T/A", "skip")
+        self.assertEqual(check_results.evaluate(events, set(), expected_skips={"T/A"}), [])
+
+    def test_listed_skip_that_runs_fails(self):
+        events = finished("T", "pass") + finished("T/A", "pass")
+        problems = check_results.evaluate(events, set(), expected_skips={"T/A"})
+        self.assertEqual(len(problems), 1)
+        self.assertIn("T/A", problems[0])
 
     def test_no_results_fails(self):
         self.assertNotEqual(check_results.evaluate([], set()), [])
