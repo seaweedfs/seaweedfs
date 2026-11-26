@@ -25,9 +25,11 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/constants"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestFilerInlineAppendStaysInlineBelowLimit(t *testing.T) {
@@ -458,6 +460,52 @@ func TestFilerInlineOffsetWriteRemainsUnsupported(t *testing.T) {
 	}
 	if !bytes.Equal(unchanged.Content, oldContent) || unchanged.FileSize != uint64(len(oldContent)) {
 		t.Fatalf("unsupported offset write changed entry: content=%q size=%d", unchanged.Content, unchanged.FileSize)
+	}
+}
+
+func TestFilerPartialWriteRefusesRemoteOnlyEntry(t *testing.T) {
+	ctx := context.Background()
+	const filePath = "/remote.txt"
+	for _, tc := range []struct {
+		name    string
+		query   string
+		chunks  []*filer_pb.FileChunk
+		content []byte
+	}{
+		{name: "chunk append", query: "?op=append", chunks: []*filer_pb.FileChunk{{FileId: "1,00000002", Size: 4}}},
+		{name: "inline append", query: "?op=append", content: []byte("new-")},
+		{name: "offset write", query: "?offset=2", chunks: []*filer_pb.FileChunk{{FileId: "1,00000002", Offset: 2, Size: 2}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newRenameTestStore()
+			f := newRenameTestFiler(t, store)
+			stored := &filer.Entry{
+				FullPath: util.FullPath(filePath),
+				Attr:     filer.Attr{Mtime: time.Unix(1, 0), Crtime: time.Unix(1, 0), Mode: 0644, FileSize: 4},
+				Remote:   &filer_pb.RemoteEntry{StorageName: "remote", RemoteSize: 4, RemoteMtime: 1700000000},
+			}
+			if err := store.InsertEntry(ctx, stored); err != nil {
+				t.Fatalf("insert remote-only entry: %v", err)
+			}
+			want := stored.ToProtoEntry()
+
+			fs := &FilerServer{filer: f, option: &FilerOption{SaveToFilerLimit: 12, MaxMB: 1}}
+			r := httptest.NewRequest(http.MethodPut, filePath+tc.query, bytes.NewReader([]byte("new-")))
+			_, err, cleanupChunks := fs.saveMetaData(ctx, r, "remote.txt", "", &operation.StorageOption{}, 4, nil, tc.chunks, 4, tc.content)
+			if err == nil || err.Error() != constants.ErrMsgPartialWriteRemoteOnly {
+				t.Fatalf("partial write error = %v, want %q", err, constants.ErrMsgPartialWriteRemoteOnly)
+			}
+			if len(cleanupChunks) != len(tc.chunks) {
+				t.Fatalf("refused write returned %d cleanup chunks, want %d", len(cleanupChunks), len(tc.chunks))
+			}
+			unchanged, err := f.FindEntry(ctx, util.FullPath(filePath))
+			if err != nil {
+				t.Fatalf("find remote-only entry: %v", err)
+			}
+			if !proto.Equal(unchanged.ToProtoEntry(), want) || !unchanged.IsInRemoteOnly() {
+				t.Fatalf("refused write changed the remote-only entry: %v", unchanged.ToProtoEntry())
+			}
+		})
 	}
 }
 
