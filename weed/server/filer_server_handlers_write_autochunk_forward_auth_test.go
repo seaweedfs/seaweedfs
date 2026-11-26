@@ -3,12 +3,14 @@ package weed_server
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -96,6 +98,57 @@ func TestSaveMetaDataHTTPForwardAuthFollowsRequireMode(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A refused append deletes the manifest this filer generated, but not the
+// committed chunks the manifest lists.
+func TestRefusedHTTPAppendCleansGeneratedManifest(t *testing.T) {
+	c, key := newHTTPForwardAuthFilers(t, true)
+	_, uploaded := newInlineAppendUploadServer(t, c.fsA.filer, 0, 0)
+	path := c.keyOwnedBy(t, c.addrB, c.addrB)
+	entry := newFileEntry(string(path), 7)
+	for i := 0; i < filer.SmallChunkManifestBatch-1; i++ {
+		entry.Chunks = append(entry.Chunks, &filer_pb.FileChunk{FileId: fmt.Sprintf("3,old%d", i), Offset: int64(i) * 3, Size: 3})
+	}
+	entry.FileSize = uint64(len(entry.Chunks)) * 3
+	if err := c.store.InsertEntry(context.Background(), entry); err != nil {
+		t.Fatalf("seed entry: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPut, string(path)+"?op=append", nil)
+	setHTTPForwardAuth(t, r, key, "expired")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, saveErr, uncommitted := c.fsA.saveMetaData(ctx, r, path.Name(), "", &operation.StorageOption{}, 4, nil, []*filer_pb.FileChunk{{FileId: "3,new", Size: 3}}, 3, nil)
+	if got := status.Code(saveErr); got != codes.Unauthenticated {
+		t.Fatalf("saveMetaData error code = %v, want Unauthenticated (error=%v)", got, saveErr)
+	}
+	if len(uncommitted) != 1 || uncommitted[0].GetFileIdString() != "3,new" {
+		t.Fatalf("uncommitted chunks = %v, want only the new chunk", uncommitted)
+	}
+
+	uploaded.mu.Lock()
+	var manifests []string
+	for fileId := range uploaded.data {
+		manifests = append(manifests, fileId)
+	}
+	uploaded.mu.Unlock()
+	if len(manifests) != 1 {
+		t.Fatalf("uploaded blobs = %v, want one generated manifest", manifests)
+	}
+	var queued []string
+	c.fsA.filer.FileIdDeletionQueue.Consume(func(fileIds []string) { queued = append(queued, fileIds...) })
+	if len(queued) != 1 || queued[0] != manifests[0] {
+		t.Fatalf("queued deletions = %v, want only the generated manifest %s", queued, manifests[0])
+	}
+
+	stored, err := c.store.FindEntry(ctx, path)
+	if err != nil {
+		t.Fatalf("find entry: %v", err)
+	}
+	if got := len(stored.GetChunks()); got != filer.SmallChunkManifestBatch-1 {
+		t.Fatalf("stored chunk count = %d, want %d", got, filer.SmallChunkManifestBatch-1)
 	}
 }
 

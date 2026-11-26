@@ -460,6 +460,7 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 	}
 
 	// maybe compact entry chunks
+	unmanifested := mergedChunks
 	mergedChunks, replyerr = filer.MaybeManifestize(fs.saveAsChunk(ctx, so), fs.filer.DeleteChunksNotRecursive, mergedChunks)
 	if replyerr != nil {
 		glog.V(0).InfofCtx(ctx, "manifestize %s: %v", r.RequestURI, replyerr)
@@ -558,7 +559,11 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 		case routed && errors.Is(dbErr, filer_pb.ErrPreconditionFailed):
 			replyerr = fmt.Errorf("entry %s changed during append; retry the request", path)
 		case routed && status.Code(dbErr) == codes.Unauthenticated:
-			// The owner refused the call before running it.
+			// The owner refused the call before running it. A new manifest can
+			// list committed chunks, so only its own blob is deleted.
+			if !inlineAppendConverted {
+				fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunks(mergedChunks, unmanifested))
+			}
 		case routed:
 			// The owner may have committed before the reply was lost, and a
 			// separate local store may not hold that commit yet.
