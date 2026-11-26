@@ -35,11 +35,9 @@ var cmdFix = &Command{
 	Long: `Fix runs the SeaweedFS fix command on local dat files ( or remote files) or whole folders to re-create the index .idx file. If fixing remote files, you need to synchronize master.toml to the same directory on the current node as on the master node.
   You Need to stop the volume server when running this command.
   Use -ecx to rebuild a lost EC index (.ecx) — and the .vif when missing — from the local .ec## shards.
-  On a damaged .dat, fix indexes only the needles before the first unreadable header or a record cut off by the end of the file, and exits non-zero; repair from a replica, or run fix on a copy, before compacting or loading the volume.
+  On a damaged .dat, fix indexes only the needles before the first unreadable header or a record cut off by the end of the file, and exits non-zero; repair from a replica, or run fix on a copy, before compacting or loading the volume. To recover the needles after the damage, use "weed fix.recover".
   With -ignoreError, fix keeps going and writes what it could index, but still exits non-zero if any volume failed.
   With -verifyCrc, fix also reads every needle, indexes the ones whose data fails its CRC check as deleted, and exits non-zero if it found any.
-  -verify writes the rebuilt .idx next to the .dat; a volume server started with -dir.idx uses an .idx next to the .dat in preference to the one in that directory. It removes stale .ldb, .sdx and .rdb caches next to the index, and exits non-zero if it found damage.
-  -verify refuses to run while a .cpc compaction commit marker exists: start the volume server once so it reconciles the interrupted vacuum, then re-run.
 `,
 }
 

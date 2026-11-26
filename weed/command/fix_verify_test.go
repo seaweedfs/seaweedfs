@@ -222,7 +222,7 @@ func TestVerifyDatFileTornTailAndTruncate(t *testing.T) {
 }
 
 // TestFixVerifyLoadsWritable corrupts a volume in the middle and at the tail,
-// rebuilds it with the -verify path, and loads it with the real volume code to
+// rebuilds it with fix.recover, and loads it with the real volume code to
 // make sure the load-time integrity check no longer flips it read-only.
 func TestFixVerifyLoadsWritable(t *testing.T) {
 	datName, layout := buildVerifyFixture(t, 30)

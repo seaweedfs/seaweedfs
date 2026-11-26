@@ -22,13 +22,13 @@ import (
 //   - #5674: a .dat whose head (right after the superblock) is zero-filled must
 //     still yield every needle behind the damaged region.
 //   - #12914: one bad header in the middle currently makes plain `weed fix`
-//     drop every later needle and index nothing after the damage; `-verify`
+//     drop every later needle and index nothing after the damage; `fix.recover`
 //     must recover the survivors, including the newest copy of a rewritten
 //     needle, and a zeroed superblock must be a clear error, not a silent
 //     version-0 parse.
 
 // TestIssue5674ZeroFilledHead covers the geometry reported in #5674: the
-// volume starts with zeros instead of the first needle records. `fix -verify`
+// volume starts with zeros instead of the first needle records. `fix.recover`
 // must report the zero-filled region and index every surviving needle.
 func TestIssue5674ZeroFilledHead(t *testing.T) {
 	const lostRecords = 6
@@ -86,7 +86,7 @@ func TestIssue5674ZeroFilledHead(t *testing.T) {
 
 // TestIssue12914LegacyFixDropsNeedlesAfterDamage pins the behaviour reported in
 // #12914 item 1: plain `weed fix` stops at the first bad header and loses every
-// needle behind it; `weed fix -verify` recovers them.
+// needle behind it; `weed fix.recover` recovers them.
 func TestIssue12914LegacyFixDropsNeedlesAfterDamage(t *testing.T) {
 	dir := t.TempDir()
 	base, offsets := writeFixTestVolume(t, dir, 8)
@@ -107,7 +107,7 @@ func TestIssue12914LegacyFixDropsNeedlesAfterDamage(t *testing.T) {
 	withVerifyFlags(t, true)
 	doRecoverOneVolume(dir, "fix_7", 7)
 	if got := indexedKeys(t, base+".idx"); !slices.Equal(got, []uint64{1, 2, 3, 4, 6, 7, 8}) {
-		t.Fatalf("weed fix -verify indexed %v, want [1 2 3 4 6 7 8]", got)
+		t.Fatalf("weed fix.recover indexed %v, want [1 2 3 4 6 7 8]", got)
 	}
 }
 
