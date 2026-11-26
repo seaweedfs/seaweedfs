@@ -819,3 +819,70 @@ func TestIsReplicaForward(t *testing.T) {
 	require.False(t, IsReplicaForward(url.Values{"type": {"replicate"}, "src": {"client"}}))
 	require.False(t, IsReplicaForward(url.Values{}))
 }
+
+// A volume overload is retried on one fresh assignment and then given up, so
+// a busy cluster is not hit again and again while the chunk buffer is held.
+func TestUploadReaderInChunksReassignsOnceOnOverload(t *testing.T) {
+	t.Run("relay", func(t *testing.T) {
+		_, assigns, err := uploadSingleChunk(t, func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+			return nil, &uploadStatusError{StatusCode: http.StatusServiceUnavailable, err: errors.New("volume server upload limit")}
+		})
+		if !IsUploadOverloaded(err) {
+			t.Fatalf("expected the overload to reach the caller, got %v", err)
+		}
+		if assigns != 2 {
+			t.Fatalf("expected 2 assignments, got %d", assigns)
+		}
+	})
+
+	t.Run("fan-out", func(t *testing.T) {
+		var overloadedPosts int32
+		overloaded := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+			atomic.AddInt32(&overloadedPosts, 1)
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprint(w, `{"error":"volume server upload limit"}`)
+		}))
+		defer overloaded.Close()
+		healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"name":"chunk","size":4096}`)
+		}))
+		defer healthy.Close()
+		host := func(s *httptest.Server) string { return strings.TrimPrefix(s.URL, "http://") }
+
+		var assigns int32
+		_, err := UploadReaderInChunks(context.Background(), bytes.NewReader(bytes.Repeat([]byte("x"), 4096)), &ChunkedUploadOption{
+			ChunkSize:  8 * 1024,
+			Collection: "test",
+			AssignFunc: func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+				n := atomic.AddInt32(&assigns, 1)
+				// Two holders, so uploadChunk takes the fan-out path.
+				return nil, &AssignResult{
+					Fid:      fmt.Sprintf("%d,0a0b0c0d", n),
+					Url:      host(healthy),
+					Replicas: []Location{{Url: host(overloaded)}},
+					Count:    1,
+				}, nil
+			},
+		})
+		if !IsUploadOverloaded(err) {
+			t.Fatalf("expected the overload to reach the caller, got %v", err)
+		}
+		if got := atomic.LoadInt32(&assigns); got != 2 {
+			t.Fatalf("expected 2 assignments, got %d", got)
+		}
+		// One POST per assignment: no same-holder retry under the reassign.
+		if got := atomic.LoadInt32(&overloadedPosts); got != 2 {
+			t.Fatalf("overloaded holder saw %d POSTs, want 2", got)
+		}
+	})
+}

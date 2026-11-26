@@ -141,6 +141,28 @@ type uploadStatusError struct {
 func (e *uploadStatusError) Error() string { return e.err.Error() }
 func (e *uploadStatusError) Unwrap() error { return e.err }
 
+// Is matches ErrUploadStalled for a request the stall watchdog cancelled
+// before any response came back.
+func (e *uploadStatusError) Is(target error) bool {
+	return target == ErrUploadStalled && e.StatusCode == 0 && e.stalled
+}
+
+// ErrUploadStalled matches (with errors.Is) an upload the stall watchdog
+// cancelled before the volume server answered. Once its retries are spent it
+// is load, not a fault: the caller should back off and try again.
+var ErrUploadStalled = errors.New("upload stalled")
+
+// IsUploadOverloaded reports whether a volume server refused the upload for
+// lack of capacity (429 or 503). Retrying the same holder right away only adds
+// to its load, so callers give it at most one fresh assignment.
+func IsUploadOverloaded(err error) bool {
+	var se *uploadStatusError
+	if errors.As(err, &se) {
+		return se.StatusCode == http.StatusTooManyRequests || se.StatusCode == http.StatusServiceUnavailable
+	}
+	return false
+}
+
 // ShouldReassignUpload reports whether an upload error means the client should
 // ask for a fresh volume assignment and retry on another volume.
 //
@@ -408,6 +430,12 @@ func (uploader *Uploader) retriedUploadData(ctx context.Context, prepared *prepa
 		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
+		}
+		// An overloaded holder is not asked again from here: the caller's
+		// reassign loop decides whether one fresh assignment is worth it, so
+		// retries stay in one place and do not multiply while buffers are held.
+		if IsUploadOverloaded(err) {
+			return nil, err
 		}
 		var statusErr *uploadStatusError
 		if errors.As(err, &statusErr) {

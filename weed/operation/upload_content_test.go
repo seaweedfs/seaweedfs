@@ -1036,3 +1036,87 @@ func TestUploadWithRetryForeverStopsOnReadOnlyVerdict(t *testing.T) {
 		t.Fatal("RetryForever kept retrying a read-only verdict")
 	}
 }
+
+func TestIsUploadOverloaded(t *testing.T) {
+	testCases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "429", err: &uploadStatusError{StatusCode: http.StatusTooManyRequests, err: errors.New("slow down")}, want: true},
+		{name: "503", err: &uploadStatusError{StatusCode: http.StatusServiceUnavailable, err: errors.New("upload limit")}, want: true},
+		{name: "wrapped 503", err: fmt.Errorf("upload chunk: %w", &uploadStatusError{StatusCode: http.StatusServiceUnavailable, err: errors.New("upload limit")}), want: true},
+		{name: "500", err: &uploadStatusError{StatusCode: http.StatusInternalServerError, err: errors.New("disk full")}, want: false},
+		{name: "no response", err: &uploadStatusError{StatusCode: 0, err: errors.New("dial tcp: refused")}, want: false},
+		{name: "plain error", err: errors.New("503 service unavailable"), want: false},
+		{name: "nil", err: nil, want: false},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsUploadOverloaded(tc.err); got != tc.want {
+				t.Fatalf("IsUploadOverloaded(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// Only a request the stall watchdog cancelled before any response arrived is
+// a stall; a dial failure has the same status 0 and is not.
+func TestUploadStalledMatchesErrUploadStalled(t *testing.T) {
+	testCases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "stalled before a response", err: &uploadStatusError{StatusCode: 0, stalled: true, err: errors.New("context canceled")}, want: true},
+		{name: "wrapped stall", err: fmt.Errorf("upload chunk: %w", &uploadStatusError{StatusCode: 0, stalled: true, err: errors.New("context canceled")}), want: true},
+		{name: "dial failure", err: &uploadStatusError{StatusCode: 0, err: errors.New("dial tcp: refused")}, want: false},
+		{name: "stalled reading a response", err: &uploadStatusError{StatusCode: http.StatusCreated, stalled: true, err: errors.New("context canceled")}, want: false},
+		{name: "plain error", err: errors.New("stalled"), want: false},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := errors.Is(tc.err, ErrUploadStalled); got != tc.want {
+				t.Fatalf("errors.Is(%v, ErrUploadStalled) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// An overloaded holder is not hammered again from the same caller while it
+// holds the chunk buffer: the overload goes straight back to the one place
+// that decides on a reassign. Other failures keep their same-URL retries.
+func TestRetriedUploadDataDoesNotRetryOverload(t *testing.T) {
+	testCases := []struct {
+		name      string
+		status    int
+		wantPosts int32
+	}{
+		{name: "503 overload", status: http.StatusServiceUnavailable, wantPosts: 1},
+		{name: "429 overload", status: http.StatusTooManyRequests, wantPosts: 1},
+		{name: "500 keeps its retries", status: http.StatusInternalServerError, wantPosts: 3},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var posts int32
+			holder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&posts, 1)
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, `{"error":"volume server upload limit"}`)
+			}))
+			defer holder.Close()
+
+			_, err := newUploader(http.DefaultClient).UploadData(context.Background(), []byte("hello"), &UploadOption{
+				UploadUrl: holder.URL + "/3,01637037d6",
+				Filename:  "test.bin",
+			})
+			if err == nil {
+				t.Fatal("expected the upload to fail")
+			}
+			if got := atomic.LoadInt32(&posts); got != tc.wantPosts {
+				t.Fatalf("holder saw %d POSTs, want %d", got, tc.wantPosts)
+			}
+		})
+	}
+}

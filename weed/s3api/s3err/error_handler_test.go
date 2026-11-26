@@ -144,3 +144,22 @@ func (d *drainCheckingResponseWriter) SetReadDeadline(t time.Time) error {
 	d.readDeadlines = append(d.readDeadlines, t)
 	return nil
 }
+
+// A SlowDown tells the client to back off; Retry-After says for how long, so
+// SDKs that honour it wait instead of retrying straight into the overload.
+func TestSlowDownResponseCarriesRetryAfter(t *testing.T) {
+	for _, tc := range []struct {
+		code ErrorCode
+		want string
+	}{
+		{ErrTooManyRequest, "1"},
+		{ErrRequestBytesExceed, "1"},
+		{ErrInternalError, ""},
+	} {
+		req := httptest.NewRequest(http.MethodPut, "/bucket/object", nil)
+		rr := httptest.NewRecorder()
+		WriteErrorResponse(rr, req, tc.code)
+		assert.Equal(t, GetAPIError(tc.code).HTTPStatusCode, rr.Code)
+		assert.Equal(t, tc.want, rr.Header().Get("Retry-After"), "Retry-After for %s", GetAPIError(tc.code).Code)
+	}
+}

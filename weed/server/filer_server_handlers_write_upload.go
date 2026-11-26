@@ -258,12 +258,7 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 	var uploadResult *operation.UploadResult
 	var failedFileChunks []*filer_pb.FileChunk
 
-	// Each attempt assigns anew, so also retry the errors a fresh volume dodges:
-	// a target gone read-only or full mid-write 5xxs until the master notices.
-	shouldRetry := func(err error) bool {
-		return util.IsTransientError(err) || operation.ShouldReassignUpload(err)
-	}
-	err := util.RetryOnError("filerDataToChunk", shouldRetry, func() error {
+	err := util.RetryOnError("filerDataToChunk", newChunkUploadRetryGate(), func() error {
 		// assign one file id for one chunk
 		fileId, urlLocation, auth, uploadErr = fs.assignNewFileInfo(ctx, so, uint64(len(data)))
 		if uploadErr != nil {
@@ -319,4 +314,24 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 	}
 
 	return []*filer_pb.FileChunk{chunk}, nil
+}
+
+// newChunkUploadRetryGate decides, for one chunk, whether another attempt
+// (with a fresh assignment) is worth it.
+func newChunkUploadRetryGate() func(error) bool {
+	overloadRetried := false
+	// Each attempt assigns anew, so also retry the errors a fresh volume dodges:
+	// a target gone read-only or full mid-write 5xxs until the master notices.
+	// An overload gets one fresh assignment only: retrying a cluster short of
+	// upload budget every second while holding the chunk adds to the load.
+	return func(err error) bool {
+		if operation.IsUploadOverloaded(err) {
+			if overloadRetried {
+				return false
+			}
+			overloadRetried = true
+			return true
+		}
+		return util.IsTransientError(err) || operation.ShouldReassignUpload(err)
+	}
 }

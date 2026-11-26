@@ -1924,6 +1924,10 @@ func mapChunkedUploadErrorToS3Error(reqCtx context.Context, err error) s3err.Err
 			return s3err.ErrClientDisconnected
 		}
 		return s3err.ErrIncompleteBody
+	case operation.IsUploadOverloaded(err), errors.Is(err, operation.ErrUploadStalled):
+		// The volumes are short of upload budget, or a stalled write used up
+		// its retries: load the client should back off from, not a fault.
+		return s3err.ErrTooManyRequest
 	default:
 		return s3err.ErrInternalError
 	}

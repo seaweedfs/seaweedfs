@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -45,6 +47,10 @@ type fakeVolumeServer struct {
 	mu          sync.Mutex
 	deletedFids []string
 	stored      map[string][]byte
+	// uploadStatus, when set, answers every upload with that status the way
+	// an over-budget volume server does; uploads counts the POSTs.
+	uploadStatus int
+	uploads      int
 }
 
 func (f *fakeVolumeServer) BatchDelete(_ context.Context, req *volume_server_pb.BatchDeleteRequest) (*volume_server_pb.BatchDeleteResponse, error) {
@@ -99,6 +105,20 @@ func startFakeVolumeServer(t *testing.T) *fakeVolumeServer {
 				return
 			}
 			w.WriteHeader(http.StatusOK)
+			return
+		}
+		v.mu.Lock()
+		status := v.uploadStatus
+		if r.Method == http.MethodPost {
+			v.uploads++
+		} else {
+			status = 0
+		}
+		v.mu.Unlock()
+		if status != 0 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(status)
+			io.WriteString(w, `{"error":"volume server upload limit"}`)
 			return
 		}
 		data, _ := io.ReadAll(r.Body)
@@ -1318,5 +1338,95 @@ func TestTxnConditionHoldsQuotedStoredETag(t *testing.T) {
 	notMatch := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: filer_pb.WriteCondition_IF_ETAG_NOT_MATCH, Etags: []string{"abc123"}}}}
 	if !txnConditionHolds(match, stored) || txnConditionHolds(notMatch, stored) {
 		t.Fatalf("a quoted stored ETag must compare equal to the same ETag")
+	}
+}
+
+// overloadedUploadError returns what a chunk upload to a holder answering
+// status yields, wrapped the way UploadReaderInChunks wraps it.
+func overloadedUploadError(t *testing.T, status int) error {
+	t.Helper()
+	holder := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(status)
+		io.WriteString(w, `{"error":"volume server upload limit"}`)
+	}))
+	defer holder.Close()
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = uploader.UploadData(context.Background(), []byte("hello"), &operation.UploadOption{
+		UploadUrl:   holder.URL + "/3,01637037d6",
+		MaxAttempts: 1,
+	})
+	if err == nil {
+		t.Fatalf("upload against a %d holder succeeded", status)
+	}
+	return fmt.Errorf("upload chunk: %w", err)
+}
+
+// A volume that refuses the write for lack of budget, or a stall that used up
+// its retries, is load the client should back off from: SlowDown, not a 500
+// the client cannot tell from a fault.
+func TestMapChunkedUploadErrorOverloadIsSlowDown(t *testing.T) {
+	// A dial failure is a status-0 error too, but not a stall.
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closedAddr := lis.Addr().String()
+	lis.Close()
+	uploader, err := operation.NewUploader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, dialErr := uploader.UploadData(context.Background(), []byte("hello"), &operation.UploadOption{
+		UploadUrl:   "http://" + closedAddr + "/3,01637037d6",
+		MaxAttempts: 1,
+	})
+	if dialErr == nil {
+		t.Fatal("upload to a closed port succeeded")
+	}
+
+	tests := []struct {
+		name string
+		err  error
+		want s3err.ErrorCode
+	}{
+		{"volume 503", overloadedUploadError(t, http.StatusServiceUnavailable), s3err.ErrTooManyRequest},
+		{"volume 429", overloadedUploadError(t, http.StatusTooManyRequests), s3err.ErrTooManyRequest},
+		{"exhausted stall", fmt.Errorf("upload chunk: %w", operation.ErrUploadStalled), s3err.ErrTooManyRequest},
+		{"volume 500", overloadedUploadError(t, http.StatusInternalServerError), s3err.ErrInternalError},
+		{"dial failure", fmt.Errorf("upload chunk: %w", dialErr), s3err.ErrInternalError},
+		{"plain error", errors.New("upload chunk: 503 service unavailable"), s3err.ErrInternalError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := mapChunkedUploadErrorToS3Error(context.Background(), tt.err); got != tt.want {
+				t.Errorf("mapChunkedUploadErrorToS3Error(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+// End to end: every holder over budget answers 503; the PUT answers SlowDown
+// after one reassign, not an InternalError after three.
+func TestPutToFilerVolumeOverloadAnswersSlowDown(t *testing.T) {
+	volume := startFakeVolumeServer(t)
+	volume.mu.Lock()
+	volume.uploadStatus = http.StatusServiceUnavailable
+	volume.mu.Unlock()
+	filerImpl := &ambiguousPutFiler{volume: volume, entries: map[string]*filer_pb.Entry{}, apply: true}
+	s3a := newPutTestServer(t, startFakeFiler(t, filerImpl))
+
+	_, code := putTestObject(t, s3a)
+	if code != s3err.ErrTooManyRequest {
+		t.Fatalf("putToFiler returned %v, want ErrTooManyRequest (SlowDown)", code)
+	}
+	volume.mu.Lock()
+	uploads := volume.uploads
+	volume.mu.Unlock()
+	if uploads != 2 {
+		t.Fatalf("volume saw %d upload POSTs, want 2 (one per assignment)", uploads)
 	}
 }

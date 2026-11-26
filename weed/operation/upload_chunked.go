@@ -227,6 +227,10 @@ uploadLoop:
 			// A target that fills up, loses its replica peer, or goes away fails
 			// every attempt against the same fid, so ask for a fresh assignment and
 			// retry there rather than losing the whole object to one bad volume.
+			// An overload gets one fresh assignment only: a cluster short of
+			// upload budget is not helped by being asked again while this chunk
+			// holds its buffer, and the client is told to slow down instead.
+			overloadReassigned := false
 			for attempt := 1; ; attempt++ {
 				uploadResult, uploadResultErr = uploadChunk(ctx, assignResult, buf.Bytes(), prepared, jwt, chunkMd5B64, opt)
 				if uploadResultErr == nil {
@@ -239,6 +243,12 @@ uploadLoop:
 				deleteChunkFromHolders(chunkHolders(assignResult), assignResult.Fid, jwt, opt)
 				if attempt == chunkAssignAttempts || !ShouldReassignUpload(uploadResultErr) || objectFailed() {
 					break
+				}
+				if IsUploadOverloaded(uploadResultErr) {
+					if overloadReassigned {
+						break
+					}
+					overloadReassigned = true
 				}
 				glog.V(2).Infof("re-assigning chunk at offset %d after attempt %d/%d: %v", offset, attempt, chunkAssignAttempts, uploadResultErr)
 				_, assignResult, assignErr = opt.AssignFunc(ctx, 1, uint64(size))
