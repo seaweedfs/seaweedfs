@@ -140,6 +140,20 @@ func TestExportedHandlesRemovalKeepsAnotherMountsRegistration(t *testing.T) {
 	kv.waitForRegistrations(t, 8, exportedHandleRegistration{2, "/buckets/b.txt"})
 }
 
+func TestExportedHandlesRestartedMountTakesOverItsRegistration(t *testing.T) {
+	kv := &fakeKv{values: map[string][]byte{}}
+	newExportedHandlesForTest(kv, 1, time.Minute).AcquireHandle(7, "/buckets/a.txt")
+	kv.waitFor(t, 7, "/buckets/a.txt")
+	newExportedHandlesForTest(kv, 2, time.Minute).AcquireHandle(7, "/buckets/a.txt")
+	kv.waitForRegistrations(t, 7, exportedHandleRegistration{1, "/buckets/a.txt"}, exportedHandleRegistration{2, "/buckets/a.txt"})
+
+	restarted := newExportedHandlesForTest(kv, 1, 10*time.Millisecond)
+	restarted.AcquireHandle(7, "/buckets/b.txt")
+	kv.waitForRegistrations(t, 7, exportedHandleRegistration{2, "/buckets/a.txt"}, exportedHandleRegistration{1, "/buckets/b.txt"})
+	restarted.ReleaseHandle(7)
+	kv.waitForRegistrations(t, 7, exportedHandleRegistration{2, "/buckets/a.txt"})
+}
+
 func TestExportedHandlesRecordKeepsNewestRegistrations(t *testing.T) {
 	kv := &fakeKv{values: map[string][]byte{}}
 	var want []exportedHandleRegistration

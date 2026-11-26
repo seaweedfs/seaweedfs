@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"os"
 	"sync"
 	"syscall"
 	"time"
@@ -249,8 +250,15 @@ func (h *exportedHandles) GetPath(ctx context.Context, inode uint64) (util.FullP
 	return registrations[len(registrations)-1].path, fuse.OK
 }
 
+// newExportedHandles names the mount's registrations after its host and mount
+// directory, so a mount restarted in the same place takes over, and in time
+// removes, those its predecessor left.
 func (wfs *WFS) newExportedHandles() *exportedHandles {
-	return newExportedHandles(uint32(wfs.signature), func(key, value []byte) error {
+	owner := uint32(wfs.signature)
+	if hostname, err := os.Hostname(); err == nil {
+		owner = uint32(util.HashToInt32([]byte(hostname + ":" + wfs.option.MountDirectory)))
+	}
+	return newExportedHandles(owner, func(key, value []byte) error {
 		return wfs.withFilerClient(context.Background(), false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.KvPut(ctx, &filer_pb.KvPutRequest{Key: key, Value: value})
 			if err != nil {
