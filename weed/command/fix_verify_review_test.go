@@ -238,6 +238,27 @@ func TestFixVerifyRefusesRemoteTier(t *testing.T) {
 	}
 }
 
+// An unparsable .vif may hide a remote tier, so it is refused the same way.
+func TestFixVerifyRefusesUnreadableVolumeInfo(t *testing.T) {
+	dir := t.TempDir()
+	base, _ := writeFixTestVolume(t, dir, 3)
+	if err := os.WriteFile(base+".idx", []byte("old index, 16 b"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(base+".vif", []byte("{not json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	withVerifyFlags(t, false)
+
+	err := doFixOneVolumeVerified(dir, "fix_7", 7, base+".idx")
+	if err == nil || !strings.Contains(err.Error(), "cannot tell") {
+		t.Fatalf("error %v, want a volume info refusal", err)
+	}
+	if b, err := os.ReadFile(base + ".idx"); err != nil || string(b) != "old index, 16 b" {
+		t.Fatalf("index replaced despite an unreadable .vif: %q %v", b, err)
+	}
+}
+
 // Volume ids are uint32; a larger number in a file name is rejected while
 // parsing instead of being narrowed.
 func TestRunFixRejectsVolumeIdBeyondUint32(t *testing.T) {

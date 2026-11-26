@@ -672,7 +672,11 @@ func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64
 	if cpcPath := strings.TrimSuffix(datName, ".dat") + ".cpc"; util.FileExists(cpcPath) {
 		return fmt.Errorf("volume %d: a compaction commit is pending (%s); start the volume server once so it reconciles the interrupted vacuum, then re-run", volumeId, cpcPath)
 	}
-	if _, hasRemoteFile, _, _ := volume_info.MaybeLoadVolumeInfo(path.Join(basepath, baseFileName+".vif")); hasRemoteFile {
+	_, hasRemoteFile, _, err := volume_info.MaybeLoadVolumeInfo(path.Join(basepath, baseFileName+".vif"))
+	if err != nil {
+		return fmt.Errorf("volume %d: cannot tell whether the volume is on a remote tier: %w", volumeId, err)
+	}
+	if hasRemoteFile {
 		return fmt.Errorf("volume %d: -verify needs the local .dat, the volume is read from a remote tier", volumeId)
 	}
 
