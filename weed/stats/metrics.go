@@ -1408,6 +1408,17 @@ func UpdateBucketSizeMetrics(bucket string, logicalSize, physicalSize float64, o
 	RecordBucketActiveTime(bucket)
 }
 
+// ResetBucketSizeMetrics drops the size, object count, quota and read-only
+// series of every bucket. Only the S3 instance holding the bucket size metrics
+// lock sets them; an instance that does not hold it calls this.
+func ResetBucketSizeMetrics() {
+	S3BucketSizeBytesGauge.Reset()
+	S3BucketPhysicalSizeBytesGauge.Reset()
+	S3BucketObjectCountGauge.Reset()
+	S3BucketQuotaBytesGauge.Reset()
+	S3BucketReadOnlyGauge.Reset()
+}
+
 // UpdateBucketQuotaMetrics updates the per-bucket quota gauges. A non-positive
 // quota removes the quota series so utilization queries like
 // bucket_size_bytes / bucket_quota_bytes only see enforced quotas.

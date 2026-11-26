@@ -80,12 +80,23 @@ func (s3a *S3ApiServer) startBucketSizeMetricsLoop(ctx context.Context) {
 			glog.V(1).Infof("Stopping bucket size metrics collection")
 			return
 		case <-ticker.C:
-			// Only collect metrics if we hold the lock
-			if lock.IsLocked() {
-				s3a.collectAndUpdateBucketSizeMetrics(ctx)
-			}
+			s3a.bucketSizeMetricsTick(ctx, lock.IsLocked())
 		}
 	}
+}
+
+// bucketSizeMetricsTick publishes the bucket size and quota gauges while this
+// instance holds the metrics lock, and drops them while it does not. Nothing
+// else clears them on an instance that lost the lock: bucketMetricTTLControl
+// only drops a bucket after 10 minutes without activity, and each request the
+// instance serves for the bucket counts as activity. Left alone, it would keep
+// exporting the values it collected last next to the new holder's.
+func (s3a *S3ApiServer) bucketSizeMetricsTick(ctx context.Context, locked bool) {
+	if !locked {
+		stats.ResetBucketSizeMetrics()
+		return
+	}
+	s3a.collectAndUpdateBucketSizeMetrics(ctx)
 }
 
 // collectAndUpdateBucketSizeMetrics collects bucket sizes from master topology
