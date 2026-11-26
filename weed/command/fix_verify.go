@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -670,6 +671,9 @@ func doFixOneVolumeVerified(basepath string, baseFileName string, volumeId int64
 	// that decision, so make the operator settle it first.
 	if cpcPath := strings.TrimSuffix(datName, ".dat") + ".cpc"; util.FileExists(cpcPath) {
 		return fmt.Errorf("volume %d: a compaction commit is pending (%s); start the volume server once so it reconciles the interrupted vacuum, then re-run", volumeId, cpcPath)
+	}
+	if _, hasRemoteFile, _, _ := volume_info.MaybeLoadVolumeInfo(path.Join(basepath, baseFileName+".vif")); hasRemoteFile {
+		return fmt.Errorf("volume %d: -verify needs the local .dat, the volume is read from a remote tier", volumeId)
 	}
 
 	nm := needle_map.NewMemDb()

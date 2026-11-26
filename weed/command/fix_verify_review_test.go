@@ -12,10 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -210,6 +212,29 @@ func TestFixVerifyIgnoreErrorContinues(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "fix_7.idx")); !os.IsNotExist(err) {
 		t.Fatalf("an index was written for a volume that could not be verified")
+	}
+}
+
+// A remote-tiered volume is served from its remote .dat through the existing
+// .idx, so a local .dat next to it must not replace that index.
+func TestFixVerifyRefusesRemoteTier(t *testing.T) {
+	dir := t.TempDir()
+	base, _ := writeFixTestVolume(t, dir, 3)
+	if err := os.WriteFile(base+".idx", []byte("old index, 16 b"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	vi := &volume_server_pb.VolumeInfo{Files: []*volume_server_pb.RemoteFile{{BackendType: "s3", Key: "fix_7.dat"}}}
+	if err := volume_info.SaveVolumeInfo(base+".vif", vi); err != nil {
+		t.Fatal(err)
+	}
+	withVerifyFlags(t, false)
+
+	err := doFixOneVolumeVerified(dir, "fix_7", 7, base+".idx")
+	if err == nil || !strings.Contains(err.Error(), "remote tier") {
+		t.Fatalf("error %v, want a remote tier refusal", err)
+	}
+	if b, err := os.ReadFile(base + ".idx"); err != nil || string(b) != "old index, 16 b" {
+		t.Fatalf("index of a remote-tiered volume was replaced: %q %v", b, err)
 	}
 }
 
