@@ -173,7 +173,7 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 			// every client retry behind it parks another
 			collectionCtx, cancelCollection := context.WithTimeout(context.WithoutCancel(ctx), collectionDeleteTimeout)
 			if err := f.DoDeleteCollection(collectionCtx, collectionName); err != nil {
-				glog.Warningf("bucket %s is deleted but its collection %s is left on the master: %v", entry.Name(), collectionName, err)
+				glog.Warningf("bucket %s is deleted but the deletion of its collection %s is not confirmed: %v", entry.Name(), collectionName, err)
 			}
 			cancelCollection()
 		}
