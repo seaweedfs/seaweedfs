@@ -118,6 +118,16 @@ func TestBuildWriteCondition(t *testing.T) {
 			t.Fatalf("clause = %+v", c)
 		}
 	})
+	t.Run("etag list splits outside quoted tags and drops empty elements", func(t *testing.T) {
+		cond, ok := buildWriteCondition(reqWith(map[string]string{s3_constants.IfNoneMatch: `W/"abc,def", , "x",`}))
+		if !ok {
+			t.Fatal("want ok")
+		}
+		c := oneClause(t, cond)
+		if c.Kind != filer_pb.WriteCondition_IF_ETAG_NOT_MATCH || len(c.Etags) != 2 || c.Etags[0] != `W/"abc,def"` || c.Etags[1] != `"x"` {
+			t.Fatalf("clause = %+v", c)
+		}
+	})
 	t.Run("both match and none-match reduce to clauses", func(t *testing.T) {
 		cond, ok := buildWriteCondition(reqWith(map[string]string{
 			s3_constants.IfMatch:     "*",

@@ -132,14 +132,17 @@ func clause(kind filer_pb.WriteCondition_Kind) *filer_pb.WriteCondition {
 	return &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: kind}}}
 }
 
-// etagList splits a conditional ETag header into its candidates, each kept
-// verbatim — the evaluator's canonicalization handles quotes and weak markers.
+// etagList splits a conditional ETag header into its candidates the way
+// util.ETagListMatches does, each kept verbatim — the evaluator's
+// canonicalization handles quotes and weak markers.
 func etagList(v string) []string {
-	parts := strings.Split(v, ",")
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
+	var tags []string
+	for _, tag := range util.SplitETagList(v) {
+		if tag = strings.TrimSpace(tag); tag != "" {
+			tags = append(tags, tag)
+		}
 	}
-	return parts
+	return tags
 }
 
 // objectTxnOnFiler applies a routed transaction, preferring the object's owner
