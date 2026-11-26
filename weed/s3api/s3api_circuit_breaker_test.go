@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -460,22 +461,69 @@ func TestLimitUploadSlotAdmitsHugeObjectBesideSmallOnes(t *testing.T) {
 	}
 }
 
+// The breaker's byte counters keep their meaning: what the request declares,
+// with an unknown length counted as one chunk — not the upload budget's
+// charge, which caps at four chunks and at half the budget.
 func TestLimitBucketBytesCounterSymmetricForUnknownLength(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		contentLength int64
+		want          int64
+	}{
+		{name: "unknown length counts one chunk", contentLength: -1, want: 4 << 20},
+		{name: "declared length counts in full", contentLength: 64 << 20, want: 64 << 20},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// A 1 MiB budget charges either request 512 KiB; the counter must not.
+			cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentUploadLimit: 1 << 20, MaxMB: 4})
+			cb.Enabled = true
+			key := s3_constants.Concat(s3_constants.ACTION_WRITE, s3_constants.LimitTypeBytes)
+			cb.limitations[key] = 1 << 40
+			req := putRequest(context.Background(), 1)
+			req.ContentLength = tc.contentLength
+			var during, budget int64
+			h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) {
+				during = atomic.LoadInt64(cb.counters[key])
+				budget = atomic.LoadInt64(&cb.s3a.inFlightDataSize)
+			}, s3_constants.ACTION_WRITE)
+			h(httptest.NewRecorder(), req)
+			if during != tc.want {
+				t.Fatalf("counter during request %d, want %d", during, tc.want)
+			}
+			if budget != 512<<10 {
+				t.Fatalf("upload budget charge %d, want %d", budget, 512<<10)
+			}
+			if n := atomic.LoadInt64(cb.counters[key]); n != 0 {
+				t.Fatalf("counter after request %d, want 0", n)
+			}
+		})
+	}
+}
+
+// A bucket bytes limit still rejects one PUT that declares more than it
+// allows, even though the upload budget charges that PUT far less.
+func TestLimitBucketBytesRejectsDeclaredOversizedPut(t *testing.T) {
 	cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentUploadLimit: 1 << 30, MaxMB: 4})
 	cb.Enabled = true
-	key := s3_constants.Concat(s3_constants.ACTION_WRITE, s3_constants.LimitTypeBytes)
-	cb.limitations[key] = 1 << 40
-	req := putRequest(context.Background(), 1)
-	req.ContentLength = -1
-	var during int64
-	h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) {
-		during = atomic.LoadInt64(cb.counters[key])
-	}, s3_constants.ACTION_WRITE)
-	h(httptest.NewRecorder(), req)
-	if during != 4<<20 {
-		t.Fatalf("counter during request %d, want %d", during, 4<<20)
+	key := s3_constants.Concat("b", s3_constants.ACTION_WRITE, s3_constants.LimitTypeBytes)
+	cb.limitations[key] = 16 << 20
+	req := mux.SetURLVars(putRequest(context.Background(), 1), map[string]string{"bucket": "b"})
+	req.ContentLength = 64 << 20
+	ran := false
+	h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) { ran = true }, s3_constants.ACTION_WRITE)
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if ran {
+		t.Fatal("a PUT declaring 64 MiB must not pass a 16 MiB bucket bytes limit")
+	}
+	want := s3err.GetAPIError(s3err.ErrRequestBytesExceed)
+	if rec.Code != want.HTTPStatusCode || !strings.Contains(rec.Body.String(), want.Code) {
+		t.Fatalf("got %d %q, want %d %s", rec.Code, rec.Body.String(), want.HTTPStatusCode, want.Code)
 	}
 	if n := atomic.LoadInt64(cb.counters[key]); n != 0 {
-		t.Fatalf("counter after request %d, want 0", n)
+		t.Fatalf("bucket counter after rejection %d, want 0", n)
+	}
+	if n := atomic.LoadInt64(&cb.s3a.inFlightDataSize); n != 0 {
+		t.Fatalf("upload budget after rejection %d, want 0", n)
 	}
 }

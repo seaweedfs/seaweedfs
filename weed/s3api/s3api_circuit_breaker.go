@@ -162,19 +162,24 @@ func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), 
 	}, Action(action)
 }
 
-// uploadCharge is the bytes r reserves against the in-flight upload budget and
-// the per-bucket byte counters; see util.GatewayUploadCharge. The declared size
-// is X-Amz-Decoded-Content-Length (an aws-chunked body) only when
-// Content-Length is unknown: a client-controlled header must not lower the
-// charge of a request that declares its length.
-func (cb *CircuitBreaker) uploadCharge(r *http.Request) int64 {
+// declaredUploadSize is the body length r declares: Content-Length, or
+// X-Amz-Decoded-Content-Length (an aws-chunked body) only when Content-Length
+// is unknown, so a client-controlled header cannot lower what a request that
+// declares its length is charged. -1 when neither is known.
+func declaredUploadSize(r *http.Request) int64 {
 	declared := r.ContentLength
 	if declared < 0 {
 		if decoded, err := strconv.ParseInt(r.Header.Get("X-Amz-Decoded-Content-Length"), 10, 64); err == nil && decoded >= 0 {
 			declared = decoded
 		}
 	}
-	return util.GatewayUploadCharge(declared, int64(cb.s3a.uploadChunkSize()), cb.s3a.option.ConcurrentUploadLimit)
+	return declared
+}
+
+// uploadCharge is the bytes r reserves against the in-flight upload budget;
+// see util.GatewayUploadCharge.
+func (cb *CircuitBreaker) uploadCharge(r *http.Request) int64 {
+	return util.GatewayUploadCharge(declaredUploadSize(r), int64(cb.s3a.uploadChunkSize()), cb.s3a.option.ConcurrentUploadLimit)
 }
 
 // waitForUploadSlot reserves charged bytes and one upload slot, or writes the
@@ -228,11 +233,13 @@ func (cb *CircuitBreaker) waitForUploadSlot(w http.ResponseWriter, r *http.Reque
 
 func (cb *CircuitBreaker) limit(r *http.Request, bucket string, action string) (rollback []func(), errCode s3err.ErrorCode) {
 
-	// The byte counters add and subtract the same charge as the upload budget,
-	// so an unknown length (-1) no longer decrements them.
+	// The byte counters count what the request declares, as they always have,
+	// so a bucket bytes limit still rejects one PUT larger than it. An unknown
+	// length counts one chunk rather than -1, which would decrement them; the
+	// same value is added and rolled back.
 	requestBytes := max(r.ContentLength, 0)
 	if cb.s3a != nil {
-		requestBytes = cb.uploadCharge(r)
+		requestBytes = util.CountedUploadSize(declaredUploadSize(r), int64(cb.s3a.uploadChunkSize()))
 	}
 
 	//bucket simultaneous request count
