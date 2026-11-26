@@ -122,7 +122,7 @@ func main() {
 // startup. Only those report the host THP policy, so one-shot tools stay quiet.
 func isLongRunningCommand(name string) bool {
 	switch name {
-	case "server", "master", "volume", "filer", "s3", "mini", "admin", "webdav", "sftp", "mq.broker":
+	case "server", "master", "volume", "filer", "s3", "admin", "webdav", "sftp", "mq.broker":
 		return true
 	}
 	return false

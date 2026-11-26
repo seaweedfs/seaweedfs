@@ -1440,6 +1440,7 @@ func runMini(cmd *Command, args []string) bool {
 	// flag (-v / -logtostderr / -alsologtostderr / -stderrthreshold) so they
 	// can opt back into verbose output.
 	quietMiniLogs()
+	util.LogTransparentHugePages()
 
 	// Capture which flags were explicitly provided on the command line or via
 	// WEED_* env vars BEFORE the saved options file is applied. Saved options
