@@ -1220,12 +1220,34 @@ func TestUploadBodyDeadlineCutsTrickleToUnprovenHost(t *testing.T) {
 	}
 }
 
+// slowCommitHTTPClient drains the request body at once, then takes commitFor
+// to answer 201, giving up as a transport would if the request ctx is
+// cancelled while it commits.
+type slowCommitHTTPClient struct {
+	commitFor time.Duration
+}
+
+func (c *slowCommitHTTPClient) Do(req *http.Request) (*http.Response, error) {
+	_, _ = io.Copy(io.Discard, req.Body)
+	_ = req.Body.Close()
+	select {
+	case <-req.Context().Done():
+		return nil, req.Context().Err()
+	case <-time.After(c.commitFor):
+	}
+	return &http.Response{
+		StatusCode: http.StatusCreated,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"size":1}`)),
+	}, nil
+}
+
 // Once the body is sent the wait is the server's commit, bounded by the
 // transport's response header timeout, not by the body deadline.
 func TestUploadBodyDeadlineAllowsSlowCommit(t *testing.T) {
 	setUploadBodyMinWait(t, 100*time.Millisecond)
 
-	client := &stallingHTTPClient{slowFor: 300 * time.Millisecond}
+	client := &slowCommitHTTPClient{commitFor: 300 * time.Millisecond}
 	uploader := newUploader(client)
 
 	result, err := uploader.UploadData(context.Background(), incompressibleBytes(t, 64<<10), &UploadOption{
