@@ -51,6 +51,10 @@ type ChunkedUploadOption struct {
 	// Digest names the target filer's digest, so the content and chunk
 	// digests match what that filer holds; empty uses this process's mode.
 	Digest string
+
+	// BodyDeadline opts every chunk write (relay and fan-out) into the body
+	// deadline; see UploadOption.BodyDeadline.
+	BodyDeadline bool
 }
 
 var chunkBufferPool = sync.Pool{
@@ -227,6 +231,11 @@ uploadLoop:
 			// A target that fills up, loses its replica peer, or goes away fails
 			// every attempt against the same fid, so ask for a fresh assignment and
 			// retry there rather than losing the whole object to one bad volume.
+			// Back-pressure (an overload, or a body cut at the body deadline)
+			// gets one fresh assignment only: a cluster short of upload budget
+			// or link rate is not helped by being asked again while this chunk
+			// holds its buffer, and the client is told to slow down instead.
+			backpressureReassigned := false
 			for attempt := 1; ; attempt++ {
 				uploadResult, uploadResultErr = uploadChunk(ctx, assignResult, buf.Bytes(), prepared, jwt, chunkMd5B64, opt)
 				if uploadResultErr == nil {
@@ -239,6 +248,12 @@ uploadLoop:
 				deleteChunkFromHolders(chunkHolders(assignResult), assignResult.Fid, jwt, opt)
 				if attempt == chunkAssignAttempts || !ShouldReassignUpload(uploadResultErr) || objectFailed() {
 					break
+				}
+				if IsUploadBackpressure(uploadResultErr) {
+					if backpressureReassigned {
+						break
+					}
+					backpressureReassigned = true
 				}
 				glog.V(2).Infof("re-assigning chunk at offset %d after attempt %d/%d: %v", offset, attempt, chunkAssignAttempts, uploadResultErr)
 				_, assignResult, assignErr = opt.AssignFunc(ctx, 1, uint64(size))
@@ -360,7 +375,7 @@ func uploadChunk(ctx context.Context, assignResult *AssignResult, data []byte, p
 // chunkUploadOption holds the settings that shape a chunk's bytes, shared by
 // its preparation and every upload of it.
 func chunkUploadOption(opt *ChunkedUploadOption) *UploadOption {
-	return &UploadOption{Cipher: opt.Cipher, MimeType: opt.MimeType, Digest: opt.Digest}
+	return &UploadOption{Cipher: opt.Cipher, MimeType: opt.MimeType, Digest: opt.Digest, BodyDeadline: opt.BodyDeadline}
 }
 
 // chunkHolders returns the assigned volume plus its replica holders.
@@ -394,7 +409,7 @@ func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, prepa
 	outcomes := make(chan outcome, len(hosts))
 	for _, host := range hosts {
 		go func(host string) {
-			uploadUrl := fmt.Sprintf("http://%s/%s?type=replicate", host, fid)
+			uploadUrl := fmt.Sprintf("http://%s/%s?type=replicate&%s=%s", host, fid, ReplicateSourceParam, ReplicateSourceClient)
 			if fsync {
 				uploadUrl += "&fsync=true"
 			}
@@ -431,7 +446,10 @@ func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, prepa
 	}
 	if firstErr != nil {
 		// A failed fan-out records no chunk, so roll back the copies that landed
-		// before the cancel rather than leaking them as orphans.
+		// before the cancel rather than leaking them as orphans. A holder that
+		// did not answer (cancelled, the caller gone) may still commit what it
+		// already received; the chunk loop's cleanup in uploadReaderInChunks
+		// deletes the fid from every holder after any failed attempt.
 		deleteChunkFromHolders(succeeded, fid, jwt, opt)
 		return nil, firstErr
 	}
@@ -453,7 +471,7 @@ func deleteChunkFromHolders(hosts []string, fid string, jwt security.EncodedJwt,
 	// outlives the renewed token can still trigger another renewal.
 	deleteJwt := jwt
 	for _, host := range hosts {
-		deleteUrl := fmt.Sprintf("http://%s/%s?type=replicate", host, fid)
+		deleteUrl := fmt.Sprintf("http://%s/%s?type=replicate&%s=%s", host, fid, ReplicateSourceParam, ReplicateSourceClient)
 		body, status, err := util_http.DeleteProxied(deleteUrl, string(deleteJwt))
 		if status == http.StatusUnauthorized && opt.LookupJwtFunc != nil {
 			lookupCtx, cancel := context.WithTimeout(context.Background(), cleanupJwtLookupTimeout)

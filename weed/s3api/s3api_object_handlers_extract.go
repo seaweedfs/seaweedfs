@@ -130,6 +130,8 @@ func (s3a *S3ApiServer) extractZipObject(w http.ResponseWriter, r *http.Request,
 			s3err.WriteErrorResponse(w, r, s3err.ErrEntityTooLarge)
 		} else if strings.Contains(err.Error(), s3err.ErrMsgContentSha256Mismatch) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrContentSHA256Mismatch)
+		} else if errors.Is(err, errDecodedLengthExceeded) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		} else {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		}

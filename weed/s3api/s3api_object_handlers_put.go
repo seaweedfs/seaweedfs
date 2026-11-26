@@ -238,6 +238,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				glog.Errorf("PutObjectHandler: failed to read directory marker content %s/%s: %v", bucket, object, readErr)
 				if strings.Contains(readErr.Error(), s3err.ErrMsgContentSha256Mismatch) {
 					s3err.WriteErrorResponse(w, r, s3err.ErrContentSHA256Mismatch)
+				} else if errors.Is(readErr, errDecodedLengthExceeded) {
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 				} else {
 					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 				}
@@ -736,26 +738,15 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	// Create assign function for chunked upload
 	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*operation.VolumeAssignRequest, *operation.AssignResult, error) {
-		var assignResult *filer_pb.AssignVolumeResponse
-		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			resp, err := client.AssignVolume(ctx, &filer_pb.AssignVolumeRequest{
-				Count:            int32(count),
-				Replication:      "",
-				Collection:       collection,
-				DiskType:         "",
-				DataCenter:       s3a.option.DataCenter,
-				Path:             assignPath,
-				ExpectedDataSize: expectedDataSize,
-				TtlSec:           lifecycleTTLSec,
-			})
-			if err != nil {
-				return fmt.Errorf("assign volume: %w", err)
-			}
-			if err := filer_pb.AssignVolumeResponseError(resp); err != nil {
-				return fmt.Errorf("assign volume: %w", err)
-			}
-			assignResult = resp
-			return nil
+		assignResult, err := s3a.assignUploadVolume(ctx, &filer_pb.AssignVolumeRequest{
+			Count:            int32(count),
+			Replication:      "",
+			Collection:       collection,
+			DiskType:         "",
+			DataCenter:       s3a.option.DataCenter,
+			Path:             assignPath,
+			ExpectedDataSize: expectedDataSize,
+			TtlSec:           lifecycleTTLSec,
 		})
 		if err != nil {
 			return nil, nil, err
@@ -781,9 +772,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	// Upload with auto-chunking
-	// Use context.Background() to ensure chunk uploads complete even if HTTP request is cancelled
-	// This prevents partial uploads and data corruption
-	chunkResult, err := stages.upload(context.Background(), dataReader, &operation.ChunkedUploadOption{
+	// Chunk uploads follow the request context: when the client goes away the
+	// uploads stop and release their buffers. Orphan cleanup below and the
+	// metadata commit later run on context.Background(), so an aborted upload
+	// still has its already-written chunks deleted and a commit in flight is
+	// never cut short.
+	chunkResult, err := stages.upload(r.Context(), dataReader, &operation.ChunkedUploadOption{
 		ChunkSize:       chunkSize,
 		SmallFileLimit:  smallFileLimit,
 		Collection:      collection,
@@ -793,9 +787,16 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		Cipher:          s3a.cipher, // encrypt data on volume servers
 		AssignFunc:      assignFunc,
 		LookupJwtFunc:   s3a.lookupVolumeJwt,
+		// A body that crawls below the minimum rate is cut and answered as
+		// SlowDown, so the gateway does not hold chunk buffers on it.
+		BodyDeadline: true,
 	})
 	if err != nil {
-		glog.Errorf("putToFiler: chunked upload failed: %v", err)
+		if errors.Is(r.Context().Err(), context.Canceled) {
+			glog.V(1).Infof("putToFiler: chunked upload stopped, client gone: %v", err)
+		} else {
+			glog.Errorf("putToFiler: chunked upload failed: %v", err)
+		}
 
 		// CRITICAL: Cleanup orphaned chunks before returning error
 		// UploadReaderInChunks now returns partial results even on error,
@@ -1890,6 +1891,32 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 	}
 }
 
+// s3AssignVolumeTimeout bounds one AssignVolume RPC; it mirrors operation's
+// unexported assignVolumeTimeout.
+const s3AssignVolumeTimeout = 30 * time.Second
+
+// assignUploadVolume asks a filer for a volume for one upload chunk. ctx follows
+// the client, so the call is bounded by s3AssignVolumeTimeout too, and the filer
+// walk gets the same context: a client that went away is not evidence against
+// the filer that was answering, and the next filer is not asked on its behalf.
+func (s3a *S3ApiServer) assignUploadVolume(ctx context.Context, req *filer_pb.AssignVolumeRequest) (*filer_pb.AssignVolumeResponse, error) {
+	assignCtx, cancel := context.WithTimeout(ctx, s3AssignVolumeTimeout)
+	defer cancel()
+	var assignResult *filer_pb.AssignVolumeResponse
+	err := s3a.withFilerClient(assignCtx, false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.AssignVolume(assignCtx, req)
+		if err != nil {
+			return fmt.Errorf("assign volume: %w", err)
+		}
+		if err := filer_pb.AssignVolumeResponseError(resp); err != nil {
+			return fmt.Errorf("assign volume: %w", err)
+		}
+		assignResult = resp
+		return nil
+	})
+	return assignResult, err
+}
+
 // mapChunkedUploadErrorToS3Error classifies a failed streaming upload. A truncated
 // request body (client abort or reverse-proxy timeout) is a request error, so report
 // IncompleteBody (400) rather than a 500 a reverse proxy would relay as a confusing
@@ -1900,8 +1927,10 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 // peer that went away, and a body that arrived short while the peer was still there.
 // Both surface as the same read error, so without this they are indistinguishable in
 // logs even though they point at opposite causes — a network path versus a client.
-// The upload itself deliberately runs on a background context, so cancellation of
-// reqCtx races the read error; a missed signal degrades to IncompleteBody as before.
+// The chunk uploads run on reqCtx, so once the peer is gone any upload error
+// (including a gRPC Canceled or a transport "context canceled") is the client
+// going away, not a fault; that is checked first. Orphan cleanup and the
+// metadata commit do not use reqCtx.
 //
 // This reads cancellation as "the peer is gone", which is what net/http means by it
 // today: nothing on the S3 request path cancels reqCtx for its own reasons. Anything
@@ -1913,6 +1942,8 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 // quota) is AccessDenied, as in filerErrorToS3Error and mapCopyErrorToS3Error.
 func mapChunkedUploadErrorToS3Error(reqCtx context.Context, err error) s3err.ErrorCode {
 	switch {
+	case errors.Is(reqCtx.Err(), context.Canceled):
+		return s3err.ErrClientDisconnected
 	case errors.Is(err, weed_server.ErrReadOnly):
 		return s3err.ErrAccessDenied
 	case strings.Contains(err.Error(), s3err.ErrMsgContentSha256Mismatch):
@@ -1920,10 +1951,13 @@ func mapChunkedUploadErrorToS3Error(reqCtx context.Context, err error) s3err.Err
 	case strings.Contains(err.Error(), s3err.ErrMsgPayloadChecksumMismatch):
 		return s3err.ErrInvalidDigest
 	case errors.Is(err, operation.ErrTruncatedBody):
-		if errors.Is(reqCtx.Err(), context.Canceled) {
-			return s3err.ErrClientDisconnected
-		}
 		return s3err.ErrIncompleteBody
+	case errors.Is(err, errDecodedLengthExceeded):
+		return s3err.ErrInvalidRequest
+	case operation.IsUploadOverloaded(err), errors.Is(err, operation.ErrUploadStalled):
+		// The volumes are short of upload budget, or a stalled write used up
+		// its retries: load the client should back off from, not a fault.
+		return s3err.ErrTooManyRequest
 	default:
 		return s3err.ErrInternalError
 	}

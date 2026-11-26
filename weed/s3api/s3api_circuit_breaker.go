@@ -106,13 +106,8 @@ func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), 
 		if cb.s3a != nil && (action == s3_constants.ACTION_WRITE) &&
 			(cb.s3a.option.ConcurrentUploadLimit != 0 || cb.s3a.option.ConcurrentFileUploadLimit != 0) {
 
-			// Get content length, default to 0 if not provided
-			contentLength := r.ContentLength
-			if contentLength < 0 {
-				contentLength = 0
-			}
-
-			if !cb.waitForUploadSlot(w, r, contentLength) {
+			charged := cb.uploadCharge(r)
+			if !cb.waitForUploadSlot(w, r, charged) {
 				return
 			}
 			defer func() {
@@ -120,7 +115,7 @@ func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), 
 				defer cb.s3a.inFlightDataLimitCond.L.Unlock()
 				// Decrement counters
 				newUploads := atomic.AddInt64(&cb.s3a.inFlightUploads, -1)
-				newSize := atomic.AddInt64(&cb.s3a.inFlightDataSize, -contentLength)
+				newSize := atomic.AddInt64(&cb.s3a.inFlightDataSize, -charged)
 				// Update metrics
 				stats.S3InFlightUploadCountGauge.Set(float64(newUploads))
 				stats.S3InFlightUploadBytesGauge.Set(float64(newSize))
@@ -166,13 +161,37 @@ func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), 
 	}, Action(action)
 }
 
-func (cb *CircuitBreaker) waitForUploadSlot(w http.ResponseWriter, r *http.Request, contentLength int64) bool {
+// declaredUploadSize is the body length r declares: Content-Length, or, for an
+// aws-chunked body only, X-Amz-Decoded-Content-Length when Content-Length is
+// unknown, so a client-controlled header cannot lower what a request that
+// declares its length is charged. getRequestDataReader holds an aws-chunked
+// body to that length; no other body is decoded, so for one the header proves
+// nothing and is ignored. -1 when neither is known.
+func declaredUploadSize(r *http.Request) int64 {
+	declared := r.ContentLength
+	if declared < 0 && isAwsChunkedUpload(r) {
+		if decoded, ok := decodedContentLength(r); ok {
+			declared = decoded
+		}
+	}
+	return declared
+}
+
+// uploadCharge is the bytes r reserves against the in-flight upload budget;
+// see util.GatewayUploadCharge.
+func (cb *CircuitBreaker) uploadCharge(r *http.Request) int64 {
+	return util.GatewayUploadCharge(declaredUploadSize(r), int64(cb.s3a.uploadChunkSize()), cb.s3a.option.ConcurrentUploadLimit)
+}
+
+// waitForUploadSlot reserves charged bytes and one upload slot, or writes the
+// rejection and returns false. The caller releases exactly charged.
+func (cb *CircuitBreaker) waitForUploadSlot(w http.ResponseWriter, r *http.Request, charged int64) bool {
 	s3a := cb.s3a
 	s3a.inFlightDataLimitCond.L.Lock()
 	err := util.WaitUntil(r.Context(), s3a.inFlightDataLimitCond, s3a.option.InflightUploadDataTimeout, func() bool {
 		inFlightDataSize := atomic.LoadInt64(&s3a.inFlightDataSize)
-		if s3a.option.ConcurrentUploadLimit != 0 && inFlightDataSize > s3a.option.ConcurrentUploadLimit {
-			glog.V(4).Infof("wait because inflight data %d > %d", inFlightDataSize, s3a.option.ConcurrentUploadLimit)
+		if !util.UploadAdmits(inFlightDataSize, charged, s3a.option.ConcurrentUploadLimit) {
+			glog.V(4).Infof("wait because inflight data %d + %d > %d", inFlightDataSize, charged, s3a.option.ConcurrentUploadLimit)
 			return false
 		}
 		inFlightUploads := atomic.LoadInt64(&s3a.inFlightUploads)
@@ -185,7 +204,7 @@ func (cb *CircuitBreaker) waitForUploadSlot(w http.ResponseWriter, r *http.Reque
 	if err == nil {
 		// Increment counters
 		newUploads := atomic.AddInt64(&s3a.inFlightUploads, 1)
-		newSize := atomic.AddInt64(&s3a.inFlightDataSize, contentLength)
+		newSize := atomic.AddInt64(&s3a.inFlightDataSize, charged)
 		// Update metrics
 		stats.S3InFlightUploadCountGauge.Set(float64(newUploads))
 		stats.S3InFlightUploadBytesGauge.Set(float64(newSize))
@@ -215,6 +234,15 @@ func (cb *CircuitBreaker) waitForUploadSlot(w http.ResponseWriter, r *http.Reque
 
 func (cb *CircuitBreaker) limit(r *http.Request, bucket string, action string) (rollback []func(), errCode s3err.ErrorCode) {
 
+	// The byte counters count what the request declares, as they always have,
+	// so a bucket bytes limit still rejects one PUT larger than it. An unknown
+	// length counts one chunk rather than -1, which would decrement them; the
+	// same value is added and rolled back.
+	requestBytes := max(r.ContentLength, 0)
+	if cb.s3a != nil {
+		requestBytes = util.CountedUploadSize(declaredUploadSize(r), int64(cb.s3a.uploadChunkSize()))
+	}
+
 	//bucket simultaneous request count
 	bucketCountRollBack, errCode := cb.loadCounterAndCompare(s3_constants.Concat(bucket, action, s3_constants.LimitTypeCount), 1, s3err.ErrTooManyRequest)
 	if bucketCountRollBack != nil {
@@ -225,7 +253,7 @@ func (cb *CircuitBreaker) limit(r *http.Request, bucket string, action string) (
 	}
 
 	//bucket simultaneous request content bytes
-	bucketContentLengthRollBack, errCode := cb.loadCounterAndCompare(s3_constants.Concat(bucket, action, s3_constants.LimitTypeBytes), r.ContentLength, s3err.ErrRequestBytesExceed)
+	bucketContentLengthRollBack, errCode := cb.loadCounterAndCompare(s3_constants.Concat(bucket, action, s3_constants.LimitTypeBytes), requestBytes, s3err.ErrRequestBytesExceed)
 	if bucketContentLengthRollBack != nil {
 		rollback = append(rollback, bucketContentLengthRollBack)
 	}
@@ -243,7 +271,7 @@ func (cb *CircuitBreaker) limit(r *http.Request, bucket string, action string) (
 	}
 
 	//global simultaneous request content bytes
-	globalContentLengthRollBack, errCode := cb.loadCounterAndCompare(s3_constants.Concat(action, s3_constants.LimitTypeBytes), r.ContentLength, s3err.ErrRequestBytesExceed)
+	globalContentLengthRollBack, errCode := cb.loadCounterAndCompare(s3_constants.Concat(action, s3_constants.LimitTypeBytes), requestBytes, s3err.ErrRequestBytesExceed)
 	if globalContentLengthRollBack != nil {
 		rollback = append(rollback, globalContentLengthRollBack)
 	}

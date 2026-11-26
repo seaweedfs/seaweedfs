@@ -60,6 +60,11 @@ func WriteErrorResponseWithMessage(w http.ResponseWriter, r *http.Request, error
 		errorResponse.Message = message
 	}
 	drainRequestBody(w, r)
+	if apiError.Code == "SlowDown" {
+		// Tell the client how long to back off, so an SDK that honours it
+		// waits instead of retrying straight into the overload.
+		w.Header().Set("Retry-After", "1")
+	}
 	WriteXMLResponse(w, r, apiError.HTTPStatusCode, errorResponse)
 	PostLog(r, apiError.HTTPStatusCode, errorCode)
 }

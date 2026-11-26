@@ -108,11 +108,13 @@ func TestMapChunkedUploadErrorToS3ErrorClientDisconnect(t *testing.T) {
 			want: s3err.ErrIncompleteBody,
 		},
 		{
-			// Cancellation must not reclassify faults that are not truncations.
-			name: "server fault under a canceled context stays InternalError",
+			// The chunk uploads run on the request context, so any error under
+			// a canceled one (gRPC Canceled, transport "context canceled") is the
+			// client going away, not a server fault.
+			name: "upload error under a canceled context is ClientDisconnected",
 			ctx:  canceled,
 			err:  errors.New("assign volume: no free volumes"),
-			want: s3err.ErrInternalError,
+			want: s3err.ErrClientDisconnected,
 		},
 	}
 	for _, tt := range tests {

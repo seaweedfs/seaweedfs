@@ -2,9 +2,13 @@ package s3api
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
+	"fmt"
+	"hash/crc32"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -311,4 +315,56 @@ func TestGetRequestDataReaderEmptyBodyHash(t *testing.T) {
 	if _, code := getRequestDataReader(s3a, match); code != s3err.ErrNone {
 		t.Fatalf("empty body with empty hash: code=%v", code)
 	}
+}
+
+// unsignedChunkedRequest is an anonymous aws-chunked PUT with unknown
+// Content-Length, whose body decodes to payload and which declares declared as
+// its X-Amz-Decoded-Content-Length.
+func unsignedChunkedRequest(payload string, declared string) *http.Request {
+	checksum := crc32.ChecksumIEEE([]byte(payload))
+	sum := []byte{byte(checksum >> 24), byte(checksum >> 16), byte(checksum >> 8), byte(checksum)}
+	body := fmt.Sprintf("%x\r\n%s\r\n0\r\n\r\nx-amz-checksum-crc32:%s\r\n\r\n", len(payload), payload, base64.StdEncoding.EncodeToString(sum))
+	req := httptest.NewRequest(http.MethodPut, "/bucket/key", strings.NewReader(body))
+	req.ContentLength = -1
+	req.Header.Set("X-Amz-Content-Sha256", streamingUnsignedPayload)
+	req.Header.Set("X-Amz-Trailer", "x-amz-checksum-crc32")
+	req.Header.Set("Content-Encoding", "aws-chunked")
+	req.Header.Set("X-Amz-Decoded-Content-Length", declared)
+	return req
+}
+
+// The upload budget charges an aws-chunked request of unknown Content-Length
+// by its X-Amz-Decoded-Content-Length, so the body is held to it: a client
+// cannot declare a few bytes and stream gigabytes past its reservation.
+func TestGetRequestDataReaderHoldsAwsChunkedBodyToDecodedLength(t *testing.T) {
+	s3a := &S3ApiServer{iam: &IdentityAccessManagement{}}
+
+	t.Run("matches", func(t *testing.T) {
+		reader, code := getRequestDataReader(s3a, unsignedChunkedRequest("hello world", "11"))
+		if code != s3err.ErrNone {
+			t.Fatalf("getRequestDataReader: %v", code)
+		}
+		got, err := io.ReadAll(reader)
+		if err != nil || string(got) != "hello world" {
+			t.Fatalf("got %q, %v", got, err)
+		}
+	})
+
+	t.Run("longer than declared", func(t *testing.T) {
+		reader, code := getRequestDataReader(s3a, unsignedChunkedRequest("hello world", "5"))
+		if code != s3err.ErrNone {
+			t.Fatalf("getRequestDataReader: %v", code)
+		}
+		got, err := io.ReadAll(reader)
+		if !errors.Is(err, errDecodedLengthExceeded) {
+			t.Fatalf("want errDecodedLengthExceeded, got %q, %v", got, err)
+		}
+		if len(got) > 5 {
+			t.Fatalf("read %d bytes past a declared 5", len(got))
+		}
+		wrapped := fmt.Errorf("upload chunk: read chunk at offset 0: %w", err)
+		if code := mapChunkedUploadErrorToS3Error(context.Background(), wrapped); code != s3err.ErrInvalidRequest {
+			t.Fatalf("mapped to %v, want ErrInvalidRequest", code)
+		}
+	})
 }
