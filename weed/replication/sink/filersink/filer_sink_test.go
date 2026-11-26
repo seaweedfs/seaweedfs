@@ -1,11 +1,36 @@
 package filersink
 
 import (
+	"context"
 	"errors"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
+
+func TestRespelledSourceChunkIsNeitherCopiedNorLeftBehind(t *testing.T) {
+	suffix := &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4}
+	structured := &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}, Offset: 0, Size: 4}
+
+	deleted, added, err := compareChunks(context.Background(), nil, nil,
+		&filer_pb.Entry{Chunks: []*filer_pb.FileChunk{suffix}},
+		&filer_pb.Entry{Chunks: []*filer_pb.FileChunk{structured}})
+	if err != nil {
+		t.Fatalf("compareChunks: %v", err)
+	}
+	if len(deleted) != 0 || len(added) != 0 {
+		t.Fatalf("respelling: deleted %v, added %v; want neither", deleted, added)
+	}
+
+	replica := &filer_pb.FileChunk{FileId: "7,0100000001", SourceFileId: suffix.GetFileIdString(), Offset: 0, Size: 4}
+	if kept := filer.DoMinusChunksBySourceFileId([]*filer_pb.FileChunk{replica}, []*filer_pb.FileChunk{structured}); len(kept) != 0 {
+		t.Fatalf("replica copied under %q kept after the source dropped %q", replica.SourceFileId, structured.GetFileIdString())
+	}
+	if hasStaleBackupChunk(&filer_pb.Entry{Chunks: []*filer_pb.FileChunk{replica}}, &filer_pb.Entry{Chunks: []*filer_pb.FileChunk{structured}}) {
+		t.Fatalf("replica copied under %q reported stale against %q", replica.SourceFileId, structured.GetFileIdString())
+	}
+}
 
 // entry builds a file entry with the given mtime and size for the update-action
 // decision, which only looks at those two attributes.

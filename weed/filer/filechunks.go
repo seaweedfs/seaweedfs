@@ -176,12 +176,12 @@ func DoMinusChunksBySourceFileId(as, bs []*filer_pb.FileChunk) (delta []*filer_p
 
 	fileIds := make(map[string]bool)
 	for _, interval := range bs {
-		fileIds[interval.GetFileIdString()] = true
-		fileIds[interval.GetSourceFileId()] = true
+		fileIds[ChunkIdentity(interval.GetFileIdString())] = true
+		fileIds[ChunkIdentity(interval.GetSourceFileId())] = true
 	}
 	for _, chunk := range as {
-		_, sourceFileIdFound := fileIds[chunk.GetSourceFileId()]
-		_, fileIdFound := fileIds[chunk.GetFileId()]
+		_, sourceFileIdFound := fileIds[ChunkIdentity(chunk.GetSourceFileId())]
+		_, fileIdFound := fileIds[ChunkIdentity(chunk.GetFileId())]
 		if !sourceFileIdFound && !fileIdFound {
 			delta = append(delta, chunk)
 		}
