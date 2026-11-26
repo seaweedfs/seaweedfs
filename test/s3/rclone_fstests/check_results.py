@@ -34,7 +34,7 @@ def load_events(path):
     return events
 
 
-def evaluate(events, expected):
+def evaluate(events, expected, exit_code=None):
     started, status = set(), {}
     package_failed = False
     for e in events:
@@ -58,11 +58,22 @@ def evaluate(events, expected):
         problems.append("the test binary failed outside any test (panic or -test.timeout?)")
     for name in sorted(names - set(status)):
         problems.append(f"{name}: started but never finished (panic or -test.timeout?)")
+    # A failing run exits 1. A panic exits 2 after reporting the panicking test and
+    # its parents as failed, so every test has a status, yet the rest never ran.
+    if exit_code not in (None, 0, 1):
+        problems.append(f"the test binary ended with exit code {exit_code} (panic or -test.timeout?); later tests did not run")
 
     leaves = {n for n in names if not any(o.startswith(n + "/") for o in names)}
     for name in sorted(leaves):
         if status.get(name) == "fail" and name not in expected:
             problems.append(f"{name}: unexpected failure")
+    # A parent fails whenever a child does; one with no failed descendant failed on
+    # its own (an assertion after its subtests, its cleanup).
+    for name in sorted(names - leaves):
+        if status.get(name) == "fail" and not any(
+            o.startswith(name + "/") and status.get(o) == "fail" for o in names
+        ):
+            problems.append(f"{name}: unexpected failure (no failed subtest)")
     for name in sorted(expected):
         result = status.get(name)
         if result == "pass":
@@ -73,11 +84,15 @@ def evaluate(events, expected):
 
 
 def main():
-    if len(sys.argv) != 3:
-        sys.exit("usage: check_results.py <results.jsonl> <expected_failures.txt>")
+    if len(sys.argv) not in (3, 4):
+        sys.exit("usage: check_results.py <results.jsonl> <expected_failures.txt> [<exit code file>]")
     events = load_events(sys.argv[1])
     expected = load_expected(sys.argv[2])
-    problems = evaluate(events, expected)
+    exit_code = None
+    if len(sys.argv) == 4:
+        with open(sys.argv[3]) as f:
+            exit_code = int(f.read().strip())
+    problems = evaluate(events, expected, exit_code)
     if problems:
         print("rclone fstests do not match expected_failures.txt:", file=sys.stderr)
         for p in problems:

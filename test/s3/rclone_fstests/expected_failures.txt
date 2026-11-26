@@ -8,7 +8,8 @@
 # directory behind, and the empty directory is listed as a CommonPrefix until
 # EmptyFolderCleaner removes it (s3.empty_folder_cleanup_delay, 2m by default,
 # drained by a 30s tick). These tests list right after earlier tests deleted
-# their files, so the leftover directories show up.
+# their files, so the leftover directories show up. Some leftovers come from the
+# failing FsEncoding tests below, so fixing those may change these listings too.
 TestIntegration/FsMkdir/FsPutFiles/FsListDirFile2  # empty directories listed until cleanup (#5442)
 TestIntegration/FsMkdir/FsPutFiles/FsListRDirFile2  # empty directories listed until cleanup (#5442)
 TestIntegration/FsMkdir/FsPutFiles/FsListLevel2  # empty directories listed until cleanup (#5442)

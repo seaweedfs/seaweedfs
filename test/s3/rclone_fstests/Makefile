@@ -113,15 +113,18 @@ stop-server:
 		rm -f weed-server.pid weed-server.started; \
 	fi
 
-# The suite's exit status is ignored: check_results.py decides from the results
-# which failures are expected.
+# The suite's exit status does not fail this step: check_results.py decides from
+# the results which failures are expected. It still gets the status, because a
+# panic (exit 2) can leave every started test with a status while later tests
+# never ran.
 run-suite: build-suite
 	@cd $(SUITE_DIR)/backend/s3 && \
-		RCLONE_CONFIG=$(CURDIR)/rclone.conf \
+		{ RCLONE_CONFIG=$(CURDIR)/rclone.conf \
 		RCLONE_CONFIG_SWFS_ENDPOINT=http://127.0.0.1:$(S3_PORT) \
-		$(CURDIR)/$(SUITE_BINARY) -test.v -test.run '^TestIntegration$$' -test.timeout 20m -remote swfs: 2>&1 | \
+		$(CURDIR)/$(SUITE_BINARY) -test.v -test.run '^TestIntegration$$' -test.timeout 20m -remote swfs:; \
+		echo $$? > $(CURDIR)/suite.exit; } 2>&1 | \
 		go tool test2json -p rclone > $(CURDIR)/results.jsonl || true
-	python3 check_results.py results.jsonl expected_failures.txt
+	python3 check_results.py results.jsonl expected_failures.txt suite.exit
 
 test-with-server:
 	@$(MAKE) start-server || exit $$?; \
@@ -133,4 +136,4 @@ logs:
 	@test -f weed-test.log && tail -100 weed-test.log || echo "No log file found"
 
 clean: stop-server
-	@rm -rf $(SERVER_DIR) $(SUITE_DIR) $(SUITE_BINARY) results.jsonl weed-test.log weed-server.pid weed-server.started __pycache__
+	@rm -rf $(SERVER_DIR) $(SUITE_DIR) $(SUITE_BINARY) results.jsonl suite.exit weed-test.log weed-server.pid weed-server.started __pycache__

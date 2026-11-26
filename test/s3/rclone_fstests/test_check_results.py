@@ -67,6 +67,24 @@ class EvaluateTest(unittest.TestCase):
         events = finished("T", "pass") + [ev("fail")]
         self.assertNotEqual(check_results.evaluate(events, set()), [])
 
+    def test_parent_failing_on_its_own_fails(self):
+        # All children pass, but the parent fails (e.g. its own cleanup).
+        events = finished("T/P/A", "pass") + finished("T/P", "fail") + finished("T", "fail") + [ev("fail")]
+        problems = check_results.evaluate(events, set())
+        self.assertEqual(len(problems), 1)
+        self.assertIn("T/P", problems[0])
+
+    def test_panic_in_expected_test_fails(self):
+        # A panicking test and its parents all report fail, then the binary exits 2.
+        events = finished("T/A", "fail") + finished("T", "fail") + [ev("fail")]
+        problems = check_results.evaluate(events, {"T/A"}, exit_code=2)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("exit code 2", problems[0])
+
+    def test_failing_run_exit_code_one_ok(self):
+        events = finished("T/A", "fail") + finished("T", "fail") + [ev("fail")]
+        self.assertEqual(check_results.evaluate(events, {"T/A"}, exit_code=1), [])
+
     def test_no_results_fails(self):
         self.assertNotEqual(check_results.evaluate([], set()), [])
 

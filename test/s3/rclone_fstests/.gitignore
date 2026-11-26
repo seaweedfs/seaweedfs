@@ -6,3 +6,4 @@ weed-test.log
 weed-server.pid
 weed-server.started
 __pycache__/
+suite.exit
