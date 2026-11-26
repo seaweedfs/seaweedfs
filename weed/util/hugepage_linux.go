@@ -16,8 +16,7 @@ const (
 )
 
 // TransparentHugePages is the host's transparent huge page policy as the
-// kernel reports it. Go maps the heap with MADV_HUGEPAGE, so this policy
-// applies to a SeaweedFS process whether or not the operator asked for it.
+// kernel reports it.
 type TransparentHugePages struct {
 	Enabled     string // always, madvise or never
 	Defrag      string // always, defer, defer+madvise or madvise
@@ -79,6 +78,9 @@ func LogTransparentHugePages() {
 		glog.V(0).Infof("transparent huge pages: disabled by the host; the Go heap will not use them")
 		return
 	}
-	glog.V(0).Infof("transparent huge pages: enabled=%s defrag=%s khugepaged.max_ptes_none=%s go_heap_disabled=%t; see https://go.dev/doc/gc-guide#Linux_transparent_huge_pages",
-		status.Enabled, status.Defrag, status.MaxPtesNone, goHeapHugePagesDisabled())
+	// The runtime advises only GC metadata with MADV_HUGEPAGE, so the heap
+	// itself gets huge pages only under "always".
+	goHeapTHP := status.Enabled == "always" && !goHeapHugePagesDisabled()
+	glog.V(0).Infof("transparent huge pages: enabled=%s defrag=%s khugepaged.max_ptes_none=%s go_heap_thp=%t; see https://go.dev/doc/gc-guide#Linux_transparent_huge_pages",
+		status.Enabled, status.Defrag, status.MaxPtesNone, goHeapTHP)
 }
