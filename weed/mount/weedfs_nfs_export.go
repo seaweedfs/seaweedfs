@@ -53,10 +53,10 @@ type exportedHandles struct {
 	wake     chan struct{}
 	put      func(key, value []byte) error
 	get      func(ctx context.Context, key []byte) ([]byte, error)
-	lock     func(inode uint64) (unlock func())
+	lock     func(inode uint64) (unlock func(), err error)
 }
 
-func newExportedHandles(owner uint32, put func(key, value []byte) error, get func(ctx context.Context, key []byte) ([]byte, error), lock func(inode uint64) (unlock func())) *exportedHandles {
+func newExportedHandles(owner uint32, put func(key, value []byte) error, get func(ctx context.Context, key []byte) ([]byte, error), lock func(inode uint64) (unlock func(), err error)) *exportedHandles {
 	h := &exportedHandles{
 		owner:    owner,
 		paths:    make(map[uint64]util.FullPath),
@@ -118,7 +118,11 @@ func (h *exportedHandles) loop() {
 // under -dlm; without it, mounts that update the same inode at the same moment
 // can still overwrite each other's.
 func (h *exportedHandles) write(inode uint64, path util.FullPath) error {
-	defer h.lock(inode)()
+	unlock, err := h.lock(inode)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	key := exportedHandleKey(inode)
 	value, err := h.get(context.Background(), key)
 	if err != nil {
@@ -287,14 +291,15 @@ func (wfs *WFS) newExportedHandles() *exportedHandles {
 			return nil
 		})
 		return
-	}, func(inode uint64) func() {
+	}, func(inode uint64) (func(), error) {
 		if wfs.lockClient == nil {
-			return func() {}
+			return func() {}, nil
 		}
-		lock := wfs.lockClient.NewShortLivedLock(fmt.Sprintf("%s%d", exportedHandleKeyPrefix, inode), fmt.Sprintf("mount-%d", wfs.signature))
+		key := fmt.Sprintf("%s%d", exportedHandleKeyPrefix, inode)
+		lock := wfs.lockClient.NewShortLivedLock(key, fmt.Sprintf("mount-%d", wfs.signature))
 		if lock == nil {
-			return func() {}
+			return nil, fmt.Errorf("lock %s", key)
 		}
-		return func() { lock.StopShortLivedLock() }
+		return func() { lock.StopShortLivedLock() }, nil
 	})
 }

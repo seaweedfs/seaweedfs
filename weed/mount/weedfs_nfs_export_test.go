@@ -20,12 +20,19 @@ type fakeKv struct {
 	values   map[string][]byte
 	err      error
 	getDelay time.Duration
+	lockErr  error
 	turn     sync.Mutex
 }
 
-func (kv *fakeKv) lock(uint64) func() {
+func (kv *fakeKv) lock(uint64) (func(), error) {
+	kv.Lock()
+	err := kv.lockErr
+	kv.Unlock()
+	if err != nil {
+		return nil, err
+	}
 	kv.turn.Lock()
-	return kv.turn.Unlock
+	return kv.turn.Unlock, nil
 }
 
 func (kv *fakeKv) put(key, value []byte) error {
@@ -158,6 +165,21 @@ func TestExportedHandlesConcurrentMountsKeepBothRegistrations(t *testing.T) {
 	kv.waitUntil(t, 7, "registrations of both mounts", func(got []exportedHandleRegistration) bool {
 		return len(got) == 2
 	})
+}
+
+func TestExportedHandlesWriteWaitsForTheLock(t *testing.T) {
+	kv := &fakeKv{values: map[string][]byte{
+		string(exportedHandleKey(7)): formatExportedHandle([]exportedHandleRegistration{{2, "/buckets/a.txt"}}),
+	}, lockErr: errors.New("no lock server")}
+	h := newExportedHandlesForTest(kv, 1, time.Minute)
+	h.AcquireHandle(7, "/buckets/a.txt")
+	time.Sleep(100 * time.Millisecond)
+	kv.waitForRegistrations(t, 7, exportedHandleRegistration{2, "/buckets/a.txt"})
+
+	kv.Lock()
+	kv.lockErr = nil
+	kv.Unlock()
+	kv.waitForRegistrations(t, 7, exportedHandleRegistration{2, "/buckets/a.txt"}, exportedHandleRegistration{1, "/buckets/a.txt"})
 }
 
 func TestExportedHandlesRestartedMountTakesOverItsRegistration(t *testing.T) {
