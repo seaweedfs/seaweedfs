@@ -85,3 +85,34 @@ func TestNativeReadSSES3(t *testing.T) {
 		})
 	}
 }
+
+func TestTruncateClearsS3Encryption(t *testing.T) {
+	for _, tc := range []struct {
+		size uint64
+		want filer_pb.SSEType
+	}{
+		{size: 4, want: filer_pb.SSEType_SSE_KMS},
+		{size: 0, want: filer_pb.SSEType_NONE},
+	} {
+		wfs, inode, fh := newUnlinkedOpenFile(t)
+		fh.entry.SetEntry(&filer_pb.Entry{
+			Name:       "file",
+			Attributes: &filer_pb.FuseAttributes{FileMode: 0o644, FileSize: 8},
+			Extended:   map[string][]byte{s3_constants.AmzServerSideEncryption: []byte("aws:kms"), s3_constants.SeaweedFSSSEKMSKey: []byte("test metadata")},
+			Chunks:     []*filer_pb.FileChunk{{FileId: "1,01", Size: 8, SseType: filer_pb.SSEType_SSE_KMS}},
+		})
+		if got := fh.GetEntry().sseType(); got != filer_pb.SSEType_SSE_KMS {
+			t.Fatalf("before truncate: sse = %v", got)
+		}
+		in := &fuse.SetAttrIn{}
+		in.NodeId = inode
+		in.Valid = fuse.FATTR_SIZE
+		in.Size = tc.size
+		if status := wfs.SetAttr(nil, in, &fuse.AttrOut{}); status != fuse.OK {
+			t.Fatalf("truncate to %d: %v", tc.size, status)
+		}
+		if got := fh.GetEntry().sseType(); got != tc.want {
+			t.Errorf("truncate to %d: sse = %v, want %v", tc.size, got, tc.want)
+		}
+	}
+}

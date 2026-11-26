@@ -49,6 +49,21 @@ func (le *LockedEntry) sseTypeLocked() filer_pb.SSEType {
 	return le.sse
 }
 
+// A file cut to zero bytes no longer holds the object's encrypted payload.
+func clearS3Encryption(entry *filer_pb.Entry) {
+	for _, key := range []string{
+		s3_constants.SeaweedFSSSEIV,
+		s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
+		s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
+		s3_constants.SeaweedFSSSEKMSKey,
+		s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
+		s3_constants.SeaweedFSSSES3Key,
+		s3_constants.AmzServerSideEncryption,
+	} {
+		delete(entry.Extended, key)
+	}
+}
+
 func (le *LockedEntry) GetEntry() *filer_pb.Entry {
 	le.RLock()
 	defer le.RUnlock()

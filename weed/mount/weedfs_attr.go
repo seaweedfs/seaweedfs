@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 
@@ -178,6 +179,12 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		entry.Attributes.Mtime = truncNow.Unix()
 		entry.Attributes.MtimeNs = int32(truncNow.Nanosecond())
 		entry.Attributes.FileSize = size
+		if size == 0 {
+			clearS3Encryption(entry)
+			if fh != nil {
+				fh.entry.sseCheck = sync.Once{}
+			}
+		}
 		if size > oldFileSize {
 			// The writes that fill the range will not grow the file, so they
 			// charge nothing; the growth is counted here or the quota never
