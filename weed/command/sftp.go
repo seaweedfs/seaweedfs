@@ -131,6 +131,7 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 	// metrics read from the filer
 	var metricsAddress string
 	var metricsIntervalSec int
+	var bucketsDir string
 	var filerGroup string
 	var digest string
 
@@ -142,6 +143,7 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
 			}
 			metricsAddress, metricsIntervalSec = resp.MetricsAddress, int(resp.MetricsIntervalSec)
+			bucketsDir = resp.DirBuckets
 			filerGroup = resp.FilerGroup
 			digest = resp.Digest
 			glog.V(0).Infof("SFTP read filer configuration, using filer at: %s", filerAddress)
@@ -183,6 +185,7 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 		TrustedUserCAKeysFile:    *sftpOpt.trustedUserCAKeysFile,
 		FilerSigningKey:          []byte(filerSigningKey),
 		FilerSigningExpiresAfter: filerSigningExpiresAfter,
+		BucketsDir:               bucketsDir,
 	})
 
 	// Register reload hook for HUP signal
