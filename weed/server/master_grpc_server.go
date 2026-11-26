@@ -562,7 +562,7 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 	}
 	peerAddress := pb.ServerAddress(clientAddress)
 
-	if req.ClientType == cluster.MasterType && !ms.isKnownPingTarget(stream.Context(), clientAddress, cluster.MasterType) {
+	if req.ClientType == cluster.MasterType && !ms.isConfiguredMaster(peerAddress) {
 		if err := ms.checkGrpcAdminAuth(stream.Context()); err != nil {
 			return err
 		}

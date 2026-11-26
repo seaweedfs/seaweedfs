@@ -225,6 +225,24 @@ func (ms *MasterServer) isKnownPingTarget(ctx context.Context, target string, ta
 	return false
 }
 
+// isConfiguredMaster reports whether addr is this master or one of -peers,
+// compared by gRPC endpoint since that is what raft admission dials.
+func (ms *MasterServer) isConfiguredMaster(addr pb.ServerAddress) bool {
+	grpcAddress := addr.ToGrpcAddress()
+	if ms.option != nil && ms.option.Master.ToGrpcAddress() == grpcAddress {
+		return true
+	}
+	if ms.MasterClient == nil {
+		return false
+	}
+	for _, master := range ms.MasterClient.ListCachedMasters() {
+		if master.ToGrpcAddress() == grpcAddress {
+			return true
+		}
+	}
+	return false
+}
+
 func (ms *MasterServer) Ping(ctx context.Context, req *master_pb.PingRequest) (resp *master_pb.PingResponse, pingErr error) {
 	resp = &master_pb.PingResponse{
 		StartTimeNs: time.Now().UnixNano(),
