@@ -786,11 +786,11 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		})
 	}
 	// The body deadline, when the caller opted into it (BodyDeadline), bounds
-	// the send alongside the watchdog when that is armed: whichever fires first
-	// cancels. It catches what the
-	// watchdog cannot — an unproven host, a host whose slow mark stretches
-	// the watchdog budget, an attempt after the watchdog disarmed — and,
-	// since a slow link is not one bad conn, it leaves fastUploadHosts alone.
+	// the send alongside the watchdog when that is armed: whichever fires
+	// first cancels. It catches what the watchdog cannot — an unproven host, a
+	// host whose slow mark stretches the watchdog budget, an attempt after the
+	// watchdog disarmed — and, since a slow link is not one bad conn, it
+	// leaves fastUploadHosts alone.
 	// Each arming checks the body it was armed for, so a timer that fires
 	// across the inner retry's body swap cannot misjudge the fresh body.
 	var cutByBodyDeadline atomic.Bool
