@@ -2947,6 +2947,16 @@ pub async fn post_handler(
                 response
                     .headers_mut()
                     .insert(header::RETRY_AFTER, header::HeaderValue::from_static("1"));
+                // Go's uploadRejectCloseThreshold: a large or unknown-length
+                // body is cheaper to drop with the connection than to drain.
+                if request.version() < axum::http::Version::HTTP_2
+                    && declared_length.is_none_or(|len| len > 256 << 10)
+                {
+                    response.headers_mut().insert(
+                        header::CONNECTION,
+                        header::HeaderValue::from_static("close"),
+                    );
+                }
                 return response;
             }
         }
@@ -6846,6 +6856,7 @@ mod tests {
             resp.headers().get(header::RETRY_AFTER).unwrap(),
             &header::HeaderValue::from_static("1")
         );
+        assert!(resp.headers().get(header::CONNECTION).is_none());
         assert_eq!(state.inflight_upload_bytes.load(Ordering::Relaxed), 11);
     }
 
@@ -6920,6 +6931,10 @@ mod tests {
         let resp = post_handler(State(state.clone()), request).await;
 
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            resp.headers().get(header::CONNECTION).unwrap(),
+            &header::HeaderValue::from_static("close")
+        );
         assert_eq!(state.inflight_upload_bytes.load(Ordering::Relaxed), 6);
     }
 
