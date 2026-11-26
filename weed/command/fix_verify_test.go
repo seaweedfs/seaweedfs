@@ -27,7 +27,7 @@ type verifyFixtureNeedle struct {
 func buildVerifyFixture(t *testing.T, count int) (string, []verifyFixtureNeedle) {
 	t.Helper()
 	datName := filepath.Join(t.TempDir(), "1.dat")
-	version := needle.GetCurrentVersion()
+	version := needle.Version3
 
 	df, err := os.OpenFile(datName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
@@ -246,7 +246,7 @@ func TestFixVerifyLoadsWritable(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "1.idx.bak")); err != nil {
 		t.Errorf("old index should have been kept: %v", err)
 	}
-	v, err := storage.NewVolume(dir, dir, "", 1, storage.NeedleMapInMemory, nil, nil, 0, needle.GetCurrentVersion(), 0, 0)
+	v, err := storage.NewVolume(dir, dir, "", 1, storage.NeedleMapInMemory, nil, nil, 0, needle.Version3, 0, 0)
 	if err != nil {
 		t.Fatalf("load volume: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestFixVerifyLoadsWritable(t *testing.T) {
 // mistaken for damage or swallowed when a damaged region sits next to it.
 func TestVerifyDatFileLegitimateZeroPayload(t *testing.T) {
 	datName := filepath.Join(t.TempDir(), "1.dat")
-	version := needle.GetCurrentVersion()
+	version := needle.Version3
 	df, err := os.OpenFile(datName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		t.Fatal(err)
@@ -330,7 +330,7 @@ func TestSuperBlockExtraIsRejectedCleanly(t *testing.T) {
 		t.Fatal(err)
 	}
 	sb := super_block.SuperBlock{
-		Version: needle.GetCurrentVersion(), ReplicaPlacement: &super_block.ReplicaPlacement{}, Ttl: &needle.TTL{},
+		Version: needle.Version3, ReplicaPlacement: &super_block.ReplicaPlacement{}, Ttl: &needle.TTL{},
 		Extra: &master_pb.SuperBlockExtra{ErasureCoding: &master_pb.SuperBlockExtra_ErasureCoding{Data: 10, Parity: 4}},
 	}
 	if err := os.WriteFile(datName, append(sb.Bytes(), orig[8:]...), 0644); err != nil {

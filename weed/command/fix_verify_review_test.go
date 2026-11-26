@@ -113,7 +113,7 @@ func TestFindNextReadErrorIsReported(t *testing.T) {
 	r := failingReaderAt{r: raw, failAt: layout[2].offset}
 	opts := datVerifyOptions{window: 64 << 10, zeroWindow: 512}
 	opts.normalize()
-	s := &datVerifier{f: r, vid: 1, version: needle.GetCurrentVersion(), base: 8, size: st.Size(), opts: opts,
+	s := &datVerifier{f: r, vid: 1, version: needle.Version3, base: 8, size: st.Size(), opts: opts,
 		win: &datWindow{f: r, size: st.Size(), buf: make([]byte, opts.window)}}
 	next, err := s.findNext(layout[0].offset + types.NeedlePaddingSize)
 	if err == nil || !errors.Is(err, syscall.EIO) {
@@ -404,7 +404,7 @@ func TestVerifyInflatedSizeRejectedBeforeBodyRead(t *testing.T) {
 	defer f.Close()
 	opts := datVerifyOptions{window: 64 << 10, zeroWindow: 512}
 	opts.normalize()
-	s := &datVerifier{f: f, vid: 1, version: needle.GetCurrentVersion(), base: 8, size: st.Size(), opts: opts,
+	s := &datVerifier{f: f, vid: 1, version: needle.Version3, base: 8, size: st.Size(), opts: opts,
 		win: &datWindow{f: f, size: st.Size(), buf: make([]byte, opts.window)}}
 	if _, _, err := s.readNeedleAt(layout[1].offset, false); err == nil || !strings.Contains(err.Error(), "does not fit") {
 		t.Fatalf("readNeedleAt = %v, want a data size rejection", err)
@@ -460,9 +460,6 @@ func TestVerifyDeleteChainEndingAtLastProbe(t *testing.T) {
 // A live record whose timestamp alone is corrupted still passes its CRC. That
 // timestamp must not become the lower bound a later delete record is held to.
 func TestVerifyImplausibleTimestampIsNotResyncBaseline(t *testing.T) {
-	if needle.GetCurrentVersion() != needle.Version3 {
-		t.Skip("needs v3 timestamps")
-	}
 	datName, layout := buildVerifyFixture(t, 5)
 	raw, err := os.ReadFile(datName)
 	if err != nil {
@@ -509,7 +506,7 @@ func TestVerifyReadErrorAtBoundaryIsReported(t *testing.T) {
 	r := failingReaderAt{r: raw, failAt: layout[2].offset + 4}
 	opts := datVerifyOptions{window: 64 << 10, zeroWindow: 512}
 	opts.normalize()
-	s := &datVerifier{f: r, vid: 1, version: needle.GetCurrentVersion(), base: 8, size: st.Size(), opts: opts,
+	s := &datVerifier{f: r, vid: 1, version: needle.Version3, base: 8, size: st.Size(), opts: opts,
 		win: &datWindow{f: r, size: st.Size(), buf: make([]byte, opts.window)}}
 	if _, _, err := s.readNeedleAt(layout[2].offset, false); !errors.Is(err, errDatRead) || !errors.Is(err, syscall.EIO) {
 		t.Fatalf("readNeedleAt = %v, want the read error", err)
