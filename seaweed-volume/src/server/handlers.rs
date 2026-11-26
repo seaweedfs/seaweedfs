@@ -2883,13 +2883,20 @@ pub async fn post_handler(
         .iter()
         .find(|(name, _)| name == "type")
         .is_some_and(|(_, value)| value == "replicate");
+    // Go's operation.IsReplicaForward: a gateway's fan-out write to each
+    // holder (src=client) is client traffic, not a primary-to-replica forward.
+    let is_replica_forward = is_replicate
+        && !query_fields
+            .iter()
+            .find(|(name, _)| name == "src")
+            .is_some_and(|(_, value)| value == "client");
     let content_length = headers
         .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(0);
 
-    if !is_replicate && state.concurrent_upload_limit > 0 {
+    if !is_replica_forward && state.concurrent_upload_limit > 0 {
         // Wait for inflight bytes to drop below limit, or timeout
         let timeout = client_upload_wait(state.inflight_upload_data_timeout);
         let deadline = tokio::time::Instant::now() + timeout;
@@ -2928,7 +2935,7 @@ pub async fn post_handler(
     }
 
     // RAII guard to release upload throttle on any exit path
-    let _upload_guard = if !is_replicate && state.concurrent_upload_limit > 0 {
+    let _upload_guard = if !is_replica_forward && state.concurrent_upload_limit > 0 {
         Some(InflightGuard {
             counter: &state.inflight_upload_bytes,
             bytes: content_length,
@@ -6820,6 +6827,42 @@ mod tests {
             &header::HeaderValue::from_static("1")
         );
         assert_eq!(state.inflight_upload_bytes.load(Ordering::Relaxed), 11);
+    }
+
+    /// A gateway's fan-out write (type=replicate&src=client) waits for upload
+    /// budget like any client write; a primary's own forward does not.
+    #[tokio::test]
+    async fn upload_limit_counts_gateway_fan_out_not_replica_forward() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut state = volume_test_state(&tmp);
+        {
+            let s = Arc::get_mut(&mut state).unwrap();
+            s.concurrent_upload_limit = 10;
+            s.inflight_upload_data_timeout = std::time::Duration::from_millis(50);
+        }
+        state.inflight_upload_bytes.store(11, Ordering::Relaxed);
+
+        let post = |uri: &str| {
+            Request::builder()
+                .method(Method::POST)
+                .uri(uri)
+                .header(header::CONTENT_LENGTH, "4")
+                .body(Body::from("abcd"))
+                .unwrap()
+        };
+        let fan_out = post_handler(
+            State(state.clone()),
+            post("/1,0123456789abcdef?type=replicate&src=client"),
+        )
+        .await;
+        assert_eq!(fan_out.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let forward = post_handler(
+            State(state.clone()),
+            post("/1,0123456789abcdef?type=replicate"),
+        )
+        .await;
+        assert_ne!(forward.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[test]
