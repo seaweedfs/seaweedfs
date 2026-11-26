@@ -68,6 +68,12 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 		return 0, fuse.OK
 	}
 
+	// The bytes the filer kept inside the entry, as a write before this one.
+	if err := fh.bufferInlineContent(entry.Entry, tsNs); err != nil {
+		glog.Errorf("%v", err)
+		return 0, writeErrorToFuseStatus(err)
+	}
+
 	// Size and times cover only the bytes buffered, or the next flush
 	// publishes a hole where the data should be. A partly buffered write
 	// is reported as a short write, or as an error to kernel writeback,
@@ -90,7 +96,6 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 		}
 		fh.pendingAppend = true
 	}
-	entry.Content = nil
 	oldFileSize := int64(entry.Attributes.FileSize)
 	newFileSize := max(offset+int64(len(data)), oldFileSize)
 	entry.Attributes.FileSize = uint64(newFileSize)
