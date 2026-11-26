@@ -100,7 +100,8 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost, http.MethodPut:
 		// wait until in flight data is less than the limit
 		contentLength := getContentLength(r)
-		if !fs.waitForUploadSlot(w, r, contentLength) {
+		charged := fs.uploadCharge(r)
+		if !fs.waitForUploadSlot(w, r, charged) {
 			return
 		}
 		defer func() {
@@ -108,7 +109,7 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 			defer fs.inFlightDataLimitCond.L.Unlock()
 			// Decrement counters
 			newUploads := atomic.AddInt64(&fs.inFlightUploads, -1)
-			newSize := atomic.AddInt64(&fs.inFlightDataSize, -contentLength)
+			newSize := atomic.AddInt64(&fs.inFlightDataSize, -charged)
 			// Update metrics
 			stats.FilerInFlightUploadCountGauge.Set(float64(newUploads))
 			stats.FilerInFlightUploadBytesGauge.Set(float64(newSize))
@@ -130,12 +131,20 @@ func (fs *FilerServer) filerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (fs *FilerServer) waitForUploadSlot(w http.ResponseWriter, r *http.Request, contentLength int64) bool {
+// uploadCharge is the bytes r reserves against the in-flight upload budget; see
+// util.GatewayUploadCharge. The chunk is -maxMB, what the filer cuts per chunk.
+func (fs *FilerServer) uploadCharge(r *http.Request) int64 {
+	return util.GatewayUploadCharge(r.ContentLength, int64(fs.option.MaxMB)<<20, fs.option.ConcurrentUploadLimit)
+}
+
+// waitForUploadSlot reserves charged bytes and one upload slot, or writes the
+// rejection and returns false. The caller releases exactly charged.
+func (fs *FilerServer) waitForUploadSlot(w http.ResponseWriter, r *http.Request, charged int64) bool {
 	fs.inFlightDataLimitCond.L.Lock()
 	err := util.WaitUntil(r.Context(), fs.inFlightDataLimitCond, fs.option.InflightUploadDataTimeout, func() bool {
 		inFlightDataSize := atomic.LoadInt64(&fs.inFlightDataSize)
-		if fs.option.ConcurrentUploadLimit != 0 && inFlightDataSize > fs.option.ConcurrentUploadLimit {
-			glog.V(4).Infof("wait because inflight data %d > %d", inFlightDataSize, fs.option.ConcurrentUploadLimit)
+		if !util.UploadAdmits(inFlightDataSize, charged, fs.option.ConcurrentUploadLimit) {
+			glog.V(4).Infof("wait because inflight data %d + %d > %d", inFlightDataSize, charged, fs.option.ConcurrentUploadLimit)
 			return false
 		}
 		inFlightUploads := atomic.LoadInt64(&fs.inFlightUploads)
@@ -148,7 +157,7 @@ func (fs *FilerServer) waitForUploadSlot(w http.ResponseWriter, r *http.Request,
 	if err == nil {
 		// Increment counters
 		newUploads := atomic.AddInt64(&fs.inFlightUploads, 1)
-		newSize := atomic.AddInt64(&fs.inFlightDataSize, contentLength)
+		newSize := atomic.AddInt64(&fs.inFlightDataSize, charged)
 		// Update metrics
 		stats.FilerInFlightUploadCountGauge.Set(float64(newUploads))
 		stats.FilerInFlightUploadBytesGauge.Set(float64(newSize))
@@ -170,7 +179,8 @@ func (fs *FilerServer) waitForUploadSlot(w http.ResponseWriter, r *http.Request,
 	}
 	err = fmt.Errorf("reject because no upload slot freed within %v", fs.option.InflightUploadDataTimeout)
 	glog.V(1).Infof("too many requests from %s: %v", r.RemoteAddr, err)
-	writeJsonError(w, r, http.StatusTooManyRequests, err)
+	w.Header().Set("Retry-After", "1")
+	writeJsonError(w, r, http.StatusServiceUnavailable, err)
 	return false
 }
 

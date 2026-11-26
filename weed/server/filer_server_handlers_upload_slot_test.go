@@ -31,15 +31,15 @@ func TestFilerWaitForUploadSlot(t *testing.T) {
 		return fs
 	}
 
-	t.Run("times out with 429", func(t *testing.T) {
+	t.Run("times out with 503 and Retry-After", func(t *testing.T) {
 		fs := newFiler(100 * time.Millisecond)
 		rec := httptest.NewRecorder()
 		start := time.Now()
 		if fs.waitForUploadSlot(rec, filerPutRequest(context.Background()), 4) {
 			t.Fatal("upload admitted without a free slot")
 		}
-		if rec.Code != http.StatusTooManyRequests {
-			t.Fatalf("got %d, want 429", rec.Code)
+		if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "1" {
+			t.Fatalf("got %d Retry-After %q, want 503 and 1", rec.Code, rec.Header().Get("Retry-After"))
 		}
 		if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
 			t.Fatalf("rejected after %v, before the wait timeout", elapsed)
@@ -49,7 +49,7 @@ func TestFilerWaitForUploadSlot(t *testing.T) {
 		}
 	})
 
-	t.Run("stalled body still gets the 429", func(t *testing.T) {
+	t.Run("stalled body still gets the 503", func(t *testing.T) {
 		fs := newFiler(100 * time.Millisecond)
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if fs.waitForUploadSlot(w, r, r.ContentLength) {
@@ -70,8 +70,8 @@ func TestFilerWaitForUploadSlot(t *testing.T) {
 		if err != nil {
 			t.Fatalf("no reply while the body is unsent: %v", err)
 		}
-		if resp.StatusCode != http.StatusTooManyRequests || !resp.Close {
-			t.Fatalf("got %d close=%v, want 429 with Connection: close", resp.StatusCode, resp.Close)
+		if resp.StatusCode != http.StatusServiceUnavailable || !resp.Close || resp.Header.Get("Retry-After") != "1" {
+			t.Fatalf("got %d close=%v, want 503 with Retry-After and Connection: close", resp.StatusCode, resp.Close)
 		}
 	})
 
@@ -96,4 +96,56 @@ func TestFilerWaitForUploadSlot(t *testing.T) {
 			t.Fatal("cancelled upload kept waiting for a slot")
 		}
 	})
+}
+
+func newLimitedFiler(limit, inFlight int64) *FilerServer {
+	return &FilerServer{
+		option:                &FilerOption{ConcurrentUploadLimit: limit, MaxMB: 4, InflightUploadDataTimeout: 50 * time.Millisecond},
+		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
+		inFlightDataSize:      inFlight,
+	}
+}
+
+func TestFilerUploadSlotNoOvershoot(t *testing.T) {
+	fs := newLimitedFiler(10, 8)
+	rec := httptest.NewRecorder()
+	if fs.waitForUploadSlot(rec, filerPutRequest(context.Background()), 4) {
+		t.Fatal("upload admitted beyond the limit")
+	}
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "1" {
+		t.Fatalf("got %d Retry-After %q, want 503 and 1", rec.Code, rec.Header().Get("Retry-After"))
+	}
+	if fs.inFlightDataSize != 8 {
+		t.Fatalf("in-flight bytes %d, want 8", fs.inFlightDataSize)
+	}
+}
+
+func TestFilerUploadSlotChargesUnknownLength(t *testing.T) {
+	const limit = 1 << 20
+	unknown := func() *http.Request {
+		req := filerPutRequest(context.Background())
+		req.ContentLength = -1
+		return req
+	}
+	fs := newLimitedFiler(limit, 600<<10)
+	rec := httptest.NewRecorder()
+	if fs.waitForUploadSlot(rec, unknown(), fs.uploadCharge(unknown())) {
+		t.Fatal("unknown-length upload admitted beside 600 KiB in flight")
+	}
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") != "1" {
+		t.Fatalf("got %d Retry-After %q, want 503 and 1", rec.Code, rec.Header().Get("Retry-After"))
+	}
+	fs = newLimitedFiler(limit, 0)
+	if !fs.waitForUploadSlot(httptest.NewRecorder(), unknown(), fs.uploadCharge(unknown())) || fs.inFlightDataSize != limit/2 {
+		t.Fatalf("idle: in-flight %d, want admitted with %d", fs.inFlightDataSize, limit/2)
+	}
+}
+
+func TestFilerUploadSlotAdmitsHugeObjectBesideSmallOnes(t *testing.T) {
+	fs := newLimitedFiler(64<<20, 32<<20)
+	req := filerPutRequest(context.Background())
+	req.ContentLength = 5 << 30
+	if !fs.waitForUploadSlot(httptest.NewRecorder(), req, fs.uploadCharge(req)) || fs.inFlightDataSize != 48<<20 {
+		t.Fatalf("in-flight %d, want admitted with 48 MiB", fs.inFlightDataSize)
+	}
 }

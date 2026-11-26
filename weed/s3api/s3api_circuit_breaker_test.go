@@ -378,3 +378,104 @@ func TestLimitUploadSlotRejectsStalledBody(t *testing.T) {
 		t.Fatalf("got %d close=%v, want 503 with Connection: close", resp.StatusCode, resp.Close)
 	}
 }
+
+// putThroughLimit sends req through a write-limited handler and reports the
+// status and the in-flight bytes seen while the handler ran (-1 if it did not).
+func putThroughLimit(cb *CircuitBreaker, req *http.Request) (code int, body string, inFlight int64) {
+	inFlight = -1
+	h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) {
+		inFlight = atomic.LoadInt64(&cb.s3a.inFlightDataSize)
+	}, s3_constants.ACTION_WRITE)
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	return rec.Code, rec.Body.String(), inFlight
+}
+
+func TestLimitUploadSlotNoOvershoot(t *testing.T) {
+	cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentUploadLimit: 10, InflightUploadDataTimeout: 50 * time.Millisecond})
+	cb.s3a.inFlightDataSize = 8
+	code, body, _ := putThroughLimit(cb, putRequest(context.Background(), 4))
+	if code != http.StatusServiceUnavailable || !strings.Contains(body, "<Code>SlowDown</Code>") {
+		t.Fatalf("got %d %q, want 503 SlowDown", code, body)
+	}
+	if n := atomic.LoadInt64(&cb.s3a.inFlightDataSize); n != 8 {
+		t.Fatalf("in-flight bytes %d, want 8", n)
+	}
+}
+
+func TestLimitUploadSlotChargesUnknownLength(t *testing.T) {
+	const limit = 1 << 20
+	newCB := func(inFlight int64) *CircuitBreaker {
+		cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentUploadLimit: limit, MaxMB: 4, InflightUploadDataTimeout: 50 * time.Millisecond})
+		cb.s3a.inFlightDataSize = inFlight
+		return cb
+	}
+	unknown := func() *http.Request {
+		req := putRequest(context.Background(), 1)
+		req.ContentLength = -1
+		return req
+	}
+
+	// an unknown length is charged half the budget, not 0 and not a 4 MiB chunk
+	cb := newCB(600 << 10)
+	if code, _, _ := putThroughLimit(cb, unknown()); code != http.StatusServiceUnavailable {
+		t.Fatalf("got %d, want 503", code)
+	}
+	cb = newCB(0)
+	code, _, inFlight := putThroughLimit(cb, unknown())
+	if code != http.StatusOK || inFlight != limit/2 {
+		t.Fatalf("idle: got %d in-flight %d, want 200 and %d", code, inFlight, limit/2)
+	}
+	if n := atomic.LoadInt64(&cb.s3a.inFlightDataSize); n != 0 {
+		t.Fatalf("in-flight bytes %d after release, want 0", n)
+	}
+}
+
+func TestLimitUploadSlotUsesDecodedLengthOnlyWhenUnknown(t *testing.T) {
+	newCB := func() *CircuitBreaker {
+		return newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentUploadLimit: 1 << 30, MaxMB: 4, InflightUploadDataTimeout: 50 * time.Millisecond})
+	}
+	req := putRequest(context.Background(), 1)
+	req.ContentLength = 5000
+	req.Header.Set("X-Amz-Decoded-Content-Length", "4096")
+	if _, _, inFlight := putThroughLimit(newCB(), req); inFlight != 5000 {
+		t.Fatalf("known length: in-flight %d, want 5000", inFlight)
+	}
+	req = putRequest(context.Background(), 1)
+	req.ContentLength = -1
+	req.Header.Set("X-Amz-Decoded-Content-Length", "4096")
+	if _, _, inFlight := putThroughLimit(newCB(), req); inFlight != 4096 {
+		t.Fatalf("unknown length: in-flight %d, want 4096", inFlight)
+	}
+}
+
+func TestLimitUploadSlotAdmitsHugeObjectBesideSmallOnes(t *testing.T) {
+	cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentUploadLimit: 64 << 20, MaxMB: 4, InflightUploadDataTimeout: 50 * time.Millisecond})
+	cb.s3a.inFlightDataSize = 32 << 20
+	req := putRequest(context.Background(), 1)
+	req.ContentLength = 5 << 30
+	code, _, inFlight := putThroughLimit(cb, req)
+	if code != http.StatusOK || inFlight != 48<<20 {
+		t.Fatalf("got %d in-flight %d, want 200 and %d", code, inFlight, 48<<20)
+	}
+}
+
+func TestLimitBucketBytesCounterSymmetricForUnknownLength(t *testing.T) {
+	cb := newUploadLimitedCircuitBreaker(&S3ApiServerOption{ConcurrentUploadLimit: 1 << 30, MaxMB: 4})
+	cb.Enabled = true
+	key := s3_constants.Concat(s3_constants.ACTION_WRITE, s3_constants.LimitTypeBytes)
+	cb.limitations[key] = 1 << 40
+	req := putRequest(context.Background(), 1)
+	req.ContentLength = -1
+	var during int64
+	h, _ := cb.Limit(func(w http.ResponseWriter, r *http.Request) {
+		during = atomic.LoadInt64(cb.counters[key])
+	}, s3_constants.ACTION_WRITE)
+	h(httptest.NewRecorder(), req)
+	if during != 4<<20 {
+		t.Fatalf("counter during request %d, want %d", during, 4<<20)
+	}
+	if n := atomic.LoadInt64(cb.counters[key]); n != 0 {
+		t.Fatalf("counter after request %d, want 0", n)
+	}
+}
