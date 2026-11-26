@@ -20,6 +20,28 @@ func redactScopeEntry(entry *filer_pb.Entry) {
 	}
 }
 
+// scopePreserveRemoteRenameSource keeps the filer-owned source marker on a
+// scoped replacement when the client could not see it in its redacted read.
+// The caller holds the entry path lock; copy the bytes so the stored entry and
+// request never share mutable backing storage.
+func scopePreserveRemoteRenameSource(stored, replacement *filer.Entry) {
+	if stored == nil || replacement == nil {
+		return
+	}
+	marker, ok := stored.Extended[filer.ExtRemoteRenameSourceKey]
+	if !ok {
+		return
+	}
+	if _, supplied := replacement.Extended[filer.ExtRemoteRenameSourceKey]; !supplied {
+		extended := make(map[string][]byte, len(replacement.Extended)+1)
+		for key, value := range replacement.Extended {
+			extended[key] = append([]byte(nil), value...)
+		}
+		extended[filer.ExtRemoteRenameSourceKey] = append([]byte(nil), marker...)
+		replacement.Extended = extended
+	}
+}
+
 func redactScopeMetadataResponseInPlace(resp *filer_pb.SubscribeMetadataResponse) {
 	if resp == nil {
 		return

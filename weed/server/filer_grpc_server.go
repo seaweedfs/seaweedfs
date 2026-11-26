@@ -295,6 +295,9 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 			}, nil
 		}
 		existing = current
+		if scopeKeepOnly(ctx) {
+			scopePreserveRemoteRenameSource(existing, newEntry)
+		}
 	}
 	if err := fs.checkScopeWorm(ctx, string(fullpath)); err != nil {
 		return &filer_pb.CreateEntryResponse{}, err
@@ -1080,6 +1083,9 @@ func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 			return err
 		}
 		newEntry = filer.FromPbEntry(req.Directory, req.Entry)
+		if scopeKeepOnly(ctx) {
+			scopePreserveRemoteRenameSource(entry, newEntry)
+		}
 		newEntry.Chunks = chunks
 		// Remote storage manages expiry for remote entries.
 		if newEntry.Remote != nil {

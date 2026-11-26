@@ -279,6 +279,9 @@ func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method
 	if err := scopeCheckEntryShape(e); err != nil {
 		return sc.deny(method, err.Error())
 	}
+	if _, ok := e.GetExtended()[filer.ExtRemoteRenameSourceKey]; ok {
+		return sc.deny(method, "remote rename source is filer-owned")
+	}
 	if err := sc.checkProtectedPath(method, p, false); err != nil {
 		return err
 	}

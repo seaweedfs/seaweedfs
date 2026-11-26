@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"reflect"
 	"sync"
@@ -87,6 +88,86 @@ func TestGeneralScopedSubscriptionHidesRemoteRenameSourceKey(t *testing.T) {
 		if marker := source.GetExtended()[filer.ExtRemoteRenameSourceKey]; len(marker) == 0 {
 			t.Fatalf("redaction mutated the source event")
 		}
+	}
+}
+
+func TestGeneralScopedSubscriptionRedactsDeliveredBatchTail(t *testing.T) {
+	token := scopeSubscriptionToken(t, time.Minute, []string{"/t/allowed"}, nil)
+	h := newScopeSubscriptionGRPCHarness(t, token)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := h.client.SubscribeLocalMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
+		ClientName:             "scope-subscription-batch-redaction",
+		ClientId:               78,
+		PathPrefix:             "/t/allowed",
+		ClientSupportsBatching: true,
+	})
+	if err != nil {
+		t.Fatalf("start subscription: %v", err)
+	}
+
+	const eventCount = 128
+	base := time.Now().Add(-time.Hour).UnixNano()
+	for i := 0; i < eventCount; i++ {
+		name := fmt.Sprintf("batch-%03d", i)
+		appendScopeSubscriptionMetadataEvent(h.subscribeHarness, &filer_pb.SubscribeMetadataResponse{
+			Directory: "/t/allowed",
+			TsNs:      base + int64(i),
+			EventNotification: &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{
+				Name: name,
+				Extended: map[string][]byte{
+					filer.ExtRemoteRenameSourceKey: []byte("/buckets/t1/source"),
+					"client-tag":                   []byte("keep"),
+				},
+			}},
+		})
+	}
+
+	seen := make(map[string]bool, eventCount)
+	batched := false
+	checkEntry := func(where string, entry *filer_pb.Entry) {
+		t.Helper()
+		if entry == nil {
+			t.Fatalf("%s entry missing", where)
+		}
+		if marker := entry.GetExtended()[filer.ExtRemoteRenameSourceKey]; len(marker) != 0 {
+			t.Fatalf("%s exposed remote rename source %q", where, marker)
+		}
+		if tag := string(entry.GetExtended()["client-tag"]); tag != "keep" {
+			t.Fatalf("%s lost client metadata %q", where, tag)
+		}
+		seen[entry.GetName()] = true
+	}
+	for len(seen) < eventCount {
+		resp, err := stream.Recv()
+		if err != nil {
+			t.Fatalf("receive metadata batch: %v", err)
+		}
+		if len(resp.GetEvents()) > 0 {
+			batched = true
+		}
+		inspect := func(event *filer_pb.SubscribeMetadataResponse) {
+			if event == nil || event.GetEventNotification() == nil {
+				return
+			}
+			notification := event.GetEventNotification()
+			if notification.GetOldEntry() != nil {
+				checkEntry("old", notification.GetOldEntry())
+			}
+			if notification.GetNewEntry() != nil {
+				checkEntry("new", notification.GetNewEntry())
+			}
+		}
+		inspect(resp)
+		for _, event := range resp.GetEvents() {
+			inspect(event)
+		}
+	}
+	if !batched {
+		t.Fatal("subscription never delivered an Events tail for a batched backlog")
+	}
+	if len(seen) != eventCount {
+		t.Fatalf("delivered entries = %d, want %d", len(seen), eventCount)
 	}
 }
 
