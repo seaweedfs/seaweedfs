@@ -50,8 +50,8 @@ func (c *commandVolumeTierMove) Name() string {
 func (c *commandVolumeTierMove) Help() string {
 	return `change a volume from one disk type or data center to another
 
-	volume.tier.move -fromDiskType=hdd -toDiskType=ssd [-collectionPattern=""] [-fullPercent=95] [-quietFor=1h] [-parallelLimit=4] [-toReplication=XYZ]
-	volume.tier.move -fromDataCenter=dc1 -toDataCenter=dc2 [-collectionPattern=""] [-fullPercent=95] [-quietFor=1h]
+	volume.tier.move -fromDiskType=hdd -toDiskType=ssd [-collectionPattern=""] [-fullPercent=95] [-quietFor=1h] [-parallelLimit=4] [-toReplication=XYZ] [-keepSource]
+	volume.tier.move -fromDataCenter=dc1 -toDataCenter=dc2 [-collectionPattern=""] [-fullPercent=95] [-quietFor=1h] [-keepSource]
 
 	-fromDataCenter limits the volumes to move to those with a replica in that data center.
 	-toDataCenter places the moved volumes in that data center.
@@ -61,6 +61,9 @@ func (c *commandVolumeTierMove) Help() string {
 	The command ensures the target replication is fully achieved on the destination tier
 	before deleting old replicas. This prevents data loss if a destination disk fails
 	before replication repair completes.
+
+	When -keepSource is specified, volumes are copied to the target tier without deleting
+	the original source replicas.
 
 	When -toReplication is specified, the moved volume is reconfigured with the new
 	replication setting. Otherwise, the volume's existing replication is preserved.
@@ -93,6 +96,7 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	applyChangeAlias := tierCommand.Bool("force", false, "actually apply the changes (alias for -apply)")
 	ioBytePerSecond := tierCommand.Int64("ioBytePerSecond", 0, "limit the speed of move")
 	replicationString := tierCommand.String("toReplication", "", "the new target replication setting")
+	keepSource := tierCommand.Bool("keepSource", false, "keep source replicas after copying to the target tier")
 
 	if err = tierCommand.Parse(args); err != nil {
 		return err
@@ -160,6 +164,8 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 			for job := range jobs {
 				if job.alreadyPlaced {
 					fmt.Fprintf(writer, "completing move of volume %d already on %s ...\n", job.vid, dst.dataNode.Id)
+				} else if *keepSource {
+					fmt.Fprintf(writer, "copying volume %d from %s to %s with disk type %s (keeping source) ...\n", job.vid, job.src, dst.dataNode.Id, toDiskType.ReadableString())
 				} else {
 					fmt.Fprintf(writer, "moving volume %d from %s to %s with disk type %s ...\n", job.vid, job.src, dst.dataNode.Id, toDiskType.ReadableString())
 				}
@@ -173,7 +179,7 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 				unlock := c.Lock(job.src)
 
 				if applyChanges {
-					if err := c.doMoveOneVolume(commandEnv, writer, job.vid, toDiskType, *toDataCenter, locations, job.src, dst, *ioBytePerSecond, replicationString, job.alreadyPlaced); err != nil {
+					if err := c.doMoveOneVolume(commandEnv, writer, job.vid, toDiskType, *toDataCenter, locations, job.src, dst, *ioBytePerSecond, replicationString, job.alreadyPlaced, *keepSource); err != nil {
 						fmt.Fprintf(writer, "move volume %d %s => %s: %v\n", job.vid, job.src, dst.dataNode.Id, err)
 					}
 				}
@@ -315,42 +321,92 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 	return nil
 }
 
-func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, toDataCenter string, locations []wdclient.Location, sourceVolumeServer pb.ServerAddress, dst location, ioBytePerSecond int64, replicationString *string, alreadyPlaced bool) (err error) {
+type tierMoveOps struct {
+	markReplicasWritable func(vid needle.VolumeId, locations []wdclient.Location, writable bool) error
+	liveMove             func(writer io.Writer, vid needle.VolumeId, src, dst pb.ServerAddress, diskType string, ioBytePerSecond int64) error
+	replicate            func(writer io.Writer, vid needle.VolumeId, src, dst pb.ServerAddress, diskType string, ioBytePerSecond int64) error
+	configureReplication func(vid needle.VolumeId, addr pb.ServerAddress, replication string) error
+	ensureReplication    func(writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, toDataCenter string, dst location, replicationString string, ioBytePerSecond int64) (map[string]bool, error)
+	markWritable         func(vid needle.VolumeId, addr pb.ServerAddress, writable bool) error
+	deleteReplica        func(vid needle.VolumeId, addr pb.ServerAddress) error
+}
 
+func (c *commandVolumeTierMove) defaultTierMoveOps(commandEnv *CommandEnv) tierMoveOps {
+	return tierMoveOps{
+		markReplicasWritable: func(vid needle.VolumeId, locations []wdclient.Location, writable bool) error {
+			_, err := markVolumeReplicasWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, locations, writable, false)
+			return err
+		},
+		liveMove: func(writer io.Writer, vid needle.VolumeId, src, dst pb.ServerAddress, diskType string, ioBytePerSecond int64) error {
+			return LiveMoveVolume(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, src, dst, 5*time.Second, diskType, ioBytePerSecond)
+		},
+		replicate: func(writer io.Writer, vid needle.VolumeId, src, dst pb.ServerAddress, diskType string, ioBytePerSecond int64) error {
+			return replicateVolumeToServer(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, src, dst, diskType, ioBytePerSecond)
+		},
+		configureReplication: func(vid needle.VolumeId, addr pb.ServerAddress, replication string) error {
+			return configureVolumeReplication(context.Background(), commandEnv.option.GrpcDialOption, vid, addr, replication)
+		},
+		ensureReplication: func(writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, toDataCenter string, dst location, replicationString string, ioBytePerSecond int64) (map[string]bool, error) {
+			return c.ensureReplicationFulfilled(commandEnv, writer, vid, toDiskType, toDataCenter, dst, replicationString, ioBytePerSecond)
+		},
+		markWritable: func(vid needle.VolumeId, addr pb.ServerAddress, writable bool) error {
+			return markVolumeWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, addr, writable, false)
+		},
+		deleteReplica: func(vid needle.VolumeId, addr pb.ServerAddress) error {
+			return deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, vid, addr, false, false, true)
+		},
+	}
+}
+
+func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, toDataCenter string, locations []wdclient.Location, sourceVolumeServer pb.ServerAddress, dst location, ioBytePerSecond int64, replicationString *string, alreadyPlaced, keepSource bool) (err error) {
 	if !commandEnv.isLocked() {
 		return fmt.Errorf("lock is lost")
 	}
+	return doMoveOneVolumeWithOps(c.defaultTierMoveOps(commandEnv), writer, vid, toDiskType, toDataCenter, locations, sourceVolumeServer, dst, ioBytePerSecond, replicationString, alreadyPlaced, keepSource)
+}
+
+func doMoveOneVolumeWithOps(ops tierMoveOps, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, toDataCenter string, locations []wdclient.Location, sourceVolumeServer pb.ServerAddress, dst location, ioBytePerSecond int64, replicationString *string, alreadyPlaced, keepSource bool) (err error) {
 
 	// mark all replicas as read only
-	if _, err = markVolumeReplicasWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, locations, false, false); err != nil {
+	if err = ops.markReplicasWritable(vid, locations, false); err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
 	}
 	newAddress := pb.NewServerAddressFromDataNode(dst.dataNode)
 
-	// when already placed nothing is deleted yet, so failure paths restore every replica
+	// when already placed or keepSource is true nothing is deleted yet, so failure paths restore every replica
 	deletedSource := sourceVolumeServer
-	if alreadyPlaced {
+	if alreadyPlaced || keepSource {
 		deletedSource = ""
-	} else if moveErr := LiveMoveVolume(context.Background(), commandEnv.option.GrpcDialOption, writer, vid, sourceVolumeServer, newAddress, 5*time.Second, toDiskType.ReadableString(), ioBytePerSecond); moveErr != nil {
-		// A move that deliberately kept the source readonly (its delete may
-		// have happened, leaving the target authoritative) must not be thawed
-		// — reopening the replicas beside that copy would fork the volume.
-		if !errors.Is(moveErr, volume_move.ErrSourceKeptReadonly) {
-			// mark all replicas as writable
-			if _, err = markVolumeReplicasWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, locations, true, false); err != nil {
-				glog.Errorf("mark volume %d as writable on %s: %v", vid, locations[0].Url, err)
+	}
+	if !alreadyPlaced {
+		if keepSource {
+			if copyErr := ops.replicate(writer, vid, sourceVolumeServer, newAddress, toDiskType.ReadableString(), ioBytePerSecond); copyErr != nil {
+				if err = ops.markReplicasWritable(vid, locations, true); err != nil {
+					glog.Errorf("mark volume %d as writable on %s: %v", vid, locations[0].Url, err)
+				}
+				return fmt.Errorf("copy volume %d %s => %s : %v", vid, locations[0].Url, dst.dataNode.Id, copyErr)
 			}
-		}
+		} else if moveErr := ops.liveMove(writer, vid, sourceVolumeServer, newAddress, toDiskType.ReadableString(), ioBytePerSecond); moveErr != nil {
+			// A move that deliberately kept the source readonly (its delete may
+			// have happened, leaving the target authoritative) must not be thawed
+			// -- reopening the replicas beside that copy would fork the volume.
+			if !errors.Is(moveErr, volume_move.ErrSourceKeptReadonly) {
+				// mark all replicas as writable
+				if err = ops.markReplicasWritable(vid, locations, true); err != nil {
+					glog.Errorf("mark volume %d as writable on %s: %v", vid, locations[0].Url, err)
+				}
+			}
 
-		return fmt.Errorf("move volume %d %s => %s : %v", vid, locations[0].Url, dst.dataNode.Id, moveErr)
+			return fmt.Errorf("move volume %d %s => %s : %v", vid, locations[0].Url, dst.dataNode.Id, moveErr)
+		}
 	}
 
 	// If move is successful and replication is not empty, alter moved volume's replication setting
 	if *replicationString != "" {
-		if err = configureVolumeReplication(context.Background(), commandEnv.option.GrpcDialOption, vid, newAddress, *replicationString); err != nil {
+		if err = ops.configureReplication(vid, newAddress, *replicationString); err != nil {
 			// LiveMoveVolume already deleted sourceVolumeServer; mark surviving
 			// old replicas writable before aborting so the volume stays accessible.
-			restoreSurvivingReplicasWritable(commandEnv, vid, locations, deletedSource)
+			restoreSurvivingReplicasWritableWithOps(ops, vid, locations, deletedSource)
 			return fmt.Errorf("configure replication %s on volume %d at %s: %v", *replicationString, vid, newAddress, err)
 		}
 	}
@@ -359,11 +415,16 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	// deleting old replicas to avoid data-loss risk.
 	// Use the explicit -toReplication if given, otherwise preserve the volume's
 	// existing replication from the source tier.
-	preserveServers, replicateErr := c.ensureReplicationFulfilled(commandEnv, writer, vid, toDiskType, toDataCenter, dst, *replicationString, ioBytePerSecond)
+	preserveServers, replicateErr := ops.ensureReplication(writer, vid, toDiskType, toDataCenter, dst, *replicationString, ioBytePerSecond)
 	if replicateErr != nil {
-		// Replication not fully achieved — do NOT delete old replicas.
-		restoreSurvivingReplicasWritable(commandEnv, vid, locations, deletedSource)
+		// Replication not fully achieved -- do NOT delete old replicas.
+		restoreSurvivingReplicasWritableWithOps(ops, vid, locations, deletedSource)
 		return fmt.Errorf("volume %d moved to %s but failed to fulfill replication, old replicas preserved: %v", vid, dst.dataNode.Id, replicateErr)
+	}
+
+	if keepSource {
+		restoreSurvivingReplicasWritableWithOps(ops, vid, locations, "")
+		return nil
 	}
 
 	// Mark preserved pre-existing target-tier replicas as writable.
@@ -371,7 +432,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	// stay read-only since we're keeping rather than deleting them.
 	for _, loc := range locations {
 		if preserveServers[loc.Url] {
-			if markErr := markVolumeWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), true, false); markErr != nil {
+			if markErr := ops.markWritable(vid, loc.ServerAddress(), true); markErr != nil {
 				glog.Errorf("mark volume %d as writable on preserved replica %s: %v", vid, loc.Url, markErr)
 			}
 		}
@@ -389,21 +450,21 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 		}
 		// keepRemoteData=true: remote-tiered replicas share one cloud object, so
 		// deleting a replica must not delete the object the survivors still point at.
-		if err = deleteVolume(context.Background(), commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), false, false, true); err != nil {
+		if err = ops.deleteReplica(vid, loc.ServerAddress()); err != nil {
 			fmt.Fprintf(writer, "failed to delete volume %d on %s: %v\n", vid, loc.Url, err)
 		}
 	}
 	return nil
 }
 
-// restoreSurvivingReplicasWritable marks old replicas writable after a failure,
-// skipping the source that was already deleted by LiveMoveVolume.
-func restoreSurvivingReplicasWritable(commandEnv *CommandEnv, vid needle.VolumeId, locations []wdclient.Location, deletedSource pb.ServerAddress) {
+// restoreSurvivingReplicasWritableWithOps marks old replicas writable after a failure
+// (or when keeping source replicas), skipping the source that was already deleted by LiveMoveVolume.
+func restoreSurvivingReplicasWritableWithOps(ops tierMoveOps, vid needle.VolumeId, locations []wdclient.Location, deletedSource pb.ServerAddress) {
 	for _, loc := range locations {
 		if loc.ServerAddress() == deletedSource {
 			continue
 		}
-		if markErr := markVolumeWritable(context.Background(), commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), true, false); markErr != nil {
+		if markErr := ops.markWritable(vid, loc.ServerAddress(), true); markErr != nil {
 			glog.Errorf("mark volume %d as writable on %s: %v", vid, loc.Url, markErr)
 		}
 	}
