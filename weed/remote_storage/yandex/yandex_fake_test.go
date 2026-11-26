@@ -52,6 +52,7 @@ type fakeDisk struct {
 	// DiskNotFoundError instead of the API's 409 DiskPathDoesntExistsError
 	missingParentNotFound bool
 	unauthorizedOps       bool // operation polls answer 401
+	lockedUploadLinks     int  // upload-link requests answered 423 before success
 }
 
 type recordedRequest struct {
@@ -321,6 +322,12 @@ func (d *fakeDisk) handleResources(w http.ResponseWriter, r *http.Request) {
 func (d *fakeDisk) handleUploadLink(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.lockedUploadLinks > 0 {
+		// a folder still being deleted asynchronously is locked for a moment
+		d.lockedUploadLinks--
+		writeAPIError(w, http.StatusLocked, "DiskResourceLockedError", "Resource is locked.")
+		return
+	}
 	path := cleanPath(r.URL.Query().Get("path"))
 	if _, found := d.nodes[parentPath(path)]; !found {
 		d.writeMissingParent(w)

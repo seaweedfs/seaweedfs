@@ -17,7 +17,7 @@ mtime.
   and need a long HTTP timeout.
 - Writes are expensive: one upload is an upload-link request, the PUT, a
   metadata PATCH, and a stat.
-- Yandex applies rate limits; the client retries 429, 5xx and 509 with a
+- Yandex applies rate limits; the client retries 423, 429, 5xx and 509 with a
   backoff, the sync retries a failed upload from a fresh reader.
 - The Disk API lists one folder per request, so `remote.cache` and
   `remote.copy.local`, which walk a whole tree, cost one request per folder.

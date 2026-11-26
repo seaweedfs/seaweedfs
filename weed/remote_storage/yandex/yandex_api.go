@@ -152,9 +152,12 @@ func newAPIClient(baseURL string, httpClient *http.Client, tokens *tokenSource) 
 	}
 }
 
+// retryableStatus reports an answer worth repeating: throttling, a server
+// failure, or 423 DiskResourceLockedError, which a folder that is still being
+// deleted asynchronously answers for a moment.
 func retryableStatus(status int) bool {
 	switch status {
-	case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway,
+	case http.StatusLocked, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway,
 		http.StatusServiceUnavailable, http.StatusGatewayTimeout, statusBandwidthLimitExceeded:
 		return true
 	}

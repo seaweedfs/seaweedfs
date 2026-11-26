@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func newTestClient(t *testing.T, disk *fakeDisk) (*yandexRemoteStorageClient, *httptest.Server) {
@@ -691,5 +692,34 @@ func TestOperationPollStopsOnRepeatedUnauthorized(t *testing.T) {
 	disk.mu.Unlock()
 	if polls != 2 {
 		t.Fatalf("operation polls = %d, want 2 (one retry after the refresh)", polls)
+	}
+}
+
+// TestWriteFileRetriesALockedResource: a folder the API is still deleting
+// asynchronously answers 423 DiskResourceLockedError for a moment; the client
+// retries it like a throttled request, and the sync's classifier sees it as
+// transient when the retries run out.
+func TestWriteFileRetriesALockedResource(t *testing.T) {
+	disk := newFakeDisk(t)
+	disk.mkdirAll("/root/bucket")
+	disk.lockedUploadLinks = 2
+	client, _ := newTestClient(t, disk)
+
+	entry := &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{FileSize: 3, Mtime: 1700000000}}
+	if _, err := client.WriteFile(testLocation("bucket", "/a.txt"), entry, strings.NewReader("abc")); err != nil {
+		t.Fatalf("write after a locked answer: %v", err)
+	}
+	if string(disk.nodes["/root/bucket/a.txt"].data) != "abc" {
+		t.Fatalf("object was not written")
+	}
+
+	disk.lockedUploadLinks = 100
+	_, err := client.WriteFile(testLocation("bucket", "/b.txt"), entry, strings.NewReader("abc"))
+	var apiErr *apiError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusLocked {
+		t.Fatalf("err = %v, want the 423", err)
+	}
+	if !util.IsTransientError(err) {
+		t.Fatalf("a 423 is not transient for the sync: %v", err)
 	}
 }
