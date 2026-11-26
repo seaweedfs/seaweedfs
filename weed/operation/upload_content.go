@@ -240,11 +240,7 @@ func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, ho
 			// The request addresses the filer, which authorizes it and mints the
 			// volume credential itself. The AssignVolume token is not a filer
 			// credential and gets the caller nowhere here.
-			if uploadOption.FilerJwt != nil {
-				uploadOption.Jwt = uploadOption.FilerJwt(true)
-			} else {
-				uploadOption.Jwt = security.EncodedJwt(util_http.JwtForFilerServer(true))
-			}
+			uploadOption.Jwt = filerWriteJwt(uploadOption)
 		}
 
 		uploadResult, err = uploader.retriedUploadData(context.Background(), prepared, uploadOption)
@@ -400,6 +396,12 @@ func (uploader *Uploader) retriedUploadData(ctx context.Context, prepared *prepa
 				return nil, ctx.Err()
 			case <-time.After(time.Millisecond * time.Duration(237*(i+1))):
 			}
+			// A filer credential minted for an earlier attempt can expire while
+			// that attempt streams its body or a replica forward fails, so
+			// every same-FID replay through the filer gets a fresh one.
+			if util_http.IsProxyChunkUrl(option.UploadUrl) {
+				option.Jwt = filerWriteJwt(option)
+			}
 		}
 		uploadResult, err = uploader.doUploadData(ctx, prepared, option)
 		if err == nil {
@@ -420,17 +422,6 @@ func (uploader *Uploader) retriedUploadData(ctx context.Context, prepared *prepa
 			if statusErr.StatusCode == http.StatusConflict || (statusErr.StatusCode == http.StatusUnauthorized && statusErr.expiredBeforeAppend && !util_http.IsProxyChunkUrl(option.UploadUrl)) {
 				return nil, err
 			}
-			if statusErr.StatusCode == http.StatusUnauthorized && statusErr.expiredBeforeAppend && util_http.IsProxyChunkUrl(option.UploadUrl) {
-				// The caller's filer credential was minted once and may have
-				// expired alongside the volume JWT (both default to 10s), so
-				// re-mint it before replaying the same FID; otherwise the filer
-				// rejects the retry with an unmarked 401 and recovery stops.
-				if option.FilerJwt != nil {
-					option.Jwt = option.FilerJwt(true)
-				} else {
-					option.Jwt = security.EncodedJwt(util_http.JwtForFilerServer(true))
-				}
-			}
 			if statusErr.stalled {
 				option.stallWatchdogDisarmed = true
 			}
@@ -438,6 +429,14 @@ func (uploader *Uploader) retriedUploadData(ctx context.Context, prepared *prepa
 		glog.WarningfCtx(ctx, "uploading %d to %s: %v", i, option.UploadUrl, err)
 	}
 	return
+}
+
+// filerWriteJwt mints the filer write credential for a proxy chunk upload.
+func filerWriteJwt(option *UploadOption) security.EncodedJwt {
+	if option.FilerJwt != nil {
+		return option.FilerJwt(true)
+	}
+	return security.EncodedJwt(util_http.JwtForFilerServer(true))
 }
 
 // isGenericBinaryMimeType reports a content type that says nothing about the bytes,

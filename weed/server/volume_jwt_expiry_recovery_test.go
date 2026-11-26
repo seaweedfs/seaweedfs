@@ -466,3 +466,28 @@ func TestVolumeJwtExpiryFanoutRollback(t *testing.T) {
 		require.Equal(t, plain, data)
 	}
 }
+
+// Reading a slow body can outlast the incoming write JWT, so the replica
+// forward carries a fresh one that the replica's own check accepts (#6220).
+func TestReplicaForwardJwtOutlivesIncomingJwt(t *testing.T) {
+	key := security.SigningKey("replica-forward-key")
+	vs := &VolumeServer{guard: security.NewGuard(nil, string(key), 10, "", 0, "", "")}
+	incoming := httptest.NewRequest(http.MethodPost, "/1,01637037d6_1", nil)
+	incoming.Header.Set("Authorization", "Bearer "+expirySignedToken(t, key, "1,01637037d6", time.Now().Add(-time.Minute)))
+	require.False(t, vs.maybeCheckJwtAuthorization(incoming, "1", "01637037d6_1", true), "incoming token must be expired")
+
+	forwarded := vs.replicaJwt(incoming, "1", "01637037d6_1", key)
+
+	replicaRequest := httptest.NewRequest(http.MethodPost, "/1,01637037d6_1?type=replicate", nil)
+	replicaRequest.Header.Set("Authorization", "Bearer "+string(forwarded))
+	require.True(t, vs.maybeCheckJwtAuthorization(replicaRequest, "1", "01637037d6_1", true))
+}
+
+// Without a signing key the volume server mints nothing and forwards the
+// incoming token unchanged.
+func TestReplicaForwardJwtWithoutSigningKey(t *testing.T) {
+	vs := &VolumeServer{guard: security.NewGuard(nil, "", 0, "", 0, "", "")}
+	incoming := httptest.NewRequest(http.MethodPost, "/1,01637037d6", nil)
+	incoming.Header.Set("Authorization", "Bearer incoming-token")
+	require.Equal(t, security.EncodedJwt("incoming-token"), vs.replicaJwt(incoming, "1", "01637037d6", nil))
+}
