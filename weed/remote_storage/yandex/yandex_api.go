@@ -328,7 +328,7 @@ func (c *apiClient) doJSON(ctx context.Context, method, methodPath string, query
 		if resp.StatusCode == http.StatusUnauthorized && !refreshed {
 			resp.Body.Close()
 			cancel()
-			c.tokens.Invalidate()
+			c.tokens.Invalidate(token)
 			refreshed = true
 			continue
 		}
@@ -720,7 +720,7 @@ func (c *apiClient) pollOnce(ctx context.Context, href string, refreshed *bool) 
 	}
 	if resp.StatusCode == http.StatusUnauthorized && !*refreshed {
 		resp.Body.Close()
-		c.tokens.Invalidate()
+		c.tokens.Invalidate(token)
 		*refreshed = true
 		return errRetryPoll
 	}

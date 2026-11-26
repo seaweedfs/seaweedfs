@@ -192,13 +192,15 @@ func (ts *tokenSource) Token() (string, error) {
 	return token.AccessToken, nil
 }
 
-// Invalidate marks the current access token stale so the next Token call
+// Invalidate marks the rejected access token stale so the next Token call
 // refreshes it. The API answered 401: the token is rejected whatever its
-// stored expiry says.
-func (ts *tokenSource) Invalidate() {
+// stored expiry says. Requests that were rejected with a token another
+// request has already replaced refresh nothing, so concurrent 401s cost one
+// refresh.
+func (ts *tokenSource) Invalidate(rejected string) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	if ts.src == nil {
+	if ts.src == nil || ts.tok.AccessToken != rejected {
 		return
 	}
 	ts.src = ts.conf.TokenSource(ts.ctx, &oauth2.Token{

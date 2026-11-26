@@ -263,7 +263,7 @@ func TestRefreshTokenRotation(t *testing.T) {
 		t.Fatalf("stat: %v", err)
 	}
 	// the API rejected the token; the next refresh must use the rotated one
-	yandexClient.api.tokens.Invalidate()
+	yandexClient.api.tokens.Invalidate(yandexClient.api.tokens.tok.AccessToken)
 	if _, err = yandexClient.StatFile(testLocation("bucket", "/a.txt")); err != nil {
 		t.Fatalf("stat after invalidating: %v", err)
 	}
@@ -276,6 +276,39 @@ func TestRefreshTokenRotation(t *testing.T) {
 	}
 	if requests[1]["refresh_token"] != "refresh-1" {
 		t.Fatalf("second refresh used %v, want the rotated refresh token", requests[1])
+	}
+}
+
+// TestConcurrentUnauthorizedRefreshesOnce: requests that were all rejected
+// with the same token refresh it once; a late 401 for a token already
+// replaced does not rotate the refresh token again.
+func TestConcurrentUnauthorizedRefreshesOnce(t *testing.T) {
+	ResetTokenSources()
+	t.Cleanup(ResetTokenSources)
+
+	valid := tokenConf{
+		token:        `{"access_token":"first","refresh_token":"refresh-0","token_type":"bearer","expiry":"2999-01-01T00:00:00Z"}`,
+		clientID:     "app",
+		clientSecret: "secret",
+	}
+	tokens := &fakeTokenServer{}
+	tokenServer := tokens.server(t)
+	source, err := newTokenSource(valid.conf(""), nil, tokenServer.URL)
+	if err != nil {
+		t.Fatalf("token source: %v", err)
+	}
+
+	source.Invalidate("first")
+	refreshed, err := source.Token()
+	if err != nil || refreshed == "first" {
+		t.Fatalf("token after the first 401 = %q, err %v", refreshed, err)
+	}
+	source.Invalidate("first")
+	if token, err := source.Token(); err != nil || token != refreshed {
+		t.Fatalf("token after a late 401 = %q, err %v, want %q", token, err, refreshed)
+	}
+	if requests := tokens.snapshot(); len(requests) != 1 {
+		t.Fatalf("token requests = %d, want 1", len(requests))
 	}
 }
 
@@ -314,7 +347,7 @@ func TestBareTokenDoesNotRefresh(t *testing.T) {
 	if err != nil || token != "bare" {
 		t.Fatalf("token = %q, err %v", token, err)
 	}
-	source.Invalidate()
+	source.Invalidate("bare")
 	if token, err = source.Token(); err != nil || token != "bare" {
 		t.Fatalf("after invalidate token = %q, err %v", token, err)
 	}
