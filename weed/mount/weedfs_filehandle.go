@@ -163,6 +163,9 @@ func (wfs *WFS) ReleaseHandle(handleId FileHandleId) {
 	// pending-flush registration.  Lock ordering: pendingAsyncFlushMu → fhMap.
 	wfs.pendingAsyncFlushMu.Lock()
 	fhToRelease := wfs.fhMap.ReleaseByHandle(handleId)
+	if fhToRelease != nil {
+		wfs.exportedHandles.ReleaseHandle(fhToRelease.inode)
+	}
 	if fhToRelease != nil && fhToRelease.asyncFlushPending {
 		done := make(chan struct{})
 		wfs.pendingAsyncFlush[fhToRelease.inode] = done

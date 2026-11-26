@@ -146,6 +146,9 @@ func (fh *FileHandle) RememberPath(fullPath util.FullPath) {
 		return
 	}
 	fh.savedDir, fh.savedName = fullPath.DirAndName()
+	if fh.wfs != nil {
+		fh.wfs.exportedHandles.RememberPath(fh.inode, fullPath)
+	}
 }
 
 func (fh *FileHandle) GetEntry() *LockedEntry {

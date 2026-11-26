@@ -173,6 +173,7 @@ type WFS struct {
 	copyBufferPool        sync.Pool
 	concurrentCopiersSem  chan struct{}
 	inodeToPath           *InodeToPath
+	exportedHandles       *exportedHandles
 	fhMap                 *FileHandleToInode
 	dhMap                 *DirectoryHandleToInode
 	fuseServer            *fuse.Server
@@ -316,6 +317,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 
 	if option.NfsExport {
 		wfs.inodeToPath.RetainForgotten(nfsExportForgottenInodes)
+		wfs.exportedHandles = wfs.newExportedHandles()
 	}
 
 	if option.EnableDistributedLock && !option.WritebackCache && len(option.FilerAddresses) > 0 {
