@@ -93,10 +93,10 @@ func TestIssue12914LegacyFixDropsNeedlesAfterDamage(t *testing.T) {
 	// A huge size field in the header of needle 5 makes the record run past EOF.
 	patchDat(t, base+".dat", offsets[4]+types.NeedleIdSize+types.CookieSize, []byte{0x7f, 0xff, 0xff, 0xf0})
 
-	savedVerify, savedIgnore, savedStatus := *fixVerify, *fixIgnoreError, commandExitStatus
-	*fixVerify, *fixIgnoreError, commandExitStatus = false, true, 0
+	savedIgnore, savedStatus := *fixIgnoreError, commandExitStatus
+	*fixIgnoreError, commandExitStatus = true, 0
 	t.Cleanup(func() {
-		*fixVerify, *fixIgnoreError, commandExitStatus = savedVerify, savedIgnore, savedStatus
+		*fixIgnoreError, commandExitStatus = savedIgnore, savedStatus
 	})
 
 	doFixOneVolume(dir, "fix_7", "fix", 7, true)
@@ -104,9 +104,8 @@ func TestIssue12914LegacyFixDropsNeedlesAfterDamage(t *testing.T) {
 		t.Fatalf("plain weed fix indexed %v, want [1 2 3 4] before the damage (#12914)", got)
 	}
 
-	*fixVerify = true
-	commandExitStatus = 0
-	doFixOneVolume(dir, "fix_7", "fix", 7, true)
+	withVerifyFlags(t, true)
+	doRecoverOneVolume(dir, "fix_7", 7)
 	if got := indexedKeys(t, base+".idx"); !slices.Equal(got, []uint64{1, 2, 3, 4, 6, 7, 8}) {
 		t.Fatalf("weed fix -verify indexed %v, want [1 2 3 4 6 7 8]", got)
 	}
@@ -134,12 +133,8 @@ func TestIssue12914RewrittenNeedleBehindDamage(t *testing.T) {
 	datBackend.Close()
 	patchDat(t, base+".dat", offsets[4], make([]byte, offsets[5]-offsets[4]))
 
-	savedVerify, savedIgnore, savedStatus := *fixVerify, *fixIgnoreError, commandExitStatus
-	*fixVerify, *fixIgnoreError, commandExitStatus = true, true, 0
-	t.Cleanup(func() {
-		*fixVerify, *fixIgnoreError, commandExitStatus = savedVerify, savedIgnore, savedStatus
-	})
-	doFixOneVolume(dir, "fix_7", "fix", 7, true)
+	withVerifyFlags(t, true)
+	doRecoverOneVolume(dir, "fix_7", 7)
 
 	got := idxOffsets(t, base+".idx")
 	for _, id := range []uint64{1, 2, 3, 4, 6, 7, 8} {
@@ -225,13 +220,9 @@ func TestFixRefusesPendingCompactMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	savedVerify, savedIgnore, savedStatus := *fixVerify, *fixIgnoreError, commandExitStatus
-	*fixVerify, *fixIgnoreError, commandExitStatus = true, true, 0
-	t.Cleanup(func() {
-		*fixVerify, *fixIgnoreError, commandExitStatus = savedVerify, savedIgnore, savedStatus
-	})
+	withVerifyFlags(t, true)
 
-	doFixOneVolume(dir, "fix_7", "fix", 7, true)
+	doRecoverOneVolume(dir, "fix_7", 7)
 	if CommandExitStatus() != 1 {
 		t.Fatalf("exit status = %d, want 1 (pending commit marker must fail the run)", CommandExitStatus())
 	}

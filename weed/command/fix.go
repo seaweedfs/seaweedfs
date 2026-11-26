@@ -113,41 +113,70 @@ func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64
 	return nil
 }
 
-func runFix(cmd *Command, args []string) bool {
-	if *fixVerify && *fixRemoteFile {
-		fmt.Println("-verify reads the local .dat and cannot be combined with -remoteFile")
-		return false
+// listVolumeFiles returns the folder and the entries one command line
+// argument names: every entry of a folder, or the single file given.
+func listVolumeFiles(arg string) (basePath string, files []fs.DirEntry, err error) {
+	basePath, f := path.Split(util.ResolvePath(arg))
+	if util.FolderExists(arg) {
+		files, err = os.ReadDir(arg)
+		return arg, files, err
 	}
-	if (*fixDryRun || *fixTruncateTail) && !*fixVerify {
-		fmt.Println("-dryRun and -truncateTail only apply with -verify")
-		return false
+	if f == "" {
+		files, err = os.ReadDir(basePath)
+		return basePath, files, err
 	}
-	if *fixDryRun && *fixGenerateEcx {
-		fmt.Println("-dryRun cannot be combined with -ecx, which writes the .ecx")
-		return false
+	fileInfo, err := os.Stat(arg)
+	if err != nil {
+		return basePath, nil, err
 	}
-	for _, arg := range args {
-		basePath, f := path.Split(util.ResolvePath(arg))
-		if util.FolderExists(arg) {
-			basePath = arg
-			f = ""
-		}
+	return basePath, []fs.DirEntry{fs.FileInfoToDirEntry(fileInfo)}, nil
+}
 
-		files := []fs.DirEntry{}
-		if f == "" {
-			fileInfo, err := os.ReadDir(basePath)
-			if err != nil {
-				fmt.Println(err)
-				return false
-			}
-			files = fileInfo
-		} else {
-			fileInfo, err := os.Stat(arg)
-			if err != nil {
-				fmt.Println(err)
-				return false
-			}
-			files = []fs.DirEntry{fs.FileInfoToDirEntry(fileInfo)}
+// volumeFile is a volume file name split into its parts.
+type volumeFile struct {
+	baseFileName string
+	collection   string
+	volumeId     int64
+}
+
+// selectVolumeFile parses a [collection_]id<ext> file name. ok is false when
+// the name does not end in ext or the collection or volumeId filter (when
+// set) excludes it; the filter applies before the range check, so a file it
+// excludes is never an error. An id that is not a number or does not fit a
+// uint32 is an error.
+func selectVolumeFile(name, ext, collection string, volumeId int64) (vf volumeFile, ok bool, err error) {
+	if !strings.HasSuffix(name, ext) {
+		return vf, false, nil
+	}
+	if collection != "" && !strings.HasPrefix(name, collection+"_") {
+		return vf, false, nil
+	}
+	vf.baseFileName = name[:len(name)-len(ext)]
+	idStr := vf.baseFileName
+	if sepIndex := strings.LastIndex(vf.baseFileName, "_"); sepIndex > 0 {
+		vf.collection = vf.baseFileName[:sepIndex]
+		idStr = vf.baseFileName[sepIndex+1:]
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err == nil && volumeId != 0 && volumeId != id {
+		return vf, false, nil
+	}
+	if err == nil && (id < 0 || id > math.MaxUint32) {
+		err = fmt.Errorf("volume id %d out of range", id)
+	}
+	if err != nil {
+		return vf, false, err
+	}
+	vf.volumeId = id
+	return vf, true, nil
+}
+
+func runFix(cmd *Command, args []string) bool {
+	for _, arg := range args {
+		basePath, files, err := listVolumeFiles(arg)
+		if err != nil {
+			fmt.Println(err)
+			return false
 		}
 
 		ext := ".dat"
@@ -158,36 +187,19 @@ func runFix(cmd *Command, args []string) bool {
 		}
 
 		for _, file := range files {
-			if !strings.HasSuffix(file.Name(), ext) {
-				continue
-			}
-			if *fixVolumeCollection != "" {
-				if !strings.HasPrefix(file.Name(), *fixVolumeCollection+"_") {
-					continue
-				}
-			}
-			baseFileName := file.Name()[:len(file.Name())-4]
-			collection, volumeIdStr := "", baseFileName
-			if sepIndex := strings.LastIndex(baseFileName, "_"); sepIndex > 0 {
-				collection = baseFileName[:sepIndex]
-				volumeIdStr = baseFileName[sepIndex+1:]
-			}
-			volumeId, parseErr := strconv.ParseInt(volumeIdStr, 10, 64)
-			if parseErr == nil && *fixVolumeId != 0 && *fixVolumeId != volumeId {
-				continue
-			}
-			if parseErr == nil && (volumeId < 0 || volumeId > math.MaxUint32) {
-				parseErr = fmt.Errorf("volume id %d out of range", volumeId)
-			}
+			vf, ok, parseErr := selectVolumeFile(file.Name(), ext, *fixVolumeCollection, *fixVolumeId)
 			if parseErr != nil {
-				fmt.Printf("Failed to parse volume id from %s: %v\n", baseFileName, parseErr)
+				fmt.Printf("Failed to parse volume id from %s: %v\n", vf.baseFileName, parseErr)
 				if *fixIgnoreError {
 					SetCommandExitStatus(1)
 					continue
 				}
 				return false
 			}
-			doFixOneVolume(basePath, baseFileName, collection, volumeId, *fixIncludeDeleted)
+			if !ok {
+				continue
+			}
+			doFixOneVolume(basePath, vf.baseFileName, vf.collection, vf.volumeId, *fixIncludeDeleted)
 		}
 
 		if *fixGenerateEcx {
@@ -315,19 +327,6 @@ func (scanner *VolumeFileScanner4Fix) verifyNeedle(n *needle.Needle, offset int6
 
 func doFixOneVolume(basepath string, baseFileName string, collection string, volumeId int64, fixIncludeDeleted bool) {
 	indexFileName := path.Join(basepath, baseFileName+".idx")
-
-	if *fixVerify {
-		if err := recoverOneVolume(basepath, baseFileName, volumeId, indexFileName, recoverOptions{
-			includeDeleted: fixIncludeDeleted, dryRun: *fixDryRun, truncateTail: *fixTruncateTail, maxNeedleSizeMB: *fixMaxNeedleMB}); err != nil {
-			if *fixIgnoreError {
-				glog.Error(err)
-				SetCommandExitStatus(1)
-				return
-			}
-			glog.Fatal(err)
-		}
-		return
-	}
 
 	nm := needle_map.NewMemDb()
 	nmDeleted := needle_map.NewMemDb()

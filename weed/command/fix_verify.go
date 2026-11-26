@@ -21,13 +21,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-var (
-	fixVerify       = cmdFix.Flag.Bool("verify", false, "read every needle in .dat, verify its structure and CRC32, and resynchronise past damaged regions instead of stopping at the first bad header. Needles that do not verify are left out of the rebuilt .idx and every damaged region is reported.")
-	fixDryRun       = cmdFix.Flag.Bool("dryRun", false, "with -verify: only report anomalies, do not touch .idx or .dat")
-	fixTruncateTail = cmdFix.Flag.Bool("truncateTail", false, "with -verify: cut garbage after the last valid needle off the .dat (non-zero tails are saved to <dat>.tail.<offset>.bak first), so the load-time integrity check passes")
-	fixMaxNeedleMB  = cmdFix.Flag.Int("maxNeedleSizeMB", 64, "with -verify: largest needle payload accepted while searching for the next valid needle after damage; a needle with a corrupted header larger than this cannot be recovered")
-)
-
 // printAnomalies writes one tab separated line per damaged region.
 func printAnomalies(volumeId int64, anomalies []datAnomaly) {
 	for _, a := range anomalies {

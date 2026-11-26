@@ -18,7 +18,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/storage/volume_info"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // A zero fill that erases a live record's payload length and flags but keeps
@@ -153,9 +152,9 @@ func TestVerifyRecordsKeysHitByDamage(t *testing.T) {
 
 func withVerifyFlags(t *testing.T, ignoreError bool) {
 	t.Helper()
-	savedVerify, savedIgnore, savedStatus := *fixVerify, *fixIgnoreError, commandExitStatus
-	*fixVerify, *fixIgnoreError, commandExitStatus = true, ignoreError, 0
-	t.Cleanup(func() { *fixVerify, *fixIgnoreError, commandExitStatus = savedVerify, savedIgnore, savedStatus })
+	savedIgnore, savedStatus := *fixRecoverIgnoreError, commandExitStatus
+	*fixRecoverIgnoreError, commandExitStatus = ignoreError, 0
+	t.Cleanup(func() { *fixRecoverIgnoreError, commandExitStatus = savedIgnore, savedStatus })
 }
 
 // The rebuilt index is staged next to the live one and swapped in only once
@@ -177,7 +176,7 @@ func TestFixVerifyStagesIndexAndDropsLevelDb(t *testing.T) {
 	}
 	withVerifyFlags(t, false)
 
-	doFixOneVolume(dir, "fix_7", "fix", 7, true)
+	doRecoverOneVolume(dir, "fix_7", 7)
 
 	if got := indexedKeys(t, base+".idx"); len(got) != 3 {
 		t.Fatalf("rebuilt index keys = %v, want 3", got)
@@ -205,7 +204,7 @@ func TestFixVerifyIgnoreErrorContinues(t *testing.T) {
 	}
 	withVerifyFlags(t, true)
 
-	doFixOneVolume(dir, "fix_7", "fix", 7, true)
+	doRecoverOneVolume(dir, "fix_7", 7)
 
 	if CommandExitStatus() != 1 {
 		t.Fatalf("exit status = %d, want 1", CommandExitStatus())
@@ -302,12 +301,12 @@ func TestFixVerifyExitStatusReportsDamage(t *testing.T) {
 	dir := t.TempDir()
 	base, offsets := writeFixTestVolume(t, dir, 4)
 	withVerifyFlags(t, false)
-	doFixOneVolume(dir, "fix_7", "fix", 7, true)
+	doRecoverOneVolume(dir, "fix_7", 7)
 	if CommandExitStatus() != 0 {
 		t.Fatalf("clean volume: exit status %d, want 0", CommandExitStatus())
 	}
 	patchDat(t, base+".dat", offsets[1], bytes.Repeat([]byte{0xA5}, types.NeedleHeaderSize))
-	doFixOneVolume(dir, "fix_7", "fix", 7, true)
+	doRecoverOneVolume(dir, "fix_7", 7)
 	if CommandExitStatus() != 1 {
 		t.Fatalf("damaged volume: exit status %d, want 1", CommandExitStatus())
 	}
@@ -369,37 +368,6 @@ func TestVerifyResyncedDeleteRecordGuards(t *testing.T) {
 				}
 			}); err != nil {
 				t.Fatal(err)
-			}
-		})
-	}
-}
-
-func TestRunFixRejectsVerifyFlagCombinations(t *testing.T) {
-	dir := t.TempDir()
-	writeFixTestVolume(t, dir, 2)
-	idx := filepath.Join(dir, "fix_7.idx")
-	for _, tc := range []struct {
-		name                                     string
-		verify, remote, dryRun, truncate, genEcx bool
-	}{
-		{name: "verify+remoteFile", verify: true, remote: true},
-		{name: "dryRun without verify", dryRun: true},
-		{name: "truncateTail without verify", truncate: true},
-		{name: "verify+dryRun+ecx", verify: true, dryRun: true, genEcx: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			saved := []bool{*fixVerify, *fixRemoteFile, *fixDryRun, *fixTruncateTail, *fixGenerateEcx}
-			*fixVerify, *fixRemoteFile, *fixDryRun, *fixTruncateTail, *fixGenerateEcx = tc.verify, tc.remote, tc.dryRun, tc.truncate, tc.genEcx
-			t.Cleanup(func() {
-				*fixVerify, *fixRemoteFile, *fixDryRun, *fixTruncateTail, *fixGenerateEcx = saved[0], saved[1], saved[2], saved[3], saved[4]
-			})
-			captureStdout(t, func() {
-				if runFix(cmdFix, []string{filepath.Join(dir, "fix_7.dat")}) {
-					t.Errorf("runFix accepted %s", tc.name)
-				}
-			})
-			if util.FileExists(idx) {
-				t.Fatalf("%s wrote an index", tc.name)
 			}
 		})
 	}
