@@ -394,7 +394,10 @@ func (s *filerGrpcScope) checkCreate(ctx context.Context, sc *scope, m string, r
 			return err
 		}
 	}
-	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), req.GetCondition(), req.GetChunkAuth(), false)
+	// CreateEntry reports precondition refusals in its coded response, also on
+	// StreamMutateEntry. Leave this check to the locked handler so mount clients
+	// recognize the verdict and fence writeback publication.
+	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), nil, req.GetChunkAuth(), false)
 }
 
 func (s *filerGrpcScope) checkUpdate(ctx context.Context, sc *scope, m string, req *filer_pb.UpdateEntryRequest) error {

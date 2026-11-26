@@ -292,7 +292,10 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 			currentExtended = current.Extended
 		}
 		if refusal := scopeEntryEqualRefusal(ctx, req.Condition, currentExtended); refusal != nil {
-			return &filer_pb.CreateEntryResponse{}, refusal
+			return &filer_pb.CreateEntryResponse{
+				Error:     status.Convert(refusal).Message(),
+				ErrorCode: filer_pb.FilerError_PRECONDITION_FAILED,
+			}, nil
 		}
 		if conditionIsSet(req.Condition) && !writeConditionSatisfied(req.Condition, current) {
 			glog.V(3).InfofCtx(ctx, "CreateEntry %s: precondition failed: %v", fullpath, req.Condition)
