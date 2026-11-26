@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -162,14 +161,16 @@ func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), 
 	}, Action(action)
 }
 
-// declaredUploadSize is the body length r declares: Content-Length, or
-// X-Amz-Decoded-Content-Length (an aws-chunked body) only when Content-Length
-// is unknown, so a client-controlled header cannot lower what a request that
-// declares its length is charged. -1 when neither is known.
+// declaredUploadSize is the body length r declares: Content-Length, or, for an
+// aws-chunked body only, X-Amz-Decoded-Content-Length when Content-Length is
+// unknown, so a client-controlled header cannot lower what a request that
+// declares its length is charged. getRequestDataReader holds an aws-chunked
+// body to that length; no other body is decoded, so for one the header proves
+// nothing and is ignored. -1 when neither is known.
 func declaredUploadSize(r *http.Request) int64 {
 	declared := r.ContentLength
-	if declared < 0 {
-		if decoded, err := strconv.ParseInt(r.Header.Get("X-Amz-Decoded-Content-Length"), 10, 64); err == nil && decoded >= 0 {
+	if declared < 0 && isAwsChunkedUpload(r) {
+		if decoded, ok := decodedContentLength(r); ok {
 			declared = decoded
 		}
 	}

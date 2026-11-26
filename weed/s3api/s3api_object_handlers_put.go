@@ -238,6 +238,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				glog.Errorf("PutObjectHandler: failed to read directory marker content %s/%s: %v", bucket, object, readErr)
 				if strings.Contains(readErr.Error(), s3err.ErrMsgContentSha256Mismatch) {
 					s3err.WriteErrorResponse(w, r, s3err.ErrContentSHA256Mismatch)
+				} else if errors.Is(readErr, errDecodedLengthExceeded) {
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 				} else {
 					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 				}
@@ -1950,6 +1952,8 @@ func mapChunkedUploadErrorToS3Error(reqCtx context.Context, err error) s3err.Err
 		return s3err.ErrInvalidDigest
 	case errors.Is(err, operation.ErrTruncatedBody):
 		return s3err.ErrIncompleteBody
+	case errors.Is(err, errDecodedLengthExceeded):
+		return s3err.ErrInvalidRequest
 	case operation.IsUploadOverloaded(err), errors.Is(err, operation.ErrUploadStalled):
 		// The volumes are short of upload budget, or a stalled write used up
 		// its retries: load the client should back off from, not a fault.

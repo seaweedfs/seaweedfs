@@ -444,9 +444,18 @@ func TestLimitUploadSlotUsesDecodedLengthOnlyWhenUnknown(t *testing.T) {
 	}
 	req = putRequest(context.Background(), 1)
 	req.ContentLength = -1
+	req.Header.Set("X-Amz-Content-Sha256", streamingUnsignedPayload)
 	req.Header.Set("X-Amz-Decoded-Content-Length", "4096")
 	if _, _, inFlight := putThroughLimit(newCB(), req); inFlight != 4096 {
-		t.Fatalf("unknown length: in-flight %d, want 4096", inFlight)
+		t.Fatalf("unknown length, aws-chunked: in-flight %d, want 4096", inFlight)
+	}
+	// Only an aws-chunked body is held to the header, so on any other body it
+	// cannot lower the charge below the one chunk an unknown length costs.
+	req = putRequest(context.Background(), 1)
+	req.ContentLength = -1
+	req.Header.Set("X-Amz-Decoded-Content-Length", "0")
+	if _, _, inFlight := putThroughLimit(newCB(), req); inFlight != 4<<20 {
+		t.Fatalf("unknown length, plain body: in-flight %d, want one 4 MiB chunk", inFlight)
 	}
 }
 
