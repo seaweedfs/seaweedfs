@@ -702,6 +702,13 @@ func TestOperationPollRetriesAFailedPoll(t *testing.T) {
 		t.Fatalf("delete with a failed poll: %v", err)
 	}
 
+	disk.put("/root/bucket/c.txt", &fakeNode{data: []byte("hello")})
+	disk.ops["del"] = 1
+	disk.truncatedOps = 2
+	if err := client.DeleteFile(testLocation("bucket", "/c.txt")); err != nil {
+		t.Fatalf("delete with a truncated poll answer: %v", err)
+	}
+
 	disk.put("/root/bucket/b.txt", &fakeNode{data: []byte("hello")})
 	disk.unavailableOps = 100
 	var apiErr *apiError

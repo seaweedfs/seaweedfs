@@ -53,6 +53,7 @@ type fakeDisk struct {
 	missingParentNotFound bool
 	unauthorizedOps       bool // operation polls answer 401
 	unavailableOps        int  // operation polls answered 503 before the status
+	truncatedOps          int  // operation polls whose 200 body is cut short
 	lockedUploadLinks     int  // upload-link requests answered 423 before success
 	copyKeepsDestination  bool // a copy onto an existing file reports success but keeps it
 	failCopy              bool // copies answer 500
@@ -513,6 +514,14 @@ func (d *fakeDisk) handleOperation(w http.ResponseWriter, r *http.Request) {
 	if d.unavailableOps > 0 {
 		d.unavailableOps--
 		writeAPIError(w, http.StatusServiceUnavailable, "", "")
+		return
+	}
+	if d.truncatedOps > 0 {
+		d.truncatedOps--
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "64")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":`))
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/v1/disk/operations/")

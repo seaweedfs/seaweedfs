@@ -696,8 +696,9 @@ func retryablePollError(err error) bool {
 	if errors.As(err, &apiErr) {
 		return retryableStatus(apiErr.Status)
 	}
-	var urlErr *url.Error
-	return errors.As(err, &urlErr) || errors.Is(err, context.DeadlineExceeded)
+	var netErr net.Error
+	return errors.As(err, &netErr) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF)
 }
 
 // errRetryPoll asks pollOperation to poll again at once, after a refresh.
