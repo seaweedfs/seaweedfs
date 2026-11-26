@@ -152,13 +152,16 @@ const volumeClientUploadWaitCap = 5 * time.Second
 const uploadRejectCloseThreshold = 256 << 10
 
 // uploadCharge returns the bytes an upload reserves against
-// concurrentUploadLimit. A known length is charged as-is; an unknown length
-// (chunked transfer) counts as one chunk, fileSizeLimitBytes, capped at the
-// limit itself so one request is never charged more than the whole budget.
+// concurrentUploadLimit. A known length is charged as-is. An unknown length
+// (chunked transfer) counts as one chunk, fileSizeLimitBytes, but at most half
+// the budget (and at least 1 byte): charged the whole limit, a chunked upload
+// would only be admitted on an idle server; charged half, it is admitted while
+// at most half the budget is in use. Counting the bytes it actually sends is
+// left to a later phase.
 func (vs *VolumeServer) uploadCharge(r *http.Request) int64 {
 	unknownCharge := vs.fileSizeLimitBytes
-	if vs.concurrentUploadLimit > 0 && unknownCharge > vs.concurrentUploadLimit {
-		unknownCharge = vs.concurrentUploadLimit
+	if vs.concurrentUploadLimit > 0 {
+		unknownCharge = min(unknownCharge, max(vs.concurrentUploadLimit/2, 1))
 	}
 	return util.CountedUploadSize(r.ContentLength, unknownCharge)
 }

@@ -2886,8 +2886,8 @@ pub async fn post_handler(
             if current <= state.concurrent_upload_limit {
                 break;
             }
-            // Go increments UploadLimitCond on every loop iteration (L184),
-            // not just on timeout.
+            // Go increments UploadLimitCond once per upload that has to
+            // wait; this loop counts every wake-up, so it can count more.
             metrics::HANDLER_COUNTER
                 .with_label_values(&[metrics::UPLOAD_LIMIT_COND])
                 .inc();

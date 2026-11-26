@@ -186,12 +186,40 @@ func TestUploadLimitChargesUnknownLength(t *testing.T) {
 	require.Equal(t, int64(64), atomic.LoadInt64(&vs.inFlightUploadDataSize))
 }
 
-func TestUploadLimitCapsUnknownLengthChargeAtLimit(t *testing.T) {
-	vs := newUploadLimitVolumeServer(10, 0, 50*time.Millisecond)
-	vs.fileSizeLimitBytes = 1 << 20
-	r, _ := uploadRequest(context.Background(), "/1,0123456789abcdef", -1)
+func TestUploadLimitChargesUnknownLengthHalfTheBudget(t *testing.T) {
+	t.Run("admitted while at most half the budget is in use", func(t *testing.T) {
+		vs := newUploadLimitVolumeServer(10, 4, 50*time.Millisecond)
+		vs.fileSizeLimitBytes = 100
+		r, _ := uploadRequest(context.Background(), "/1,0123456789abcdef", -1)
+		w := httptest.NewRecorder()
 
-	require.Equal(t, int64(10), vs.uploadCharge(r))
+		start := time.Now()
+		ok, charged := admitUpload(vs, w, r)
+
+		require.True(t, ok)
+		require.Less(t, time.Since(start), 40*time.Millisecond)
+		require.Equal(t, int64(5), charged)
+		require.Equal(t, int64(9), atomic.LoadInt64(&vs.inFlightUploadDataSize))
+	})
+	t.Run("waits when more than half the budget is in use", func(t *testing.T) {
+		vs := newUploadLimitVolumeServer(10, 6, 50*time.Millisecond)
+		vs.fileSizeLimitBytes = 100
+		r, _ := uploadRequest(context.Background(), "/1,0123456789abcdef", -1)
+		w := httptest.NewRecorder()
+
+		ok, _ := admitUpload(vs, w, r)
+
+		require.False(t, ok)
+		require.Equal(t, http.StatusServiceUnavailable, w.Code)
+		require.Equal(t, int64(6), atomic.LoadInt64(&vs.inFlightUploadDataSize))
+	})
+	t.Run("limit of one byte still charges one byte", func(t *testing.T) {
+		vs := newUploadLimitVolumeServer(1, 0, 50*time.Millisecond)
+		vs.fileSizeLimitBytes = 100
+		r, _ := uploadRequest(context.Background(), "/1,0123456789abcdef", -1)
+
+		require.Equal(t, int64(1), vs.uploadCharge(r))
+	})
 }
 
 func TestUploadLimitZeroCountsWithoutWaiting(t *testing.T) {
