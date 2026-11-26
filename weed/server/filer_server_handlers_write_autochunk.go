@@ -63,7 +63,8 @@ func (fs *FilerServer) autoChunk(ctx context.Context, w http.ResponseWriter, r *
 		case errStr == constants.ErrMsgBadDigest,
 			errStr == constants.ErrMsgAppendSaveInsideChunked,
 			errStr == constants.ErrMsgAppendInlineMode,
-			errStr == constants.ErrMsgOffsetWriteInline:
+			errStr == constants.ErrMsgOffsetWriteInline,
+			errStr == constants.ErrMsgPartialWriteRemoteOnly:
 			writeJsonError(w, r, http.StatusBadRequest, err)
 		default:
 			writeJsonError(w, r, http.StatusInternalServerError, err)
@@ -300,6 +301,10 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 			return
 		}
 		if existingEntry != nil {
+			if existingEntry.IsInRemoteOnly() && (len(fileChunks) > 0 || len(content) > 0) {
+				replyerr = errors.New(constants.ErrMsgPartialWriteRemoteOnly)
+				return
+			}
 			existingSnapshot = existingEntry.ToProtoEntry()
 			entry = cloneEntryForAppend(existingEntry)
 		}

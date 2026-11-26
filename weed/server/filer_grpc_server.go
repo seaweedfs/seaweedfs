@@ -1305,8 +1305,10 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 		if err := scopeCheckAppendState(entry.ToProtoEntry(), req.GetChunks()); err != nil {
 			return &filer_pb.AppendToEntryResponse{}, status.Errorf(codes.PermissionDenied, "filer: scoped append refused: %v", err)
 		}
+	} else if err := checkAppendStoredRepresentation(entry, req.GetChunks()); err != nil {
+		return &filer_pb.AppendToEntryResponse{}, err
 	}
-	offset = int64(filer.TotalSize(entry.GetChunks()))
+	offset = int64(entry.Size())
 
 	for _, chunk := range req.Chunks {
 		chunk.Offset = offset
@@ -1352,6 +1354,23 @@ func scopeAppendChunkTotalFits(offset int64, chunks []*filer_pb.FileChunk) error
 			return fmt.Errorf("chunk %s exceeds int64 file range", chunk.GetFileIdString())
 		}
 		end += chunk.Size
+	}
+	return nil
+}
+
+// AppendToEntry only accepts chunk references. It cannot safely combine them
+// with inline bytes or a remote-only object: the reader would prefer the
+// inline bytes or place the new chunk at offset zero and hide the remote
+// object. Callers can promote or cache those representations first.
+func checkAppendStoredRepresentation(entry *filer.Entry, chunks []*filer_pb.FileChunk) error {
+	if len(chunks) == 0 {
+		return nil
+	}
+	if len(entry.Content) > 0 {
+		return status.Error(codes.FailedPrecondition, "filer: cannot append chunks to an inline entry")
+	}
+	if entry.IsInRemoteOnly() {
+		return status.Error(codes.FailedPrecondition, "filer: cannot append chunks to a remote-only entry")
 	}
 	return nil
 }
