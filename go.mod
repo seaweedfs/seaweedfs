@@ -108,7 +108,7 @@ require (
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.3
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.155.1
 	go.etcd.io/etcd/api/v3 v3.7.3
-	go.etcd.io/etcd/client/pkg/v3 v3.7.3
+	go.etcd.io/etcd/client/pkg/v3 v3.7.4
 	go.etcd.io/etcd/client/v3 v3.7.3
 	go.mongodb.org/mongo-driver v1.17.9
 	go.uber.org/atomic v1.12.0
