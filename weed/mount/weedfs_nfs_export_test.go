@@ -40,8 +40,9 @@ func (kv *fakeKv) waitFor(t *testing.T, inode uint64, want util.FullPath) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		got, _ := kv.get(context.Background(), exportedHandleKey(inode))
-		if util.FullPath(got) == want {
+		value, _ := kv.get(context.Background(), exportedHandleKey(inode))
+		_, got, _ := parseExportedHandle(value)
+		if got == want {
 			return
 		}
 		if time.Now().After(deadline) {
@@ -51,15 +52,15 @@ func (kv *fakeKv) waitFor(t *testing.T, inode uint64, want util.FullPath) {
 	}
 }
 
-func newExportedHandlesForTest(kv *fakeKv, delay time.Duration) *exportedHandles {
-	h := newExportedHandles(kv.put, kv.get)
+func newExportedHandlesForTest(kv *fakeKv, owner uint32, delay time.Duration) *exportedHandles {
+	h := newExportedHandles(owner, kv.put, kv.get)
 	h.delay = delay
 	return h
 }
 
 func TestExportedHandlesRecordFollowsOpenRenameAndClose(t *testing.T) {
 	kv := &fakeKv{values: map[string][]byte{}}
-	h := newExportedHandlesForTest(kv, 20*time.Millisecond)
+	h := newExportedHandlesForTest(kv, 1, 20*time.Millisecond)
 
 	h.RememberPath(7, "/buckets/a.txt")
 	h.AcquireHandle(8, "/buckets/c.txt")
@@ -86,20 +87,53 @@ func TestExportedHandlesRecordFollowsOpenRenameAndClose(t *testing.T) {
 	kv.waitFor(t, 7, "")
 }
 
+func TestExportedHandlesReopenBeforeCloseKeepsRecord(t *testing.T) {
+	kv := &fakeKv{values: map[string][]byte{}}
+	h := newExportedHandlesForTest(kv, 1, 10*time.Millisecond)
+
+	h.AcquireHandle(7, "/buckets/a.txt")
+	h.AcquireHandle(7, "/buckets/a.txt")
+	h.ReleaseHandle(7)
+	time.Sleep(40 * time.Millisecond)
+	kv.waitFor(t, 7, "/buckets/a.txt")
+	h.ReleaseHandle(7)
+	kv.waitFor(t, 7, "")
+}
+
+func TestExportedHandlesRemovalKeepsAnotherMountsRecord(t *testing.T) {
+	kv := &fakeKv{values: map[string][]byte{}}
+	first := newExportedHandlesForTest(kv, 1, 10*time.Millisecond)
+	second := newExportedHandlesForTest(kv, 2, time.Minute)
+
+	first.AcquireHandle(7, "/buckets/a.txt")
+	kv.waitFor(t, 7, "/buckets/a.txt")
+	first.ReleaseHandle(7)
+	second.AcquireHandle(7, "/buckets/a.txt")
+	time.Sleep(60 * time.Millisecond)
+	value, _ := kv.get(context.Background(), exportedHandleKey(7))
+	if owner, path, ok := parseExportedHandle(value); !ok || owner != 2 || path != "/buckets/a.txt" {
+		t.Fatalf("record = %d %q %v, want the second mount's", owner, path, ok)
+	}
+}
+
 func TestResolveDotNameFromRecordOfEarlierMount(t *testing.T) {
 	kv := &fakeKv{values: map[string][]byte{}}
 	file := util.FullPath("/buckets/a/b/c.txt")
 	inode := file.AsInode(1)
-	kv.values[string(exportedHandleKey(inode))] = []byte(file)
-	kv.values[string(exportedHandleKey(inode+1))] = []byte("/elsewhere/c.txt")
+	earlier := newExportedHandlesForTest(kv, 9, time.Minute)
+	earlier.AcquireHandle(inode, file)
+	earlier.AcquireHandle(inode+1, "/elsewhere/c.txt")
+	kv.waitFor(t, inode, file)
+	kv.waitFor(t, inode+1, "/elsewhere/c.txt")
 
 	wfs := newDotLookupTestWFS("/buckets", true)
-	wfs.exportedHandles = newExportedHandlesForTest(kv, time.Minute)
+	wfs.exportedHandles = newExportedHandlesForTest(kv, 1, time.Minute)
 
 	path, gotInode, status := wfs.resolveDotName(context.Background(), inode, ".")
 	if status != fuse.OK || path != file || gotInode != inode {
 		t.Fatalf("resolveDotName(.) = %q, %d, %v; want %q, %d, OK", path, gotInode, status, file, inode)
 	}
+	wfs.inodeToPath.RememberForgotten(inode, file)
 	if !wfs.inodeToPath.LookupHandle(file, inode, false) {
 		t.Fatalf("LookupHandle refused the recorded path")
 	}

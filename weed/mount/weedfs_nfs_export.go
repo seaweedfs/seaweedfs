@@ -20,6 +20,8 @@ import (
 // still finds them when it comes back.
 const exportedHandleRemovalDelay = time.Minute
 
+const exportedHandleRetryDelay = time.Second
+
 var exportedHandleKeyPrefix = []byte("mount.nfsExport.inode.")
 
 func exportedHandleKey(inode uint64) []byte {
@@ -35,7 +37,9 @@ func exportedHandleKey(inode uint64) []byte {
 // latest state of each changed inode, so records never go back to an older one.
 type exportedHandles struct {
 	mu       sync.Mutex
+	owner    uint32
 	paths    map[uint64]util.FullPath
+	opens    map[uint64]int
 	removals map[uint64]*time.Timer
 	delay    time.Duration
 	dirty    map[uint64]struct{}
@@ -44,9 +48,11 @@ type exportedHandles struct {
 	get      func(ctx context.Context, key []byte) ([]byte, error)
 }
 
-func newExportedHandles(put func(key, value []byte) error, get func(ctx context.Context, key []byte) ([]byte, error)) *exportedHandles {
+func newExportedHandles(owner uint32, put func(key, value []byte) error, get func(ctx context.Context, key []byte) ([]byte, error)) *exportedHandles {
 	h := &exportedHandles{
+		owner:    owner,
 		paths:    make(map[uint64]util.FullPath),
+		opens:    make(map[uint64]int),
 		removals: make(map[uint64]*time.Timer),
 		delay:    exportedHandleRemovalDelay,
 		dirty:    make(map[uint64]struct{}),
@@ -83,21 +89,56 @@ func (h *exportedHandles) loop() {
 			delete(h.dirty, inode)
 			path := h.paths[inode]
 			h.mu.Unlock()
-			if err := h.put(exportedHandleKey(inode), []byte(path)); err != nil {
+			if err := h.write(inode, path); err != nil {
 				glog.Warningf("record nfs export handle %d %q: %v", inode, path, err)
+				time.AfterFunc(exportedHandleRetryDelay, func() {
+					h.mu.Lock()
+					defer h.mu.Unlock()
+					if h.paths[inode] == path {
+						h.markDirty(inode)
+					}
+				})
 			}
 		}
 	}
 }
 
-// AcquireHandle records the path of an inode the mount opens, cancelling a
-// pending removal.
+// write stores path as the inode's record, owned by this mount. An empty path
+// removes the record, unless another mount has since recorded the inode.
+func (h *exportedHandles) write(inode uint64, path util.FullPath) error {
+	key := exportedHandleKey(inode)
+	if path == "" {
+		value, err := h.get(context.Background(), key)
+		if err != nil {
+			return err
+		}
+		if owner, _, ok := parseExportedHandle(value); !ok || owner != h.owner {
+			return nil
+		}
+		return h.put(key, nil)
+	}
+	value := make([]byte, 4+len(path))
+	binary.BigEndian.PutUint32(value, h.owner)
+	copy(value[4:], path)
+	return h.put(key, value)
+}
+
+func parseExportedHandle(value []byte) (owner uint32, path util.FullPath, ok bool) {
+	if len(value) <= 4 {
+		return 0, "", false
+	}
+	return binary.BigEndian.Uint32(value), util.FullPath(value[4:]), true
+}
+
+// AcquireHandle records the path of an inode the mount opens a new file
+// handle for, cancelling a pending removal.
 func (h *exportedHandles) AcquireHandle(inode uint64, path util.FullPath) {
 	if h == nil || path == "" {
 		return
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.opens[inode]++
 	if t := h.removals[inode]; t != nil {
 		t.Stop()
 		delete(h.removals, inode)
@@ -132,6 +173,10 @@ func (h *exportedHandles) ReleaseHandle(inode uint64) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.opens[inode]--; h.opens[inode] > 0 {
+		return
+	}
+	delete(h.opens, inode)
 	if _, recorded := h.paths[inode]; !recorded || h.removals[inode] != nil {
 		return
 	}
@@ -160,16 +205,17 @@ func (h *exportedHandles) GetPath(ctx context.Context, inode uint64) (util.FullP
 		glog.Warningf("read nfs export handle %d: %v", inode, err)
 		return "", fuse.EIO
 	}
-	if len(value) == 0 {
+	_, path, ok := parseExportedHandle(value)
+	if !ok {
 		return "", fuse.Status(syscall.ESTALE)
 	}
-	return util.FullPath(value), fuse.OK
+	return path, fuse.OK
 }
 
 func (wfs *WFS) newExportedHandles() *exportedHandles {
-	return newExportedHandles(func(key, value []byte) error {
-		return wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			resp, err := client.KvPut(context.Background(), &filer_pb.KvPutRequest{Key: key, Value: value})
+	return newExportedHandles(uint32(wfs.signature), func(key, value []byte) error {
+		return wfs.withFilerClient(context.Background(), false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+			resp, err := client.KvPut(ctx, &filer_pb.KvPutRequest{Key: key, Value: value})
 			if err != nil {
 				return err
 			}
