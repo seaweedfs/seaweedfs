@@ -121,6 +121,7 @@ func (iam *IdentityAccessManagement) abortWhenRevoked(f http.HandlerFunc, identi
 			req.body = r.Body
 			req.stream = http.NewResponseController(w)
 		}
+		r = r.WithContext(context.WithValue(ctx, inFlightRequestKey{}, req))
 		tracked.add(req)
 		defer tracked.remove(req)
 		if tracked.generation.Load() != since {
@@ -128,6 +129,20 @@ func (iam *IdentityAccessManagement) abortWhenRevoked(f http.HandlerFunc, identi
 		}
 		f(w, r)
 	}
+}
+
+type inFlightRequestKey struct{}
+
+// untrackInFlight stops re-checking r before it stores a change to access,
+// which would otherwise judge r by its own change and abort it after the
+// change is stored. It reports false when r was aborted already, so the change
+// must not be stored.
+func (iam *IdentityAccessManagement) untrackInFlight(r *http.Request) bool {
+	req, ok := r.Context().Value(inFlightRequestKey{}).(*inFlightRequest)
+	if !ok || iam == nil || iam.inFlight == nil {
+		return true
+	}
+	return iam.inFlight.remove(req)
 }
 
 // identitySource tells from how the request authenticated how a re-check finds
@@ -251,10 +266,13 @@ func (t *inFlightRequests) add(req *inFlightRequest) {
 	t.mu.Unlock()
 }
 
-func (t *inFlightRequests) remove(req *inFlightRequest) {
+// remove reports whether req was still tracked, that is not aborted.
+func (t *inFlightRequests) remove(req *inFlightRequest) bool {
 	t.mu.Lock()
+	defer t.mu.Unlock()
+	_, tracked := t.requests[req]
 	delete(t.requests, req)
-	t.mu.Unlock()
+	return tracked
 }
 
 // pending takes the requests waiting for a re-check.
