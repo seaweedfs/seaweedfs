@@ -63,13 +63,16 @@ type Filer struct {
 	GrpcDialOption      grpc.DialOption
 	// PeerContext supplies fresh per-call authentication for filer-owned RPCs.
 	// Set it before bootstrap or peer aggregation starts.
-	PeerContext        func(context.Context) context.Context
-	dialOptions        *DialOptions
-	DirBucketsPath     string
-	Cipher             bool
-	LocalMetaLogBuffer *log_buffer.LogBuffer
-	metaLogCollection  string
-	metaLogReplication string
+	PeerContext func(context.Context) context.Context
+	// PeerSubscriptionContext authenticates peer metadata subscriptions; when
+	// nil, PeerContext is used.
+	PeerSubscriptionContext func(context.Context) context.Context
+	dialOptions             *DialOptions
+	DirBucketsPath          string
+	Cipher                  bool
+	LocalMetaLogBuffer      *log_buffer.LogBuffer
+	metaLogCollection       string
+	metaLogReplication      string
 	// Override where system metadata-log chunks are assigned, keeping the
 	// internal log out of the default collection; empty keeps today's
 	// behaviour. Set via viper: filer.options.metaLog.collection / .replication.

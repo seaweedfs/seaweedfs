@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"crypto/rand"
+	"strings"
 	"testing"
 	"time"
 
@@ -208,6 +209,58 @@ func TestPeerAdminTokenWithDedicatedGrpcKey(t *testing.T) {
 			})
 			if status.Code(err) != tc.want {
 				t.Fatalf("lookup code=%v, want %v", status.Code(err), tc.want)
+			}
+		})
+	}
+}
+
+// Filer-owned calls sign with the key filesystem gRPC verifies: a dedicated
+// grpc_key alone must authenticate them in require-mode, and a peer without the
+// shared-key admin fallback must accept them when both keys are configured.
+func TestPeerAdminTokenSignedWithGrpcVerificationKey(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		sharedKey   bool
+		requireMode bool
+	}{
+		{"gRPC key only in require-mode", false, true},
+		{"peer without admin fallback", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, httpKey := newPeerFilers(t)
+			c.seed(t, util.FullPath("/realm"))
+			grpcKey := make([]byte, 32)
+			if _, err := rand.Read(grpcKey); err != nil {
+				t.Fatal(err)
+			}
+			for _, fs := range []*FilerServer{c.fsA, c.fsB} {
+				if !tc.sharedKey {
+					fs.filerGuard.UpdateSigningKeys("", 10, "", 0, "", "")
+				}
+				fs.grpcScopeSettings.Store(&grpcScopeSettings{key: grpcKey, requireToken: tc.requireMode})
+				fs.grpcScope.cfg.verificationKeys = fs.grpcScopeVerificationKeys
+				fs.grpcScope.cfg.requireToken = func() bool { return tc.requireMode }
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			err := pb.WithFilerClient(false, 0, c.addrB, c.fsA.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+				_, err := client.LookupDirectoryEntry(c.fsA.peerContext(ctx), &filer_pb.LookupDirectoryEntryRequest{Directory: "/", Name: "realm"})
+				return err
+			})
+			if err != nil {
+				t.Fatalf("filer-owned lookup: %v", err)
+			}
+			md, _ := metadata.FromOutgoingContext(c.fsA.peerSubscriptionContext(ctx))
+			auth := md.Get("authorization")
+			if len(auth) != 1 {
+				t.Fatalf("subscription authorization=%q, want one bearer", auth)
+			}
+			subscriptionKey := grpcKey
+			if tc.sharedKey {
+				subscriptionKey = httpKey
+			}
+			if !security.IsFilerAdminToken(subscriptionKey, security.EncodedJwt(strings.TrimPrefix(auth[0], security.BearerPrefix))) {
+				t.Fatal("subscription bearer is not an admin token for the key its verifier accepts")
 			}
 		})
 	}

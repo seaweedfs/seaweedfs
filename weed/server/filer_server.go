@@ -332,6 +332,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	}
 	fs.filerGuard = security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec, v.GetString("jwt.filer_signing.previous_key"), v.GetString("jwt.filer_signing.read.previous_key"))
 	fs.filer.PeerContext = fs.peerContext
+	fs.filer.PeerSubscriptionContext = fs.peerSubscriptionContext
 	basicAuth, basicAuthFile := loadBasicAuth(nil, "")
 	fs.basicAuth.Store(basicAuth)
 	fs.basicAuthFile = basicAuthFile

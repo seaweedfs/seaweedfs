@@ -16,6 +16,9 @@ func (f *Filer) peerCallContext(ctx context.Context) context.Context {
 }
 
 func (f *Filer) peerSubscriptionContext(ctx context.Context) context.Context {
+	if f != nil && f.PeerSubscriptionContext != nil {
+		return f.PeerSubscriptionContext(ctx)
+	}
 	if f != nil && f.PeerContext != nil {
 		return f.PeerContext(ctx)
 	}
