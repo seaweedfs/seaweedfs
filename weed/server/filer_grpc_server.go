@@ -1275,7 +1275,7 @@ func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendTo
 	} else if err := checkAppendStoredRepresentation(entry, req.GetChunks()); err != nil {
 		return &filer_pb.AppendToEntryResponse{}, err
 	}
-	offset = int64(filer.TotalSize(entry.GetChunks()))
+	offset = int64(entry.Size())
 
 	for _, chunk := range req.Chunks {
 		chunk.Offset = offset

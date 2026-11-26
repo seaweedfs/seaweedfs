@@ -338,3 +338,48 @@ func TestAppendToEntryEmptyRequestKeepsInlineEntry(t *testing.T) {
 	require.Equal(t, []byte("inline"), readInlineEntry(t, stored))
 	require.Empty(t, stored.GetChunks())
 }
+
+func TestAppendToEntryAppendsAfterSparseTail(t *testing.T) {
+	chunkData := map[string][]byte{
+		"1,01637037d6": []byte("old-"),
+		"1,01637037d7": []byte("new-"),
+	}
+	volume := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, ok := chunkData[strings.TrimPrefix(r.URL.Path, "/")]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(data)
+	}))
+	t.Cleanup(volume.Close)
+
+	fs, store := newAppendLockServer(t)
+	close(store.release)
+	store.entries[appendRepresentationPath] = &filer.Entry{
+		FullPath: util.FullPath(appendRepresentationPath),
+		Attr: filer.Attr{
+			Mtime:    time.Unix(1700000000, 0),
+			Crtime:   time.Unix(1700000000, 0),
+			Mode:     0644,
+			FileSize: 10,
+		},
+		Chunks: []*filer_pb.FileChunk{{FileId: "1,01637037d6", Offset: 0, Size: 4}},
+	}
+
+	_, err := fs.AppendToEntry(context.Background(), appendRepresentationRequest("/data", "append.txt"))
+	require.NoError(t, err)
+	stored, err := fs.filer.FindEntry(context.Background(), appendRepresentationPath)
+	require.NoError(t, err)
+	require.Len(t, stored.GetChunks(), 2)
+	require.Equal(t, int64(10), stored.GetChunks()[1].Offset)
+
+	stream, err := filer.PrepareStreamContent(appendReadLookup{urls: map[string]string{
+		"1,01637037d6": volume.URL + "/1,01637037d6",
+		"1,01637037d7": volume.URL + "/1,01637037d7",
+	}}, func(string) string { return "" }, stored.GetChunks(), 0, int64(filer.FileSize(stored.ToProtoEntry())))
+	require.NoError(t, err)
+	var got bytes.Buffer
+	require.NoError(t, stream(&got))
+	require.Equal(t, []byte("old-\x00\x00\x00\x00\x00\x00new-"), got.Bytes(), "appended bytes must follow the sparse tail")
+}
