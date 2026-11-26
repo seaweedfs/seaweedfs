@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
@@ -155,8 +156,9 @@ func TestFilerGrpcRequireTokenPreservesDedicatedSubscriptionTokenFallback(t *tes
 						FullMethod: scopeFilerMethodPrefix + method,
 					}, func(_ any, stream grpc.ServerStream) error {
 						called = true
-						if stream.Context() != ctx {
-							t.Fatal("subscription admission replaced the handler's transport context")
+						want, _ := peer.FromContext(ctx)
+						if got, _ := peer.FromContext(stream.Context()); got != want {
+							t.Fatal("subscription admission replaced the handler's transport peer")
 						}
 						return nil
 					})
@@ -191,14 +193,30 @@ func TestFilerGrpcRequireTokenSubscriptionKeepsTokenScopeOverMtls(t *testing.T) 
 	t.Cleanup(func() { v.Set("jwt.filer_signing.subscribe.key", "") })
 	fs := &FilerServer{}
 	fs.grpcScopeSettings.Store(&grpcScopeSettings{requireToken: true})
+	scope := subscriptionScopeServer(true)
+	scope.cfg.subscriptionScope = fs.metadataSubscriptionScope
+	scope.cfg.requireToken = func() bool { return true }
 	token := string(security.GenJwtForMetadataSubscription(security.SigningKey(subscriptionTokenKey), 60, []string{aliceWS}))
 	for _, method := range []string{security.MethodSubscribeMetadata, security.MethodSubscribeLocalMetadata} {
-		scope, err := fs.metadataSubscriptionScope(verifiedSubscriptionContext(token), method)
-		if err != nil || scope == nil || len(scope.Prefixes) != 1 || scope.Prefixes[0] != aliceWS {
-			t.Fatalf("%s over mTLS in require-mode: scope=%+v err=%v, want the token's prefixes", method, scope, err)
+		var got *security.MetadataSubscriptionScope
+		err := scope.stream(nil, &scopeExpiryServerStream{ctx: verifiedSubscriptionContext(token)}, &grpc.StreamServerInfo{
+			FullMethod: scopeFilerMethodPrefix + method,
+		}, func(_ any, stream grpc.ServerStream) (err error) {
+			got, err = fs.metadataSubscriptionScope(stream.Context(), method)
+			return err
+		})
+		if err != nil || got == nil || len(got.Prefixes) != 1 || got.Prefixes[0] != aliceWS {
+			t.Fatalf("%s over mTLS in require-mode: scope=%+v err=%v, want the token's prefixes", method, got, err)
 		}
-		if scope, err := fs.metadataSubscriptionScope(verifiedSubscriptionContext("not-a-subscription-token"), method); err != nil || scope != nil {
-			t.Fatalf("%s over mTLS with another bearer: scope=%+v err=%v, want the mTLS full stream", method, scope, err)
+		// The token can expire before the handler reads the request; the
+		// certificate must not then widen the stream.
+		admitted := context.WithValue(verifiedSubscriptionContext("expired-subscription-token"), scopeSubscriptionContextKey{},
+			&security.MetadataSubscriptionScope{Prefixes: []string{aliceWS}, ExpiresAt: time.Now().Add(-time.Second)})
+		if got, err := fs.metadataSubscriptionScope(admitted, method); status.Code(err) != codes.Unauthenticated {
+			t.Fatalf("%s with an expired admitted token over mTLS: scope=%+v err=%v, want Unauthenticated", method, got, err)
+		}
+		if got, err := fs.metadataSubscriptionScope(verifiedSubscriptionContext("not-a-subscription-token"), method); err != nil || got != nil {
+			t.Fatalf("%s over mTLS with another bearer: scope=%+v err=%v, want the mTLS full stream", method, got, err)
 		}
 	}
 }

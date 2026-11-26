@@ -11,12 +11,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
 func (fs *FilerServer) metadataSubscriptionScope(ctx context.Context, method string) (*security.MetadataSubscriptionScope, error) {
-	if sc, ok := ctx.Value(scopeSubscriptionContextKey{}).(*scope); ok {
+	switch sc := ctx.Value(scopeSubscriptionContextKey{}).(type) {
+	case *scope:
 		if sc.expired() {
 			return nil, scopeExpiredError(sc)
 		}
@@ -25,20 +25,21 @@ func (fs *FilerServer) metadataSubscriptionScope(ctx context.Context, method str
 			prefixes = append(prefixes, grant.path)
 		}
 		return &security.MetadataSubscriptionScope{Prefixes: prefixes, ExpiresAt: sc.exp}, nil
+	case *security.MetadataSubscriptionScope:
+		if !time.Now().Before(sc.ExpiresAt) {
+			return nil, errMetadataSubscriptionExpired
+		}
+		return sc, nil
 	}
 	var adminKey, previousAdminKey security.SigningKey
 	if fs.filerGuard != nil {
 		adminKey, previousAdminKey = fs.filerGuard.VerificationKeys(true)
 	}
-	subscribeKey := security.SigningKey(util.GetViper().GetString("jwt.filer_signing.subscribe.key"))
-	if settings := fs.grpcScopeSettings.Load(); settings != nil && settings.requireToken {
-		// Require-mode admits a subscription token on its own, so its scope
-		// applies over mTLS too.
-		if scope, err := security.CheckGrpcMetadataSubscription(peer.NewContext(ctx, &peer.Peer{}), subscribeKey, adminKey, previousAdminKey, method); err == nil && scope != nil {
-			return scope, nil
-		}
-	}
-	return security.CheckGrpcMetadataSubscription(ctx, subscribeKey, adminKey, previousAdminKey, method)
+	return security.CheckGrpcMetadataSubscription(ctx,
+		security.SigningKey(util.GetViper().GetString("jwt.filer_signing.subscribe.key")),
+		adminKey,
+		previousAdminKey,
+		method)
 }
 
 // scopeMetadataResponse keeps only what a scoped subscriber may see: events

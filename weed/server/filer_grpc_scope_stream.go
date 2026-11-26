@@ -45,6 +45,9 @@ func (s *filerGrpcScope) stream(srv any, ss grpc.ServerStream, info *grpc.Stream
 					verificationContext = peer.NewContext(verificationContext, &peer.Peer{})
 				}
 				if subScope, subErr := s.cfg.subscriptionScope(verificationContext, method); subErr == nil && (!requireToken || subScope != nil) {
+					if subScope != nil {
+						ss = &subscriptionStream{ServerStream: ss, ctx: context.WithValue(ss.Context(), scopeSubscriptionContextKey{}, subScope)}
+					}
 					return handler(srv, ss)
 				}
 			}

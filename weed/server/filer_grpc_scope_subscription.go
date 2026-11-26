@@ -1,14 +1,24 @@
 package weed_server
 
 import (
+	"context"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"google.golang.org/grpc"
 )
 
-// Only the scope interceptor produces this marker, after verifying a general
-// filer token. Dedicated subscription tokens keep their existing verifier.
+// Only the scope interceptor produces this marker: a *scope for a general
+// filer token, or the *security.MetadataSubscriptionScope a dedicated
+// subscription token was admitted with.
 type scopeSubscriptionContextKey struct{}
+
+type subscriptionStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s *subscriptionStream) Context() context.Context { return s.ctx }
 
 // checkSubscribe bounds every requested selector. Event filtering also enforces
 // path-segment boundaries because the subscription's prefix match is textual.
