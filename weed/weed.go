@@ -94,6 +94,9 @@ func main() {
 			cmd.Flag.Parse(args[1:])
 			args = cmd.Flag.Args()
 			IsDebug = cmd.IsDebug
+			if isLongRunningCommand(cmd.Name()) {
+				util.LogTransparentHugePages()
+			}
 			if !cmd.Run(cmd, args) {
 				fmt.Fprintf(os.Stderr, "\n")
 				cmd.Flag.Usage()
@@ -113,6 +116,16 @@ func main() {
 	fmt.Fprintf(os.Stderr, "weed: unknown subcommand %q\nRun 'weed help' for usage.\n", args[0])
 	setExitStatus(2)
 	exit()
+}
+
+// isLongRunningCommand reports whether the command keeps serving after
+// startup. Only those report the host THP policy, so one-shot tools stay quiet.
+func isLongRunningCommand(name string) bool {
+	switch name {
+	case "server", "master", "volume", "filer", "s3", "mini", "admin", "webdav", "sftp", "mq.broker":
+		return true
+	}
+	return false
 }
 
 var usageTemplate = `

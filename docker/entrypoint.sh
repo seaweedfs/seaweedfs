@@ -2,6 +2,8 @@
 
 # Enable FIPS 140-3 mode by default (Go 1.24+)
 # To disable: docker run -e GODEBUG=fips140=off ...
+# Transparent huge pages are a host-wide setting this image cannot change; to
+# turn them off for this process only, append GODEBUG=disablethp=1.
 export GODEBUG="${GODEBUG:+$GODEBUG,}fips140=on"
 
 # Fix permissions for mounted volumes
