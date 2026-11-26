@@ -170,100 +170,60 @@ func assertScopedEntryUnchanged(t *testing.T, run scopedEntryRun, want *filer.En
 	}
 }
 
-func TestScopedUpdatePreservesPendingRemoteRenameSourceMarker(t *testing.T) {
-	const name = "pending-remote-rename-marker"
-	initial := newFileEntry(scopeJoin(aliceWS, name), 1)
-	initial.Content = []byte("old")
-	initial.Extended = map[string][]byte{
-		filer.ExtRemoteRenameSourceKey: []byte("/buckets/t1/source"),
+func TestScopedReplacementsKeepRemoteRenameSourceFilerOwned(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		create   bool
+		supplied bool
+	}{
+		{name: "update preserves marker"},
+		{name: "create preserves marker", create: true},
+		{name: "update rejects supplied marker", supplied: true},
+		{name: "create rejects supplied marker", create: true, supplied: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const name = "remote-rename.txt"
+			initial := newFileEntry(scopeJoin(aliceWS, name), 1)
+			initial.Content = []byte("old")
+			initial.Extended = map[string][]byte{
+				filer.ExtRemoteRenameSourceKey: []byte("/buckets/t1/source"),
+			}
+			requested := &filer_pb.Entry{
+				Name:       name,
+				Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
+				Content:    []byte("new"),
+				Extended:   map[string][]byte{"client-tag": []byte("keep")},
+			}
+			if tc.supplied {
+				requested.Extended[filer.ExtRemoteRenameSourceKey] = []byte("/buckets/t1/other-source")
+			}
+			execute := runScopedUpdateState
+			if tc.create {
+				execute = runScopedCreateState
+			}
+			run := execute(t, initial, requested, nil)
+			if tc.supplied {
+				if status.Code(run.err) != codes.PermissionDenied || run.called {
+					t.Fatalf("err=%v called=%v, want admission PermissionDenied", run.err, run.called)
+				}
+				assertScopedEntryUnchanged(t, run, initial)
+				return
+			}
+			if run.err != nil {
+				t.Fatalf("scoped replacement: %v", run.err)
+			}
+			if got := run.got.Extended[filer.ExtRemoteRenameSourceKey]; string(got) != "/buckets/t1/source" {
+				t.Fatalf("pending remote rename source marker = %q, want preserved marker", got)
+			}
+			if _, ok := requested.Extended[filer.ExtRemoteRenameSourceKey]; ok {
+				t.Fatal("scoped replacement mutated the request with the hidden marker")
+			}
+			requested.Extended["client-tag"][0] = 'x'
+			if got := string(run.got.Extended["client-tag"]); got != "keep" {
+				t.Fatalf("stored client metadata = %q after request mutation, want keep", got)
+			}
+		})
 	}
-	requested := &filer_pb.Entry{
-		Name:       name,
-		Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
-		Content:    []byte("new"),
-		Extended:   map[string][]byte{"client-tag": []byte("keep")},
-	}
-
-	run := runScopedUpdateState(t, initial, requested, nil)
-	if run.err != nil {
-		t.Fatalf("scoped update: %v", run.err)
-	}
-	if got := run.got.Extended[filer.ExtRemoteRenameSourceKey]; string(got) != "/buckets/t1/source" {
-		t.Fatalf("pending remote rename source marker = %q, want preserved marker", got)
-	}
-	if _, ok := requested.Extended[filer.ExtRemoteRenameSourceKey]; ok {
-		t.Fatal("scoped update mutated the request with the hidden marker")
-	}
-	requested.Extended["client-tag"][0] = 'x'
-	if got := string(run.got.Extended["client-tag"]); got != "keep" {
-		t.Fatalf("stored client metadata = %q after request mutation, want keep", got)
-	}
-}
-
-func TestScopedCreatePreservesPendingRemoteRenameSourceMarker(t *testing.T) {
-	const name = "pending-remote-rename-create-marker"
-	initial := newFileEntry(scopeJoin(aliceWS, name), 1)
-	initial.Content = []byte("old")
-	initial.Extended = map[string][]byte{
-		filer.ExtRemoteRenameSourceKey: []byte("/buckets/t1/source"),
-	}
-	requested := &filer_pb.Entry{
-		Name:       name,
-		Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
-		Content:    []byte("new"),
-		Extended:   map[string][]byte{"client-tag": []byte("keep")},
-	}
-
-	run := runScopedCreateState(t, initial, requested, nil)
-	if run.err != nil {
-		t.Fatalf("scoped create: %v", run.err)
-	}
-	if got := run.got.Extended[filer.ExtRemoteRenameSourceKey]; string(got) != "/buckets/t1/source" {
-		t.Fatalf("pending remote rename source marker = %q, want preserved marker", got)
-	}
-	if _, ok := requested.Extended[filer.ExtRemoteRenameSourceKey]; ok {
-		t.Fatal("scoped create mutated the request with the hidden marker")
-	}
-	requested.Extended["client-tag"][0] = 'x'
-	if got := string(run.got.Extended["client-tag"]); got != "keep" {
-		t.Fatalf("stored client metadata = %q after request mutation, want keep", got)
-	}
-}
-
-func TestScopedUpdateRejectsClientRemoteRenameSourceMarker(t *testing.T) {
-	const name = "client-remote-rename-marker"
-	initial := newFileEntry(scopeJoin(aliceWS, name), 1)
-	requested := &filer_pb.Entry{
-		Name:       name,
-		Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
-		Extended: map[string][]byte{
-			filer.ExtRemoteRenameSourceKey: []byte("/buckets/t1/source"),
-		},
-	}
-
-	run := runScopedUpdateState(t, initial, requested, nil)
-	if status.Code(run.err) != codes.PermissionDenied || run.called {
-		t.Fatalf("scoped update err=%v called=%v, want admission PermissionDenied", run.err, run.called)
-	}
-	assertScopedEntryUnchanged(t, run, initial)
-}
-
-func TestScopedCreateRejectsClientRemoteRenameSourceMarker(t *testing.T) {
-	const name = "client-remote-rename-create-marker"
-	initial := newFileEntry(scopeJoin(aliceWS, name), 1)
-	requested := &filer_pb.Entry{
-		Name:       name,
-		Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
-		Extended: map[string][]byte{
-			filer.ExtRemoteRenameSourceKey: []byte("/buckets/t1/source"),
-		},
-	}
-
-	run := runScopedCreateState(t, initial, requested, nil)
-	if status.Code(run.err) != codes.PermissionDenied || run.called {
-		t.Fatalf("scoped create err=%v called=%v, want admission PermissionDenied", run.err, run.called)
-	}
-	assertScopedEntryUnchanged(t, run, initial)
 }
 
 func provenUpdateEntry(name string, chunks ...*filer_pb.FileChunk) *filer_pb.Entry {
