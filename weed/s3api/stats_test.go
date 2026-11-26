@@ -66,11 +66,8 @@ type slowReader struct {
 }
 
 func (s slowReader) Read(b []byte) (int, error) {
-	n, err := s.Reader.Read(b)
-	if n > 0 {
-		time.Sleep(s.delay)
-	}
-	return n, err
+	time.Sleep(s.delay)
+	return s.Reader.Read(b)
 }
 
 func putStageSamples(t *testing.T, operation, stage string) (uint64, float64) {
@@ -108,7 +105,7 @@ func TestPutStagesRecordEachStage(t *testing.T) {
 
 	r = timeBodyReads(r)
 	stages := newPutStages(r)
-	result, err := stages.upload(context.Background(), r.Body, stagedUploadOption(20*time.Millisecond, nil))
+	result, err := stages.upload(context.Background(), io.LimitReader(r.Body, 8), stagedUploadOption(20*time.Millisecond, nil))
 	require.NoError(t, err)
 	require.Len(t, result.FileChunks, 2)
 	time.Sleep(5 * time.Millisecond)
