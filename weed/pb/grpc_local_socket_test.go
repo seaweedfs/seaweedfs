@@ -134,7 +134,8 @@ func TestServeGrpcOnLocalSocketIsOwnerOnly(t *testing.T) {
 	t.Cleanup(func() { localSocketCheckInterval = prevInterval })
 
 	grpcServer, port := startHealthGrpcServer(t)
-	socketPath := filepath.Join(localSocketDir(t), "grpc.sock")
+	socketDir := localSocketDir(t)
+	socketPath := filepath.Join(socketDir, "grpc.sock")
 	RegisterLocalGrpcSocket("127.0.0.1", port, socketPath)
 	ServeGrpcOnLocalSocket(grpcServer, port)
 	waitForOwnerOnlySocket(t, socketPath)
@@ -143,6 +144,19 @@ func TestServeGrpcOnLocalSocketIsOwnerOnly(t *testing.T) {
 		t.Fatalf("remove socket: %v", err)
 	}
 	waitForOwnerOnlySocket(t, socketPath)
+	conn, err := grpc.NewClient("unix:"+socketPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial socket: %v", err)
+	}
+	defer conn.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := healthpb.NewHealthClient(conn).Check(ctx, &healthpb.HealthCheckRequest{}); err != nil {
+		t.Fatalf("health check over the socket: %v", err)
+	}
+	if entries, err := os.ReadDir(socketDir); err != nil || len(entries) != 1 {
+		t.Fatalf("socket dir should hold only the socket: %v %v", entries, err)
+	}
 }
 
 func waitForOwnerOnlySocket(t *testing.T, socketPath string) {
