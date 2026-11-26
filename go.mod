@@ -77,7 +77,7 @@ require (
 	github.com/prometheus/client_golang v1.24.1
 	github.com/prometheus/client_model v0.6.3
 	github.com/prometheus/procfs v0.23.0
-	github.com/rabbitmq/amqp091-go v1.16.0
+	github.com/rabbitmq/amqp091-go v1.17.0
 	github.com/rclone/rclone v1.75.1
 	github.com/rdleal/intervalst v1.5.0
 	github.com/redis/go-redis/v9 v9.23.0
