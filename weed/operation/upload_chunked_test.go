@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1008,6 +1009,75 @@ func TestUploadReaderInChunksReassignsOnceOnBodyDeadline(t *testing.T) {
 			}
 			if elapsed >= 5*time.Second {
 				t.Fatalf("two deadline cuts took %v", elapsed)
+			}
+		})
+	}
+}
+
+// A caller that goes away after the chunk's body reached the holders must not
+// leave the fid behind: a volume commits on a context that ignores the
+// cancel, so each holder of the chunk — not only those that answered — gets a
+// cleanup DELETE.
+func TestUploadReaderInChunksDeletesChunkOnCallerCancel(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		holders int
+	}{
+		{name: "relay", holders: 1},
+		{name: "fan-out", holders: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotBody := make(chan struct{}, tc.holders)
+			var mu sync.Mutex
+			deleted := map[string][]string{} // host → fids
+			var hosts []string
+			for i := 0; i < tc.holders; i++ {
+				var srv *httptest.Server
+				srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodDelete {
+						mu.Lock()
+						host := strings.TrimPrefix(srv.URL, "http://")
+						deleted[host] = append(deleted[host], strings.TrimPrefix(r.URL.Path, "/"))
+						mu.Unlock()
+						w.WriteHeader(http.StatusAccepted)
+						return
+					}
+					_, _ = io.Copy(io.Discard, r.Body)
+					gotBody <- struct{}{}
+					<-r.Context().Done()
+				}))
+				t.Cleanup(srv.Close)
+				hosts = append(hosts, strings.TrimPrefix(srv.URL, "http://"))
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			go func() {
+				for i := 0; i < tc.holders; i++ {
+					<-gotBody
+				}
+				cancel()
+			}()
+			_, err := UploadReaderInChunks(ctx, strings.NewReader("hello world"), &ChunkedUploadOption{
+				ChunkSize:  1024,
+				Collection: "test",
+				AssignFunc: func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+					result := &AssignResult{Fid: "3,01abcdef", Url: hosts[0], Count: 1}
+					for _, h := range hosts[1:] {
+						result.Replicas = append(result.Replicas, Location{Url: h})
+					}
+					return nil, result, nil
+				},
+			})
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected the caller's cancel to end the upload, got %v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			for _, h := range hosts {
+				if !slices.Contains(deleted[h], "3,01abcdef") {
+					t.Fatalf("holder %s got no DELETE for the cancelled chunk, deletes=%v", h, deleted)
+				}
 			}
 		})
 	}

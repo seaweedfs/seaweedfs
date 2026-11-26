@@ -58,6 +58,9 @@ type fakeVolumeServer struct {
 	uploadsHeld      int
 	uploadsCancelled int
 	gotUpload        chan struct{}
+	// httpDeletedFids records the fids the gateway's own cleanup DELETEs over
+	// HTTP (a failed chunk write), as opposed to BatchDelete's orphan cleanup.
+	httpDeletedFids []string
 }
 
 func (f *fakeVolumeServer) BatchDelete(_ context.Context, req *volume_server_pb.BatchDeleteRequest) (*volume_server_pb.BatchDeleteResponse, error) {
@@ -77,11 +80,25 @@ func (f *fakeVolumeServer) deleted() []string {
 	return append([]string(nil), f.deletedFids...)
 }
 
+func (f *fakeVolumeServer) httpDeleted() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.httpDeletedFids...)
+}
+
 func startFakeVolumeServer(t *testing.T) *fakeVolumeServer {
 	t.Helper()
 	v := &fakeVolumeServer{stored: map[string][]byte{}}
 	upload := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fid := strings.TrimPrefix(r.URL.Path, "/")
+		if r.Method == http.MethodDelete {
+			v.mu.Lock()
+			v.httpDeletedFids = append(v.httpDeletedFids, fid)
+			delete(v.stored, fid)
+			v.mu.Unlock()
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 		if r.Method == http.MethodGet {
 			v.mu.Lock()
 			data, ok := v.stored[fid]
@@ -1507,5 +1524,15 @@ func TestPutToFilerClientGoneCancelsChunkUploads(t *testing.T) {
 			t.Fatal("the volume never saw the upload being cancelled")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+
+	// The volume commits on a context that ignores the cancel, so a body it
+	// already holds may still land: the cancelled chunk's fid must be deleted
+	// rather than left as a needle nothing references.
+	filerImpl.mu.Lock()
+	assigned := fmt.Sprintf("3,%016x%08x", filerImpl.nextKey, uint32(filerImpl.nextKey))
+	filerImpl.mu.Unlock()
+	if deleted := volume.httpDeleted(); !slices.Contains(deleted, assigned) {
+		t.Fatalf("the cancelled chunk %s was not deleted, deletes=%v", assigned, deleted)
 	}
 }

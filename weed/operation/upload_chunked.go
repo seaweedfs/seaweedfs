@@ -446,7 +446,10 @@ func uploadChunkToHolders(ctx context.Context, hosts []string, fid string, prepa
 	}
 	if firstErr != nil {
 		// A failed fan-out records no chunk, so roll back the copies that landed
-		// before the cancel rather than leaking them as orphans.
+		// before the cancel rather than leaking them as orphans. A holder that
+		// did not answer (cancelled, the caller gone) may still commit what it
+		// already received; the chunk loop's cleanup in uploadReaderInChunks
+		// deletes the fid from every holder after any failed attempt.
 		deleteChunkFromHolders(succeeded, fid, jwt, opt)
 		return nil, firstErr
 	}
