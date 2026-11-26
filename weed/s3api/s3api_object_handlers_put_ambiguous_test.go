@@ -1406,6 +1406,30 @@ func overloadedUploadError(t *testing.T, status int) error {
 	return fmt.Errorf("upload chunk: %w", err)
 }
 
+// CopyObject and UploadPartCopy write chunks too: a destination volume short
+// of budget, or a stalled chunk write, is SlowDown there as for PutObject.
+func TestMapCopyErrorOverloadIsSlowDown(t *testing.T) {
+	s3a := &S3ApiServer{}
+	tests := []struct {
+		name string
+		err  error
+		want s3err.ErrorCode
+	}{
+		{"volume 503", fmt.Errorf("upload chunk data: %w", overloadedUploadError(t, http.StatusServiceUnavailable)), s3err.ErrTooManyRequest},
+		{"volume 429", fmt.Errorf("upload chunk data: %w", overloadedUploadError(t, http.StatusTooManyRequests)), s3err.ErrTooManyRequest},
+		{"exhausted stall", fmt.Errorf("upload chunk data: %w", operation.ErrUploadStalled), s3err.ErrTooManyRequest},
+		{"volume 500", fmt.Errorf("upload chunk data: %w", overloadedUploadError(t, http.StatusInternalServerError)), s3err.ErrInternalError},
+		{"plain error", errors.New("upload chunk data: 503 service unavailable"), s3err.ErrInternalError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := s3a.mapCopyErrorToS3Error(tt.err); got != tt.want {
+				t.Errorf("mapCopyErrorToS3Error(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
 // A volume that refuses the write for lack of budget, or a stall that used up
 // its retries, is load the client should back off from: SlowDown, not a 500
 // the client cannot tell from a fault.

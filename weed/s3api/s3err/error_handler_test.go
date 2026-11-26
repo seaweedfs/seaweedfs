@@ -160,6 +160,8 @@ func TestSlowDownResponseCarriesRetryAfter(t *testing.T) {
 		rr := httptest.NewRecorder()
 		WriteErrorResponse(rr, req, tc.code)
 		assert.Equal(t, GetAPIError(tc.code).HTTPStatusCode, rr.Code)
-		assert.Equal(t, tc.want, rr.Header().Get("Retry-After"), "Retry-After for %s", GetAPIError(tc.code).Code)
+		// Result() holds what was sent: a header set after WriteHeader would
+		// show in rr.Header() but never reach the client.
+		assert.Equal(t, tc.want, rr.Result().Header.Get("Retry-After"), "Retry-After for %s", GetAPIError(tc.code).Code)
 	}
 }

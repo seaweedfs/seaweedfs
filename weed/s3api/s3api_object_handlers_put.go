@@ -804,7 +804,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		BodyDeadline: true,
 	})
 	if err != nil {
-		if r.Context().Err() != nil {
+		if errors.Is(r.Context().Err(), context.Canceled) {
 			glog.V(1).Infof("putToFiler: chunked upload stopped, client gone: %v", err)
 		} else {
 			glog.Errorf("putToFiler: chunked upload failed: %v", err)
@@ -1941,9 +1941,6 @@ func mapChunkedUploadErrorToS3Error(reqCtx context.Context, err error) s3err.Err
 	case strings.Contains(err.Error(), s3err.ErrMsgPayloadChecksumMismatch):
 		return s3err.ErrInvalidDigest
 	case errors.Is(err, operation.ErrTruncatedBody):
-		if errors.Is(reqCtx.Err(), context.Canceled) {
-			return s3err.ErrClientDisconnected
-		}
 		return s3err.ErrIncompleteBody
 	case operation.IsUploadOverloaded(err), errors.Is(err, operation.ErrUploadStalled):
 		// The volumes are short of upload budget, or a stalled write used up
