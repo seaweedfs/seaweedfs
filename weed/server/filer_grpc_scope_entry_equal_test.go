@@ -11,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -298,6 +299,84 @@ func TestScopedEntryEqualCreateClientRecognizesDefiniteRefusal(t *testing.T) {
 			}
 			if events := len(queue.snapshot()); events != 0 {
 				t.Fatalf("refusal emitted %d events", events)
+			}
+		})
+	}
+}
+
+func TestScopedLocalOverwriteEndsPendingRemoteRename(t *testing.T) {
+	const dir, name = "/buckets/b/dst", "a.jpg"
+	for _, method := range []string{"CreateEntry", "UpdateEntry"} {
+		t.Run(method, func(t *testing.T) {
+			client := copyingRenameRemoteClient{&renameRemoteClient{copyErr: errors.New("copy refused")}}
+			server, store := newRenameRemoteTestServer(t, client)
+			store.entries["/buckets/b/src/a.jpg"] = remoteOnlyRenameEntry("/buckets/b/src/a.jpg", 101)
+			store.entries[dir+"/"+name] = remoteOnlyRenameEntry(dir+"/"+name, 202)
+			if err := renameFile(server, "/buckets/b/src/a.jpg", dir+"/"+name); err != nil {
+				t.Fatalf("rename: %v", err)
+			}
+			pending, err := store.FindEntry(context.Background(), dir+"/"+name)
+			if err != nil || string(pending.Extended[filer.ExtRemoteRenameSourceKey]) != "/buckets/b/src/a.jpg" {
+				t.Fatalf("pending rename entry=%v err=%v, want the source marker", pending, err)
+			}
+
+			scope := newFilerGrpcScope(scopeConfig{
+				signingKey: func() security.SigningKey { return security.SigningKey(scopeTestKey) },
+			}, server)
+			ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
+				"authorization", "Bearer "+scopedToken("overwrite", time.Hour, []string{dir}, nil),
+			))
+			call := func(method string, req any) (any, error) {
+				return scope.unary(ctx, req, &grpc.UnaryServerInfo{FullMethod: scopeFilerMethodPrefix + method}, func(handlerCtx context.Context, handlerReq any) (any, error) {
+					switch r := handlerReq.(type) {
+					case *filer_pb.CreateEntryRequest:
+						return server.CreateEntry(handlerCtx, r)
+					case *filer_pb.UpdateEntryRequest:
+						return server.UpdateEntry(handlerCtx, r)
+					case *filer_pb.LookupDirectoryEntryRequest:
+						return server.LookupDirectoryEntry(handlerCtx, r)
+					}
+					return nil, fmt.Errorf("unexpected request %T", handlerReq)
+				})
+			}
+
+			local := &filer_pb.Entry{Name: name, Attributes: &filer_pb.FuseAttributes{FileMode: 0644, FileSize: 5}, Content: []byte("local")}
+			if method == "CreateEntry" {
+				resp, err := call(method, &filer_pb.CreateEntryRequest{Directory: dir, Entry: local})
+				if err != nil || resp.(*filer_pb.CreateEntryResponse).GetError() != "" {
+					t.Fatalf("local overwrite: resp=%v err=%v", resp, err)
+				}
+			} else if _, err := call(method, &filer_pb.UpdateEntryRequest{Directory: dir, Entry: local}); err != nil {
+				t.Fatalf("local overwrite: %v", err)
+			}
+			overwritten, err := store.FindEntry(context.Background(), dir+"/"+name)
+			if err != nil {
+				t.Fatalf("find overwritten entry: %v", err)
+			}
+			if _, marked := overwritten.Extended[filer.ExtRemoteRenameSourceKey]; marked {
+				t.Fatalf("local overwrite kept the pending rename marker: %v", overwritten.ToProtoEntry())
+			}
+
+			looked, err := call("LookupDirectoryEntry", &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: name})
+			if err != nil {
+				t.Fatalf("scoped lookup: %v", err)
+			}
+			current := looked.(*filer_pb.LookupDirectoryEntryResponse).GetEntry()
+			next := proto.Clone(current).(*filer_pb.Entry)
+			next.Content = []byte("again")
+			condition := &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{
+				Kind:          filer_pb.WriteCondition_IF_ENTRY_EQUAL,
+				ExpectedEntry: current,
+			}}}
+			if _, err := call("UpdateEntry", &filer_pb.UpdateEntryRequest{Directory: dir, Entry: next, Condition: condition}); err != nil {
+				t.Fatalf("guarded write after the local overwrite: %v", err)
+			}
+			got, err := store.FindEntry(context.Background(), dir+"/"+name)
+			if err != nil {
+				t.Fatalf("find entry after guarded write: %v", err)
+			}
+			if string(got.Content) != "again" {
+				t.Fatalf("after guarded write content=%q, want again", got.Content)
 			}
 		})
 	}
