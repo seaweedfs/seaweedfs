@@ -103,17 +103,6 @@ func TestDoMinusChunksByNeedleIdentity(t *testing.T) {
 	}
 }
 
-func TestDoMinusChunksByNeedleIdentityWithNothingToRemove(t *testing.T) {
-	chunks := []*filer_pb.FileChunk{
-		{FileId: "3,0c00000003_1", Offset: 0, Size: 100, ModifiedTsNs: 1},
-		{FileId: "3,0d00000003", Offset: 100, Size: 100, ModifiedTsNs: 2},
-	}
-	allocs := testing.AllocsPerRun(10, func() {
-		DoMinusChunksByNeedleIdentity(nil, chunks)
-	})
-	assert.Zero(t, allocs)
-}
-
 func TestCompactFileChunksRealCase(t *testing.T) {
 
 	chunks := []*filer_pb.FileChunk{

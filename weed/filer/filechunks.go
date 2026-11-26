@@ -108,7 +108,9 @@ func SeparateGarbageChunks(visibles *IntervalList[*VisibleInterval], chunks []*f
 	// The literal partition removes covered metadata entries. Before queueing
 	// garbage, also remove any chunk whose spelling resolves to a needle retained
 	// by the compacted entry.
-	garbage = DoMinusChunksByNeedleIdentity(garbage, compacted)
+	if len(garbage) > 0 {
+		garbage = DoMinusChunksByNeedleIdentity(garbage, compacted)
+	}
 	return compacted, garbage
 }
 
@@ -153,9 +155,6 @@ func DoMinusChunksByNeedleIdentity(as, bs []*filer_pb.FileChunk) (delta []*filer
 }
 
 func doMinusChunks(as, bs []*filer_pb.FileChunk, identity func(string) string) (delta []*filer_pb.FileChunk) {
-	if len(as) == 0 {
-		return nil
-	}
 
 	fileIds := make(map[string]bool)
 	for _, interval := range bs {
