@@ -2858,9 +2858,14 @@ pub async fn post_handler(
     // JWT check for writes
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    let expired_jwt = {
+    let (expired_jwt, replica_jwt) = {
         let guard = state.guard.read().unwrap();
-        match guard.check_jwt_for_file(token.as_deref(), &file_id, true) {
+        let replica_jwt = (!guard.signing_key.is_empty()).then(|| ReplicaJwt {
+            signing_key: guard.signing_key.clone(),
+            expires_after_sec: guard.expires_after_sec,
+            file_id: file_id.clone(),
+        });
+        let expired_jwt = match guard.check_jwt_for_file(token.as_deref(), &file_id, true) {
             Ok(()) => None,
             Err(_) => Some(
                 is_multipart_form_data(&headers)
@@ -2873,7 +2878,8 @@ pub async fn post_handler(
                         )
                     }),
             ),
-        }
+        };
+        (expired_jwt, replica_jwt)
     };
     if let Some(expired_jwt) = expired_jwt {
         let mut response =
@@ -3410,14 +3416,6 @@ pub async fn post_handler(
     let replication = if needs_replication {
         let state_clone = state.clone();
         let path_clone = path.clone();
-        let replica_jwt = {
-            let guard = state.guard.read().unwrap();
-            (!guard.signing_key.is_empty()).then(|| ReplicaJwt {
-                signing_key: guard.signing_key.clone(),
-                expires_after_sec: guard.expires_after_sec,
-                file_id: file_id.clone(),
-            })
-        };
         let query_clone = match replica_jwt {
             Some(_) => without_query_jwt(&query),
             None => query.clone(),
