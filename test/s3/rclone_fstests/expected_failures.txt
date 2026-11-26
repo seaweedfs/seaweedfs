@@ -4,16 +4,16 @@
 # fix that makes it pass.
 # Format: <full subtest name>  # reason
 
-# seaweedfs/seaweedfs#5442: deleting the last key under a prefix leaves its filer
-# directory behind, and the empty directory is listed as a CommonPrefix until
-# EmptyFolderCleaner removes it (s3.empty_folder_cleanup_delay, 2m by default,
-# drained by a 30s tick). These tests list right after earlier tests deleted
+# Deleting the last key under a prefix leaves its filer directory behind, and
+# the empty directory is listed as a CommonPrefix until EmptyFolderCleaner
+# removes it (s3.empty_folder_cleanup_delay, 2m by default, drained by a 30s
+# tick). These tests list right after earlier tests deleted
 # their files, so the leftover directories show up. Some leftovers come from the
 # failing FsEncoding tests below, so fixing those may change these listings too.
-TestIntegration/FsMkdir/FsPutFiles/FsListDirFile2  # empty directories listed until cleanup (#5442)
-TestIntegration/FsMkdir/FsPutFiles/FsListRDirFile2  # empty directories listed until cleanup (#5442)
-TestIntegration/FsMkdir/FsPutFiles/FsListLevel2  # empty directories listed until cleanup (#5442)
-TestIntegration/FsMkdir/FsPutFiles/FromRoot/ListEntries  # empty directories listed until cleanup (#5442)
+TestIntegration/FsMkdir/FsPutFiles/FsListDirFile2  # empty directories listed until cleanup
+TestIntegration/FsMkdir/FsPutFiles/FsListRDirFile2  # empty directories listed until cleanup
+TestIntegration/FsMkdir/FsPutFiles/FsListLevel2  # empty directories listed until cleanup
+TestIntegration/FsMkdir/FsPutFiles/FromRoot/ListEntries  # empty directories listed until cleanup
 
 # An object whose name has control characters, a backslash or a vertical tab is
 # listed under a different name than the one it was written with.
@@ -29,5 +29,5 @@ TestIntegration/FsMkdir/FsPutFiles/Internal/Versions/Mkdir  # rclone provider qu
 
 # The test itself, not its subtests: FsMkdir ends by removing the test bucket,
 # and DeleteBucket answers 409 BucketNotEmpty although no keys are left -
-# leftover empty directories (#5442) or FsEncoding objects that were not deleted.
+# leftover empty directories or FsEncoding objects that were not deleted.
 TestIntegration/FsMkdir  # DeleteBucket returns BucketNotEmpty at the end of the run
