@@ -6,6 +6,7 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/remote_storage/azure"
 	_ "github.com/seaweedfs/seaweedfs/weed/remote_storage/gcs"
 	_ "github.com/seaweedfs/seaweedfs/weed/remote_storage/s3"
+	_ "github.com/seaweedfs/seaweedfs/weed/remote_storage/yandex"
 
 	_ "github.com/seaweedfs/seaweedfs/weed/replication/sink/azuresink"
 	_ "github.com/seaweedfs/seaweedfs/weed/replication/sink/b2sink"
