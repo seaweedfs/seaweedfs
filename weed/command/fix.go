@@ -111,6 +111,46 @@ func (scanner *VolumeFileScanner4Fix) VisitNeedle(n *needle.Needle, offset int64
 	return nil
 }
 
+func runFix(cmd *Command, args []string) bool {
+	for _, arg := range args {
+		basePath, files, err := listVolumeFiles(arg)
+		if err != nil {
+			fmt.Println(err)
+			return false
+		}
+
+		ext := ".dat"
+		if *fixRemoteFile {
+			ext = ".idx"
+			util.LoadConfiguration("master", false)
+			backend.LoadConfiguration(util.GetViper())
+		}
+
+		for _, file := range files {
+			vf, ok, parseErr := selectVolumeFile(file.Name(), ext, *fixVolumeCollection, *fixVolumeId)
+			if parseErr != nil {
+				fmt.Printf("Failed to parse volume id from %s: %v\n", vf.baseFileName, parseErr)
+				if *fixIgnoreError {
+					SetCommandExitStatus(1)
+					continue
+				}
+				return false
+			}
+			if !ok {
+				continue
+			}
+			doFixOneVolume(basePath, vf.baseFileName, vf.collection, vf.volumeId, *fixIncludeDeleted)
+		}
+
+		if *fixGenerateEcx {
+			if !fixEcxFromShardsInDir(basePath, files) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // listVolumeFiles returns the folder and the entries one command line
 // argument names: every entry of a folder, or the single file given.
 func listVolumeFiles(arg string) (basePath string, files []fs.DirEntry, err error) {
@@ -167,46 +207,6 @@ func selectVolumeFile(name, ext, collection string, volumeId int64) (vf volumeFi
 	}
 	vf.volumeId = id
 	return vf, true, nil
-}
-
-func runFix(cmd *Command, args []string) bool {
-	for _, arg := range args {
-		basePath, files, err := listVolumeFiles(arg)
-		if err != nil {
-			fmt.Println(err)
-			return false
-		}
-
-		ext := ".dat"
-		if *fixRemoteFile {
-			ext = ".idx"
-			util.LoadConfiguration("master", false)
-			backend.LoadConfiguration(util.GetViper())
-		}
-
-		for _, file := range files {
-			vf, ok, parseErr := selectVolumeFile(file.Name(), ext, *fixVolumeCollection, *fixVolumeId)
-			if parseErr != nil {
-				fmt.Printf("Failed to parse volume id from %s: %v\n", vf.baseFileName, parseErr)
-				if *fixIgnoreError {
-					SetCommandExitStatus(1)
-					continue
-				}
-				return false
-			}
-			if !ok {
-				continue
-			}
-			doFixOneVolume(basePath, vf.baseFileName, vf.collection, vf.volumeId, *fixIncludeDeleted)
-		}
-
-		if *fixGenerateEcx {
-			if !fixEcxFromShardsInDir(basePath, files) {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 // fixEcxFromShardsInDir finds EC volumes in files (identified by their .ec00
