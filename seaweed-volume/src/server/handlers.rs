@@ -2927,11 +2927,14 @@ pub async fn post_handler(
         loop {
             // Created before the check, so a release in between still wakes it.
             let notified = state.upload_notify.notified();
-            if let Ok(prev) = state.inflight_upload_bytes.try_update(
+            // try_update needs 1.95; rust-version is 1.91.1.
+            #[allow(deprecated)]
+            let admitted = state.inflight_upload_bytes.fetch_update(
                 Ordering::AcqRel,
                 Ordering::Acquire,
                 |in_flight| upload_admits(in_flight, charged, limit).then_some(in_flight + charged),
-            ) {
+            );
+            if let Ok(prev) = admitted {
                 metrics::INFLIGHT_UPLOAD_SIZE.set(prev + charged);
                 break;
             }
