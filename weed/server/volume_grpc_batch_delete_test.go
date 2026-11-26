@@ -53,6 +53,16 @@ func TestBatchDelete_DeniesNonWhitelistedPeer(t *testing.T) {
 	}
 }
 
+func TestCheckGrpcAdminAuth_AllowsLocalSocket(t *testing.T) {
+	vs := &VolumeServer{
+		guard: security.NewGuard([]string{"10.0.0.1"}, "", 0, "", 0, "", ""),
+	}
+	ctx := peer.NewContext(context.Background(), &peer.Peer{
+		Addr: &net.UnixAddr{Name: "@", Net: "unix"},
+	})
+	require.NoError(t, vs.checkGrpcAdminAuth(ctx))
+}
+
 type syncCountingBackend struct {
 	backend.BackendStorageFile
 	syncs atomic.Int32

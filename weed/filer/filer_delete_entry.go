@@ -172,7 +172,9 @@ func (f *Filer) DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isR
 			// the same, or a master that is down parks this handler indefinitely and
 			// every client retry behind it parks another
 			collectionCtx, cancelCollection := context.WithTimeout(context.WithoutCancel(ctx), collectionDeleteTimeout)
-			f.DoDeleteCollection(collectionCtx, collectionName)
+			if err := f.DoDeleteCollection(collectionCtx, collectionName); err != nil {
+				glog.Warningf("bucket %s is deleted but the deletion of its collection %s is not confirmed: %v", entry.Name(), collectionName, err)
+			}
 			cancelCollection()
 		}
 		// drop bucket-labeled series held by this process; the S3 gateway

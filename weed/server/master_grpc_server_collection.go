@@ -39,6 +39,9 @@ func (ms *MasterServer) CollectionList(ctx context.Context, req *master_pb.Colle
 }
 
 func (ms *MasterServer) CollectionDelete(ctx context.Context, req *master_pb.CollectionDeleteRequest) (*master_pb.CollectionDeleteResponse, error) {
+	if err := ms.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 
 	if !ms.Topo.IsLeader() {
 		return nil, raft.NotLeaderError

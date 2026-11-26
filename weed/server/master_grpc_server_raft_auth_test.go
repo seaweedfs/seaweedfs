@@ -81,3 +81,65 @@ func TestRaftMembershipRPCs_NoWhitelistFailsOpen(t *testing.T) {
 		t.Errorf("RaftAddServer: empty whitelist should fail open, got %v", err)
 	}
 }
+
+func TestMasterAdminRPCs_RejectUnwhitelisted(t *testing.T) {
+	ms := newAdminLockMaster()
+	ms.guard = security.NewGuard([]string{"127.0.0.1"}, "", 0, "", 0, "", "")
+	ctx := ctxFromHost("10.13.37.66")
+
+	calls := map[string]func() error{
+		"CollectionDelete": func() error {
+			_, err := ms.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{Name: "c"})
+			return err
+		},
+		"DisableVacuum": func() error {
+			_, err := ms.DisableVacuum(ctx, &master_pb.DisableVacuumRequest{})
+			return err
+		},
+		"EnableVacuum": func() error {
+			_, err := ms.EnableVacuum(ctx, &master_pb.EnableVacuumRequest{})
+			return err
+		},
+		"VolumeGrow": func() error {
+			_, err := ms.VolumeGrow(ctx, &master_pb.VolumeGrowRequest{WritableVolumeCount: 1})
+			return err
+		},
+		"ResumeVolumeGrowth": func() error {
+			_, err := ms.ResumeVolumeGrowth(ctx, &master_pb.ResumeVolumeGrowthRequest{})
+			return err
+		},
+		"LeaseAdminToken": func() error {
+			_, err := ms.LeaseAdminToken(ctx, &master_pb.LeaseAdminTokenRequest{LockName: "admin"})
+			return err
+		},
+		"ReleaseAdminToken": func() error {
+			_, err := ms.ReleaseAdminToken(ctx, &master_pb.ReleaseAdminTokenRequest{LockName: "admin"})
+			return err
+		},
+	}
+	for name, call := range calls {
+		if err := call(); status.Code(err) != codes.PermissionDenied {
+			t.Errorf("%s: expected PermissionDenied, got %v", name, err)
+		}
+	}
+	if ms.Topo.IsVacuumDisabled() {
+		t.Error("DisableVacuum from an unwhitelisted caller disabled vacuum")
+	}
+}
+
+func TestMasterAdminRPCs_AllowLocalSocketAndGrowthLoop(t *testing.T) {
+	ms := &MasterServer{
+		Topo:  topology.NewTopology("test", nil, 0, 0, false),
+		guard: security.NewGuard([]string{"10.0.0.1"}, "", 0, "", 0, "", ""),
+	}
+	local := peer.NewContext(context.Background(), &peer.Peer{Addr: &net.UnixAddr{Name: "@", Net: "unix"}})
+	if _, err := ms.DisableVacuum(local, &master_pb.DisableVacuumRequest{}); err != nil {
+		t.Fatalf("DisableVacuum over the local socket: %v", err)
+	}
+	if !ms.Topo.IsVacuumDisabled() {
+		t.Error("DisableVacuum over the local socket did not disable vacuum")
+	}
+	if _, err := ms.VolumeGrow(context.Background(), &master_pb.VolumeGrowRequest{WritableVolumeCount: 1}); status.Code(err) == codes.PermissionDenied {
+		t.Errorf("in-process VolumeGrow was refused: %v", err)
+	}
+}
