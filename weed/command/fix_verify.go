@@ -744,23 +744,34 @@ func installRebuiltIndex(scanner *VolumeFileScanner4Fix, indexFileName string, v
 		}
 		fmt.Printf("volume %d: previous index saved as %s\n", volumeId, bak)
 	}
-	if err := os.Rename(staged, indexFileName); err != nil {
-		os.Remove(staged)
-		return fmt.Errorf("install %s: %w", indexFileName, err)
-	}
-	if err := util.FsyncDir(path.Dir(indexFileName)); err != nil {
-		return fmt.Errorf("sync directory of %s: %w", indexFileName, err)
-	}
-	// these caches describe the previous index; the volume server rebuilds them
+	// these caches describe the previous index; drop them before the swap so a
+	// crash never leaves the new index next to them. The volume server rebuilds
+	// them from whichever index is in place.
+	removed := false
 	for _, ext := range []string{".ldb", ".sdx", ".rdb"} {
 		cache := strings.TrimSuffix(indexFileName, ".idx") + ext
 		if !util.FileExists(cache) && !util.FolderExists(cache) {
 			continue
 		}
 		if err := os.RemoveAll(cache); err != nil {
+			os.Remove(staged)
 			return fmt.Errorf("remove the stale %s (delete it before starting the volume server): %w", cache, err)
 		}
+		removed = true
 		fmt.Printf("volume %d: removed the stale %s; the volume server rebuilds it from the new index\n", volumeId, cache)
+	}
+	if removed {
+		if err := util.FsyncDir(path.Dir(indexFileName)); err != nil {
+			os.Remove(staged)
+			return fmt.Errorf("sync directory of %s: %w", indexFileName, err)
+		}
+	}
+	if err := os.Rename(staged, indexFileName); err != nil {
+		os.Remove(staged)
+		return fmt.Errorf("install %s: %w", indexFileName, err)
+	}
+	if err := util.FsyncDir(path.Dir(indexFileName)); err != nil {
+		return fmt.Errorf("sync directory of %s: %w", indexFileName, err)
 	}
 	return nil
 }
