@@ -12,6 +12,7 @@ import (
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -296,10 +297,10 @@ func (wfs *WFS) newExportedHandles() *exportedHandles {
 			return func() {}, nil
 		}
 		key := fmt.Sprintf("%s%d", exportedHandleKeyPrefix, inode)
-		lock := wfs.lockClient.NewShortLivedLock(key, fmt.Sprintf("mount-%d", wfs.signature))
+		lock := wfs.lockClient.NewBlockingLongLivedLock(key, fmt.Sprintf("mount-%d", wfs.signature), lock_manager.LiveLockTTL)
 		if lock == nil {
 			return nil, fmt.Errorf("lock %s", key)
 		}
-		return func() { lock.StopShortLivedLock() }, nil
+		return func() { lock.Stop() }, nil
 	})
 }
