@@ -184,3 +184,21 @@ func TestFilerGrpcRequireTokenRejectsInvalidBearerWithPermissiveSubscriptionVeri
 		t.Fatalf("invalid bearer with permissive subscription verifier error=%v called=%v, want Unauthenticated before dispatch", err, called)
 	}
 }
+
+func TestFilerGrpcRequireTokenSubscriptionKeepsTokenScopeOverMtls(t *testing.T) {
+	v := util.GetViper()
+	v.Set("jwt.filer_signing.subscribe.key", subscriptionTokenKey)
+	t.Cleanup(func() { v.Set("jwt.filer_signing.subscribe.key", "") })
+	fs := &FilerServer{}
+	fs.grpcScopeSettings.Store(&grpcScopeSettings{requireToken: true})
+	token := string(security.GenJwtForMetadataSubscription(security.SigningKey(subscriptionTokenKey), 60, []string{aliceWS}))
+	for _, method := range []string{security.MethodSubscribeMetadata, security.MethodSubscribeLocalMetadata} {
+		scope, err := fs.metadataSubscriptionScope(verifiedSubscriptionContext(token), method)
+		if err != nil || scope == nil || len(scope.Prefixes) != 1 || scope.Prefixes[0] != aliceWS {
+			t.Fatalf("%s over mTLS in require-mode: scope=%+v err=%v, want the token's prefixes", method, scope, err)
+		}
+		if scope, err := fs.metadataSubscriptionScope(verifiedSubscriptionContext("not-a-subscription-token"), method); err != nil || scope != nil {
+			t.Fatalf("%s over mTLS with another bearer: scope=%+v err=%v, want the mTLS full stream", method, scope, err)
+		}
+	}
+}

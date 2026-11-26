@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -29,11 +30,15 @@ func (fs *FilerServer) metadataSubscriptionScope(ctx context.Context, method str
 	if fs.filerGuard != nil {
 		adminKey, previousAdminKey = fs.filerGuard.VerificationKeys(true)
 	}
-	return security.CheckGrpcMetadataSubscription(ctx,
-		security.SigningKey(util.GetViper().GetString("jwt.filer_signing.subscribe.key")),
-		adminKey,
-		previousAdminKey,
-		method)
+	subscribeKey := security.SigningKey(util.GetViper().GetString("jwt.filer_signing.subscribe.key"))
+	if settings := fs.grpcScopeSettings.Load(); settings != nil && settings.requireToken {
+		// Require-mode admits a subscription token on its own, so its scope
+		// applies over mTLS too.
+		if scope, err := security.CheckGrpcMetadataSubscription(peer.NewContext(ctx, &peer.Peer{}), subscribeKey, adminKey, previousAdminKey, method); err == nil && scope != nil {
+			return scope, nil
+		}
+	}
+	return security.CheckGrpcMetadataSubscription(ctx, subscribeKey, adminKey, previousAdminKey, method)
 }
 
 // scopeMetadataResponse keeps only what a scoped subscriber may see: events
