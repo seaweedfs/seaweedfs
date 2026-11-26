@@ -62,16 +62,27 @@ func TestExportedHandlesRecordFollowsOpenRenameAndClose(t *testing.T) {
 	h := newExportedHandlesForTest(kv, 20*time.Millisecond)
 
 	h.RememberPath(7, "/buckets/a.txt")
+	h.AcquireHandle(8, "/buckets/c.txt")
+	kv.waitFor(t, 8, "/buckets/c.txt")
+	if got, _ := kv.get(context.Background(), exportedHandleKey(7)); len(got) != 0 {
+		t.Fatalf("a path change recorded inode 7, which was never opened: %q", got)
+	}
+
+	h.AcquireHandle(7, "/buckets/a.txt")
 	kv.waitFor(t, 7, "/buckets/a.txt")
 	h.RememberPath(7, "/buckets/b.txt")
 	kv.waitFor(t, 7, "/buckets/b.txt")
 
 	h.ReleaseHandle(7)
-	h.RememberPath(7, "/buckets/b.txt")
+	h.AcquireHandle(7, "/buckets/b.txt")
 	time.Sleep(60 * time.Millisecond)
 	kv.waitFor(t, 7, "/buckets/b.txt")
 
 	h.ReleaseHandle(7)
+	h.RememberPath(7, "/buckets/b.txt")
+	kv.waitFor(t, 7, "")
+	h.RememberPath(7, "/buckets/b.txt")
+	time.Sleep(20 * time.Millisecond)
 	kv.waitFor(t, 7, "")
 }
 

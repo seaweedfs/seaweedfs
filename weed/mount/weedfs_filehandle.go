@@ -77,6 +77,7 @@ func (wfs *WFS) AcquireHandle(ctx context.Context, inode uint64, flags, uid, gid
 			continue
 		}
 		fileHandle.RememberPath(path)
+		wfs.exportedHandles.AcquireHandle(inode, path)
 		if existed && freshLookup {
 			// Another opener created the handle while our lookup was in flight;
 			// install only state that provably improves on what it holds.

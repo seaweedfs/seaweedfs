@@ -90,8 +90,9 @@ func (h *exportedHandles) loop() {
 	}
 }
 
-// RememberPath records the path of an open inode, cancelling a pending removal.
-func (h *exportedHandles) RememberPath(inode uint64, path util.FullPath) {
+// AcquireHandle records the path of an inode the mount opens, cancelling a
+// pending removal.
+func (h *exportedHandles) AcquireHandle(inode uint64, path util.FullPath) {
 	if h == nil || path == "" {
 		return
 	}
@@ -101,6 +102,22 @@ func (h *exportedHandles) RememberPath(inode uint64, path util.FullPath) {
 		t.Stop()
 		delete(h.removals, inode)
 	}
+	h.setPath(inode, path)
+}
+
+// RememberPath moves the record of an inode to its new path, if it has one.
+func (h *exportedHandles) RememberPath(inode uint64, path util.FullPath) {
+	if h == nil || path == "" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, recorded := h.paths[inode]; recorded {
+		h.setPath(inode, path)
+	}
+}
+
+func (h *exportedHandles) setPath(inode uint64, path util.FullPath) {
 	if h.paths[inode] != path {
 		h.paths[inode] = path
 		h.markDirty(inode)

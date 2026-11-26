@@ -124,6 +124,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 		fileHandle.SetEntry(newEntry)
 	}
 	fileHandle.RememberPath(entryFullPath)
+	wfs.exportedHandles.AcquireHandle(inode, entryFullPath)
 	// Mark dirty so the deferred filer create happens on Flush, even if the
 	// file is closed without any writes. An eager create has already
 	// persisted the entry, so its handle starts clean.
