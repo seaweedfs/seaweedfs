@@ -80,6 +80,16 @@ public class FilerJwtTest {
     }
 
     @Test
+    public void filerBasicAuthFollowsThePassword() {
+        FilerSecurityContext.setFilerBasicAuth("filer", "");
+        assertNull(FilerSecurityContext.getFilerAuthorizationHeaderValue(false));
+
+        FilerSecurityContext.setFilerBasicAuth("", "only-pass");
+        assertEquals("Basic " + Base64.getEncoder().encodeToString(":only-pass".getBytes(StandardCharsets.UTF_8)),
+                FilerSecurityContext.getFilerAuthorizationHeaderValue(false));
+    }
+
+    @Test
     public void onlyFilerProxyUrlsAreFilerRequests() {
         assertTrue(SeaweedUtil.isProxyChunkUrl("http://filer:8888/?proxyChunkId=3,01637037d6"));
         assertFalse(SeaweedUtil.isProxyChunkUrl("http://volume:8080/3,01637037d6"));

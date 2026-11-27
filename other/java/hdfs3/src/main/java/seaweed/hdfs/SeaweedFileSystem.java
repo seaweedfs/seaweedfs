@@ -80,8 +80,9 @@ public class SeaweedFileSystem extends FileSystem {
     // Options set here override the [filer.basic_auth] and [jwt.filer_signing] values of security.toml.
     static void applyFilerCredentials(Configuration conf) throws IOException {
         String user = conf.get(FS_SEAWEED_FILER_BASIC_AUTH_USER, "");
-        if (!user.isEmpty()) {
-            FilerSecurityContext.setFilerBasicAuth(user, secret(conf, FS_SEAWEED_FILER_BASIC_AUTH_PASSWORD));
+        String password = secret(conf, FS_SEAWEED_FILER_BASIC_AUTH_PASSWORD);
+        if (!user.isEmpty() || password != null) {
+            FilerSecurityContext.setFilerBasicAuth(user, password);
         }
         String key = secret(conf, FS_SEAWEED_FILER_JWT_SIGNING_KEY);
         if (key != null) {

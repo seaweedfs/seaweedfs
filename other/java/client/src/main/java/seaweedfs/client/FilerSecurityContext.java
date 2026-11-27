@@ -161,9 +161,11 @@ public abstract class FilerSecurityContext extends SslContext {
         return basicAuthHeaderValue;
     }
 
-    // Configure the filer's [filer.basic_auth] credentials programmatically.
+    // Configure the filer's [filer.basic_auth] credentials programmatically. Like the
+    // filer, an empty password turns them off and an empty user is allowed.
     public static void setFilerBasicAuth(String username, String password) {
-        filerBasicAuthHeaderValue = computeBasicAuthHeaderValue(username, password);
+        filerBasicAuthHeaderValue = Strings.isNullOrEmpty(password) ? null
+                : encodeBasicAuth(Strings.nullToEmpty(username), password);
     }
 
     // Configure jwt.filer_signing.key programmatically; expiresAfterSeconds <= 0 uses 10.
@@ -227,7 +229,11 @@ public abstract class FilerSecurityContext extends SslContext {
         if (Strings.isNullOrEmpty(username)) {
             return null;
         }
-        String credentials = username + ":" + (password == null ? "" : password);
+        return encodeBasicAuth(username, password == null ? "" : password);
+    }
+
+    private static String encodeBasicAuth(String username, String password) {
+        String credentials = username + ":" + password;
         return "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
     }
 
