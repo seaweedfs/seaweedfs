@@ -2135,6 +2135,9 @@ func (iam *IdentityAccessManagement) authorizeRequest(r *http.Request, identity 
 			if isBucketListingRequest(r, action) {
 				policyObject = ""
 			}
+			if iam.primeBucketForIAM != nil && policyObject != "" && policyObject != "/" {
+				iam.primeBucketForIAM(bucket)
+			}
 			policyReq, allowed, evaluated, err := iam.evaluateBucketPolicy(bucket, policyObject, string(action), principal, r, claims)
 			r = policyReq
 

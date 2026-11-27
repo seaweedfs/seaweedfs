@@ -812,3 +812,46 @@ func TestEvaluateBucketPolicyRechecksTheServedVersion(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, evaluated && !allowed, "the served version is not tagged CLEAN")
 }
+
+// The first request on a bucket whose policy is not loaded yet is decided
+// like any later one.
+func TestColdBucketDecidesExistingObjectTagDenyOnObjectTags(t *testing.T) {
+	const (
+		bucket    = "scan-bucket"
+		accessKey = "LOCALSCANKEY00000001"
+		secretKey = "local-scan-secret-for-loopback-only"
+	)
+	objects := map[string]string{"scanned/clean.txt": "CLEAN", "scanned/infected.txt": "INFECTED"}
+	want := map[string]s3err.ErrorCode{"scanned/clean.txt": s3err.ErrNone, "scanned/infected.txt": s3err.ErrAccessDenied}
+
+	for key, code := range want {
+		iam := &IdentityAccessManagement{
+			hashes:       make(map[string]*sync.Pool),
+			hashCounters: make(map[string]*int32),
+		}
+		require.NoError(t, iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+			Identities: []*iam_pb.Identity{{
+				Name:        "app",
+				Actions:     []string{"Read"},
+				Credentials: []*iam_pb.Credential{{AccessKey: accessKey, SecretKey: secretKey}},
+			}},
+		}))
+		iam.policyEngine = NewBucketPolicyEngine()
+		iam.primeBucketForIAM = func(b string) s3err.ErrorCode {
+			require.NoError(t, iam.policyEngine.engine.SetBucketPolicy(b, `{"Version":"2012-10-17","Statement":[{
+				"Effect":"Deny","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::`+b+`/scanned/*",
+				"Condition":{"StringNotEquals":{"s3:ExistingObjectTag/ScanStatus":"CLEAN"}}}]}`))
+			return s3err.ErrNone
+		}
+		iam.objectEntryForPolicy = func(r *http.Request, b, object string) (map[string][]byte, bool) {
+			value, found := objects[strings.TrimPrefix(object, "/")]
+			return map[string][]byte{s3_constants.AmzObjectTaggingPrefix + "ScanStatus": []byte(value)}, found
+		}
+
+		req := mustNewRequest(http.MethodGet, "http://127.0.0.1:9000/"+bucket+"/"+key, 0, nil, t)
+		require.NoError(t, signRequestV4(req, accessKey, secretKey))
+		req = mux.SetURLVars(req, map[string]string{"bucket": bucket, "object": key})
+		_, got := iam.authRequest(req, s3_constants.ACTION_READ)
+		assert.Equal(t, code, got, key)
+	}
+}
