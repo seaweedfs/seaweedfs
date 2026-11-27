@@ -22,6 +22,9 @@ func TestCommandArgsApply(t *testing.T) {
 		{"ec.encode", nil, true},
 		{"ec.encode", []string{"-collection=a", "-quietFor=1h"}, true},
 		{"ec.encode", []string{"-quietFor=soon"}, false},
+		{"volume.vacuum", nil, true},
+		{"volume.vacuum", []string{"-garbageThreshold=0.2"}, true},
+		{"volume.vacuum", []string{"-apply"}, false},
 		{"volume.list", []string{"-apply"}, false},
 		{"no.such.command", []string{"-apply"}, false},
 	}
