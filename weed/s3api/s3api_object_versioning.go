@@ -2339,7 +2339,7 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		return nil, scanErr
 	}
 
-	if versionPointerInFlight(versionsEntry) {
+	if versionPointerGraceLeft(versionsEntry) > 0 {
 		versioningHealInfof("deferred", "bucket=%s key=%s mode=recent_pointer missing_file=%s", bucket, normalizedObject, stalePointerFile)
 		if latestEntry == nil {
 			return nil, fmt.Errorf("%w: no remaining version in %s", filer_pb.ErrNotFound, versionsDir)
@@ -2436,9 +2436,14 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 // then would replicate back and delete or roll back the version on the peer.
 const staleVersionPointerGrace = 10 * time.Minute
 
-func versionPointerInFlight(versionsEntry *filer_pb.Entry) bool {
+// versionPointerGraceLeft returns how much of the grace the pointer has left;
+// zero means its version file is overdue.
+func versionPointerGraceLeft(versionsEntry *filer_pb.Entry) time.Duration {
 	ts := getVersionTimestamp(string(versionsEntry.GetExtended()[s3_constants.ExtLatestVersionIdKey]))
-	return ts > 0 && time.Since(time.Unix(0, ts)) < staleVersionPointerGrace
+	if ts <= 0 {
+		return 0
+	}
+	return min(max(staleVersionPointerGrace-time.Since(time.Unix(0, ts)), 0), staleVersionPointerGrace)
 }
 
 // conditionalUpdateEntryRouted persists the repair on the object's write

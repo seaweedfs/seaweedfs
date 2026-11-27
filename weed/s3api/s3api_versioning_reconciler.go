@@ -111,7 +111,11 @@ const (
 	versionsHealMaxBackoff    = 30 * time.Second
 )
 
-var errVersionPointerInFlight = errors.New("latest pointer names a version still in flight")
+type versionPointerInFlightError struct{ graceLeft time.Duration }
+
+func (e versionPointerInFlightError) Error() string {
+	return fmt.Sprintf("latest pointer names a version still in flight for %v", e.graceLeft)
+}
 
 type versionsHealCandidate struct {
 	bucket    string
@@ -231,9 +235,10 @@ func (s3a *S3ApiServer) drainVersionsHealQueue() {
 	for _, c := range ready {
 		c.attempts++
 		if err := s3a.healVersionsPointer(c.bucket, c.object); err != nil {
-			if errors.Is(err, errVersionPointerInFlight) {
+			var inFlight versionPointerInFlightError
+			if errors.As(err, &inFlight) {
 				c.attempts--
-				q.requeue(c, staleVersionPointerGrace)
+				q.requeue(c, inFlight.graceLeft)
 				continue
 			}
 			backoff := versionsHealBaseBackoff << uint(c.attempts-1)
@@ -288,8 +293,8 @@ func (s3a *S3ApiServer) healVersionsPointer(bucket, object string) error {
 		// (which could rewrite the pointer to an older version).
 		return fmt.Errorf("probe latest version %s/%s/%s: %w", bucket, object, latestFile, probeErr)
 	}
-	if versionPointerInFlight(versionsEntry) {
-		return errVersionPointerInFlight
+	if graceLeft := versionPointerGraceLeft(versionsEntry); graceLeft > 0 {
+		return versionPointerInFlightError{graceLeft: graceLeft}
 	}
 	// Reuse the read-path heal so behaviour stays identical: it will
 	// repair the pointer to the newest remaining version, or clear it
