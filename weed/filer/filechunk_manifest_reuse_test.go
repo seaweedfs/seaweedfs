@@ -113,8 +113,8 @@ func TestReuseStoredManifestsKeepsEveryManifestResentFlat(t *testing.T) {
 	require.Equal(t, sent[3*SmallChunkManifestBatch:], rest)
 }
 
-// A manifest stays only for the exact chunks it holds: a chunk that changed,
-// or is gone, makes the commit's own list win.
+// A manifest stays only for the exact chunks it holds, in its order: a chunk
+// that changed, moved or is gone makes the commit's own list win.
 func TestReuseStoredManifestsLeavesAManifestWhoseChunksChanged(t *testing.T) {
 	for name, change := range map[string]func([]*filer_pb.FileChunk) []*filer_pb.FileChunk{
 		"size":  func(c []*filer_pb.FileChunk) []*filer_pb.FileChunk { c[7].Size = 5; return c },
@@ -124,6 +124,10 @@ func TestReuseStoredManifestsLeavesAManifestWhoseChunksChanged(t *testing.T) {
 			return c
 		},
 		"gone": func(c []*filer_pb.FileChunk) []*filer_pb.FileChunk { return append(c[:7:7], c[8:]...) },
+		"order": func(c []*filer_pb.FileChunk) []*filer_pb.FileChunk {
+			c[7], c[8] = c[8], c[7]
+			return c
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fixture := newReuseFixture(t)

@@ -82,24 +82,26 @@ func ReuseStoredManifests(ctx context.Context, lookupFileIdFn wdclient.LookupFil
 }
 
 // heldUnchanged returns where in chunks the chunks manifest holds are, if each
-// is there as the manifest holds it and not taken by another manifest, and the
-// manifest spans exactly them.
+// is there as the manifest holds it, in its order and not taken by another
+// manifest, and the manifest spans exactly them. Order matters: of two chunks
+// with the same ModifiedTsNs, the later one wins.
 func heldUnchanged(manifest *filer_pb.FileChunk, held, chunks []*filer_pb.FileChunk, position map[string]int, taken []bool) ([]int, bool) {
 	if len(held) == 0 {
 		return nil, false
 	}
 	positions := make([]int, 0, len(held))
-	claimed := make(map[int]bool, len(held))
 	start, stop := held[0].Offset, held[0].Offset+int64(held[0].Size)
 	for _, chunk := range held {
 		if chunk.IsChunkManifest {
 			return nil, false
 		}
 		i, found := position[ChunkIdentity(chunk.GetFileIdString())]
-		if !found || taken[i] || claimed[i] || !sameChunk(chunks[i], chunk) {
+		if !found || taken[i] || !sameChunk(chunks[i], chunk) {
 			return nil, false
 		}
-		claimed[i] = true
+		if len(positions) > 0 && i <= positions[len(positions)-1] {
+			return nil, false
+		}
 		positions = append(positions, i)
 		start = min(start, chunk.Offset)
 		stop = max(stop, chunk.Offset+int64(chunk.Size))
