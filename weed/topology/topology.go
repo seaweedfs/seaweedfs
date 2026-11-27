@@ -713,6 +713,10 @@ func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption,
 	if volumeLocationList == nil || volumeLocationList.Length() == 0 {
 		return "", 0, nil, shouldGrow, fmt.Errorf("%s available for collection:%s replication:%s ttl:%s", NoWritableVolumes, option.Collection, option.ReplicaPlacement.String(), option.Ttl.String())
 	}
+	// Its volumes are about to be deleted, and a write placed there is lost.
+	if c, found := t.FindCollection(option.Collection); found && c.isDeleting() {
+		return "", 0, nil, false, fmt.Errorf("collection %q is being deleted", option.Collection)
+	}
 	// Track estimated assigned bytes to spread load between heartbeats. A flat
 	// fallback overcharges a small-file workload enough to mark near-empty
 	// volumes full, so prefer the volume's own average.

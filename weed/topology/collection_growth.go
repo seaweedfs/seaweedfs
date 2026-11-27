@@ -1,28 +1,33 @@
 package topology
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
-// growthFence keeps volume growth out of a collection being deleted. Growth
-// holds lock shared while it creates one volume; a delete takes it exclusively
-// to raise the fence, so the volume in flight has registered, and is found by
-// the delete, before the delete lists the collection's servers.
+// growthFence keeps volume growth and assigns out of a collection being
+// deleted. Growth holds lock shared while it creates one volume; a delete
+// raises deleting and then takes lock, so the volume in flight has registered,
+// and is found by the delete, before the delete lists the collection's servers.
 type growthFence struct {
 	lock     sync.RWMutex
-	deleting int
+	deleting atomic.Int32
 }
 
-// FenceGrowth stops volume growth into the collection once the volume growth
-// is creating has registered. The returned func lets growth back in, for a
-// delete that failed and leaves the collection in place.
+// FenceGrowth stops assigns and volume growth in the collection, and returns
+// once the volume growth is creating has registered. The returned func lets
+// them back in, for a delete that failed and leaves the collection in place.
 func (c *Collection) FenceGrowth() (unfence func()) {
+	c.growth.deleting.Add(1)
 	c.growth.lock.Lock()
-	c.growth.deleting++
 	c.growth.lock.Unlock()
 	return func() {
-		c.growth.lock.Lock()
-		c.growth.deleting--
-		c.growth.lock.Unlock()
+		c.growth.deleting.Add(-1)
 	}
+}
+
+func (c *Collection) isDeleting() bool {
+	return c.growth.deleting.Load() > 0
 }
 
 func (c *Collection) unlockForGrowth() {
@@ -37,7 +42,7 @@ func (t *Topology) lockForGrowth(option *VolumeGrowOption) bool {
 	for {
 		c := option.collection
 		c.growth.lock.RLock()
-		if c.growth.deleting > 0 {
+		if c.isDeleting() {
 			c.growth.lock.RUnlock()
 			return false
 		}
