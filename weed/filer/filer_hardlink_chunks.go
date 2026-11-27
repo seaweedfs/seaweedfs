@@ -67,7 +67,7 @@ func (f *Filer) KeepHardLinkedChunks(ctx context.Context, replaced, replacement 
 // withoutChunksOf returns garbage without chunks, without the manifests among
 // them, and without every chunk those manifests list, nested ones included.
 func withoutChunksOf(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, invalidator CacheInvalidator, chunks, garbage []*filer_pb.FileChunk) ([]*filer_pb.FileChunk, error) {
-	data, manifests, err := ResolveChunkManifest(ctx, lookupFileIdFn, chunks, 0, math.MaxInt64, invalidator)
+	data, manifests, err := ResolveChunkManifest(ctx, lookupFileIdFn, chunks, 0, math.MaxInt64, invalidator, false)
 	if err != nil {
 		return nil, err
 	}

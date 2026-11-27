@@ -172,7 +172,7 @@ type ItemEntry struct {
 func (c *commandFsVerify) resolveAndVerify(entryPath string, chunks []*filer_pb.FileChunk, errorChunksCount *atomic.Uint64, wg *sync.WaitGroup) (verified bool, hasMissingNeedles bool) {
 	dataChunks := chunks
 	manifestResolveFailed := false
-	if resolved, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), chunks, 0, math.MaxInt64, nil); resolveErr == nil {
+	if resolved, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), chunks, 0, math.MaxInt64, nil, false); resolveErr == nil {
 		dataChunks = append(resolved, manifestChunks...)
 	} else {
 		manifestResolveFailed = true
@@ -495,7 +495,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 					return nil
 				}
 			}
-			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64, nil)
+			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64, nil, false)
 			if resolveErr != nil {
 				return fmt.Errorf("failed to ResolveChunkManifest: %+v", resolveErr)
 			}

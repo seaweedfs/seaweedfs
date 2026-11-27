@@ -338,7 +338,7 @@ func (c *commandFsMergeVolumes) recordPlanSources(ctx context.Context, lookupFn 
 	if len(manifests) == 0 {
 		return found, nil
 	}
-	dataChunks, manifestChunks, err := filer.ResolveChunkManifest(ctx, lookupFn, manifests, 0, math.MaxInt64, nil)
+	dataChunks, manifestChunks, err := filer.ResolveChunkManifest(ctx, lookupFn, manifests, 0, math.MaxInt64, nil, false)
 	for _, chunk := range slices.Concat(dataChunks, manifestChunks) {
 		if !slices.Contains(manifests, chunk) {
 			record(chunk)
@@ -455,7 +455,7 @@ func unreferencedTargets(ctx context.Context, client filer_pb.SeaweedFilerClient
 		return nil
 	}
 	chunks := resp.Entry.GetChunks()
-	dataChunks, manifestChunks, err := filer.ResolveChunkManifest(ctx, lookupFn, chunks, 0, math.MaxInt64, nil)
+	dataChunks, manifestChunks, err := filer.ResolveChunkManifest(ctx, lookupFn, chunks, 0, math.MaxInt64, nil, false)
 	if err != nil {
 		return nil
 	}

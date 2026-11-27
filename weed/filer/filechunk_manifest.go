@@ -55,20 +55,14 @@ func SeparateManifestChunks(chunks []*filer_pb.FileChunk) (manifestChunks, nonMa
 	return
 }
 
-func ResolveChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset, stopOffset int64, invalidator CacheInvalidator) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+// ResolveChunkManifest expands manifests into the data chunks they hold. With
+// cutToSpan, for reading a file's bytes, each manifest's chunks are cut to the
+// manifest's span, since an older truncate could shorten a manifest and leave
+// its chunks whole. Deletions and chunk-list comparisons need every referenced
+// chunk, so they pass false.
+func ResolveChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset, stopOffset int64, invalidator CacheInvalidator, cutToSpan bool) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
 	resolver := newChunkManifestResolver(ctx, lookupFileIdFn, invalidator, nil)
-	defer resolver.close()
-	return resolver.resolve(chunks, startOffset, stopOffset)
-}
-
-// ResolveChunkManifestForRead is ResolveChunkManifest for reading a file's
-// bytes: the chunks of each manifest are cut to the manifest's span, since an
-// older truncate could shorten a manifest and leave its chunks whole.
-// Deletions and chunk-list comparisons need every referenced chunk, so they
-// use ResolveChunkManifest.
-func ResolveChunkManifestForRead(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset, stopOffset int64, invalidator CacheInvalidator) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
-	resolver := newChunkManifestResolver(ctx, lookupFileIdFn, invalidator, nil)
-	resolver.cutToSpan = true
+	resolver.cutToSpan = cutToSpan
 	defer resolver.close()
 	return resolver.resolve(chunks, startOffset, stopOffset)
 }

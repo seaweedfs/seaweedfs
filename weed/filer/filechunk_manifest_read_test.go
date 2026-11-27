@@ -31,18 +31,18 @@ func chunkExtents(chunks []*filer_pb.FileChunk) map[string][2]int64 {
 	return extents
 }
 
-// Reads see the file as the truncate left it; deletions, which resolve with
-// ResolveChunkManifest, still see every chunk the manifest references.
-func TestResolveChunkManifestForReadCutsAShortenedManifest(t *testing.T) {
+// Reads see the file as the truncate left it; deletions, which resolve
+// without cutToSpan, still see every chunk the manifest references.
+func TestResolveChunkManifestCutsAShortenedManifest(t *testing.T) {
 	fixture, shortened := shortenedManifestFixture(t)
 	ctx := context.Background()
 
-	data, manifests, err := ResolveChunkManifestForRead(ctx, fixture.lookup, []*filer_pb.FileChunk{shortened}, 0, math.MaxInt64, nil)
+	data, manifests, err := ResolveChunkManifest(ctx, fixture.lookup, []*filer_pb.FileChunk{shortened}, 0, math.MaxInt64, nil, true)
 	require.NoError(t, err)
 	require.Len(t, manifests, 1)
 	require.Equal(t, map[string][2]int64{"1,01": {0, 100}, "1,02": {100, 150}}, chunkExtents(data))
 
-	all, _, err := ResolveChunkManifest(ctx, fixture.lookup, []*filer_pb.FileChunk{shortened}, 0, math.MaxInt64, nil)
+	all, _, err := ResolveChunkManifest(ctx, fixture.lookup, []*filer_pb.FileChunk{shortened}, 0, math.MaxInt64, nil, false)
 	require.NoError(t, err)
 	require.Equal(t, map[string][2]int64{"1,01": {0, 100}, "1,02": {100, 200}, "1,03": {200, 300}}, chunkExtents(all))
 
