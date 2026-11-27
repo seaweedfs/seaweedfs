@@ -86,7 +86,7 @@ public abstract class FilerSecurityContext extends SslContext {
                 }
             }
 
-            if (toml.getBoolean("https.client.enabled")) {
+            if (toml.getBoolean("https.client.enabled", false)) {
                 httpTrustCertCollectionFilePath = toml.getString("https.client.ca");
                 logger.debug("loading HTTP ca from {}", httpTrustCertCollectionFilePath);
                 httpClientCertChainFilePath = toml.getString("https.client.cert");
