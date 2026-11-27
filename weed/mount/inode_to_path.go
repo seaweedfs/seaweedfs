@@ -202,6 +202,24 @@ func (i *InodeToPath) moveForgotten(sourcePath, targetPath util.FullPath) bool {
 	return true
 }
 
+// RememberForgotten retains path as that of a forgotten inode, one an earlier
+// mount handed out, unless the table already knows the inode or the path.
+func (i *InodeToPath) RememberForgotten(inode uint64, path util.FullPath) {
+	i.Lock()
+	defer i.Unlock()
+	if i.forgotten == nil || i.forgotten.Contains(inode) {
+		return
+	}
+	if _, live := i.inode2path[inode]; live {
+		return
+	}
+	if _, taken := i.forgottenInodes[path]; taken {
+		return
+	}
+	i.forgotten.Add(inode, path)
+	i.forgottenInodes[path] = inode
+}
+
 // GetForgottenPath returns the path of an inode the kernel forgot, if retained.
 func (i *InodeToPath) GetForgottenPath(inode uint64) (util.FullPath, bool) {
 	if i.forgotten == nil {

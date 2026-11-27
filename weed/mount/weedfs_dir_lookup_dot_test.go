@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"context"
 	"syscall"
 	"testing"
 	"time"
@@ -29,7 +30,7 @@ func TestResolveDotNameForgottenInode(t *testing.T) {
 		inode := wfs.inodeToPath.Lookup(file, 1, false, false, 0, true)
 		wfs.inodeToPath.Forget(inode, 1, nil, nil)
 
-		path, gotInode, status := wfs.resolveDotName(inode, ".")
+		path, gotInode, status := wfs.resolveDotName(context.Background(), inode, ".")
 		if !retain {
 			if status != fuse.Status(syscall.ESTALE) {
 				t.Fatalf("without retention: status %v, want ESTALE", status)
@@ -57,7 +58,7 @@ func TestResolveDotNameForgottenPathTakenByAnotherInode(t *testing.T) {
 		t.Fatalf("test setup: path kept inode %d", inode)
 	}
 
-	if _, _, status := wfs.resolveDotName(inode, "."); status != fuse.Status(syscall.ESTALE) {
+	if _, _, status := wfs.resolveDotName(context.Background(), inode, "."); status != fuse.Status(syscall.ESTALE) {
 		t.Fatalf("status %v, want ESTALE", status)
 	}
 }
@@ -75,7 +76,7 @@ func TestResolveDotNameParent(t *testing.T) {
 		{top, "/buckets"},
 		{1, "/buckets"},
 	} {
-		path, possibleInode, status := wfs.resolveDotName(tc.inode, "..")
+		path, possibleInode, status := wfs.resolveDotName(context.Background(), tc.inode, "..")
 		if status != fuse.OK || path != tc.want || possibleInode != 0 {
 			t.Errorf("resolveDotName(%d, ..) = %q, %d, %v; want %q, 0, OK", tc.inode, path, possibleInode, status, tc.want)
 		}

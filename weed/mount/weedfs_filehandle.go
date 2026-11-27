@@ -77,6 +77,9 @@ func (wfs *WFS) AcquireHandle(ctx context.Context, inode uint64, flags, uid, gid
 			continue
 		}
 		fileHandle.RememberPath(path)
+		if !existed {
+			wfs.exportedHandles.AcquireHandle(inode, path)
+		}
 		if existed && freshLookup {
 			// Another opener created the handle while our lookup was in flight;
 			// install only state that provably improves on what it holds.
@@ -163,6 +166,9 @@ func (wfs *WFS) ReleaseHandle(handleId FileHandleId) {
 	// pending-flush registration.  Lock ordering: pendingAsyncFlushMu → fhMap.
 	wfs.pendingAsyncFlushMu.Lock()
 	fhToRelease := wfs.fhMap.ReleaseByHandle(handleId)
+	if fhToRelease != nil {
+		wfs.exportedHandles.ReleaseHandle(fhToRelease.inode)
+	}
 	if fhToRelease != nil && fhToRelease.asyncFlushPending {
 		done := make(chan struct{})
 		wfs.pendingAsyncFlush[fhToRelease.inode] = done

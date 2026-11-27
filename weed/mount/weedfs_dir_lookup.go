@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"context"
 	"syscall"
 	"unicode/utf8"
 
@@ -26,10 +27,13 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		return s
 	}
 
+	ctx, cancelFunc := ctxFromCancel(cancel)
+	defer cancelFunc()
+
 	var fullFilePath util.FullPath
 	var possibleInode uint64
 	if name == "." || name == ".." {
-		if fullFilePath, possibleInode, code = wfs.resolveDotName(header.NodeId, name); code != fuse.OK {
+		if fullFilePath, possibleInode, code = wfs.resolveDotName(ctx, header.NodeId, name); code != fuse.OK {
 			return code
 		}
 		if fullFilePath == util.FullPath(wfs.option.FilerMountRootPath) {
@@ -45,8 +49,6 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	}
 
 	// Use shared lookup logic that checks cache first, then filer if needed
-	ctx, cancelFunc := ctxFromCancel(cancel)
-	defer cancelFunc()
 	localEntry, _, status := wfs.lookupEntry(ctx, fullFilePath)
 	if status != fuse.OK {
 		if status == fuse.ENOENT && name == "." {
@@ -56,7 +58,11 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	}
 	inode := possibleInode
 	if name == "." {
-		if !sameFile(inode, fullFilePath, localEntry) || !wfs.inodeToPath.LookupHandle(fullFilePath, inode, localEntry.IsDirectory()) {
+		if !sameFile(inode, fullFilePath, localEntry) {
+			return fuse.Status(syscall.ESTALE)
+		}
+		wfs.inodeToPath.RememberForgotten(inode, fullFilePath)
+		if !wfs.inodeToPath.LookupHandle(fullFilePath, inode, localEntry.IsDirectory()) {
 			return fuse.Status(syscall.ESTALE)
 		}
 	} else {
@@ -87,15 +93,20 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 }
 
 // resolveDotName answers the lookups the kernel sends to decode a file
-// handle: "." on the handle's node id, which it may have forgotten, and ".."
-// for a directory's parent. "." keeps the handle's node id, or fails ESTALE
-// when its path now belongs to another inode.
-func (wfs *WFS) resolveDotName(nodeId uint64, name string) (util.FullPath, uint64, fuse.Status) {
+// handle: "." on the handle's node id, which it may have forgotten, or which
+// an earlier mount had open, and ".." for a directory's parent. "." keeps the
+// handle's node id, or fails ESTALE when its path now belongs to another inode.
+func (wfs *WFS) resolveDotName(ctx context.Context, nodeId uint64, name string) (util.FullPath, uint64, fuse.Status) {
 	path, code := wfs.inodeToPath.GetPath(nodeId)
 	if code != fuse.OK {
 		forgotten, found := wfs.inodeToPath.GetForgottenPath(nodeId)
 		if !found {
-			return "", 0, fuse.Status(syscall.ESTALE)
+			if forgotten, code = wfs.exportedHandles.GetPath(ctx, nodeId); code != fuse.OK {
+				return "", 0, code
+			}
+			if !forgotten.IsUnder(util.FullPath(wfs.option.FilerMountRootPath)) {
+				return "", 0, fuse.Status(syscall.ESTALE)
+			}
 		}
 		if inode, known := wfs.inodeToPath.GetInode(forgotten); known && inode != nodeId {
 			return "", 0, fuse.Status(syscall.ESTALE)
