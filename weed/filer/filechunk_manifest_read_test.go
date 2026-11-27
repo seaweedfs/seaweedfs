@@ -11,7 +11,7 @@ import (
 )
 
 // shortenedManifestFixture serves a manifest of three 100-byte chunks whose
-// chunk in the entry a truncate before #13042 shortened to 150 bytes.
+// chunk in the entry an older truncate shortened to 150 bytes.
 func shortenedManifestFixture(t *testing.T) (*manifestReadFixture, *filer_pb.FileChunk) {
 	fixture := newManifestReadFixture(t, map[string][]*filer_pb.FileChunk{
 		"short": {

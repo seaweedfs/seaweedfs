@@ -62,12 +62,10 @@ func ResolveChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFil
 }
 
 // ResolveChunkManifestForRead is ResolveChunkManifest for reading a file's
-// bytes: the chunks of each manifest are cut to the manifest's span. Until
-// #13042 a truncate through a manifest only shortened the manifest chunk, so
-// the chunks it holds can reach past it; those bytes are no longer the file's
-// and must not show where the file has since grown over them without writing
-// them. ResolveChunkManifest, which deletions and chunk-list comparisons use
-// to find every chunk a manifest references, returns them whole.
+// bytes: the chunks of each manifest are cut to the manifest's span, since an
+// older truncate could shorten a manifest and leave its chunks whole.
+// Deletions and chunk-list comparisons need every referenced chunk, so they
+// use ResolveChunkManifest.
 func ResolveChunkManifestForRead(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset, stopOffset int64, invalidator CacheInvalidator) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
 	resolver := newChunkManifestResolver(ctx, lookupFileIdFn, invalidator, nil)
 	resolver.cutToSpan = true
