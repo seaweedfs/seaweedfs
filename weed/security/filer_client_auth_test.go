@@ -264,7 +264,28 @@ func writeFilerSecurityToml(t *testing.T, path string, grpcKey, httpKey SigningK
 	}
 }
 
-func TestFilerAdminTokenReloadsConfigurationAndFailsClosed(t *testing.T) {
+// readFilerClientKeysEveryCall makes token sources re-read their
+// configuration on every call, so rotation tests observe each file change.
+func readFilerClientKeysEveryCall(t *testing.T) {
+	t.Helper()
+	saved := filerClientKeyTTL
+	filerClientKeyTTL = 0
+	resetGlobalFilerClientKeys()
+	t.Cleanup(func() {
+		filerClientKeyTTL = saved
+		resetGlobalFilerClientKeys()
+	})
+}
+
+func resetGlobalFilerClientKeys() {
+	globalFilerClientKeys.mu.Lock()
+	globalFilerClientKeys.read = false
+	globalFilerClientKeys.known = false
+	globalFilerClientKeys.mu.Unlock()
+}
+
+func TestFilerAdminTokenReloadsConfigurationAndKeepsLastKeysOnReadError(t *testing.T) {
+	readFilerClientKeysEveryCall(t)
 	dir := t.TempDir()
 	savedDirectory := util.ConfigurationFileDirectory
 	util.ConfigurationFileDirectory = util.DirectoryValueType(dir)
@@ -288,12 +309,16 @@ func TestFilerAdminTokenReloadsConfigurationAndFailsClosed(t *testing.T) {
 	if err != nil || token != "" {
 		t.Fatalf("keyless configuration returned token=%t err=%v", token != "", err)
 	}
+	writeFilerSecurityToml(t, path, keyA, SigningKey(""))
+	if token, err = FilerAdminToken(context.Background()); err != nil || !IsFilerAdminToken(keyA, token) {
+		t.Fatal("global source did not read the restored key")
+	}
 	if err := os.WriteFile(path, []byte("[jwt.filer_signing\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	token, err = FilerAdminToken(context.Background())
-	if err == nil || token != "" {
-		t.Fatalf("malformed configuration returned token=%t err=%v", token != "", err)
+	if err != nil || !IsFilerAdminToken(keyA, token) {
+		t.Fatalf("unreadable configuration did not keep the last keys: token=%t err=%v", token != "", err)
 	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
@@ -319,6 +344,7 @@ func writeFilerSecurityConfig(t *testing.T, path string, grpcKey, httpKey Signin
 }
 
 func TestFilerAdminTokenFromFileUsesIndependentRotatingSources(t *testing.T) {
+	readFilerClientKeysEveryCall(t)
 	dir := t.TempDir()
 	pathA := filepath.Join(dir, "endpoint-a.yaml")
 	pathB := filepath.Join(dir, "endpoint-b.yaml")
@@ -379,5 +405,157 @@ func TestFilerAdminTokenFromFileFailsClosedForMissingOrMalformedConfig(t *testin
 	token, err = FilerAdminTokenFromFile(malformed)(context.Background())
 	if err == nil || token != "" {
 		t.Fatalf("malformed config returned token=%t err=%v", token != "", err)
+	}
+}
+
+func TestFilerAdminTokenCachesKeysWithinRefreshInterval(t *testing.T) {
+	saved := filerClientKeyTTL
+	filerClientKeyTTL = time.Hour
+	resetGlobalFilerClientKeys()
+	t.Cleanup(func() {
+		filerClientKeyTTL = saved
+		resetGlobalFilerClientKeys()
+	})
+	dir := t.TempDir()
+	savedDirectory := util.ConfigurationFileDirectory
+	util.ConfigurationFileDirectory = util.DirectoryValueType(dir)
+	t.Cleanup(func() { util.ConfigurationFileDirectory = savedDirectory })
+	path := filepath.Join(dir, "security.toml")
+	keyA := testSigningKey(t)
+	keyB := testSigningKey(t)
+	writeFilerSecurityToml(t, path, keyA, SigningKey(""))
+
+	token, err := FilerAdminToken(context.Background())
+	if err != nil || !IsFilerAdminToken(keyA, token) {
+		t.Fatal("global source did not use the configured key")
+	}
+	writeFilerSecurityToml(t, path, keyB, SigningKey(""))
+	token, err = FilerAdminToken(context.Background())
+	if err != nil || !IsFilerAdminToken(keyA, token) {
+		t.Fatal("global source re-read its configuration within the refresh interval")
+	}
+
+	globalFilerClientKeys.mu.Lock()
+	globalFilerClientKeys.readAt = time.Now().Add(-2 * time.Hour)
+	globalFilerClientKeys.mu.Unlock()
+	token, err = FilerAdminToken(context.Background())
+	if err != nil || !IsFilerAdminToken(keyB, token) || IsFilerAdminToken(keyA, token) {
+		t.Fatal("global source did not pick up the rotated key after the refresh interval")
+	}
+
+	// Changing an environment override takes effect at once.
+	envKey := testSigningKey(t)
+	t.Setenv("WEED_JWT_FILER_SIGNING_GRPC_KEY", string(envKey))
+	if token, err = FilerAdminToken(context.Background()); err != nil || !IsFilerAdminToken(envKey, token) {
+		t.Fatal("global source did not follow a changed environment override")
+	}
+	os.Unsetenv("WEED_JWT_FILER_SIGNING_GRPC_KEY")
+	if token, err = FilerAdminToken(context.Background()); err != nil || !IsFilerAdminToken(keyB, token) {
+		t.Fatal("global source did not follow a removed environment override")
+	}
+
+	// A failed read keeps the last keys and is not cached: the next call
+	// reads the repaired file without waiting for the interval.
+	if err := os.WriteFile(path, []byte("[jwt.filer_signing\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	globalFilerClientKeys.mu.Lock()
+	globalFilerClientKeys.readAt = time.Now().Add(-2 * time.Hour)
+	globalFilerClientKeys.mu.Unlock()
+	if token, err = FilerAdminToken(context.Background()); err != nil || !IsFilerAdminToken(keyB, token) {
+		t.Fatalf("unreadable configuration did not keep the last keys: token=%t err=%v", token != "", err)
+	}
+	writeFilerSecurityToml(t, path, keyA, SigningKey(""))
+	if token, err = FilerAdminToken(context.Background()); err != nil || !IsFilerAdminToken(keyA, token) {
+		t.Fatal("global source did not recover after the configuration was repaired")
+	}
+}
+
+func TestFilerAdminTokenUnreadableConfigurationKeepsStartupKeys(t *testing.T) {
+	readFilerClientKeysEveryCall(t)
+	dir := t.TempDir()
+	savedDirectory := util.ConfigurationFileDirectory
+	util.ConfigurationFileDirectory = util.DirectoryValueType(dir)
+	t.Cleanup(func() { util.ConfigurationFileDirectory = savedDirectory })
+	if err := os.WriteFile(filepath.Join(dir, "security.toml"), []byte("[jwt.filer_signing\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	startup := util.GetViper()
+	savedGrpc, savedShared := startup.GetString("jwt.filer_signing.grpc_key"), startup.GetString("jwt.filer_signing.key")
+	t.Cleanup(func() {
+		startup.Set("jwt.filer_signing.grpc_key", savedGrpc)
+		startup.Set("jwt.filer_signing.key", savedShared)
+	})
+
+	// A process that never read a key keeps its tokenless behavior.
+	startup.Set("jwt.filer_signing.grpc_key", "")
+	startup.Set("jwt.filer_signing.key", "")
+	if token, err := FilerAdminToken(context.Background()); err != nil || token != "" {
+		t.Fatalf("unreadable configuration without startup keys returned token=%t err=%v", token != "", err)
+	}
+	key := testSigningKey(t)
+	startup.Set("jwt.filer_signing.key", string(key))
+	if token, err := FilerAdminToken(context.Background()); err != nil || !IsFilerAdminToken(key, token) {
+		t.Fatalf("unreadable configuration did not use the startup key: err=%v", err)
+	}
+}
+
+func TestFilerSubscriptionTokensPreferSharedKey(t *testing.T) {
+	grpcKey := testSigningKey(t)
+	sharedKey := testSigningKey(t)
+	bearer := func(ctx context.Context) EncodedJwt {
+		t.Helper()
+		md, _ := metadata.FromOutgoingContext(ctx)
+		values := md.Get("authorization")
+		if len(values) != 1 {
+			t.Fatalf("got %d authorization values, want 1", len(values))
+		}
+		return EncodedJwt(values[0][len(BearerPrefix):])
+	}
+
+	for _, tc := range []struct {
+		name                 string
+		grpcKey, sharedKey   SigningKey
+		wantCall, wantStream SigningKey
+	}{
+		{name: "both keys", grpcKey: grpcKey, sharedKey: sharedKey, wantCall: grpcKey, wantStream: sharedKey},
+		{name: "grpc key only", grpcKey: grpcKey, wantCall: grpcKey, wantStream: grpcKey},
+		{name: "shared key only", sharedKey: sharedKey, wantCall: sharedKey, wantStream: sharedKey},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := viper.New()
+			v.Set("jwt.filer_signing.grpc_key", string(tc.grpcKey))
+			v.Set("jwt.filer_signing.key", string(tc.sharedKey))
+			source := func(ctx context.Context) (EncodedJwt, error) {
+				return filerAdminTokenForKeys(ctx, SigningKey(v.GetString("jwt.filer_signing.grpc_key")), SigningKey(v.GetString("jwt.filer_signing.key"))), nil
+			}
+			conn := &recordingClientConn{}
+			wrapped := WithFilerClientAuth(conn, source)
+
+			if err := wrapped.Invoke(context.Background(), "/filer_pb.SeaweedFiler/LookupDirectoryEntry", nil, nil); err != nil {
+				t.Fatal(err)
+			}
+			if !IsFilerAdminToken(tc.wantCall, bearer(conn.contexts[len(conn.contexts)-1])) {
+				t.Fatal("unary filer call was not signed with the filesystem gRPC key")
+			}
+			if _, err := wrapped.NewStream(context.Background(), &grpc.StreamDesc{}, "/filer_pb.SeaweedFiler/ListEntries"); err != nil {
+				t.Fatal(err)
+			}
+			if !IsFilerAdminToken(tc.wantCall, bearer(conn.contexts[len(conn.contexts)-1])) {
+				t.Fatal("non-subscription stream was not signed with the filesystem gRPC key")
+			}
+			for _, method := range []string{"/filer_pb.SeaweedFiler/SubscribeMetadata", "/filer_pb.SeaweedFiler/SubscribeLocalMetadata"} {
+				if _, err := wrapped.NewStream(context.Background(), &grpc.StreamDesc{}, method); err != nil {
+					t.Fatal(err)
+				}
+				if !IsFilerAdminToken(tc.wantStream, bearer(conn.contexts[len(conn.contexts)-1])) {
+					t.Fatalf("%s was not signed with the expected subscription key", method)
+				}
+			}
+			ctx, err := WithFilerSubscriptionToken(context.Background(), source)
+			if err != nil || !IsFilerAdminToken(tc.wantStream, bearer(ctx)) {
+				t.Fatal("WithFilerSubscriptionToken did not prefer the shared key")
+			}
+		})
 	}
 }

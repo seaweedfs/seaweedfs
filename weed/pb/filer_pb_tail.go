@@ -103,7 +103,7 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 		subscribeCtx := ctx
 		if option.FilerTokenSource != nil {
 			var authErr error
-			subscribeCtx, authErr = security.WithFilerToken(ctx, option.FilerTokenSource)
+			subscribeCtx, authErr = security.WithFilerSubscriptionToken(ctx, option.FilerTokenSource)
 			if authErr != nil {
 				return fmt.Errorf("resolve subscription credentials: %w", authErr)
 			}
