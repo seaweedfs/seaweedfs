@@ -156,11 +156,15 @@ func TestMaintenanceManager_IsTaskTypeEnabled(t *testing.T) {
 	if manager.IsTaskTypeEnabled("ec_balance") {
 		t.Fatal("no registered worker can run ec_balance")
 	}
-	manager.queue.workers["w1"] = &MaintenanceWorker{ID: "w1", Status: "active", Capabilities: []MaintenanceTaskType{"vacuum"}}
+	manager.queue.workers["w1"] = &MaintenanceWorker{ID: "w1", Status: "active", LastHeartbeat: time.Now(), Capabilities: []MaintenanceTaskType{"vacuum"}}
 	if manager.IsTaskTypeEnabled("ec_balance") {
 		t.Fatal("the only worker cannot run ec_balance")
 	}
-	manager.queue.workers["w2"] = &MaintenanceWorker{ID: "w2", Status: "busy", Capabilities: []MaintenanceTaskType{"ec_balance"}}
+	manager.queue.workers["w2"] = &MaintenanceWorker{ID: "w2", Status: "active", LastHeartbeat: time.Now().Add(-time.Hour), Capabilities: []MaintenanceTaskType{"ec_balance"}}
+	if manager.IsTaskTypeEnabled("ec_balance") {
+		t.Fatal("a worker past its heartbeat timeout cannot run ec_balance")
+	}
+	manager.queue.workers["w3"] = &MaintenanceWorker{ID: "w3", Status: "busy", LastHeartbeat: time.Now(), Capabilities: []MaintenanceTaskType{"ec_balance"}}
 	if !manager.IsTaskTypeEnabled("ec_balance") {
 		t.Fatal("ec_balance is enabled and a worker can run it")
 	}

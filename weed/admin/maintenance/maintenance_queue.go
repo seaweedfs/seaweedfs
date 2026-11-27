@@ -925,11 +925,15 @@ func (mq *MaintenanceQueue) GetWorkers() []*MaintenanceWorker {
 	return workers
 }
 
-func (mq *MaintenanceQueue) hasWorkerFor(taskType MaintenanceTaskType) bool {
+func (mq *MaintenanceQueue) hasWorkerFor(taskType MaintenanceTaskType, workerTimeout time.Duration) bool {
+	cutoff := time.Now().Add(-workerTimeout)
 	mq.mutex.RLock()
 	defer mq.mutex.RUnlock()
 	for _, worker := range mq.workers {
 		if worker.Status != "active" && worker.Status != "busy" {
+			continue
+		}
+		if workerTimeout > 0 && worker.LastHeartbeat.Before(cutoff) {
 			continue
 		}
 		for _, capability := range worker.Capabilities {
