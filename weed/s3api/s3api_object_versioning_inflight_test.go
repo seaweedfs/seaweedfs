@@ -177,3 +177,22 @@ func TestHealPointerlessVersionsEntryIgnoresRecentCommit(t *testing.T) {
 		t.Errorf("repaired pointer = %q, want %q", got, presentId)
 	}
 }
+
+func TestHealStalePointerDefersWhenLiveEntryWasJustStored(t *testing.T) {
+	old := time.Now().Add(-2 * staleVersionPointerGrace)
+	pointerId := invertedVersionId(old)
+	stored := committedAt(&filer_pb.Entry{Extended: map[string][]byte{
+		s3_constants.ExtLatestVersionIdKey:       []byte(pointerId),
+		s3_constants.ExtLatestVersionFileNameKey: []byte("v_" + pointerId),
+	}}, old)
+	s3a, f := newHealPointerServer(t, stored, invertedVersionId(old.Add(-time.Hour)))
+	snapshot := proto.Clone(stored).(*filer_pb.Entry)
+	stored.CommitTsNs = time.Now().UnixNano()
+
+	if _, err := s3a.healStaleLatestVersionPointer("b", "k", snapshot, "v_"+pointerId); err != nil {
+		t.Fatalf("healStaleLatestVersionPointer: %v", err)
+	}
+	if len(f.updates) != 0 {
+		t.Fatalf("updates = %d, want the repair deferred for the pointer stored again", len(f.updates))
+	}
+}

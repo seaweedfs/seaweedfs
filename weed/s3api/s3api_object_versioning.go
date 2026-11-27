@@ -2399,6 +2399,10 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		versioningHealInfof("abandoned", "bucket=%s key=%s mode=pointer_moved observed_id=%s live_id=%s", bucket, normalizedObject, observedId, liveId)
 		return latestEntry, nil
 	}
+	if stalePointerFile != "" && versionPointerGraceLeft(liveEntry) > 0 {
+		versioningHealInfof("deferred", "bucket=%s key=%s mode=recent_commit missing_file=%s", bucket, normalizedObject, stalePointerFile)
+		return latestEntry, nil
+	}
 
 	// Clone the live image before any mutation so the precondition compares
 	// against exactly what the filer stores (nil and empty Extended maps are
