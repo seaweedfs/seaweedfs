@@ -83,8 +83,8 @@ func ReuseStoredManifests(ctx context.Context, lookupFileIdFn wdclient.LookupFil
 
 // heldUnchanged returns where in chunks the chunks manifest holds are, if each
 // is there as the manifest holds it, in its order and not taken by another
-// manifest, and the manifest spans exactly them. Order matters: of two chunks
-// with the same ModifiedTsNs, the later one wins.
+// manifest, and the manifest spans exactly them. Order matters: where two
+// chunks with the same ModifiedTsNs overlap, the later one wins.
 func heldUnchanged(manifest *filer_pb.FileChunk, held, chunks []*filer_pb.FileChunk, position map[string]int, taken []bool) ([]int, bool) {
 	if len(held) == 0 {
 		return nil, false
@@ -108,6 +108,24 @@ func heldUnchanged(manifest *filer_pb.FileChunk, held, chunks []*filer_pb.FileCh
 	}
 	if manifest.Offset != start || manifest.Offset+int64(manifest.Size) != stop {
 		return nil, false
+	}
+	// Kept, the manifest's chunks are read before every other chunk, so none
+	// may overlap one of them with the same ModifiedTsNs.
+	heldAt := make(map[int64][]*filer_pb.FileChunk, len(held))
+	for _, chunk := range held {
+		heldAt[chunk.ModifiedTsNs] = append(heldAt[chunk.ModifiedTsNs], chunk)
+	}
+	next := 0
+	for i, chunk := range chunks {
+		if next < len(positions) && positions[next] == i {
+			next++
+			continue
+		}
+		for _, h := range heldAt[chunk.ModifiedTsNs] {
+			if chunk.Offset < h.Offset+int64(h.Size) && h.Offset < chunk.Offset+int64(chunk.Size) {
+				return nil, false
+			}
+		}
 	}
 	return positions, true
 }

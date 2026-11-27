@@ -114,7 +114,8 @@ func TestReuseStoredManifestsKeepsEveryManifestResentFlat(t *testing.T) {
 }
 
 // A manifest stays only for the exact chunks it holds, in its order: a chunk
-// that changed, moved or is gone makes the commit's own list win.
+// that changed, moved or is gone, or one that ties with a chunk it holds where
+// they overlap, makes the commit's own list win.
 func TestReuseStoredManifestsLeavesAManifestWhoseChunksChanged(t *testing.T) {
 	for name, change := range map[string]func([]*filer_pb.FileChunk) []*filer_pb.FileChunk{
 		"size":  func(c []*filer_pb.FileChunk) []*filer_pb.FileChunk { c[7].Size = 5; return c },
@@ -128,6 +129,11 @@ func TestReuseStoredManifestsLeavesAManifestWhoseChunksChanged(t *testing.T) {
 			c[7], c[8] = c[8], c[7]
 			return c
 		},
+		// Listed before chunk 128 and read after it once the manifest is kept.
+		"tie": func(c []*filer_pb.FileChunk) []*filer_pb.FileChunk {
+			tie := &filer_pb.FileChunk{FileId: fmt.Sprintf("3,%x%08x", 0xfff, 0x5eed), Offset: 1275, Size: 10, ModifiedTsNs: c[128].ModifiedTsNs}
+			return append(c[:128:128], append([]*filer_pb.FileChunk{tie}, c[128:]...)...)
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fixture := newReuseFixture(t)
@@ -139,6 +145,19 @@ func TestReuseStoredManifestsLeavesAManifestWhoseChunksChanged(t *testing.T) {
 			require.Equal(t, sent, rest)
 		})
 	}
+}
+
+// A newer chunk over the manifest's chunks wins wherever it is listed.
+func TestReuseStoredManifestsKeepsAManifestANewerChunkOverlaps(t *testing.T) {
+	fixture := newReuseFixture(t)
+	stored := fixture.storedEntryChunks(t, SmallChunkManifestBatch+10)
+	sent := appendedChunks(SmallChunkManifestBatch + 10)
+	newer := &filer_pb.FileChunk{FileId: fmt.Sprintf("3,%x%08x", 0xfff, 0x5eed), Offset: 1275, Size: 10, ModifiedTsNs: 1 << 40}
+	sent = append(sent[:128:128], append([]*filer_pb.FileChunk{newer}, sent[128:]...)...)
+
+	reused, rest := ReuseStoredManifests(context.Background(), fixture.lookup, stored, nil, sent)
+	require.Equal(t, manifestsOf(stored), reused)
+	require.Equal(t, append([]*filer_pb.FileChunk{newer}, sent[SmallChunkManifestBatch+1:]...), rest)
 }
 
 // A truncate before #13042 could shorten a manifest without cutting its
