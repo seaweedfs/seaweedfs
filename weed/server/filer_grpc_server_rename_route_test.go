@@ -3,11 +3,13 @@ package weed_server
 import (
 	"context"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // A file created with IF_NOT_EXISTS lands on the write owner. A rename sent
@@ -89,6 +91,23 @@ func TestStreamRenameEntryMissOnOwnerNotFound(t *testing.T) {
 	}, &renameTestStream{})
 	if err == nil || !strings.Contains(err.Error(), filer_pb.ErrNotFound.Error()) {
 		t.Fatalf("rename of an absent entry: %v", err)
+	}
+}
+
+// A missing source is ENOENT to the client, whether the miss is this
+// filer's or the owner's relayed over gRPC.
+func TestRenameErrnoMissingSource(t *testing.T) {
+	c := newTwoFilers(t)
+	separateStores(c)
+	sharedWriteRing(c)
+	for _, p := range []string{string(c.keyOwnedBy(t, c.addrA, c.addrA)), string(c.keyOwnedBy(t, c.addrB, c.addrB))} {
+		dir, name := util.FullPath(p).DirAndName()
+		err := c.fsA.StreamRenameEntry(&filer_pb.StreamRenameEntryRequest{
+			OldDirectory: dir, OldName: name, NewDirectory: dir, NewName: name + ".renamed",
+		}, &renameTestStream{})
+		if got := renameErrno(err); got != int32(syscall.ENOENT) {
+			t.Fatalf("rename of absent %s: errno %d for %v, want ENOENT", p, got, err)
+		}
 	}
 }
 

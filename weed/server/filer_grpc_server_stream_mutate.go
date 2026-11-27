@@ -248,7 +248,7 @@ func (p *renameStreamProxy) SetTrailer(md metadata.MD)       { p.parent.stream.S
 func renameErrno(err error) int32 {
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "not found"):
+	case strings.Contains(msg, "not found"), strings.Contains(msg, filer_pb.ErrNotFound.Error()):
 		return int32(syscall.ENOENT)
 	case strings.Contains(msg, "not empty"):
 		return int32(syscall.ENOTEMPTY)
