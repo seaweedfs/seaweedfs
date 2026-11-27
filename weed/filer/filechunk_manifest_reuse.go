@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"slices"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -44,10 +45,12 @@ func ReuseStoredManifests(ctx context.Context, lookupFileIdFn wdclient.LookupFil
 	starts := make(map[int64]bool, len(chunks))
 	stops := make(map[int64]bool, len(chunks))
 	position := make(map[string]int, len(chunks))
+	stamped := make(map[int64][]int, len(chunks))
 	for i, chunk := range chunks {
 		starts[chunk.Offset] = true
 		stops[chunk.Offset+int64(chunk.Size)] = true
 		position[ChunkIdentity(chunk.GetFileIdString())] = i
+		stamped[chunk.ModifiedTsNs] = append(stamped[chunk.ModifiedTsNs], i)
 	}
 
 	taken := make([]bool, len(chunks))
@@ -61,7 +64,7 @@ func ReuseStoredManifests(ctx context.Context, lookupFileIdFn wdclient.LookupFil
 			glog.V(1).InfofCtx(ctx, "reuse manifest %s: %v", manifest.GetFileIdString(), err)
 			continue
 		}
-		if positions, ok := heldUnchanged(manifest, held, chunks, position, taken); ok {
+		if positions, ok := heldUnchanged(manifest, held, chunks, position, stamped, taken); ok {
 			for _, i := range positions {
 				taken[i] = true
 			}
@@ -85,7 +88,7 @@ func ReuseStoredManifests(ctx context.Context, lookupFileIdFn wdclient.LookupFil
 // is there as the manifest holds it, in its order and not taken by another
 // manifest, and the manifest spans exactly them. Order matters: where two
 // chunks with the same ModifiedTsNs overlap, the later one wins.
-func heldUnchanged(manifest *filer_pb.FileChunk, held, chunks []*filer_pb.FileChunk, position map[string]int, taken []bool) ([]int, bool) {
+func heldUnchanged(manifest *filer_pb.FileChunk, held, chunks []*filer_pb.FileChunk, position map[string]int, stamped map[int64][]int, taken []bool) ([]int, bool) {
 	if len(held) == 0 {
 		return nil, false
 	}
@@ -111,18 +114,12 @@ func heldUnchanged(manifest *filer_pb.FileChunk, held, chunks []*filer_pb.FileCh
 	}
 	// Kept, the manifest's chunks are read before every other chunk, so none
 	// may overlap one of them with the same ModifiedTsNs.
-	heldAt := make(map[int64][]*filer_pb.FileChunk, len(held))
-	for _, chunk := range held {
-		heldAt[chunk.ModifiedTsNs] = append(heldAt[chunk.ModifiedTsNs], chunk)
-	}
-	next := 0
-	for i, chunk := range chunks {
-		if next < len(positions) && positions[next] == i {
-			next++
-			continue
-		}
-		for _, h := range heldAt[chunk.ModifiedTsNs] {
-			if chunk.Offset < h.Offset+int64(h.Size) && h.Offset < chunk.Offset+int64(chunk.Size) {
+	for _, h := range held {
+		for _, i := range stamped[h.ModifiedTsNs] {
+			if _, own := slices.BinarySearch(positions, i); own {
+				continue
+			}
+			if chunk := chunks[i]; chunk.Offset < h.Offset+int64(h.Size) && h.Offset < chunk.Offset+int64(chunk.Size) {
 				return nil, false
 			}
 		}
