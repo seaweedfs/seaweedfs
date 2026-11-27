@@ -58,30 +58,41 @@ func ctxState(ctx context.Context) string {
 }
 
 // idleTimeoutTestServer serves the test handlers through a Listener whose
-// activity timeout is testIdleTimeout. mode is "http", "https" or "h2";
-// pause wraps the handlers in PauseIdleTimeoutWhileHandling.
+// activity timeout is testIdleTimeout, and /quiet and /upload work quietly
+// for testQuietFor. mode is "http", "https" or "h2"; pause wraps the
+// handlers in PauseIdleTimeoutWhileHandling.
 type idleTimeoutTestServer struct {
 	*httptest.Server
 	listener *countingListener
+	quietFor time.Duration
 	// bodyErr gets the error of the body read on /upload when it fails.
 	bodyErr chan error
 	// hungUp gets the context state /wait saw once it stopped waiting.
 	hungUp chan string
-	// closed is signaled when the server has closed a connection.
-	closed chan struct{}
+	// downloadErr gets the outcome of /download's writes.
+	downloadErr chan error
 }
 
 func newIdleTimeoutTestServer(t *testing.T, mode string, pause bool) *idleTimeoutTestServer {
 	t.Helper()
+	return newIdleTimeoutTestServerWith(t, mode, pause, testIdleTimeout, testQuietFor)
+}
+
+// newIdleTimeoutTestServerWith is newIdleTimeoutTestServer with its own idle
+// timeout and quiet time.
+func newIdleTimeoutTestServerWith(t *testing.T, mode string, pause bool, idle, quietFor time.Duration) *idleTimeoutTestServer {
+	t.Helper()
 	s := &idleTimeoutTestServer{
-		bodyErr: make(chan error, 1),
-		hungUp:  make(chan string, 1),
-		closed:  make(chan struct{}, 1),
+		quietFor: quietFor,
+		bodyErr:  make(chan error, 1),
+		hungUp:   make(chan string, 1),
+
+		downloadErr: make(chan error, 1),
 	}
 	mux := http.NewServeMux()
 	quiet := func(ctx context.Context) {
 		select {
-		case <-time.After(testQuietFor):
+		case <-time.After(s.quietFor):
 		case <-ctx.Done():
 		}
 	}
@@ -101,6 +112,25 @@ func newIdleTimeoutTestServer(t *testing.T, mode string, pause bool) *idleTimeou
 		quiet(r.Context())
 		fmt.Fprintf(w, "%s %d", ctxState(r.Context()), n)
 	})
+	mux.HandleFunc("/handling", func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		tc, _ := r.Context().Value(connContextKey{}).(*Conn)
+		if tc == nil {
+			fmt.Fprint(w, "no conn")
+			return
+		}
+		tc.mu.Lock()
+		defer tc.mu.Unlock()
+		fmt.Fprint(w, tc.handling)
+	})
+	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		chunk := bytes.Repeat([]byte("z"), 64<<10)
+		var err error
+		for i := 0; i < 1024 && err == nil; i++ { // 64 MiB
+			_, err = w.Write(chunk)
+		}
+		s.downloadErr <- err
+	})
 	mux.HandleFunc("/wait", func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-time.After(10 * time.Second):
@@ -115,16 +145,8 @@ func newIdleTimeoutTestServer(t *testing.T, mode string, pause bool) *idleTimeou
 
 	s.Server = httptest.NewUnstartedServer(h)
 	s.listener = &countingListener{Listener: s.Server.Listener}
-	s.Server.Listener = &Listener{Listener: s.listener, Timeout: testIdleTimeout}
+	s.Server.Listener = &Listener{Listener: s.listener, Timeout: idle}
 	s.Server.Config.ConnContext = ConnContext
-	s.Server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
-		if state == http.StateClosed {
-			select {
-			case s.closed <- struct{}{}:
-			default:
-			}
-		}
-	}
 	switch mode {
 	case "http":
 		s.Server.Start()
@@ -185,7 +207,7 @@ func (s *idleTimeoutTestServer) rawConn(t *testing.T) net.Conn {
 }
 
 func TestQuietHandlerKeepsItsContext(t *testing.T) {
-	for _, mode := range []string{"http", "https", "h2"} {
+	for _, mode := range []string{"http", "https"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newIdleTimeoutTestServer(t, mode, true)
 			c := s.client()
@@ -220,7 +242,7 @@ func TestQuietHandlerWithoutPauseLosesItsContext(t *testing.T) {
 }
 
 func TestQuietHandlerAfterItsBodyKeepsItsContext(t *testing.T) {
-	for _, mode := range []string{"http", "https", "h2"} {
+	for _, mode := range []string{"http", "https"} {
 		t.Run(mode, func(t *testing.T) {
 			s := newIdleTimeoutTestServer(t, mode, true)
 			c := s.client()
@@ -284,19 +306,52 @@ func TestIdleConnectionStillTimesOut(t *testing.T) {
 	}
 }
 
-// TestIdleHTTP2ConnectionStillTimesOutAfterAQuietRequest checks that the
-// HTTP/2 frame reader, which waits without deadline while a quiet handler
-// runs, is back under the idle timeout once the handler has returned.
-func TestIdleHTTP2ConnectionStillTimesOutAfterAQuietRequest(t *testing.T) {
-	s := newIdleTimeoutTestServer(t, "h2", true)
-	c := s.client()
-	if got := s.do(t, c, http.MethodGet, "/quiet", nil); got != "ok" {
-		t.Fatalf("quiet request: context %s", got)
+// TestOnlyHTTP1RequestsArePaused checks the scope of the pause: an HTTP/1.1
+// request holds it while its handler runs, with or without a body, and an
+// HTTP/2 request leaves the connection's timeout alone.
+func TestOnlyHTTP1RequestsArePaused(t *testing.T) {
+	for mode, want := range map[string]string{"http": "1", "https": "1", "h2": "0"} {
+		t.Run(mode, func(t *testing.T) {
+			s := newIdleTimeoutTestServer(t, mode, true)
+			c := s.client()
+			for _, body := range []string{"", "x"} {
+				method := http.MethodGet
+				if body != "" {
+					method = http.MethodPost
+				}
+				if got := s.do(t, c, method, "/handling", strings.NewReader(body)); got != want {
+					t.Fatalf("%s with body %q: %s requests paused, want %s", method, body, got, want)
+				}
+			}
+		})
 	}
-	select {
-	case <-s.closed:
-	case <-time.After(10 * testIdleTimeout):
-		t.Fatal("idle HTTP/2 connection still open after the quiet request")
+}
+
+// TestStalledDownloadStillTimesOut checks that a client that stops reading
+// an answer is still cut off by the idle timeout: over HTTP/1.1 the write
+// waits on the socket, over HTTP/2 on flow-control credit, which only the
+// frame reader's deadline ends. Over TLS, closing the connection after the
+// failed write can take up to the 5 s crypto/tls gives its close_notify.
+func TestStalledDownloadStillTimesOut(t *testing.T) {
+	for _, mode := range []string{"http", "https", "h2"} {
+		t.Run(mode, func(t *testing.T) {
+			s := newIdleTimeoutTestServer(t, mode, true)
+			c := s.client()
+			c.Timeout = 0 // the client must not give up first
+			resp, err := c.Get(s.Server.URL + "/download")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			select {
+			case err := <-s.downloadErr:
+				if err == nil {
+					t.Fatal("download finished although the client read none of it")
+				}
+			case <-time.After(8 * time.Second):
+				t.Fatal("download still waiting on a client that stopped reading")
+			}
+		})
 	}
 }
 
@@ -321,24 +376,20 @@ func TestClientHangUpStillCancelsTheContext(t *testing.T) {
 }
 
 // TestPauseUnderConcurrentRequests runs quiet requests, uploads and quick
-// requests at once, over HTTP/1.1 connections and over one HTTP/2
-// connection that carries them side by side; run it with -race.
+// requests at once over several connections; run it with -race. A request
+// can wait for its turn on a connection, so the idle timeout here is 1 s:
+// a slow run must not find the connection closed between two requests.
 func TestPauseUnderConcurrentRequests(t *testing.T) {
-	for _, mode := range []string{"http", "h2"} {
+	for _, mode := range []string{"http", "https"} {
 		t.Run(mode, func(t *testing.T) {
-			s := newIdleTimeoutTestServer(t, mode, true)
+			s := newIdleTimeoutTestServerWith(t, mode, true, time.Second, 1500*time.Millisecond)
 			var clients []*http.Client
-			if mode == "h2" {
-				clients = []*http.Client{s.client()}
-			} else {
-				for i := 0; i < 4; i++ {
-					clients = append(clients, s.client())
-				}
+			for i := 0; i < 4; i++ {
+				clients = append(clients, s.client())
 			}
 			body := bytes.Repeat([]byte("y"), 64<<10)
 			var wg sync.WaitGroup
-			var failures atomic.Int32
-			for i := 0; i < 12; i++ {
+			for i := 0; i < 8; i++ {
 				wg.Add(1)
 				go func(i int) {
 					defer wg.Done()
@@ -358,21 +409,12 @@ func TestPauseUnderConcurrentRequests(t *testing.T) {
 							got, err = s.send(c, http.MethodGet, "/ctx", nil)
 						}
 						if err != nil || got != want {
-							failures.Add(1)
 							t.Errorf("request %d.%d: %q (%v), want %q", i, j, got, err, want)
 						}
 					}
 				}(i)
 			}
 			wg.Wait()
-			if failures.Load() > 0 {
-				return
-			}
-			if mode == "h2" {
-				if n := s.listener.accepted.Load(); n != 1 {
-					t.Fatalf("HTTP/2 requests used %d connections, want 1", n)
-				}
-			}
 		})
 	}
 }

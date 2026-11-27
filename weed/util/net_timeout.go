@@ -132,8 +132,7 @@ func (c *Conn) pauseIdleTimeout() {
 }
 
 // resumeIdleTimeout puts reading back under the activity timeout once the
-// last such handler has returned, including a read that is already waiting
-// (the HTTP/2 frame reader, which keeps reading between requests).
+// last such handler has returned, including a read that is already waiting.
 func (c *Conn) resumeIdleTimeout() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -222,22 +221,26 @@ func ConnFromContext(ctx context.Context) net.Conn {
 // without sending a byte (a large CopyObject into a versioned bucket, which
 // answers only once the copy is done) lets the timeout end net/http's
 // background read, the read the server keeps waiting while a handler runs,
-// to see a client hang up. net/http takes
-// that as the client's connection failing and cancels the connection's
-// context: the request in progress, and every later request the client
-// sends on the kept-alive connection, then run with a canceled context.
+// to see a client hang up. net/http takes that as the client's connection
+// failing and cancels the connection's context: the request in progress,
+// and every later request the client sends on the kept-alive connection,
+// then run with a canceled context.
+//
+// Only HTTP/1.x requests are paused. HTTP/2 has no background read: when
+// its connection carries nothing for the timeout, the frame reader's
+// deadline closes the connection, and no later request runs on it. That
+// deadline is also what ends a stream whose client stopped reading, since
+// such a stream waits for flow-control credit, not on the socket.
 func PauseIdleTimeoutWhileHandling(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tc, _ := r.Context().Value(connContextKey{}).(*Conn)
-		if tc == nil || tc.Timeout <= 0 {
+		if tc == nil || tc.Timeout <= 0 || r.ProtoMajor != 1 {
 			h.ServeHTTP(w, r)
 			return
 		}
 		pause := &idleTimeoutPause{conn: tc}
 		defer pause.end()
-		// An HTTP/2 request without a body has a Body that is at its end
-		// already and a ContentLength of 0.
-		if r.Body == nil || r.Body == http.NoBody || r.ContentLength == 0 {
+		if r.Body == nil || r.Body == http.NoBody {
 			pause.begin()
 		} else {
 			// net/http starts the background read in the same body read
