@@ -33,15 +33,32 @@ pub fn shard_id_try_from(v: u32) -> Result<ShardId, String> {
 pub const EC_SHARD_GHOST: &str = "ghost";
 pub const EC_SHARD_STALE_SIZE: &str = "stale_size";
 
+/// What tells two files apart: (device, inode) on unix, (volume serial,
+/// file index) on Windows.
 #[cfg(unix)]
-fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+fn file_id(f: &File) -> io::Result<(u64, u64)> {
     use std::os::unix::fs::MetadataExt;
-    a.dev() == b.dev() && a.ino() == b.ino()
+    let m = f.metadata()?;
+    Ok((m.dev(), m.ino()))
 }
 
-#[cfg(not(unix))]
-fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
-    a.created().ok() == b.created().ok() && a.modified().ok() == b.modified().ok()
+#[cfg(windows)]
+fn file_id(f: &File) -> io::Result<(u64, u64)> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+    // SAFETY: the handle stays open for the call and `info` is a valid out-param.
+    unsafe {
+        let mut info: BY_HANDLE_FILE_INFORMATION = std::mem::zeroed();
+        if GetFileInformationByHandle(f.as_raw_handle() as _, &mut info) == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok((
+            info.dwVolumeSerialNumber as u64,
+            (info.nFileIndexHigh as u64) << 32 | info.nFileIndexLow as u64,
+        ))
+    }
 }
 
 /// A single erasure-coded shard file.
@@ -130,20 +147,21 @@ impl EcVolumeShard {
     /// when the path is gone or names another file than the open one,
     /// `EC_SHARD_STALE_SIZE` when its size changed since the mount.
     pub fn disk_mismatch(&self) -> Option<&'static str> {
-        let on_disk = match fs::metadata(self.file_name()) {
-            Ok(m) => m,
+        let on_disk = match File::open(self.file_name()) {
+            Ok(f) => f,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Some(EC_SHARD_GHOST),
             Err(_) => return None,
         };
-        if let Some(open) = self.ecd_file.as_ref().and_then(|f| f.metadata().ok()) {
-            if !same_file(&on_disk, &open) {
+        let mounted = self.ecd_file.as_ref().and_then(|f| file_id(f).ok());
+        if let (Some(mounted), Ok(id)) = (mounted, file_id(&on_disk)) {
+            if id != mounted {
                 return Some(EC_SHARD_GHOST);
             }
         }
-        if on_disk.len() as i64 != self.ecd_file_size {
-            return Some(EC_SHARD_STALE_SIZE);
+        match on_disk.metadata() {
+            Ok(m) if m.len() as i64 != self.ecd_file_size => Some(EC_SHARD_STALE_SIZE),
+            _ => None,
         }
-        None
     }
 
     /// A duplicate of the mounted shard handle, for a reader that has to
