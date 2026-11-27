@@ -21,8 +21,12 @@ import (
 const replacedChunk, writtenChunk = "3,0c03", "4,0d04"
 
 func fileEntryWithChunk(path string, inode uint64, fileId string) *filer.Entry {
+	return fileEntryWithChunkValue(path, inode, &filer_pb.FileChunk{FileId: fileId, Offset: 0, Size: 4, ModifiedTsNs: 1})
+}
+
+func fileEntryWithChunkValue(path string, inode uint64, chunk *filer_pb.FileChunk) *filer.Entry {
 	entry := newFileEntry(path, inode)
-	entry.Chunks = []*filer_pb.FileChunk{{FileId: fileId, Offset: 0, Size: 4, ModifiedTsNs: 1}}
+	entry.Chunks = []*filer_pb.FileChunk{chunk}
 	return entry
 }
 
@@ -35,13 +39,13 @@ func queuedDeletions(f *filer.Filer) []string {
 	return ids
 }
 
-// hardLinkedTarget puts /dir/dst.txt in the store as one of links hard links
-// to a file whose only chunk is 3,0c03; with two links /dir/other.txt is the
-// second.
-func hardLinkedTarget(t *testing.T, store *renameTestStore, links int32) filer.HardLinkId {
+// hardLinkedTargetWithChunkValue puts /dir/dst.txt in the store as one of
+// links hard links to a file whose only chunk is chunk; with two links
+// /dir/other.txt is the second.
+func hardLinkedTargetWithChunkValue(t *testing.T, store *renameTestStore, links int32, chunk *filer_pb.FileChunk) filer.HardLinkId {
 	t.Helper()
 	id := filer.HardLinkId("hl-chunks-test-01")
-	shared := fileEntryWithChunk("/dir/dst.txt", 303, replacedChunk)
+	shared := fileEntryWithChunkValue("/dir/dst.txt", 303, chunk)
 	shared.HardLinkId, shared.HardLinkCounter = id, links
 	blob, err := shared.EncodeAttributesAndChunks()
 	if err != nil {
@@ -54,6 +58,10 @@ func hardLinkedTarget(t *testing.T, store *renameTestStore, links int32) filer.H
 		store.entries[p] = link
 	}
 	return id
+}
+
+func hardLinkedTarget(t *testing.T, store *renameTestStore, links int32) filer.HardLinkId {
+	return hardLinkedTargetWithChunkValue(t, store, links, &filer_pb.FileChunk{FileId: replacedChunk, Offset: 0, Size: 4, ModifiedTsNs: 1})
 }
 
 func hardLinkChunkServer(t *testing.T, links int32) (*FilerServer, *filer.Filer, *renameTestStore, filer.HardLinkId) {
@@ -216,6 +224,101 @@ func TestUpdateEntryThroughHardLinkDeletesReplacedChunk(t *testing.T) {
 
 	checkDeletions(t, f, replacedChunk)
 	checkOtherLink(t, f, writtenChunk, 2)
+}
+
+func TestUpdateEntryThroughHardLinkKeepsEquivalentChunkSpellings(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		stored    *filer_pb.FileChunk
+		requested *filer_pb.FileChunk
+	}{
+		{
+			name:      "suffix to structured",
+			stored:    &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 1},
+			requested: &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}, Offset: 0, Size: 4, ModifiedTsNs: 2},
+		},
+		{
+			name:      "structured to suffix",
+			stored:    &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}, Offset: 0, Size: 4, ModifiedTsNs: 1},
+			requested: &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 2},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newRenameTestStore()
+			store.entries["/dir"] = newDirectoryEntry("/dir", 100)
+			id := hardLinkedTargetWithChunkValue(t, store, 2, tc.stored)
+			swapNotificationQueue(t, &captureQueue{})
+			f := newRenameTestFiler(t, store)
+			server := &FilerServer{filer: f, option: &FilerOption{}, entryLockTable: util.NewLockTable[util.FullPath]()}
+
+			updateDst(t, server, dstEntry(id, 2, tc.requested))
+
+			checkDeletions(t, f)
+			checkOtherLink(t, f, tc.requested.GetFileIdString(), 2)
+		})
+	}
+}
+
+func TestUpdateEntryDoesNotDeleteCoveredEquivalentChunkSpellings(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		stored     *filer_pb.FileChunk
+		older      *filer_pb.FileChunk
+		newer      *filer_pb.FileChunk
+		wantDelete string
+	}{
+		{
+			name:   "suffix to structured",
+			stored: &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 1},
+			older:  &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 1},
+			newer:  &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}, Offset: 0, Size: 4, ModifiedTsNs: 2},
+		},
+		{
+			name:   "structured to suffix",
+			stored: &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}, Offset: 0, Size: 4, ModifiedTsNs: 1},
+			older:  &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}, Offset: 0, Size: 4, ModifiedTsNs: 1},
+			newer:  &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 2},
+		},
+		{
+			name:       "different needle remains garbage",
+			stored:     &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 1},
+			older:      &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 1},
+			newer:      &filer_pb.FileChunk{FileId: "3,0c00000004_1", Offset: 0, Size: 4, ModifiedTsNs: 2},
+			wantDelete: "3,0c00000003_1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, f, store, id := hardLinkChunkServer(t, 1)
+			// hardLinkChunkServer already installed the shared record; replace its
+			// chunk with the spelling under test while retaining the same link ID.
+			shared := fileEntryWithChunkValue("/dir/dst.txt", 303, tc.stored)
+			shared.HardLinkId, shared.HardLinkCounter = id, 1
+			blob, err := shared.EncodeAttributesAndChunks()
+			if err != nil {
+				t.Fatalf("encode shared chunk: %v", err)
+			}
+			store.kv = map[string][]byte{}
+			store.kv[string(id)] = blob
+
+			updateDst(t, server, dstEntry(id, 1, tc.older, tc.newer))
+			if tc.wantDelete == "" {
+				checkDeletions(t, f)
+			} else {
+				checkDeletions(t, f, tc.wantDelete)
+			}
+			stored, err := f.FindEntry(context.Background(), "/dir/dst.txt")
+			if err != nil {
+				t.Fatalf("find updated entry: %v", err)
+			}
+			if len(stored.GetChunks()) != 1 {
+				t.Fatalf("updated chunks = %v, want only the visible chunk", stored.GetChunks())
+			}
+			got := stored.GetChunks()[0]
+			if got.GetFileIdString() != tc.newer.GetFileIdString() || got.Offset != tc.newer.Offset || got.Size != tc.newer.Size || got.ModifiedTsNs != tc.newer.ModifiedTsNs {
+				t.Fatalf("updated chunk = %v, want visible chunk %v", got, tc.newer)
+			}
+		})
+	}
 }
 
 func renameSrcOverHardLinkedDst(t *testing.T, server *FilerServer, store *renameTestStore) {

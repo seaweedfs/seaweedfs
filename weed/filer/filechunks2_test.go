@@ -48,6 +48,61 @@ func TestDoMinusChunks(t *testing.T) {
 	assert.Equalf(t, firstNewEntry, emptiedChunksInA, "empty")
 }
 
+func TestDoMinusChunksByNeedle(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		old         *filer_pb.FileChunk
+		new         *filer_pb.FileChunk
+		wantGarbage bool
+	}{
+		{
+			name: "suffix to structured",
+			old:  &filer_pb.FileChunk{FileId: "3,0c00000003_1"},
+			new:  &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}},
+		},
+		{
+			name: "structured to suffix",
+			old:  &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}},
+			new:  &filer_pb.FileChunk{FileId: "3,0c00000003_1"},
+		},
+		{
+			name:        "different needle",
+			old:         &filer_pb.FileChunk{FileId: "3,0c00000003_1"},
+			new:         &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 14, Cookie: 3}},
+			wantGarbage: true,
+		},
+		{
+			name:        "different volume",
+			old:         &filer_pb.FileChunk{FileId: "3,0c00000003_1"},
+			new:         &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 4, FileKey: 13, Cookie: 3}},
+			wantGarbage: true,
+		},
+		{
+			name:        "different cookie",
+			old:         &filer_pb.FileChunk{FileId: "3,0c00000003_1"},
+			new:         &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 4}},
+			wantGarbage: true,
+		},
+		{
+			name:        "distinct malformed IDs",
+			old:         &filer_pb.FileChunk{FileId: "not-a-fid"},
+			new:         &filer_pb.FileChunk{FileId: "another-not-a-fid"},
+			wantGarbage: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DoMinusChunks([]*filer_pb.FileChunk{tc.old}, []*filer_pb.FileChunk{tc.new})
+			if tc.wantGarbage {
+				if assert.Len(t, got, 1) {
+					assert.Equal(t, tc.old.GetFileIdString(), got[0].GetFileIdString())
+				}
+				return
+			}
+			assert.Empty(t, got)
+		})
+	}
+}
+
 func TestCompactFileChunksRealCase(t *testing.T) {
 
 	chunks := []*filer_pb.FileChunk{
