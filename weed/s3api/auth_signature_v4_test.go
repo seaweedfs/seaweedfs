@@ -675,7 +675,7 @@ func TestExtractSignedHeadersCase(t *testing.T) {
 			if errCode != s3err.ErrNone {
 				t.Fatalf("extractSignedHeaders failed: %v", errCode)
 			}
-			actual := getCanonicalHeaders(extracted)
+			actual := getCanonicalHeaders(extracted, signV4TrimAll)
 			if actual != tt.expected {
 				t.Errorf("%s: expected %q, got %q", tt.name, tt.expected, actual)
 			}
@@ -694,7 +694,7 @@ func TestExtractSignedHeadersContentLength(t *testing.T) {
 	if errCode != s3err.ErrNone {
 		t.Fatalf("extractSignedHeaders failed: %v", errCode)
 	}
-	if got := getCanonicalHeaders(extracted); got != "content-length:0\nhost:bucket.domain.com\n" {
+	if got := getCanonicalHeaders(extracted, signV4TrimAll); got != "content-length:0\nhost:bucket.domain.com\n" {
 		t.Fatalf("unexpected canonical headers %q", got)
 	}
 }
@@ -810,7 +810,7 @@ func TestCalculateAndVerifySignatureTrimVariants(t *testing.T) {
 		"botocore":  signV4TrimAllWhitespace,
 	} {
 		t.Run(name, func(t *testing.T) {
-			canonical := canonicalRequestWith(headers, payload, "", "/bucket/key", http.MethodPut, trim)
+			canonical := getCanonicalRequest(headers, payload, "", "/bucket/key", http.MethodPut, trim)
 			signature := getSignature(signingKey, getStringToSign(canonical, date, scope))
 			authInfo := &v4AuthInfo{HashedPayload: payload, Date: date, Scope: scope, Region: "us-east-1", Service: "s3", Signature: signature}
 			got, errCode := calculateAndVerifySignature(secret, http.MethodPut, "/bucket/key", "", headers, authInfo)

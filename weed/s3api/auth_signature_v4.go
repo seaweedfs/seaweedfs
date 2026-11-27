@@ -616,7 +616,7 @@ func calculateAndVerifySignature(secretKey, method, urlPath, queryStr string, ex
 	signingKey := getSigningKey(secretKey, authInfo.Date.Format(yyyymmdd), authInfo.Region, authInfo.Service)
 	var canonicalRequest, stringToSign, newSignature string
 	for i, trim := range signV4HeaderValueTrims {
-		cr := canonicalRequestWith(extractedSignedHeaders, authInfo.HashedPayload, queryStr, urlPath, method, trim)
+		cr := getCanonicalRequest(extractedSignedHeaders, authInfo.HashedPayload, queryStr, urlPath, method, trim)
 		if i > 0 && cr == canonicalRequest {
 			continue // same canonical request, same signature
 		}
@@ -1230,19 +1230,14 @@ func getScope(t time.Time, region string, service string) string {
 //	<CanonicalHeaders>\n
 //	<SignedHeaders>\n
 //	<HashedPayload>
-func getCanonicalRequest(extractedSignedHeaders http.Header, payload, queryStr, urlPath, method string) string {
-	return canonicalRequestWith(extractedSignedHeaders, payload, queryStr, urlPath, method, signV4TrimAll)
-}
-
-// canonicalRequestWith is getCanonicalRequest with the given header value trim.
-func canonicalRequestWith(extractedSignedHeaders http.Header, payload, queryStr, urlPath, method string, trim func(string) string) string {
+func getCanonicalRequest(extractedSignedHeaders http.Header, payload, queryStr, urlPath, method string, trim func(string) string) string {
 	rawQuery := strings.Replace(queryStr, "+", "%20", -1)
 	encodedPath := encodePath(urlPath)
 	canonicalRequest := strings.Join([]string{
 		method,
 		encodedPath,
 		rawQuery,
-		canonicalHeadersWith(extractedSignedHeaders, trim),
+		getCanonicalHeaders(extractedSignedHeaders, trim),
 		getSignedHeaders(extractedSignedHeaders),
 		payload,
 	}, "\n")
@@ -1280,12 +1275,7 @@ func getSigningKey(secretKey string, time string, region string, service string)
 }
 
 // getCanonicalHeaders generate a list of request headers with their values
-func getCanonicalHeaders(signedHeaders http.Header) string {
-	return canonicalHeadersWith(signedHeaders, signV4TrimAll)
-}
-
-// canonicalHeadersWith is getCanonicalHeaders with the given header value trim.
-func canonicalHeadersWith(signedHeaders http.Header, trim func(string) string) string {
+func getCanonicalHeaders(signedHeaders http.Header, trim func(string) string) string {
 	var headers []string
 	vals := make(http.Header)
 	for k, vv := range signedHeaders {
