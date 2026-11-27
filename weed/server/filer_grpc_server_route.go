@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -69,6 +70,35 @@ func (fs *FilerServer) forwardDeleteEntry(ctx context.Context, req *filer_pb.Del
 		return &filer_pb.DeleteEntryResponse{}, handled, err
 	}
 	return ownerResp, handled, nil
+}
+
+// forwardStreamRenameEntry sends the rename to its source's write owner and
+// relays the owner's responses. handled=false means this filer is the owner
+// and applies it.
+func (fs *FilerServer) forwardStreamRenameEntry(req *filer_pb.StreamRenameEntryRequest, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldPath util.FullPath) (bool, error) {
+	ctx := stream.Context()
+	return fs.forwardToWriteOwner(ctx, entryRouteKey(oldPath), func(owner pb.ServerAddress) error {
+		glog.V(2).InfofCtx(ctx, "StreamRenameEntry %s: forwarding to owner %s", oldPath, owner)
+		req.IsMoved = true
+		return pb.WithFilerClient(true, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			forwarded, err := client.StreamRenameEntry(withCallerAuthContext(ctx), req)
+			if err != nil {
+				return err
+			}
+			for {
+				resp, recvErr := forwarded.Recv()
+				if recvErr == io.EOF {
+					return nil
+				}
+				if recvErr != nil {
+					return recvErr
+				}
+				if sendErr := stream.Send(resp); sendErr != nil {
+					return sendErr
+				}
+			}
+		})
+	})
 }
 
 // forwardToWriteOwner sends the request to key's write owner so a single filer's

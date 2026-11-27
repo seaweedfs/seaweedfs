@@ -100,7 +100,22 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 	oldParent := util.FullPath(filepath.ToSlash(req.OldDirectory))
 	newParent := util.FullPath(filepath.ToSlash(req.NewDirectory))
 
+	oldPath := oldParent.Child(req.OldName)
+	if req.IsMoved {
+		if err := fs.checkForwardedWrite(stream.Context(), entryRouteKey(oldPath)); err != nil {
+			return err
+		}
+	}
 	if err := fs.filer.CanRename(stream.Context(), oldParent, newParent, req.OldName); err != nil {
+		// Exclusive and conditional creates land on the write owner, so a
+		// source missing here may only not have replicated yet: the owner
+		// renames it. A scoped rename stays local, since the owner would skip
+		// the scope's checks.
+		if err == filer_pb.ErrNotFound && !req.IsMoved && !scopeKeepOnly(stream.Context()) && fs.ownerKeepsOwnStore(entryRouteKey(oldPath)) {
+			if handled, forwardErr := fs.forwardStreamRenameEntry(req, stream, oldPath); handled {
+				return forwardErr
+			}
+		}
 		return err
 	}
 
