@@ -244,13 +244,12 @@ func (s3a *S3ApiServer) GetBucketWebsiteHandler(w http.ResponseWriter, r *http.R
 }
 
 // listObjectsQueryParams are the query keys a ListObjects/ListObjectsV2 request may
-// carry. x-id is stamped by the AWS SDKs and carries no meaning for the server; the
-// rest of the non-listing keys are what a presigned URL signs into the query string.
+// carry. The non-listing keys are what a presigned URL signs into the query string.
 var listObjectsQueryParams = map[string]bool{
 	"prefix": true, "delimiter": true, "marker": true, "max-keys": true,
 	"encoding-type": true, "list-type": true, "continuation-token": true,
 	"start-after": true, "fetch-owner": true, "expected-bucket-owner": true,
-	"allow-unordered": true, "x-id": true,
+	"allow-unordered": true,
 	// SigV2 presigned URLs.
 	"AWSAccessKeyId": true, "Signature": true, "Expires": true,
 }
@@ -264,13 +263,14 @@ func unroutedBucketSubresource(r *http.Request) (string, bool) {
 }
 
 // unroutedSubresource names a query key that no route claimed, outside the
-// request's own parameters, SigV2 presign keys, and SigV4 presign keys
-// (all "X-Amz-" prefixed).
+// request's own parameters, SigV2 presign keys, SigV4 presign keys (all
+// "X-Amz-" prefixed), and the custom "x-" parameters S3 ignores (x-id from the
+// AWS SDKs, x-purpose from Elasticsearch).
 func unroutedSubresource(r *http.Request, allowed map[string]bool) (string, bool) {
 	for key := range r.URL.Query() {
 		switch {
-		case allowed[key], strings.HasPrefix(key, "X-Amz-"):
-		case key == "x-id", key == "AWSAccessKeyId", key == "Signature", key == "Expires":
+		case allowed[key], strings.HasPrefix(key, "X-Amz-"), strings.HasPrefix(key, "x-"):
+		case key == "AWSAccessKeyId", key == "Signature", key == "Expires":
 		default:
 			return key, true
 		}

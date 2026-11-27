@@ -18,6 +18,8 @@ func TestUnroutedBucketSubresource(t *testing.T) {
 		"list-type=2&continuation-token=x",
 		"delimiter=/&encoding-type=url",
 		"x-id=ListObjectsV2",
+		"prefix=tests-a/&x-purpose=SnapshotMetadata",
+		"list-type=2&x-custom-tag=1",
 		// The listing handlers read allow-unordered and validate it against
 		// delimiter, so the guard has to let it through to them.
 		"allow-unordered=true",
@@ -31,7 +33,7 @@ func TestUnroutedBucketSubresource(t *testing.T) {
 		assert.False(t, found, "%q is a listing request, got %q", query, name)
 	}
 
-	for _, query := range []string{"torrent=", "replication=", "prefix=a&torrent="} {
+	for _, query := range []string{"torrent=", "replication=", "prefix=a&torrent=", "purpose=x"} {
 		req, _ := http.NewRequest("GET", "http://localhost/bucket?"+query, nil)
 		_, found := unroutedBucketSubresource(req)
 		assert.True(t, found, "%q should be reported as a subresource", query)
