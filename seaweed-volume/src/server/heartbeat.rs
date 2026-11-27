@@ -1055,7 +1055,8 @@ async fn ec_tick_pass(
     if !EC_SHARD_CHECK_RUNNING.swap(true, Ordering::AcqRel) {
         let state = state.clone();
         tokio::task::spawn_blocking(move || {
-            state.store.read().unwrap().check_mounted_ec_shards();
+            let shards = state.store.read().unwrap().ec_shard_disk_checks();
+            Store::check_mounted_ec_shards(&shards);
             EC_SHARD_CHECK_RUNNING.store(false, Ordering::Release);
         });
     }
