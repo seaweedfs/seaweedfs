@@ -114,13 +114,13 @@ func TestDeleteFencesTheCollectionPublishedSinceItsLookup(t *testing.T) {
 
 	c.growth.lock.Lock()
 	type result struct {
-		c       *Collection
-		unfence func()
+		c      *Collection
+		finish func(bool)
 	}
 	fenced := make(chan result, 1)
 	go func() {
-		fc, unfence, _ := topo.FenceGrowth("bucket")
-		fenced <- result{fc, unfence}
+		fc, finish, _ := topo.FenceGrowth("bucket")
+		fenced <- result{fc, finish}
 	}()
 	for deadline := time.Now().Add(5 * time.Second); !c.isDeleting(); {
 		if time.Now().After(deadline) {
@@ -144,7 +144,86 @@ func TestDeleteFencesTheCollectionPublishedSinceItsLookup(t *testing.T) {
 	if !replacement.isDeleting() || c.isDeleting() {
 		t.Error("the fence is not on the published collection alone")
 	}
-	got.unfence()
+	got.finish(false)
+}
+
+// A second delete of the name waits for the one running. Once that one removed
+// the collection, the second finds nothing, and leaves alone a collection a
+// write recreated under the name in between.
+func TestOverlappingDeletesRemoveOnlyTheFencedCollection(t *testing.T) {
+	topo, option := newGrowthFenceTopology()
+	c := option.collection
+
+	_, finishFirst, found := topo.FenceGrowth("bucket")
+	if !found {
+		t.Fatal("first delete found no collection")
+	}
+	type result struct {
+		c     *Collection
+		found bool
+	}
+	second := make(chan result, 1)
+	go func() {
+		fc, _, found := topo.FenceGrowth("bucket")
+		second <- result{fc, found}
+	}()
+	select {
+	case <-second:
+		t.Fatal("second delete did not wait for the one running")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	topo.DeleteCollection("bucket")
+	replacement := topo.getOrCreateCollection("bucket")
+	finishFirst(true)
+
+	select {
+	case got := <-second:
+		if got.found || got.c != nil {
+			t.Fatal("second delete went on to the collection recreated under the name")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("second delete did not return")
+	}
+	if replacement.isDeleting() {
+		t.Error("the recreated collection was fenced")
+	}
+	if !c.isDeleting() {
+		t.Error("the deleted collection let growth back in")
+	}
+}
+
+// A delete waiting on one that failed takes over the collection left in place.
+func TestDeleteAfterAFailedOneTakesOverTheCollection(t *testing.T) {
+	topo, option := newGrowthFenceTopology()
+	c := option.collection
+
+	_, finishFirst, _ := topo.FenceGrowth("bucket")
+	type result struct {
+		c      *Collection
+		finish func(bool)
+	}
+	second := make(chan result, 1)
+	go func() {
+		fc, finish, _ := topo.FenceGrowth("bucket")
+		second <- result{fc, finish}
+	}()
+	time.Sleep(50 * time.Millisecond)
+	finishFirst(false)
+
+	var got result
+	select {
+	case got = <-second:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second delete did not return")
+	}
+	if got.c != c || !c.isDeleting() {
+		t.Fatal("second delete does not hold the collection the failed one left")
+	}
+	got.finish(false)
+	if c.isDeleting() {
+		t.Error("growth stayed fenced after both deletes failed")
+	}
 }
 
 func TestAssignStaysOutOfACollectionBeingDeleted(t *testing.T) {

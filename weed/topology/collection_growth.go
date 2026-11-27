@@ -9,9 +9,11 @@ import (
 // deleted. Growth holds lock shared while it creates one volume; a delete
 // raises deleting and then takes lock, so the volume in flight has registered,
 // and is found by the delete, before the delete lists the collection's servers.
+// deleteLock runs one delete of the collection at a time.
 type growthFence struct {
-	lock     sync.RWMutex
-	deleting atomic.Int32
+	lock       sync.RWMutex
+	deleting   atomic.Int32
+	deleteLock sync.Mutex
 }
 
 // FenceGrowth stops assigns and volume growth in the collection, and returns
@@ -29,17 +31,34 @@ func (c *Collection) FenceGrowth() (unfence func()) {
 // FenceGrowth fences the collection published under the name. A collection
 // unpublished for being empty before its fence went up is let go, and the one
 // published since, where growth registers its volumes, is fenced instead.
-func (t *Topology) FenceGrowth(collectionName string) (c *Collection, unfence func(), found bool) {
+// It then waits for a delete already running on the collection, and finds
+// nothing once that delete removed it, so a delete never reaches a collection
+// recreated under the name after it was called. finish ends the delete, and
+// lets growth back in unless the collection was deleted.
+func (t *Topology) FenceGrowth(collectionName string) (c *Collection, finish func(deleted bool), found bool) {
+	var unfence func()
 	for {
 		if c, found = t.FindCollection(collectionName); !found {
 			return nil, nil, false
 		}
 		unfence = c.FenceGrowth()
 		if published, stillFound := t.FindCollection(collectionName); stillFound && published == c {
-			return c, unfence, true
+			break
 		}
 		unfence()
 	}
+	c.growth.deleteLock.Lock()
+	if published, stillFound := t.FindCollection(collectionName); !stillFound || published != c {
+		c.growth.deleteLock.Unlock()
+		unfence()
+		return nil, nil, false
+	}
+	return c, func(deleted bool) {
+		if !deleted {
+			unfence()
+		}
+		c.growth.deleteLock.Unlock()
+	}, true
 }
 
 func (c *Collection) isDeleting() bool {

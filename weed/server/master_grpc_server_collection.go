@@ -82,7 +82,7 @@ func (ms *MasterServer) doDeleteNormalCollection(ctx context.Context, collection
 
 	// Before listing the servers: a grow still running would otherwise create
 	// volumes on servers missing from the list, or after their delete.
-	collection, unfence, ok := ms.Topo.FenceGrowth(collectionName)
+	collection, finish, ok := ms.Topo.FenceGrowth(collectionName)
 	if !ok {
 		return nil
 	}
@@ -103,10 +103,11 @@ func (ms *MasterServer) doDeleteNormalCollection(ctx context.Context, collection
 	}
 
 	if err := ms.deleteCollectionFrom(ctx, collectionName, servers); err != nil {
-		unfence()
+		finish(false)
 		return err
 	}
 	ms.Topo.DeleteCollection(collectionName)
+	finish(true)
 
 	return nil
 }
