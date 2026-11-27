@@ -571,7 +571,7 @@ func idleTimeoutSeconds(seconds *int) time.Duration {
 
 func newHttpServer(h http.Handler, tlsConfig *tls.Config) *http.Server {
 	s := &http.Server{
-		Handler:     h,
+		Handler:     util.PauseIdleTimeoutWhileHandling(h),
 		ConnContext: util.ConnContext,
 	}
 	if tlsConfig != nil {
