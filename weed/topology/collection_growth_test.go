@@ -1,6 +1,8 @@
 package topology
 
 import (
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,11 +169,7 @@ func TestOverlappingDeletesRemoveOnlyTheFencedCollection(t *testing.T) {
 		fc, _, found := topo.FenceGrowth("bucket")
 		second <- result{fc, found}
 	}()
-	select {
-	case <-second:
-		t.Fatal("second delete did not wait for the one running")
-	case <-time.After(100 * time.Millisecond):
-	}
+	waitForLockWaiter(t, "(*Topology).FenceGrowth")
 
 	finishFirst(true)
 	replacement := topo.getOrCreateCollection("bucket")
@@ -207,7 +205,7 @@ func TestDeleteAfterAFailedOneTakesOverTheCollection(t *testing.T) {
 		fc, finish, _ := topo.FenceGrowth("bucket")
 		second <- result{fc, finish}
 	}()
-	time.Sleep(50 * time.Millisecond)
+	waitForLockWaiter(t, "(*Topology).FenceGrowth")
 	finishFirst(false)
 
 	var got result
@@ -286,6 +284,27 @@ func TestDeleteFencesANameWithoutACollection(t *testing.T) {
 	if _, found := topo.FindCollection("ec-only"); found {
 		t.Error("the fence outlived the delete")
 	}
+}
+
+// waitForLockWaiter waits until a goroutine running fn is blocked on a mutex.
+func waitForLockWaiter(t *testing.T, fn string) {
+	t.Helper()
+	buf := make([]byte, 1<<20)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		n := runtime.Stack(buf, true)
+		if n == len(buf) {
+			buf = make([]byte, 2*len(buf))
+			continue
+		}
+		for _, g := range strings.Split(string(buf[:n]), "\n\n") {
+			if strings.Contains(g, "sync.(*Mutex).lockSlow") && strings.Contains(g, fn) {
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("%s never waited on a mutex", fn)
 }
 
 func TestAssignStaysOutOfACollectionBeingDeleted(t *testing.T) {
