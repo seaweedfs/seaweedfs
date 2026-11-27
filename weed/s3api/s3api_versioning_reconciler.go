@@ -111,6 +111,8 @@ const (
 	versionsHealMaxBackoff    = 30 * time.Second
 )
 
+var errVersionPointerInFlight = errors.New("latest pointer names a version still in flight")
+
 type versionsHealCandidate struct {
 	bucket    string
 	object    string
@@ -229,6 +231,11 @@ func (s3a *S3ApiServer) drainVersionsHealQueue() {
 	for _, c := range ready {
 		c.attempts++
 		if err := s3a.healVersionsPointer(c.bucket, c.object); err != nil {
+			if errors.Is(err, errVersionPointerInFlight) {
+				c.attempts--
+				q.requeue(c, staleVersionPointerGrace)
+				continue
+			}
 			backoff := versionsHealBaseBackoff << uint(c.attempts-1)
 			if backoff > versionsHealMaxBackoff {
 				backoff = versionsHealMaxBackoff
@@ -273,7 +280,7 @@ func (s3a *S3ApiServer) healVersionsPointer(bucket, object string) error {
 	}
 	latestFile := string(fileBytes)
 	if versionPointerInFlight(versionsEntry) {
-		return nil
+		return errVersionPointerInFlight
 	}
 	if _, probeErr := s3a.getEntry(bucketDir+"/"+versionsObjectPath, latestFile); probeErr == nil {
 		// Pointer is consistent.
