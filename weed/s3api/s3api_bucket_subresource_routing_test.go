@@ -20,6 +20,7 @@ func TestUnroutedBucketSubresource(t *testing.T) {
 		"x-id=ListObjectsV2",
 		"prefix=tests-a/&x-purpose=SnapshotMetadata",
 		"list-type=2&x-custom-tag=1",
+		"prefix=a&X-Purpose=SnapshotMetadata",
 		// The listing handlers read allow-unordered and validate it against
 		// delimiter, so the guard has to let it through to them.
 		"allow-unordered=true",

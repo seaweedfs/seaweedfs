@@ -263,13 +263,13 @@ func unroutedBucketSubresource(r *http.Request) (string, bool) {
 }
 
 // unroutedSubresource names a query key that no route claimed, outside the
-// request's own parameters, SigV2 presign keys, SigV4 presign keys (all
-// "X-Amz-" prefixed), and the custom "x-" parameters S3 ignores (x-id from the
-// AWS SDKs, x-purpose from Elasticsearch).
+// request's own parameters, SigV2 presign keys, and "x-" keys in any case:
+// SigV4 presign keys and the custom parameters S3 ignores (x-id from the AWS
+// SDKs, x-purpose from Elasticsearch).
 func unroutedSubresource(r *http.Request, allowed map[string]bool) (string, bool) {
 	for key := range r.URL.Query() {
 		switch {
-		case allowed[key], strings.HasPrefix(key, "X-Amz-"), strings.HasPrefix(key, "x-"):
+		case allowed[key], len(key) >= 2 && strings.EqualFold(key[:2], "x-"):
 		case key == "AWSAccessKeyId", key == "Signature", key == "Expires":
 		default:
 			return key, true
