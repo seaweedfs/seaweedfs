@@ -84,6 +84,9 @@ func (ms *MasterServer) doDeleteNormalCollection(ctx context.Context, collection
 	if !ok {
 		return nil
 	}
+	// Before listing the servers: a grow still running would otherwise create
+	// volumes on servers missing from the list, or after their delete.
+	unfence := collection.FenceGrowth()
 
 	// One RPC per server, not one per replica: ListVolumeServers reports a node
 	// once for every replica it holds, while DeleteCollection removes the whole
@@ -101,6 +104,7 @@ func (ms *MasterServer) doDeleteNormalCollection(ctx context.Context, collection
 	}
 
 	if err := ms.deleteCollectionFrom(ctx, collectionName, servers); err != nil {
+		unfence()
 		return err
 	}
 	ms.Topo.DeleteCollection(collectionName)
