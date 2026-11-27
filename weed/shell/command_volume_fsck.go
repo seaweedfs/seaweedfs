@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -384,20 +385,27 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 				manifestChunks = nil
 			}
 			// Chunks past a shortened manifest's span are referenced but never
-			// read, so only the visible ones decide whether the path is lost.
-			var visibleFids map[string]bool
+			// read, so they neither trigger nor claim the purge. If the cut view
+			// cannot be resolved, every resolved chunk counts as past the span.
+			var pastSpan map[string]bool
 			if purgeAbsent && len(manifestChunks) > 0 {
 				visibleData, visibleManifests, visibleErr := filer.ResolveChunkManifest(ctx, lookupFn, entry.Entry.GetChunks(), 0, math.MaxInt64, nil, true)
 				if errors.Is(visibleErr, context.Canceled) || errors.Is(visibleErr, context.DeadlineExceeded) {
 					return visibleErr
 				}
-				visibleFids = make(map[string]bool)
+				visible := make(map[string]bool)
 				if visibleErr != nil {
-					fmt.Fprintf(c.writer, "WARNING: ResolveChunkManifest failed for %s: %v — not purging this path\n",
+					fmt.Fprintf(c.writer, "WARNING: ResolveChunkManifest failed for %s: %v — not purging for its manifest chunks\n",
 						util.NewFullPath(entry.Dir, entry.Entry.Name), visibleErr)
 				} else {
-					for _, chunk := range append(visibleData, visibleManifests...) {
-						visibleFids[chunk.GetFileIdString()] = true
+					for _, chunk := range slices.Concat(visibleData, visibleManifests) {
+						visible[chunk.GetFileIdString()] = true
+					}
+				}
+				pastSpan = make(map[string]bool)
+				for _, chunk := range slices.Concat(dataChunks, manifestChunks) {
+					if fid := chunk.GetFileIdString(); !visible[fid] {
+						pastSpan[fid] = true
 					}
 				}
 			}
@@ -419,7 +427,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 					selectedVolume &&
 					!c.knownVolumeIds[chunk.Fid.VolumeId] &&
 					!purgePathQueued && c.collectionMatcher == nil &&
-					(visibleFids == nil || visibleFids[chunk.GetFileIdString()])
+					!pastSpan[chunk.GetFileIdString()]
 				if purgePath {
 					purgePathQueued = true
 				}
