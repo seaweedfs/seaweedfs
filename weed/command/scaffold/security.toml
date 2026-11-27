@@ -25,6 +25,18 @@
 #                                         previous gRPC scope and assignment-proof key during rotation
 # A set env var wins over the file, so the file can stay empty (or absent).
 
+# The FIPS 140-3 mode of every process that reads this file: "off", "on" or
+# "strict" (WEED_FIPS_MODE). Unset leaves each process as it is. Go processes
+# take the mode from GODEBUG and refuse to start when it differs: "off" needs
+# fips140=off, "on" needs fips140=on, "strict" needs fips140=only. The Rust
+# volume server, workers and vector engine take it from here: under "on" and
+# "strict" their TLS offers and accepts only the FIPS 140-3 versions, cipher
+# suites, key exchange groups and signature schemes Go allows in that mode.
+# This restricts behaviour only; the Rust binaries do not yet use a validated
+# cryptographic module.
+[fips]
+mode = ""
+
 # comma separated origins allowed to make requests to the filer and s3 gateway.
 # enter in this format: https://domain.com, or http://localhost:port
 [cors.allowed_origins]

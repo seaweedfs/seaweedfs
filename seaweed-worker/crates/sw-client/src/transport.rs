@@ -14,6 +14,12 @@ use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use bytes::Bytes;
 use reqwest::header::{AUTHORIZATION, RANGE};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::crypto::CryptoProvider;
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
+use rustls::{DigitallySignedStruct, SignatureScheme};
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -188,9 +194,12 @@ impl std::fmt::Debug for HttpsTls {
 }
 
 /// Both tonic and reqwest link rustls; with more than one crypto provider
-/// compiled in, rustls needs one picked before TLS is configured.
+/// compiled in, rustls needs one picked before TLS is configured. It is the
+/// one every SeaweedFS Rust binary installs (`seaweed_common::tls`): aws-lc-rs,
+/// filtered to the FIPS lists in FIPS mode. A binary's own earlier install
+/// wins, so a library caller cannot replace it.
 pub fn install_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    seaweed_common::tls::install_default_crypto_provider();
 }
 
 /// Default transport: the SeaweedFS volume HTTP API — `GET /<fileId>` with an
@@ -228,35 +237,140 @@ impl HttpTransport {
     /// A transport dialing volume servers over HTTPS.
     pub fn with_tls(tls: &HttpsTls) -> Result<Self> {
         install_crypto_provider();
-        let mut builder = reqwest::Client::builder()
-            .connect_timeout(VOLUME_CONNECT_TIMEOUT)
-            .use_rustls_tls()
-            .danger_accept_invalid_certs(tls.insecure_skip_verify);
-        if let Some(ca) = &tls.ca_pem {
-            builder = builder.tls_built_in_root_certs(false).add_root_certificate(
-                reqwest::Certificate::from_pem(ca).context("https.client.ca")?,
-            );
-        }
-        match (&tls.cert_pem, &tls.key_pem) {
-            (Some(cert), Some(key)) => {
-                let mut pem = cert.clone();
-                if !pem.ends_with(b"\n") {
-                    pem.push(b'\n');
-                }
-                pem.extend_from_slice(key);
-                builder = builder.identity(
-                    reqwest::Identity::from_pem(&pem).context("https.client cert and key")?,
-                );
-            }
-            (None, None) => {}
-            _ => bail!("https.client needs both cert and key, or neither"),
-        }
+        let builder = reqwest::Client::builder().connect_timeout(VOLUME_CONNECT_TIMEOUT);
+        let builder = if tls.insecure_skip_verify && seaweed_common::fips::process_mode().is_fips()
+        {
+            builder.use_preconfigured_tls(unverified_tls_config(
+                tls,
+                Arc::new(seaweed_common::tls::crypto_provider()),
+            )?)
+        } else {
+            reqwest_tls(builder, tls)?
+        };
         Ok(Self {
             http: builder.build().context("volume HTTPS client")?,
             scheme: "https",
             read_timeout: VOLUME_READ_TIMEOUT,
             write_timeout: VOLUME_WRITE_TIMEOUT,
         })
+    }
+}
+
+/// reqwest's own rustls configuration for `tls`: the CA, the client identity,
+/// and with `insecure_skip_verify` reqwest's verifier that accepts any server.
+fn reqwest_tls(builder: reqwest::ClientBuilder, tls: &HttpsTls) -> Result<reqwest::ClientBuilder> {
+    let mut builder = builder
+        .use_rustls_tls()
+        .danger_accept_invalid_certs(tls.insecure_skip_verify);
+    if let Some(ca) = &tls.ca_pem {
+        builder = builder
+            .tls_built_in_root_certs(false)
+            .add_root_certificate(reqwest::Certificate::from_pem(ca).context("https.client.ca")?);
+    }
+    match (&tls.cert_pem, &tls.key_pem) {
+        (Some(cert), Some(key)) => {
+            let mut pem = cert.clone();
+            if !pem.ends_with(b"\n") {
+                pem.push(b'\n');
+            }
+            pem.extend_from_slice(key);
+            builder = builder
+                .identity(reqwest::Identity::from_pem(&pem).context("https.client cert and key")?);
+        }
+        (None, None) => {}
+        _ => bail!("https.client needs both cert and key, or neither"),
+    }
+    Ok(builder)
+}
+
+/// The client configuration for `https.client.insecure_skip_verify` in FIPS
+/// mode, on `provider`. reqwest's verifier for that setting advertises its own
+/// signature schemes (SHA-1, Ed448) whatever the provider allows, so this one
+/// is built here: the server certificate is not checked, but handshake
+/// signatures are, with the provider's algorithms, and only its schemes are
+/// offered. HTTP/1.1 only, as the volume servers speak it.
+fn unverified_tls_config(
+    tls: &HttpsTls,
+    provider: Arc<CryptoProvider>,
+) -> Result<rustls::ClientConfig> {
+    let verifier = Arc::new(UnverifiedServer {
+        provider: provider.clone(),
+    });
+    let builder = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .context("TLS versions")?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier);
+    let mut config = match (&tls.cert_pem, &tls.key_pem) {
+        (Some(cert), Some(key)) => {
+            let chain = CertificateDer::pem_slice_iter(cert)
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .context("https.client cert")?;
+            let key = PrivateKeyDer::from_pem_slice(key).context("https.client key")?;
+            builder
+                .with_client_auth_cert(chain, key)
+                .context("https.client cert and key")?
+        }
+        (None, None) => builder.with_no_client_auth(),
+        _ => bail!("https.client needs both cert and key, or neither"),
+    };
+    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    config.require_ems = config.require_ems || seaweed_common::tls::require_ems();
+    Ok(config)
+}
+
+/// Accepts any server certificate and host name, as `insecure_skip_verify`
+/// asks, while verifying the handshake signatures with the provider's
+/// algorithms and offering only their schemes.
+#[derive(Debug)]
+struct UnverifiedServer {
+    provider: Arc<CryptoProvider>,
+}
+
+impl ServerCertVerifier for UnverifiedServer {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }
 
@@ -426,6 +540,65 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    /// The signature schemes a client with `config` offers in its ClientHello,
+    /// as a server sees them: one flight through in-memory connections.
+    fn offered_schemes(config: rustls::ClientConfig) -> Vec<SignatureScheme> {
+        #[derive(Debug, Default)]
+        struct Recorder(std::sync::Mutex<Vec<SignatureScheme>>);
+        impl rustls::server::ResolvesServerCert for Recorder {
+            fn resolve(
+                &self,
+                hello: rustls::server::ClientHello<'_>,
+            ) -> Option<Arc<rustls::sign::CertifiedKey>> {
+                *self.0.lock().unwrap() = hello.signature_schemes().to_vec();
+                None
+            }
+        }
+        let recorder = Arc::new(Recorder::default());
+        let server_config = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_cert_resolver(recorder.clone());
+        let name = ServerName::try_from("volume.example").unwrap();
+        let mut client = rustls::ClientConnection::new(Arc::new(config), name).unwrap();
+        let mut server = rustls::ServerConnection::new(Arc::new(server_config)).unwrap();
+        let mut flight = Vec::new();
+        client.write_tls(&mut flight).unwrap();
+        server.read_tls(&mut flight.as_slice()).unwrap();
+        let _ = server.process_new_packets();
+        recorder.0.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn unverified_tls_in_fips_mode_offers_only_the_fips_schemes() {
+        let provider = Arc::new(seaweed_common::tls::provider_for(
+            seaweed_common::fips::FipsMode::On,
+        ));
+        let config = unverified_tls_config(&HttpsTls::default(), provider).unwrap();
+        let mut offered = offered_schemes(config);
+        let mut want = seaweed_common::tls::FIPS_SIGNATURE_SCHEMES.to_vec();
+        offered.sort_by_key(|s| u16::from(*s));
+        want.sort_by_key(|s| u16::from(*s));
+        assert_eq!(offered, want);
+        assert!(!offered.contains(&SignatureScheme::ED448));
+        assert!(!offered.contains(&SignatureScheme::RSA_PKCS1_SHA1));
+    }
+
+    #[test]
+    fn unverified_tls_needs_both_halves_of_the_identity() {
+        let provider = Arc::new(seaweed_common::tls::provider_for(
+            seaweed_common::fips::FipsMode::On,
+        ));
+        let half = HttpsTls {
+            cert_pem: Some(b"x".to_vec()),
+            ..HttpsTls::default()
+        };
+        assert!(unverified_tls_config(&half, provider).is_err());
+    }
 
     #[test]
     fn not_written_is_found_under_later_contexts_and_only_there() {

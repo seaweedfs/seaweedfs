@@ -7,7 +7,7 @@ use seaweed_volume::metrics;
 use seaweed_volume::pb::volume_server_pb::volume_server_server::VolumeServerServer;
 use seaweed_volume::security::tls::{
     GrpcClientAuthPolicy, TlsPolicy, build_rustls_server_config,
-    build_rustls_server_config_with_grpc_client_auth, install_default_crypto_provider,
+    build_rustls_server_config_with_grpc_client_auth,
 };
 use seaweed_volume::security::{Guard, SigningKey};
 #[cfg(unix)]
@@ -47,8 +47,6 @@ fn main() {
     // returns. See seaweed_volume::malloc_tuning for the measurements.
     let malloc_tuning = seaweed_volume::malloc_tuning::pin_mmap_threshold();
 
-    install_default_crypto_provider();
-
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -58,6 +56,7 @@ fn main() {
         .init();
 
     let config = config::parse_cli();
+    install_crypto_provider_for_fips_mode(&config.security_file);
     seaweed_volume::server::server_stats::init_process_start();
     #[cfg(unix)]
     let cpu_profile = match CpuProfileSession::start(&config) {
@@ -99,6 +98,30 @@ fn main() {
     if let Err(e) = rt.block_on(run(config, cpu_profile)) {
         error!("Volume server failed: {}", e);
         std::process::exit(1);
+    }
+}
+
+/// Resolves the FIPS mode from `fips.mode` or `WEED_FIPS_MODE`, logs it and
+/// installs the matching rustls provider before anything builds TLS; exits
+/// when the value is unknown.
+fn install_crypto_provider_for_fips_mode(security_file: &str) {
+    let installed = config::resolve_fips_setting(security_file)
+        .map_err(|e| e.to_string())
+        .and_then(|setting| {
+            seaweed_common::tls::install_process_provider(setting.mode)
+                .map(|()| setting)
+                .map_err(|e| e.to_string())
+        });
+    match installed {
+        Ok(setting) if setting.mode.is_fips() => info!(
+            "{}: TLS limited to the FIPS 140-3 versions, suites, groups and signature schemes Go allows; the cryptographic module is not validated",
+            setting
+        ),
+        Ok(setting) => info!("{}", setting),
+        Err(e) => {
+            error!("{}", e);
+            std::process::exit(1);
+        }
     }
 }
 
@@ -267,7 +290,9 @@ fn build_http_server_tls_acceptor(
     ) {
         Ok(tls_config) => tls_config,
         Err(e)
-            if !config.https_ca_file.is_empty() && tls_policy_is_configured(&config.tls_policy) =>
+            if !config.https_ca_file.is_empty()
+                && tls_policy_is_configured(&config.tls_policy)
+                && !seaweed_common::fips::process_mode().is_fips() =>
         {
             warn!(
                 "Failed to apply HTTP TLS policy '{}', falling back to default rustls policy",

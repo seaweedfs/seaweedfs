@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use rustls::client::danger::HandshakeSignatureValid;
 use rustls::crypto::CryptoProvider;
-use rustls::crypto::aws_lc_rs;
 use rustls::pki_types::UnixTime;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::WebPkiClientVerifier;
@@ -120,10 +119,10 @@ impl ClientCertVerifier for CommonNameVerifier {
 
 // aws-lc-rs and ring both get linked transitively, so rustls can't auto-select
 // a provider and tonic's client TLS panics on first use. Pin the default to
-// aws-lc-rs, matching the server config. Idempotent. The body lives in
-// seaweed-common so this binary and the Rust plugin workers cannot end up
-// installing different providers; re-exported here so callers keep their
-// import path.
+// aws-lc-rs, matching the server config (filtered to the FIPS lists in FIPS
+// mode). Idempotent. The body lives in seaweed-common so this binary and the
+// Rust plugin workers cannot end up installing different providers;
+// re-exported here so callers keep their import path.
 pub use seaweed_common::tls::install_default_crypto_provider;
 
 pub fn build_rustls_server_config(
@@ -195,9 +194,16 @@ fn build_rustls_server_config_with_client_auth(
         builder.with_client_cert_verifier(verifier)
     };
 
-    builder
+    let mut config = builder
         .with_single_cert(cert_chain, private_key)
-        .map_err(|e| TlsPolicyError(format!("build rustls server config failed: {}", e)))
+        .map_err(|e| {
+            TlsPolicyError(format!(
+                "build rustls server config from '{}' and '{}' failed: {}",
+                cert_path, key_path, e
+            ))
+        })?;
+    config.require_ems = config.require_ems || seaweed_common::tls::require_ems();
+    Ok(config)
 }
 
 fn read_cert_chain(cert_path: &str) -> Result<Vec<CertificateDer<'static>>, TlsPolicyError> {
@@ -241,13 +247,45 @@ fn read_root_store(ca_path: &str) -> Result<RootCertStore, TlsPolicyError> {
     Ok(roots)
 }
 
+/// The process's provider (see `seaweed_common::tls::crypto_provider`) with
+/// `tls.cipher_suites` applied. In FIPS mode a configured suite outside the
+/// FIPS list is an error, so the setting cannot widen what the mode allows.
 fn build_crypto_provider(policy: &TlsPolicy) -> Result<Arc<CryptoProvider>, TlsPolicyError> {
-    let mut provider = aws_lc_rs::default_provider();
+    build_crypto_provider_for(seaweed_common::fips::process_mode(), policy)
+}
+
+fn build_crypto_provider_for(
+    mode: seaweed_common::fips::FipsMode,
+    policy: &TlsPolicy,
+) -> Result<Arc<CryptoProvider>, TlsPolicyError> {
+    let mut provider = seaweed_common::tls::provider_for(mode);
+    if mode.is_fips() {
+        refuse_non_fips_cipher_suites(mode, &policy.cipher_suites)?;
+    }
     let cipher_suites = parse_cipher_suites(&provider.cipher_suites, &policy.cipher_suites)?;
     if !cipher_suites.is_empty() {
         provider.cipher_suites = cipher_suites;
     }
     Ok(Arc::new(provider))
+}
+
+/// Errors naming the first suite in `value` (`tls.cipher_suites`) that rustls
+/// implements but FIPS mode does not allow, such as ChaCha20-Poly1305.
+fn refuse_non_fips_cipher_suites(
+    mode: seaweed_common::fips::FipsMode,
+    value: &str,
+) -> Result<(), TlsPolicyError> {
+    for name in value.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+        if let Ok(suite) = parse_cipher_suite_name(name)
+            && !seaweed_common::tls::FIPS_CIPHER_SUITES.contains(&suite)
+        {
+            return Err(TlsPolicyError(format!(
+                "tls.cipher_suites names '{}', which FIPS mode {} does not allow",
+                name, mode
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub fn build_supported_versions(
@@ -420,8 +458,12 @@ fn go_tls_version_for_supported(version: &SupportedProtocolVersion) -> GoTlsVers
 
 #[cfg(test)]
 mod tests {
-    use super::{TlsPolicy, build_supported_versions, common_name_is_allowed, parse_cipher_suites};
+    use super::{
+        TlsPolicy, build_crypto_provider_for, build_supported_versions, common_name_is_allowed,
+        parse_cipher_suites,
+    };
     use rustls::crypto::aws_lc_rs;
+    use seaweed_common::fips::FipsMode;
     use std::collections::HashSet;
 
     #[test]
@@ -463,6 +505,55 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cipher_suites.len(), 2);
+    }
+
+    #[test]
+    fn test_fips_mode_refuses_a_configured_chacha20_suite() {
+        let policy = |suites: &str| TlsPolicy {
+            cipher_suites: suites.to_string(),
+            ..TlsPolicy::default()
+        };
+        let err = build_crypto_provider_for(
+            FipsMode::On,
+            &policy("TLS_AES_128_GCM_SHA256,TLS_CHACHA20_POLY1305_SHA256"),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "tls.cipher_suites names 'TLS_CHACHA20_POLY1305_SHA256', which FIPS mode on does not allow"
+        );
+        let provider = build_crypto_provider_for(
+            FipsMode::Strict,
+            &policy("TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_AES_128_GCM_SHA256"),
+        )
+        .unwrap();
+        assert_eq!(provider.cipher_suites.len(), 2);
+        let provider =
+            build_crypto_provider_for(FipsMode::Off, &policy("TLS_CHACHA20_POLY1305_SHA256"))
+                .unwrap();
+        assert_eq!(provider.cipher_suites.len(), 1);
+    }
+
+    #[test]
+    fn test_fips_mode_provider_drops_chacha20_and_x25519() {
+        let provider = build_crypto_provider_for(FipsMode::On, &TlsPolicy::default()).unwrap();
+        assert!(
+            provider
+                .cipher_suites
+                .iter()
+                .all(|s| s.suite() != rustls::CipherSuite::TLS13_CHACHA20_POLY1305_SHA256)
+        );
+        assert!(
+            provider
+                .kx_groups
+                .iter()
+                .all(|g| g.name() != rustls::NamedGroup::X25519)
+        );
+        let default = build_crypto_provider_for(FipsMode::Off, &TlsPolicy::default()).unwrap();
+        assert_eq!(
+            default.cipher_suites.len(),
+            aws_lc_rs::default_provider().cipher_suites.len()
+        );
     }
 
     #[test]
