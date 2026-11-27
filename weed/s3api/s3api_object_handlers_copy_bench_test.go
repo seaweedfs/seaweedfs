@@ -134,7 +134,7 @@ func BenchmarkCopyChunk_Buffered(b *testing.B) {
 				if err != nil {
 					b.Fatalf("download: %v", err)
 				}
-				if err := s3a.uploadChunkData(data, env.assign, false); err != nil {
+				if err := s3a.uploadChunkData(data, env.assign, false, ""); err != nil {
 					b.Fatalf("upload: %v", err)
 				}
 			}
