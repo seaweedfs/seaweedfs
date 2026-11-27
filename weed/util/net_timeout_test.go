@@ -539,7 +539,9 @@ func TestPauseEndsOnceAndNotAfterTheHandler(t *testing.T) {
 // not on the copy the pause hands the handler.
 func TestPauseRemovesMultipartTempFiles(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
+	for _, k := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(k, tmp)
+	}
 	a, b := net.Pipe()
 	defer a.Close()
 	defer b.Close()
