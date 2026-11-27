@@ -7,6 +7,24 @@ templ PluginSchedulerStatus() {
         const root = document.getElementById('plugin-scheduler-blockers');
         if (!root) return;
         root.replaceChildren();
+        const balancers = data.ec_balancers || [];
+        if (balancers.length > 1) {
+            const overlap = document.createElement('div');
+            overlap.className = 'alert alert-warning';
+            const heading = document.createElement('strong');
+            heading.textContent = balancers.length + ' EC balancers are active';
+            overlap.appendChild(heading);
+            balancers.forEach(function(name) {
+                const line = document.createElement('div');
+                line.textContent = name;
+                overlap.appendChild(line);
+            });
+            const hint = document.createElement('div');
+            hint.className = 'small mt-1';
+            hint.textContent = 'Each one plans shard moves from the same topology without knowing about the others, so their moves can collide. Keep only one enabled.';
+            overlap.appendChild(hint);
+            root.appendChild(overlap);
+        }
         const lock = data.lock || {};
         const waiters = lock.waiters || [];
         if (waiters.length) {
