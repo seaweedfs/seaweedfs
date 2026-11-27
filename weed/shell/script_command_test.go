@@ -13,6 +13,12 @@ func TestCommandArgsApply(t *testing.T) {
 		{"ec.balance", []string{"-volumeIds=1,2", "-apply"}, true},
 		{"ec.balance", []string{"-volumeIds=not-a-volume-id", "-apply"}, false},
 		{"ec.balance", []string{"-bogus", "-apply"}, false},
+		{"volume.balance", nil, false},
+		{"volume.balance", []string{"-force"}, true},
+		{"volume.balance", []string{"-volumeBy=FULL", "-apply"}, true},
+		{"volume.balance", []string{"-volumeBy=SOME", "-apply"}, false},
+		{"volume.balance", []string{"-maxParallelization=0", "-apply"}, false},
+		{"volume.balance", []string{"-apply", "-force=false"}, false},
 		{"volume.list", []string{"-apply"}, false},
 		{"no.such.command", []string{"-apply"}, false},
 	}
