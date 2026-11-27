@@ -182,3 +182,52 @@ func TestVolumeFsckPurgesEntryWhoseManifestIsOnMissingVolume(t *testing.T) {
 		t.Fatalf("purged paths = %v, want /big, whose manifest is on missing volume 99", purged)
 	}
 }
+
+// An older truncate could shorten a manifest and leave its chunks whole. A
+// chunk past the cut on a missing volume loses nothing a reader sees, so it
+// must not purge the path; it is still reported as a reference.
+func TestVolumeFsckPurgesOnlyForChunksWithinAManifestSpan(t *testing.T) {
+	chunk := func(volumeID uint32, fileKey uint64, offset int64) *filer_pb.FileChunk {
+		return &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: volumeID, FileKey: fileKey, Cookie: 1}, Offset: offset, Size: 100}
+	}
+	manifest := func(fileKey uint64, size uint64) *filer_pb.FileChunk {
+		return &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: fileKey, Cookie: 1}, Size: size, IsChunkManifest: true}
+	}
+	shortened, whole := manifest(1, 100), manifest(4, 200)
+	stub := &stubFilerServer{
+		entries: map[string]*filer_pb.Entry{
+			"/":      {IsDirectory: true},
+			"/short": {Chunks: []*filer_pb.FileChunk{shortened}},
+			"/lost":  {Chunks: []*filer_pb.FileChunk{whole}},
+		},
+		volumeUrls: map[string]string{"7": startStubManifestVolume(t, map[*filer_pb.FileChunk][]*filer_pb.FileChunk{
+			shortened: {chunk(7, 2, 0), chunk(99, 3, 100)},
+			whole:     {chunk(99, 5, 0), chunk(7, 6, 100)},
+		})},
+	}
+	verbose := false
+	findMissing := true
+	var output bytes.Buffer
+	c := &commandVolumeFsck{
+		tempFolder:               t.TempDir(),
+		verbose:                  &verbose,
+		findMissingChunksInFiler: &findMissing,
+		writer:                   &output,
+		env:                      startStubFiler(t, stub),
+		volumeIds:                map[uint32]bool{99: true},
+		knownVolumeIds:           map[uint32]bool{7: true},
+	}
+	var purged []purgeItem
+	if err := c.collectFilerFileIdAndPaths(map[string]map[uint32]VInfo{"dn1": {7: {}}}, true, func(item purgeItem) {
+		purged = append(purged, item)
+	}, 0, 0); err != nil {
+		t.Fatalf("collect filer references: %v", err)
+	}
+
+	if len(purged) != 1 || purged[0].path != util.FullPath("/lost") {
+		t.Fatalf("purged paths = %v, want only /lost, whose visible chunk is on missing volume 99", purged)
+	}
+	if !strings.Contains(output.String(), "99,300000001 /short volume not found\n") {
+		t.Fatalf("missing-volume report %q lacks the chunk past /short's span", output.String())
+	}
+}

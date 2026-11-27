@@ -359,7 +359,8 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 			if *c.verbose && entry.Entry.IsDirectory {
 				fmt.Fprintf(c.writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
 			}
-			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(ctx, filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64, nil, false)
+			lookupFn := filer.LookupFn(c.env)
+			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(ctx, lookupFn, entry.Entry.GetChunks(), 0, math.MaxInt64, nil, false)
 			if resolveErr != nil {
 				// Cancellation/deadline isn't manifest corruption; surface it
 				// so the BFS bails out cleanly without polluting the
@@ -382,6 +383,24 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 				dataChunks = entry.Entry.GetChunks()
 				manifestChunks = nil
 			}
+			// Chunks past a shortened manifest's span are referenced but never
+			// read, so only the visible ones decide whether the path is lost.
+			var visibleFids map[string]bool
+			if purgeAbsent && len(manifestChunks) > 0 {
+				visibleData, visibleManifests, visibleErr := filer.ResolveChunkManifest(ctx, lookupFn, entry.Entry.GetChunks(), 0, math.MaxInt64, nil, true)
+				if errors.Is(visibleErr, context.Canceled) || errors.Is(visibleErr, context.DeadlineExceeded) {
+					return visibleErr
+				}
+				visibleFids = make(map[string]bool)
+				if visibleErr != nil {
+					fmt.Fprintf(c.writer, "WARNING: ResolveChunkManifest failed for %s: %v — not purging this path\n",
+						util.NewFullPath(entry.Dir, entry.Entry.Name), visibleErr)
+				} else {
+					for _, chunk := range append(visibleData, visibleManifests...) {
+						visibleFids[chunk.GetFileIdString()] = true
+					}
+				}
+			}
 			dataChunks = append(dataChunks, manifestChunks...)
 			// One Filer entry can have many missing chunks; delete the path only once.
 			purgePathQueued := false
@@ -399,7 +418,8 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 				purgePath := purgeAbsent &&
 					selectedVolume &&
 					!c.knownVolumeIds[chunk.Fid.VolumeId] &&
-					!purgePathQueued && c.collectionMatcher == nil
+					!purgePathQueued && c.collectionMatcher == nil &&
+					(visibleFids == nil || visibleFids[chunk.GetFileIdString()])
 				if purgePath {
 					purgePathQueued = true
 				}
