@@ -61,6 +61,51 @@ func ResolveChunkManifest(ctx context.Context, lookupFileIdFn wdclient.LookupFil
 	return resolver.resolve(chunks, startOffset, stopOffset)
 }
 
+// ResolveChunkManifestForRead is ResolveChunkManifest for reading a file's
+// bytes: the chunks of each manifest are cut to the manifest's span. Until
+// #13042 a truncate through a manifest only shortened the manifest chunk, so
+// the chunks it holds can reach past it; those bytes are no longer the file's
+// and must not show where the file has since grown over them without writing
+// them. ResolveChunkManifest, which deletions and chunk-list comparisons use
+// to find every chunk a manifest references, returns them whole.
+func ResolveChunkManifestForRead(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset, stopOffset int64, invalidator CacheInvalidator) (dataChunks, manifestChunks []*filer_pb.FileChunk, manifestResolveErr error) {
+	resolver := newChunkManifestResolver(ctx, lookupFileIdFn, invalidator, nil)
+	resolver.cutToSpan = true
+	defer resolver.close()
+	return resolver.resolve(chunks, startOffset, stopOffset)
+}
+
+// cutToManifestSpan returns the chunks a manifest holds, cut to the manifest's
+// span: chunks that start at or past its end are dropped, and one that crosses
+// it is shortened, in a copy. A manifest made by MaybeManifestize spans its
+// chunks exactly, so this only changes one a truncate shortened.
+func cutToManifestSpan(manifest *filer_pb.FileChunk, held []*filer_pb.FileChunk) []*filer_pb.FileChunk {
+	end := manifest.Offset + int64(manifest.Size)
+	var cut []*filer_pb.FileChunk
+	for i, chunk := range held {
+		chunkEnd := chunk.Offset + int64(chunk.Size)
+		if chunkEnd <= end {
+			if cut != nil {
+				cut = append(cut, chunk)
+			}
+			continue
+		}
+		if cut == nil {
+			cut = append(make([]*filer_pb.FileChunk, 0, len(held)), held[:i]...)
+		}
+		if chunk.Offset >= end {
+			continue
+		}
+		shortened := proto.Clone(chunk).(*filer_pb.FileChunk)
+		shortened.Size = uint64(end - chunk.Offset)
+		cut = append(cut, shortened)
+	}
+	if cut == nil {
+		return held
+	}
+	return cut
+}
+
 // ResolveChunkManifestWithFilerJwt is ResolveChunkManifest that signs proxied
 // manifest downloads with filerJwtFn instead of the process-wide filer read
 // key, for readers carrying per-source credentials.
@@ -97,6 +142,16 @@ type chunkManifestResolver struct {
 	workers        sync.WaitGroup
 	startOnce      sync.Once
 	started        bool
+	// cutToSpan cuts each manifest's chunks to its span (cutToManifestSpan).
+	cutToSpan bool
+}
+
+// held returns a resolved manifest's chunks, cut to its span for reads.
+func (r *chunkManifestResolver) held(manifest *filer_pb.FileChunk, chunks []*filer_pb.FileChunk) []*filer_pb.FileChunk {
+	if r.cutToSpan {
+		return cutToManifestSpan(manifest, chunks)
+	}
+	return chunks
 }
 
 func newChunkManifestResolver(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, invalidator CacheInvalidator, filerJwtFn security.FilerJwtProvider) *chunkManifestResolver {
@@ -263,7 +318,7 @@ func (r *chunkManifestResolver) resolve(chunks []*filer_pb.FileChunk, startOffse
 					dataChunks = append(dataChunks, slots[j].chunk)
 					continue
 				}
-				for _, c := range slots[j].result.chunks {
+				for _, c := range r.held(slots[j].chunk, slots[j].result.chunks) {
 					if !c.IsChunkManifest && max(c.Offset, startOffset) < min(c.Offset+int64(c.Size), stopOffset) {
 						dataChunks = append(dataChunks, c)
 					}
@@ -289,7 +344,7 @@ func (r *chunkManifestResolver) resolve(chunks []*filer_pb.FileChunk, startOffse
 		}
 
 		manifestChunks = append(manifestChunks, slot.chunk)
-		subDataChunks, subManifestChunks, subErr := r.resolve(slot.result.chunks, startOffset, stopOffset)
+		subDataChunks, subManifestChunks, subErr := r.resolve(r.held(slot.chunk, slot.result.chunks), startOffset, stopOffset)
 		if subErr != nil {
 			return dataChunks, nil, subErr
 		}

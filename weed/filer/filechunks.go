@@ -336,7 +336,7 @@ func MergeIntoChunkViews(chunkViews *IntervalList[*ChunkView], start int64, stop
 // If the file chunk content is a chunk manifest
 func NonOverlappingVisibleIntervals(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles *IntervalList[*VisibleInterval], err error) {
 
-	chunks, _, err = ResolveChunkManifest(ctx, lookupFileIdFn, chunks, startOffset, stopOffset, nil)
+	chunks, _, err = ResolveChunkManifestForRead(ctx, lookupFileIdFn, chunks, startOffset, stopOffset, nil)
 	if err != nil {
 		return
 	}

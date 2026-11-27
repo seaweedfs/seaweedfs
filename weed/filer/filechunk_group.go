@@ -246,7 +246,7 @@ func (group *ChunkGroup) SetChunks(chunks []*filer_pb.FileChunk) error {
 			return err
 		}
 
-		dataChunks = append(dataChunks, resolvedChunks...)
+		dataChunks = append(dataChunks, cutToManifestSpan(chunk, resolvedChunks)...)
 	}
 
 	sections := make(map[SectionIndex]*FileChunkSection)
