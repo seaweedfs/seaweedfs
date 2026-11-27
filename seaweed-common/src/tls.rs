@@ -8,14 +8,18 @@
 //!
 //! Under [`FipsMode::On`] and [`FipsMode::Strict`] the provider is aws-lc-rs
 //! filtered to what Go's `crypto/tls` allows when `GODEBUG=fips140` is `on` or
-//! `only` (`crypto/tls/defaults_fips140.go`, Go 1.26). TLS 1.2 and 1.3 are all
-//! rustls implements, which is Go's FIPS version list.
+//! `only` (`crypto/tls/defaults_fips140.go`, Go 1.27.4, the version go.mod
+//! requires). TLS 1.2 and 1.3 are all rustls implements, which is Go's FIPS
+//! version list.
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
-use rustls::crypto::{CryptoProvider, SupportedKxGroup, WebPkiSupportedAlgorithms, aws_lc_rs};
-use rustls::pki_types::alg_id;
-use rustls::{CipherSuite, NamedGroup, SignatureScheme};
+use rustls::crypto::{
+    CryptoProvider, KeyProvider, SupportedKxGroup, WebPkiSupportedAlgorithms, aws_lc_rs,
+};
+use rustls::pki_types::{PrivateKeyDer, SubjectPublicKeyInfoDer, alg_id};
+use rustls::sign::{Signer, SigningKey};
+use rustls::{CipherSuite, NamedGroup, SignatureAlgorithm, SignatureScheme};
 
 use crate::fips::{self, FipsMode, FipsModeError};
 
@@ -32,8 +36,10 @@ pub const FIPS_CIPHER_SUITES: &[CipherSuite] = &[
     CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
 ];
 
-/// Go's `allowedCurvePreferencesFIPS` as rustls 0.23 has them, in Go's
-/// default preference order. rustls has no SecP384r1MLKEM1024 and no P-521.
+/// Go's `allowedCurvePreferencesFIPS` as rustls 0.23 has them and Go enables
+/// by default, in Go's preference order. rustls has no SecP384r1MLKEM1024 and
+/// no P-521; it has MLKEM1024, which Go allows but enables only when
+/// configured, so it is left out as Go leaves it out of its defaults.
 fn fips_kx_groups() -> Vec<&'static dyn SupportedKxGroup> {
     vec![
         aws_lc_rs::kx_group::X25519MLKEM768,
@@ -48,6 +54,9 @@ pub const FIPS_SIGNATURE_SCHEMES: &[SignatureScheme] = &[
     SignatureScheme::RSA_PSS_SHA256,
     SignatureScheme::ECDSA_NISTP256_SHA256,
     SignatureScheme::ED25519,
+    SignatureScheme::ML_DSA_44,
+    SignatureScheme::ML_DSA_65,
+    SignatureScheme::ML_DSA_87,
     SignatureScheme::RSA_PSS_SHA384,
     SignatureScheme::RSA_PSS_SHA512,
     SignatureScheme::RSA_PKCS1_SHA256,
@@ -58,19 +67,24 @@ pub const FIPS_SIGNATURE_SCHEMES: &[SignatureScheme] = &[
 ];
 
 /// The certificate key types Go's `isCertificateAllowedFIPS` accepts: RSA,
-/// ECDSA on P-256, P-384 or P-521, and Ed25519. The RSA algorithms rustls
-/// verifies with take keys of 2048 to 8192 bits, so Go's 2048-bit floor holds.
+/// ECDSA on P-256, P-384 or P-521, Ed25519, and ML-DSA (Go allows ML-DSA for
+/// its native module only). The RSA algorithms rustls verifies with take keys
+/// of 2048 to 8192 bits, so Go's 2048-bit floor holds.
 const FIPS_CERTIFICATE_KEYS: &[rustls::pki_types::AlgorithmIdentifier] = &[
     alg_id::RSA_ENCRYPTION,
     alg_id::ECDSA_P256,
     alg_id::ECDSA_P384,
     alg_id::ECDSA_P521,
     alg_id::ED25519,
+    alg_id::ML_DSA_44,
+    alg_id::ML_DSA_65,
+    alg_id::ML_DSA_87,
 ];
 
 /// The aws-lc-rs verification algorithms limited to Go's FIPS signature
-/// schemes and certificate keys: the default set without ML-DSA, which Go's
-/// TLS does not implement. Built once, since rustls needs `'static` slices.
+/// schemes and certificate keys. With aws-lc-rs's current set that removes
+/// nothing; the filter keeps an algorithm a later rustls adds out of FIPS
+/// mode until Go allows it. Built once, since rustls needs `'static` slices.
 fn fips_signature_verification_algorithms() -> WebPkiSupportedAlgorithms {
     static ALGORITHMS: OnceLock<WebPkiSupportedAlgorithms> = OnceLock::new();
     *ALGORITHMS.get_or_init(|| {
@@ -94,6 +108,73 @@ fn fips_signature_verification_algorithms() -> WebPkiSupportedAlgorithms {
     })
 }
 
+/// Loads private keys through aws-lc-rs and passes them through
+/// [`restrict_to_fips`], so a FIPS-mode listener or client signs handshakes
+/// only with Go's FIPS signature schemes.
+#[derive(Debug)]
+struct FipsKeyProvider;
+
+static FIPS_KEY_PROVIDER: FipsKeyProvider = FipsKeyProvider;
+
+impl KeyProvider for FipsKeyProvider {
+    fn load_private_key(
+        &self,
+        key_der: PrivateKeyDer<'static>,
+    ) -> Result<Arc<dyn SigningKey>, rustls::Error> {
+        let key = aws_lc_rs::default_provider()
+            .key_provider
+            .load_private_key(key_der)?;
+        restrict_to_fips(key)
+    }
+
+    fn fips(&self) -> bool {
+        aws_lc_rs::default_provider().key_provider.fips()
+    }
+}
+
+/// Wraps `key` so it offers only [`FIPS_SIGNATURE_SCHEMES`], refusing a key
+/// that can sign none of them, such as Ed448, with an error naming its type.
+fn restrict_to_fips(key: Arc<dyn SigningKey>) -> Result<Arc<dyn SigningKey>, rustls::Error> {
+    if key.choose_scheme(FIPS_SIGNATURE_SCHEMES).is_none() {
+        return Err(rustls::Error::General(format!(
+            "{} private key is not allowed in FIPS mode, which accepts RSA, ECDSA P-256/P-384/P-521, Ed25519 and ML-DSA keys",
+            key_kind(key.algorithm())
+        )));
+    }
+    Ok(Arc::new(FipsSigningKey(key)))
+}
+
+/// How a refused key is named.
+fn key_kind(algorithm: SignatureAlgorithm) -> String {
+    match algorithm {
+        SignatureAlgorithm::ED448 => "an Ed448".to_string(),
+        other => format!("a {other:?}"),
+    }
+}
+
+/// A signing key that offers only [`FIPS_SIGNATURE_SCHEMES`].
+#[derive(Debug)]
+struct FipsSigningKey(Arc<dyn SigningKey>);
+
+impl SigningKey for FipsSigningKey {
+    fn choose_scheme(&self, offered: &[SignatureScheme]) -> Option<Box<dyn Signer>> {
+        let allowed = offered
+            .iter()
+            .copied()
+            .filter(|scheme| FIPS_SIGNATURE_SCHEMES.contains(scheme))
+            .collect::<Vec<_>>();
+        self.0.choose_scheme(&allowed)
+    }
+
+    fn public_key(&self) -> Option<SubjectPublicKeyInfoDer<'_>> {
+        self.0.public_key()
+    }
+
+    fn algorithm(&self) -> SignatureAlgorithm {
+        self.0.algorithm()
+    }
+}
+
 /// The aws-lc-rs provider with Go's FIPS-mode TLS lists applied. It still
 /// runs on the non-validated aws-lc-rs build, so `CryptoProvider::fips()` is
 /// false.
@@ -107,6 +188,7 @@ pub fn fips_provider() -> CryptoProvider {
             .collect(),
         kx_groups: fips_kx_groups(),
         signature_verification_algorithms: fips_signature_verification_algorithms(),
+        key_provider: &FIPS_KEY_PROVIDER,
         ..default
     }
 }
@@ -255,6 +337,83 @@ mod tests {
         }
     }
 
+    fn load(provider: &CryptoProvider, pem: &str) -> Result<Arc<dyn SigningKey>, rustls::Error> {
+        use rustls::pki_types::pem::PemObject;
+        provider
+            .key_provider
+            .load_private_key(PrivateKeyDer::from_pem_slice(pem.as_bytes()).unwrap())
+    }
+
+    const ML_DSA_44_KEY: &str = include_str!("testdata/mldsa44.pem");
+    const ED448_KEY: &str = include_str!("testdata/ed448.pem");
+    const P256_KEY: &str = include_str!("testdata/p256.pem");
+    const ED25519_KEY: &str = include_str!("testdata/ed25519.pem");
+
+    /// A key that signs only Ed448, which aws-lc-rs cannot load, to drive the
+    /// refusal.
+    #[derive(Debug)]
+    struct Ed448Only;
+
+    impl SigningKey for Ed448Only {
+        fn choose_scheme(&self, _offered: &[SignatureScheme]) -> Option<Box<dyn Signer>> {
+            None
+        }
+
+        fn algorithm(&self) -> SignatureAlgorithm {
+            SignatureAlgorithm::ED448
+        }
+    }
+
+    #[test]
+    fn fips_mode_refuses_keys_outside_go_s_list() {
+        let err = restrict_to_fips(Arc::new(Ed448Only)).unwrap_err();
+        assert!(err.to_string().contains("an Ed448 private key"), "{err}");
+        assert!(
+            err.to_string().contains("not allowed in FIPS mode"),
+            "{err}"
+        );
+        assert!(load(&provider_for(FipsMode::On), ED448_KEY).is_err());
+    }
+
+    #[test]
+    fn fips_mode_allows_ml_dsa_as_go_1_27_does() {
+        let fips = provider_for(FipsMode::On);
+        let ml_dsa = load(&fips, ML_DSA_44_KEY).unwrap();
+        assert!(
+            ml_dsa
+                .choose_scheme(&[SignatureScheme::ML_DSA_44])
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn fips_mode_keys_sign_with_fips_schemes_only() {
+        let fips = provider_for(FipsMode::Strict);
+        let p256 = load(&fips, P256_KEY).unwrap();
+        let signer = p256
+            .choose_scheme(&[SignatureScheme::ECDSA_NISTP256_SHA256])
+            .unwrap();
+        assert_eq!(signer.scheme(), SignatureScheme::ECDSA_NISTP256_SHA256);
+        assert!(
+            p256.choose_scheme(&[SignatureScheme::ECDSA_SHA1_Legacy])
+                .is_none()
+        );
+        assert!(p256.public_key().is_some());
+        let ed25519 = load(&fips, ED25519_KEY).unwrap();
+        assert!(ed25519.choose_scheme(&[SignatureScheme::ED25519]).is_some());
+    }
+
+    #[test]
+    fn off_keeps_the_default_key_provider() {
+        let off = provider_for(FipsMode::Off);
+        let ml_dsa = load(&off, ML_DSA_44_KEY).unwrap();
+        assert!(
+            ml_dsa
+                .choose_scheme(&[SignatureScheme::ML_DSA_44])
+                .is_some()
+        );
+    }
+
     #[test]
     fn fips_mode_verifies_go_s_signature_schemes_only() {
         let provider = fips_provider();
@@ -273,8 +432,10 @@ mod tests {
                 .all(|alg| FIPS_CERTIFICATE_KEYS.contains(&alg.public_key_alg_id()))
         );
         let default = aws_lc_rs::default_provider();
-        let ml_dsa = default.signature_verification_algorithms.all.len()
-            - provider.signature_verification_algorithms.all.len();
-        assert_eq!(ml_dsa, 3, "only ML-DSA-44, -65 and -87 are dropped");
+        assert_eq!(
+            default.signature_verification_algorithms.all.len(),
+            provider.signature_verification_algorithms.all.len(),
+            "Go 1.27 allows every key type aws-lc-rs verifies"
+        );
     }
 }

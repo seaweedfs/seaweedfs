@@ -196,7 +196,12 @@ fn build_rustls_server_config_with_client_auth(
 
     let mut config = builder
         .with_single_cert(cert_chain, private_key)
-        .map_err(|e| TlsPolicyError(format!("build rustls server config failed: {}", e)))?;
+        .map_err(|e| {
+            TlsPolicyError(format!(
+                "build rustls server config from '{}' and '{}' failed: {}",
+                cert_path, key_path, e
+            ))
+        })?;
     config.require_ems = config.require_ems || seaweed_common::tls::require_ems();
     Ok(config)
 }

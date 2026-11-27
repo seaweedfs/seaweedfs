@@ -213,7 +213,12 @@ fn build_config(files: &GrpcServerTls) -> Result<ServerConfig> {
     let mut config = ServerConfig::builder()
         .with_client_cert_verifier(verifier)
         .with_single_cert(cert_chain, key)
-        .context("server certificate")?;
+        .with_context(|| {
+            format!(
+                "server certificate {} and key {}",
+                files.cert_path, files.key_path
+            )
+        })?;
     config.alpn_protocols = vec![b"h2".to_vec()];
     config.require_ems = config.require_ems || crate::tls::require_ems();
     Ok(config)
@@ -415,7 +420,12 @@ fn client_config(
             cert_chain("cert", &files.cert_path, &cert)?,
             private_key("key", &files.key_path, &key)?,
         )
-        .context("client certificate")?;
+        .with_context(|| {
+            format!(
+                "client certificate {} and key {}",
+                files.cert_path, files.key_path
+            )
+        })?;
     config.alpn_protocols = vec![b"h2".to_vec()];
     config.require_ems = config.require_ems || crate::tls::require_ems();
     Ok(config)
