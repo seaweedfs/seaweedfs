@@ -22,6 +22,7 @@ import (
 )
 
 type VolumeServer struct {
+	ecShardCheckRunning atomic.Bool
 	volume_server_pb.UnimplementedVolumeServerServer
 	inFlightUploadDataSize        int64
 	inFlightDownloadDataSize      int64
