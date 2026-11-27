@@ -98,7 +98,7 @@ func runFilerCat(cmd *Command, args []string) bool {
 		writer = f
 	}
 
-	pb.WithGrpcFilerClientAuth(false, util.RandomInt32(), filerCat.filerAddress, filerCat.grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithGrpcFilerClientAuth(false, util.RandomInt32(), filerCat.filerAddress, filerCat.grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Name:      name,
@@ -119,6 +119,10 @@ func runFilerCat(cmd *Command, args []string) bool {
 		return filer.StreamContent(&filerCat, writer, respLookupEntry.Entry.GetChunks(), 0, int64(filer.FileSize(respLookupEntry.Entry)))
 
 	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read %s: %v\n", filerSource, err)
+		return false
+	}
 
 	return true
 }

@@ -17,6 +17,9 @@ import (
 func TestAdminScriptShellOptionsAuthenticateFilerCalls(t *testing.T) {
 	// Admin scripts run shell commands against the filer, so under
 	// grpc_require_token they must present the worker's filer admin token.
+	// Environment overrides take precedence over the file; clear them.
+	t.Setenv("WEED_JWT_FILER_SIGNING_GRPC_KEY", "")
+	t.Setenv("WEED_JWT_FILER_SIGNING_KEY", "")
 	dir := t.TempDir()
 	saved := util.ConfigurationFileDirectory
 	util.ConfigurationFileDirectory = util.DirectoryValueType(dir)
