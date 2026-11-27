@@ -21,7 +21,9 @@ docker compose -f seaweedfs-compose.yml -p seaweedfs up
 
 ```
 
-## Try latest tip
+## Try the latest development image
+
+The compose file below uses `chrislusf/seaweedfs:dev`, built from `master`. It is a development image, not a stable release, and can lag `master` by hours or more; the `org.opencontainers.image.revision` label records the commit it was built from, and pinning by digest keeps that exact build. See [Development builds](../README.md#development-builds) for the `dev` binaries and image details.
 
 ```bash
 
