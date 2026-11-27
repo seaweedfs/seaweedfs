@@ -65,12 +65,15 @@ fn ec_shard_copy_failure_reason(status: &Status) -> &'static str {
         m::EC_SHARD_COPY_NO_SPACE
     } else if code == tonic::Code::DeadlineExceeded
         || msg.contains("deadline exceeded")
+        || msg.contains("deadlineexceeded")
+        || msg.contains("deadline expired")
         || msg.contains("deadline has elapsed")
         || msg.contains("timeout")
         || msg.contains("timed out")
     {
         m::EC_SHARD_COPY_TIMEOUT
-    } else if code == tonic::Code::NotFound || msg.contains("not found") {
+    } else if code == tonic::Code::NotFound || msg.contains("not found") || msg.contains("notfound")
+    {
         m::EC_SHARD_COPY_SOURCE_NOT_FOUND
     } else if msg.contains("input/output error") {
         m::EC_SHARD_COPY_IO_ERROR
@@ -3961,18 +3964,7 @@ impl VolumeServer for VolumeGrpcService {
         let collection = req.collection.clone();
         let source = req.source_data_node.clone();
         let wire_shard_ids = req.shard_ids.clone();
-        let result = tokio::spawn(async move {
-            let _lifecycle = lifecycle;
-            let copy = svc.volume_ec_shards_copy_locked(req, vid, shard_ids);
-            match request_id {
-                Some(id) => crate::server::request_id::scope_request_id(id, copy).await,
-                None => copy.await,
-            }
-        })
-        .await
-        .map_err(|e| Status::internal(format!("VolumeEcShardsCopy volume {}: {}", vid, e)))
-        .and_then(|r| r);
-        if let Err(status) = &result {
+        let report = move |status: &Status| {
             let reason = ec_shard_copy_failure_reason(status);
             crate::metrics::EC_SHARD_COPY_FAILURES
                 .with_label_values(&[collection.as_str(), reason])
@@ -8485,6 +8477,26 @@ mod tests {
     fn test_ec_shard_copy_failure_reason() {
         use crate::metrics as m;
         let cases = [
+            (
+                Status::internal(format!(
+                    "VolumeEcShardsCopy volume 7 copy .ec01: {}",
+                    Status::not_found("No such file or directory (os error 2)")
+                )),
+                m::EC_SHARD_COPY_SOURCE_NOT_FOUND,
+            ),
+            (
+                Status::internal(
+                    "failed to copy /d/7.ec01 file: rpc error: code = NotFound desc = gone",
+                ),
+                m::EC_SHARD_COPY_SOURCE_NOT_FOUND,
+            ),
+            (
+                Status::internal(format!(
+                    "VolumeEcShardsCopy volume 7 copy .ec01: {}",
+                    Status::deadline_exceeded("stream")
+                )),
+                m::EC_SHARD_COPY_TIMEOUT,
+            ),
             (
                 Status::internal(
                     "VolumeEcShardsCopy volume 7: failed to copy /d/7.ec01 file: CopyFile not found ec volume id 7",

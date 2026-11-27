@@ -630,9 +630,9 @@ func ecShardCopyFailureReason(err error) string {
 		return stats.EcShardCopyEmptyIndex
 	case code == codes.ResourceExhausted || strings.Contains(msg, "no space left"):
 		return stats.EcShardCopyNoSpace
-	case code == codes.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) || strings.Contains(msg, "deadline exceeded") || strings.Contains(msg, "deadline has elapsed") || strings.Contains(msg, "timeout") || strings.Contains(msg, "timed out"):
+	case code == codes.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) || strings.Contains(msg, "deadline exceeded") || strings.Contains(msg, "deadlineexceeded") || strings.Contains(msg, "deadline expired") || strings.Contains(msg, "deadline has elapsed") || strings.Contains(msg, "timeout") || strings.Contains(msg, "timed out"):
 		return stats.EcShardCopyTimeout
-	case code == codes.NotFound || strings.Contains(msg, "not found"):
+	case code == codes.NotFound || strings.Contains(msg, "not found") || strings.Contains(msg, "notfound"):
 		return stats.EcShardCopySourceNotFound
 	case strings.Contains(msg, "input/output error"):
 		return stats.EcShardCopyIoError
