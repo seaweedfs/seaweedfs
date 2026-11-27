@@ -129,4 +129,36 @@ func TestLoadSecurityConfigurationOrErrorRefusesAnUnreadableFile(t *testing.T) {
 	if strings.Contains(err.Error(), secret) {
 		t.Fatal("the error quotes the configuration")
 	}
+
+	// A readable file is merged by the same, single read.
+	if err := os.WriteFile(filepath.Join(dir, "security.toml"), []byte("[load_security_test]\nmarker = \"merged\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := LoadSecurityConfigurationOrError(); err != nil {
+		t.Fatalf("readable security.toml: %v", err)
+	}
+	if got := GetViper().GetString("load_security_test.marker"); got != "merged" {
+		t.Fatalf("settings of the checked file were not merged: %q", got)
+	}
+}
+
+func TestLoadSecurityConfigurationOrErrorRefusesADirectoryItCannotSearch(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can search any directory")
+	}
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	saved := ConfigurationFileDirectory
+	ConfigurationFileDirectory = DirectoryValueType(dir)
+	t.Cleanup(func() { ConfigurationFileDirectory = saved })
+	if err := os.WriteFile(filepath.Join(dir, "security.toml"), []byte("[grpc]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0700) })
+	if err := LoadSecurityConfigurationOrError(); err == nil {
+		t.Fatal("a security.toml in a directory the process cannot search was treated as absent")
+	}
 }
