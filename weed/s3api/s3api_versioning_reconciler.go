@@ -279,9 +279,6 @@ func (s3a *S3ApiServer) healVersionsPointer(bucket, object string) error {
 		return nil
 	}
 	latestFile := string(fileBytes)
-	if versionPointerInFlight(versionsEntry) {
-		return errVersionPointerInFlight
-	}
 	if _, probeErr := s3a.getEntry(bucketDir+"/"+versionsObjectPath, latestFile); probeErr == nil {
 		// Pointer is consistent.
 		return nil
@@ -290,6 +287,9 @@ func (s3a *S3ApiServer) healVersionsPointer(bucket, object string) error {
 		// rather than invoking heal on a possibly-incomplete listing
 		// (which could rewrite the pointer to an older version).
 		return fmt.Errorf("probe latest version %s/%s/%s: %w", bucket, object, latestFile, probeErr)
+	}
+	if versionPointerInFlight(versionsEntry) {
+		return errVersionPointerInFlight
 	}
 	// Reuse the read-path heal so behaviour stays identical: it will
 	// repair the pointer to the newest remaining version, or clear it

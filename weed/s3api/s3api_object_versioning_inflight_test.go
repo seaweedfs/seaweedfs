@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"testing"
@@ -33,5 +34,42 @@ func TestVersionPointerInFlight(t *testing.T) {
 		if got := versionPointerInFlight(tc.entry); got != tc.want {
 			t.Errorf("%s: versionPointerInFlight = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestHealVersionsPointerInFlight(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		withFile     bool
+		wantInFlight bool
+	}{
+		{"recent pointer to a present file is consistent", true, false},
+		{"recent pointer to a missing file waits", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &anonymousReadFiler{entries: make(map[string]*filer_pb.Entry)}
+			versionId := generateVersionId(true)
+			fileName := "v_" + versionId
+			f.entries["/buckets/b/k"+s3_constants.VersionsFolder] = &filer_pb.Entry{
+				Name:        "k" + s3_constants.VersionsFolder,
+				IsDirectory: true,
+				Extended: map[string][]byte{
+					s3_constants.ExtLatestVersionIdKey:       []byte(versionId),
+					s3_constants.ExtLatestVersionFileNameKey: []byte(fileName),
+				},
+			}
+			if tc.withFile {
+				f.entries["/buckets/b/k"+s3_constants.VersionsFolder+"/"+fileName] = &filer_pb.Entry{Name: fileName}
+			}
+			s3a := newPutTestServer(t, startFakeFiler(t, f))
+			err := s3a.healVersionsPointer("b", "k")
+			if tc.wantInFlight {
+				if !errors.Is(err, errVersionPointerInFlight) {
+					t.Fatalf("healVersionsPointer = %v, want in flight", err)
+				}
+			} else if err != nil {
+				t.Fatalf("healVersionsPointer = %v, want nil", err)
+			}
+		})
 	}
 }
