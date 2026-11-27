@@ -66,8 +66,12 @@ func TestCollectionToDelete(t *testing.T) {
 		{name: "named", collections: []string{"", "photos"}, query: "collection=photos", want: "photos"},
 		{name: "literal keyword name", collections: []string{"_default"}, query: "collection=_default", want: "_default"},
 		{name: "literal keyword name and default", collections: []string{"", "_default"}, query: "collection=_default", wantErr: true},
-		{name: "explicit default", collections: []string{""}, query: "collection=_default_", want: ""},
-		{name: "explicit default next to literal keyword name", collections: []string{"", "_default"}, query: "collection=_default_", want: ""},
+		{name: "legacy default keyword", collections: []string{""}, query: "collection=_default_", want: ""},
+		{name: "legacy default keyword next to literal keyword name", collections: []string{"", "_default"}, query: "collection=_default_", want: ""},
+		{name: "literal legacy keyword name", collections: []string{"_default_"}, query: "collection=_default_", want: "_default_"},
+		{name: "literal legacy keyword name and default", collections: []string{"", "_default_"}, query: "collection=_default_", wantErr: true},
+		{name: "default keyword next to literal legacy keyword name", collections: []string{"", "_default_"}, query: "collection=_default", want: ""},
+		{name: "both literal keyword names and default", collections: []string{"", "_default", "_default_"}, query: "collection=_default", wantErr: true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -287,11 +287,11 @@ method gets `405 Method Not Allowed`.
 
 The `collection` parameter is required: a request without it, or with an
 empty value, gets `400 Bad Request`. To delete the default (empty-named)
-collection, name it explicitly with `collection=_default`, the same keyword
-`weed shell` uses. If a collection is literally named `_default`, that name
-deletes it, and when it exists next to the default collection the request
-gets `400 Bad Request`. `collection=_default_`, which `weed shell
-collection.delete` also accepts, always deletes the default collection.
+collection, name it explicitly with `collection=_default` or
+`collection=_default_`, the keywords `weed shell collection.delete` accepts.
+If a collection is literally named a keyword, that name deletes it, and when
+it exists next to the default collection the request gets
+`400 Bad Request`; use the other keyword for the default collection.
 
 ### Health
 
