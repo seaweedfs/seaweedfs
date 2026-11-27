@@ -38,6 +38,8 @@ func TestUpdateEntryRecreatesOnlyOnNotFound(t *testing.T) {
 		{"not found", status.Error(codes.NotFound, filer_pb.ErrNotFound.Error()), false, 1},
 		{"canceled", status.Error(codes.Canceled, "context canceled"), true, 2},
 		{"unavailable", status.Error(codes.Unavailable, "connection refused"), true, 2},
+		{"unavailable with the not-found text", status.Error(codes.Unavailable, filer_pb.ErrNotFound.Error()), true, 2},
+		{"plain-text not found", status.Error(codes.Unknown, filer_pb.ErrNotFound.Error()), false, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			lis, err := net.Listen("tcp", "127.0.0.1:0")

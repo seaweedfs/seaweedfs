@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -299,12 +298,11 @@ func (fs *FilerSink) entryMissing(key string) (bool, error) {
 	return missing, err
 }
 
-// isEntryNotFound reports a lookup not-found. The string check is a deliberate
-// compatibility fallback: a cross-cluster gRPC error often arrives as a plain
-// status string that no longer wraps the filer_pb.ErrNotFound sentinel, so
-// errors.Is alone would miss it.
+// isEntryNotFound reports a lookup not-found. filer_pb.LookupEntry already maps
+// every miss, plain-text ones included, to the sentinel; the same text on any
+// other status is a failed read.
 func isEntryNotFound(err error) bool {
-	return errors.Is(err, filer_pb.ErrNotFound) || strings.Contains(err.Error(), filer_pb.ErrNotFound.Error())
+	return errors.Is(err, filer_pb.ErrNotFound)
 }
 
 func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
