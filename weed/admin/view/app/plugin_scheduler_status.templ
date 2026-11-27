@@ -7,24 +7,24 @@ templ PluginSchedulerStatus() {
         const root = document.getElementById('plugin-scheduler-blockers');
         if (!root) return;
         root.replaceChildren();
-        const balancers = data.ec_balancers || [];
-        if (balancers.length > 1) {
-            const overlap = document.createElement('div');
-            overlap.className = 'alert alert-warning';
+        (data.maintenance_overlaps || []).forEach(function(overlap) {
+            const runners = overlap.runners || [];
+            const box = document.createElement('div');
+            box.className = 'alert alert-warning';
             const heading = document.createElement('strong');
-            heading.textContent = balancers.length + ' EC balancers are active';
-            overlap.appendChild(heading);
-            balancers.forEach(function(name) {
+            heading.textContent = overlap.work + ' has ' + runners.length + ' independent runners';
+            box.appendChild(heading);
+            runners.forEach(function(name) {
                 const line = document.createElement('div');
                 line.textContent = name;
-                overlap.appendChild(line);
+                box.appendChild(line);
             });
             const hint = document.createElement('div');
             hint.className = 'small mt-1';
-            hint.textContent = 'Each one plans shard moves from the same topology without knowing about the others, so their moves can collide. Keep only one enabled.';
-            overlap.appendChild(hint);
-            root.appendChild(overlap);
-        }
+            hint.textContent = 'Each one plans from the same topology without knowing about the others, so their changes can collide. Keep only one enabled.';
+            box.appendChild(hint);
+            root.appendChild(box);
+        });
         const lock = data.lock || {};
         const waiters = lock.waiters || [];
         if (waiters.length) {

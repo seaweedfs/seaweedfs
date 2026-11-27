@@ -618,7 +618,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 schedulerStates: [],
                 schedulerStatus: null,
                 schedulerLock: null,
-                schedulerECBalancers: [],
+                schedulerOverlaps: [],
                 allJobs: [],
                 allActivities: [],
                 monitorRowsScope: null,
@@ -1627,7 +1627,7 @@ templ Plugin(page string, initialJob string, lane string) {
             }
 
             function renderSchedulerStatus() {
-                window.renderPluginSchedulerStatus({scheduler: state.schedulerStatus, lock: state.schedulerLock, ec_balancers: state.schedulerECBalancers, job_type: monitorJobTypeScope()});
+                window.renderPluginSchedulerStatus({scheduler: state.schedulerStatus, lock: state.schedulerLock, maintenance_overlaps: state.schedulerOverlaps, job_type: monitorJobTypeScope()});
                 var valueNodes = document.querySelectorAll('.plugin-scheduler-next-run');
                 if (!valueNodes.length) {
                     return;
@@ -3143,7 +3143,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 state.schedulerStates = Array.isArray(schedulerStates) ? schedulerStates : [];
                 state.schedulerStatus = schedulerStatus && schedulerStatus.scheduler ? schedulerStatus.scheduler : null;
                 state.schedulerLock = schedulerStatus && schedulerStatus.lock ? schedulerStatus.lock : null;
-                state.schedulerECBalancers = schedulerStatus && Array.isArray(schedulerStatus.ec_balancers) ? schedulerStatus.ec_balancers : [];
+                state.schedulerOverlaps = schedulerStatus && Array.isArray(schedulerStatus.maintenance_overlaps) ? schedulerStatus.maintenance_overlaps : [];
                 renderQueueJobs();
                 renderDetectionJobs();
                 renderExecutionJobs();
