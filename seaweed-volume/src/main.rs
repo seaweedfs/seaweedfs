@@ -638,6 +638,9 @@ async fn run(
                 sighup.recv().await;
                 info!("Received SIGHUP, reloading...");
 
+                // 0. Re-read TLS server certificates (Go's certreload.ReloadAll)
+                seaweed_volume::security::tls::reload_all();
+
                 // 1. Load new volumes from disk (Go's LoadNewVolumes)
                 {
                     info!("Loading new volume ids...");
