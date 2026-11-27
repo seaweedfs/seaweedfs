@@ -207,6 +207,15 @@ func TestWithFilerClientAuthSourceErrorDoesNotReachConnection(t *testing.T) {
 	}
 }
 
+func filerAdminToken(t *testing.T, v interface{ GetString(string) string }) EncodedJwt {
+	t.Helper()
+	grpcKey, sharedKey, err := filerClientKeysFrom(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filerAdminTokenForKeys(context.Background(), grpcKey, sharedKey)
+}
+
 func TestFilerAdminTokenKeyPrecedenceAndNoKey(t *testing.T) {
 	v := viper.New()
 	grpcKey := testSigningKey(t)
@@ -218,18 +227,18 @@ func TestFilerAdminTokenKeyPrecedenceAndNoKey(t *testing.T) {
 		v.Set("jwt.filer_signing.key", "")
 	})
 
-	token := filerAdminToken(v)
+	token := filerAdminToken(t, v)
 	if !IsFilerAdminToken(grpcKey, token) || IsFilerAdminToken(httpKey, token) {
 		t.Fatal("grpc_key did not take precedence over the HTTP signing key")
 	}
 
 	v.Set("jwt.filer_signing.grpc_key", "")
-	token = filerAdminToken(v)
+	token = filerAdminToken(t, v)
 	if !IsFilerAdminToken(httpKey, token) {
 		t.Fatal("HTTP signing-key fallback did not produce a valid token")
 	}
 	v.Set("jwt.filer_signing.key", "")
-	token = filerAdminToken(v)
+	token = filerAdminToken(t, v)
 	if token != "" {
 		t.Fatal("no configured key produced a token")
 	}
@@ -239,7 +248,7 @@ func TestFilerAdminTokenHasTenSecondExpiry(t *testing.T) {
 	v := viper.New()
 	key := testSigningKey(t)
 	v.Set("jwt.filer_signing.grpc_key", string(key))
-	token := filerAdminToken(v)
+	token := filerAdminToken(t, v)
 	claims := &SeaweedFilerAdminClaims{}
 	parsed, err := DecodeJwt(key, token, claims)
 	if err != nil || parsed == nil || !parsed.Valid || claims.ExpiresAt == nil {

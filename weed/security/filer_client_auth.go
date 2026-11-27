@@ -178,10 +178,6 @@ func filerAdminTokenForKeys(ctx context.Context, grpcKey, sharedKey SigningKey) 
 	return GenJwtForFilerAdmin(key, 10)
 }
 
-func filerAdminToken(v interface{ GetString(string) string }) EncodedJwt {
-	return filerAdminTokenForKeys(context.Background(), SigningKey(v.GetString("jwt.filer_signing.grpc_key")), SigningKey(v.GetString("jwt.filer_signing.key")))
-}
-
 // WithFilerSubscriptionToken is WithFilerToken for opening a metadata
 // subscription; admin token sources then prefer the shared signing key.
 func WithFilerSubscriptionToken(ctx context.Context, source FilerTokenSource) (context.Context, error) {
