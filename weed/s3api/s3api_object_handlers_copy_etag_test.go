@@ -55,6 +55,58 @@ func TestValidateConditionalCopyHeadersUsesStoredExtendedETag(t *testing.T) {
 	}
 }
 
+// The copy and rename source conditions match ETags the way the read and write
+// paths do: If-None-Match ignores the W/ prefix, and either header accepts the
+// comma-separated list RFC 9110 allows.
+func TestSourceConditionalHeadersMatchETagLists(t *testing.T) {
+	etag := "d41d8cd98f00b204e9800998ecf8427e"
+	entry := &filer_pb.Entry{Attributes: &filer_pb.FuseAttributes{Md5: mustDecodeHexETagForTest(t, etag)}}
+
+	for _, names := range []sourceConditionalHeaderNames{copySourceConditionalHeaders, renameSourceConditionalHeaders} {
+		failing := []string{
+			`"` + etag + `"`,
+			`W/"` + etag + `"`,
+			`"0000", "` + etag + `"`,
+			`*`,
+		}
+		for _, value := range failing {
+			r := httptest.NewRequest(http.MethodPut, "/bucket/dst", nil)
+			r.Header.Set(names.ifNoneMatch, value)
+			if got := validateSourceConditionalHeaders(r, entry, names); got != s3err.ErrPreconditionFailed {
+				t.Errorf("%s: %q = %v, want %v", names.ifNoneMatch, value, got, s3err.ErrPreconditionFailed)
+			}
+		}
+		r := httptest.NewRequest(http.MethodPut, "/bucket/dst", nil)
+		r.Header.Set(names.ifNoneMatch, `"0000"`)
+		if got := validateSourceConditionalHeaders(r, entry, names); got != s3err.ErrNone {
+			t.Errorf("%s: unrelated tag = %v, want %v", names.ifNoneMatch, got, s3err.ErrNone)
+		}
+
+		passing := []string{
+			`"` + etag + `"`,
+			etag,
+			`"0000", "` + etag + `"`,
+			`"` + etag + `", "0000"`,
+			`*`,
+		}
+		for _, value := range passing {
+			r := httptest.NewRequest(http.MethodPut, "/bucket/dst", nil)
+			r.Header.Set(names.ifMatch, value)
+			if got := validateSourceConditionalHeaders(r, entry, names); got != s3err.ErrNone {
+				t.Errorf("%s: %q = %v, want %v", names.ifMatch, value, got, s3err.ErrNone)
+			}
+		}
+		// If-Match uses the strong comparison, so a weak tag never satisfies it.
+		for _, value := range []string{`W/"` + etag + `"`, `"0000"`} {
+			r := httptest.NewRequest(http.MethodPut, "/bucket/dst", nil)
+			r.Header.Set(names.ifMatch, value)
+			if got := validateSourceConditionalHeaders(r, entry, names); got != s3err.ErrPreconditionFailed {
+				t.Errorf("%s: %q = %v, want %v", names.ifMatch, value, got, s3err.ErrPreconditionFailed)
+			}
+		}
+	}
+}
+
 func newCopyETagTestEntry(t *testing.T, storedETag, computedETag string) *filer_pb.Entry {
 	t.Helper()
 

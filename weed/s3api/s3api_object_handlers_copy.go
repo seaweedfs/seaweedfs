@@ -2034,16 +2034,16 @@ func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *f
 // matching x-amz-copy-source-if-match with a failing x-amz-copy-source-if-unmodified-since
 // copies rather than returning 412.
 func validateSourceConditionalHeaders(r *http.Request, entry *filer_pb.Entry, names sourceConditionalHeaderNames) s3err.ErrorCode {
-	sourceETag := strings.Trim(copyEntryETag(entry), `"`)
-	ifMatch := strings.Trim(r.Header.Get(names.ifMatch), `"`)
-	ifNoneMatch := strings.Trim(r.Header.Get(names.ifNoneMatch), `"`)
+	sourceETag := copyEntryETag(entry)
+	ifMatch := r.Header.Get(names.ifMatch)
+	ifNoneMatch := r.Header.Get(names.ifNoneMatch)
 
-	if ifMatch != "" && ifMatch != "*" && ifMatch != sourceETag {
+	if ifMatch != "" && !util.ETagListMatches(ifMatch, sourceETag, false) {
 		glog.V(3).Infof("%s failed - expected %s, got %s", names.ifMatch, ifMatch, sourceETag)
 		return s3err.ErrPreconditionFailed
 	}
 
-	if ifNoneMatch != "" && (ifNoneMatch == "*" || ifNoneMatch == sourceETag) {
+	if ifNoneMatch != "" && util.ETagListMatches(ifNoneMatch, sourceETag, true) {
 		glog.V(3).Infof("%s failed - matched %s", names.ifNoneMatch, sourceETag)
 		return s3err.ErrPreconditionFailed
 	}
