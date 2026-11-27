@@ -46,6 +46,7 @@ func subscriptionScopeServerWithKeys(withSubscriptionVerifier bool, filerKey, pr
 				filerKey,
 				previousFilerKey,
 				method,
+				0,
 			)
 		}
 	}
@@ -262,6 +263,7 @@ func TestScopeSubscriptionKeyOverlapCompatibilityMatrix(t *testing.T) {
 								tc.filerKey,
 								tc.previousKey,
 								method,
+								0,
 							)
 							if dedicatedErr != nil || dedicatedScope == nil {
 								t.Fatalf("dedicated verifier err=%v scope=%v, want a subscription scope", dedicatedErr, dedicatedScope)

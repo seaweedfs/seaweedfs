@@ -65,7 +65,7 @@ func TestCheckGrpcMetadataSubscription(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			scope, err := CheckGrpcMetadataSubscription(tt.ctx, tt.subKey, adminKey, nil, tt.method)
+			scope, err := CheckGrpcMetadataSubscription(tt.ctx, tt.subKey, adminKey, nil, tt.method, 0)
 			if status.Code(err) != tt.wantCode {
 				t.Fatalf("code = %v (%v), want %v", status.Code(err), err, tt.wantCode)
 			}
@@ -133,7 +133,7 @@ func TestWithMetadataSubscriptionCredentials(t *testing.T) {
 	v.Set("jwt.filer_signing.subscribe.key", "subscribe-key")
 	md, _ := metadata.FromOutgoingContext(WithMetadataSubscriptionCredentials(context.Background(), nil))
 	in := metadata.NewIncomingContext(context.Background(), md)
-	scope, err := CheckGrpcMetadataSubscription(in, SigningKey("subscribe-key"), SigningKey("admin-key"), nil, MethodSubscribeLocalMetadata)
+	scope, err := CheckGrpcMetadataSubscription(in, SigningKey("subscribe-key"), SigningKey("admin-key"), nil, MethodSubscribeLocalMetadata, 0)
 	if err != nil || scope != nil {
 		t.Fatalf("scope=%v err=%v, want unrestricted", scope, err)
 	}
@@ -145,8 +145,32 @@ func TestWithMetadataSubscriptionCredentials(t *testing.T) {
 	if len(md.Get("authorization")) != 1 {
 		t.Fatalf("want only the per-cluster token, got %v", md.Get("authorization"))
 	}
-	scope, err = CheckGrpcMetadataSubscription(metadata.NewIncomingContext(context.Background(), md), SigningKey("subscribe-b"), clusterKey, nil, MethodSubscribeMetadata)
+	scope, err = CheckGrpcMetadataSubscription(metadata.NewIncomingContext(context.Background(), md), SigningKey("subscribe-b"), clusterKey, nil, MethodSubscribeMetadata, 0)
 	if err != nil || scope != nil {
 		t.Fatalf("per-cluster token: scope=%v err=%v, want unrestricted", scope, err)
+	}
+}
+
+// A subscriber whose clock trails the filer's gets the same leeway on its
+// admin token as unary filer calls do; past the leeway it is refused.
+func TestCheckGrpcMetadataSubscriptionAdminTokenLeeway(t *testing.T) {
+	adminKey := SigningKey("admin-key-for-leeway-test")
+	expired := func(ago time.Duration) context.Context {
+		t.Helper()
+		claims := SeaweedFilerAdminClaims{RegisteredClaims: jwt.RegisteredClaims{ExpiresAt: jwt.NewNumericDate(time.Now().Add(-ago))}}
+		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(adminKey))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return incomingBearer(token)
+	}
+	if scope, err := CheckGrpcMetadataSubscription(expired(5*time.Second), SigningKey("subscribe-key"), adminKey, nil, MethodSubscribeMetadata, 30*time.Second); err != nil || scope != nil {
+		t.Fatalf("admin token 5s past expiry within 30s leeway: scope=%v err=%v, want unrestricted", scope, err)
+	}
+	if _, err := CheckGrpcMetadataSubscription(expired(5*time.Second), SigningKey("subscribe-key"), adminKey, nil, MethodSubscribeMetadata, 0); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("admin token 5s past expiry without leeway: err=%v, want Unauthenticated", err)
+	}
+	if _, err := CheckGrpcMetadataSubscription(expired(time.Minute), SigningKey("subscribe-key"), adminKey, nil, MethodSubscribeMetadata, 30*time.Second); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("admin token past the leeway: err=%v, want Unauthenticated", err)
 	}
 }

@@ -105,8 +105,9 @@ func metadataSubscriptionScope(signingKey SigningKey, token EncodedJwt, method s
 // Without subscribeKey every caller is unrestricted (nil scope). With it, an
 // mTLS-verified peer or an admin token signed by adminKey or previousAdminKey
 // is unrestricted, and a token signed by subscribeKey is limited to the
-// returned scope.
-func CheckGrpcMetadataSubscription(ctx context.Context, subscribeKey, adminKey, previousAdminKey SigningKey, method string) (scope *MetadataSubscriptionScope, err error) {
+// returned scope. Admin tokens are checked with leeway, the filer's gRPC
+// clock leeway, as unary filer calls check them.
+func CheckGrpcMetadataSubscription(ctx context.Context, subscribeKey, adminKey, previousAdminKey SigningKey, method string, leeway time.Duration) (scope *MetadataSubscriptionScope, err error) {
 	if len(subscribeKey) == 0 || isMtlsVerifiedPeer(ctx) {
 		return nil, nil
 	}
@@ -121,7 +122,7 @@ func CheckGrpcMetadataSubscription(ctx context.Context, subscribeKey, adminKey, 
 			continue
 		}
 		token := EncodedJwt(parts[1])
-		if IsFilerAdminToken(adminKey, token, previousAdminKey) {
+		if IsFilerAdminTokenWithLeeway(adminKey, previousAdminKey, token, leeway) {
 			return nil, nil
 		}
 		if scope, ok := metadataSubscriptionScope(subscribeKey, token, method); ok {
