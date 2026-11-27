@@ -1680,7 +1680,7 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 	// the source volume for compressed bytes, so a gzipped chunk is
 	// forwarded to the destination without anyone having to decompress.
 	if canStreamCopyChunk(chunk) {
-		if err := s3a.streamCopyChunkRange(context.Background(), srcUrls, fileId, 0, int64(chunk.Size), true /*isFullChunk*/, assignResult, nil); err != nil {
+		if err := s3a.streamCopyChunkRange(context.Background(), srcUrls, fileId, 0, int64(chunk.Size), true /*isFullChunk*/, assignResult, nil, dstPath); err != nil {
 			return nil, fmt.Errorf("stream chunk: %w", err)
 		}
 		return dstChunk, nil
@@ -1741,7 +1741,7 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 		if !isFullChunk {
 			digest = util.NewMd5()
 		}
-		if err := s3a.streamCopyChunkRange(context.Background(), srcUrls, fileId, offsetInChunk, int64(rangeChunk.Size), isFullChunk, assignResult, digest); err != nil {
+		if err := s3a.streamCopyChunkRange(context.Background(), srcUrls, fileId, offsetInChunk, int64(rangeChunk.Size), isFullChunk, assignResult, digest, dstPath); err != nil {
 			return nil, fmt.Errorf("stream chunk range: %w", err)
 		}
 		if digest != nil {

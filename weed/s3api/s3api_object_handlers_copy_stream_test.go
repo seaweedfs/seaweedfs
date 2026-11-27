@@ -66,7 +66,7 @@ func TestStreamCopyChunkRangeFsync(t *testing.T) {
 				Fsync:    tc.fsync,
 			}
 			err := (&S3ApiServer{}).streamCopyChunkRange(context.Background(), []string{source.URL},
-				assign.FileId, 0, int64(len(payload)), true, assign, nil)
+				assign.FileId, 0, int64(len(payload)), true, assign, nil, "")
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("stream copy error=%v, wantErr=%v", err, tc.wantErr)
 			}
@@ -142,7 +142,7 @@ func TestStreamCopyChunkRangeFallsBackToNextReplica(t *testing.T) {
 				Location: &filer_pb.Location{Url: strings.TrimPrefix(destination.URL, "http://")},
 			}
 			err := (&S3ApiServer{}).streamCopyChunkRange(context.Background(), tc.sources,
-				assign.FileId, 0, int64(len(payload)), true, assign, nil)
+				assign.FileId, 0, int64(len(payload)), true, assign, nil, "")
 			if tc.wantErr == "" && err != nil {
 				t.Fatalf("stream copy: %v", err)
 			}
@@ -280,5 +280,38 @@ func TestVolumeLocationUrls(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("urls=%v, want %v", got, want)
 		}
+	}
+}
+
+// TestStreamCopyChunkRange_ContentLocation checks that the streaming chunk
+// copy (used for unencrypted CopyObject and UploadPartCopy) records the
+// destination object path on the new needle.
+func TestStreamCopyChunkRange_ContentLocation(t *testing.T) {
+	util_http.InitGlobalHttpClient()
+
+	src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "hello")
+	}))
+	defer src.Close()
+
+	var got string
+	dst := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("Seaweed-Content-Location")
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"size":5}`)
+	}))
+	defer dst.Close()
+
+	assign := &filer_pb.AssignVolumeResponse{
+		FileId:   "3,01",
+		Location: &filer_pb.Location{Url: strings.TrimPrefix(dst.URL, "http://")},
+	}
+	s3a := &S3ApiServer{}
+	if err := s3a.streamCopyChunkRange(context.Background(), []string{src.URL}, "2,01", 0, 5, true, assign, nil, "/buckets/b/a b"); err != nil {
+		t.Fatalf("stream copy: %v", err)
+	}
+	if got != "/buckets/b/a%20b" {
+		t.Errorf("Seaweed-Content-Location = %q, want %q", got, "/buckets/b/a%20b")
 	}
 }
