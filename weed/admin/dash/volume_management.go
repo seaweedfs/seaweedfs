@@ -656,8 +656,12 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 
 func defaultPlacementServers(servers []VolumeServer) []VolumeServer {
 	dcRacks := make(map[string][]string)
+	seen := make(map[[2]string]bool)
 	for _, vs := range servers {
-		dcRacks[vs.DataCenter] = append(dcRacks[vs.DataCenter], vs.Rack)
+		if key := [2]string{vs.DataCenter, vs.Rack}; !seen[key] {
+			seen[key] = true
+			dcRacks[vs.DataCenter] = append(dcRacks[vs.DataCenter], vs.Rack)
+		}
 	}
 	var stray []VolumeServer
 	for _, vs := range servers {
