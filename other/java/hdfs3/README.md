@@ -149,6 +149,62 @@ The test suite covers:
    hadoop fs -put local.txt seaweedfs://localhost:8888/test/
    ```
 
+### Secured filer
+
+With `fs.seaweed.volume.server.access` set to `filerProxy`, chunk reads and writes go to the
+filer's HTTP port, so they need the filer's HTTP credentials. The client signs a filer JWT
+when it has the filer's `jwt.filer_signing` key (writes) or
+`jwt.filer_signing.read` key (reads), and otherwise sends the `[filer.basic_auth]`
+credentials. These credentials are sent only to the filer, never to volume servers. gRPC mTLS
+comes from the `[grpc]` section as before.
+
+`security.toml` (read from `./`, `~/.seaweedfs/` or `/etc/seaweedfs/`), using the filer's
+own values:
+
+```toml
+[jwt.filer_signing]
+key = "<filer write key>"
+
+[jwt.filer_signing.read]
+key = "<filer read key>"
+
+# or, for a filer with Basic Auth
+[filer.basic_auth]
+user = "<user>"
+password = "<password>"
+
+[grpc]
+ca = "/etc/seaweedfs/ca.crt"
+
+[grpc.client]
+cert = "/etc/seaweedfs/client.crt"
+key = "/etc/seaweedfs/client.key"
+```
+
+The same values can be set in `core-site.xml`, where they override `security.toml`. The
+secrets can also come from a Hadoop credential provider:
+
+```xml
+<property>
+  <name>fs.seaweed.volume.server.access</name>
+  <value>filerProxy</value>
+</property>
+<property>
+  <name>fs.seaweed.filer.jwt.signing.key</name>
+  <value>filer write key</value>
+</property>
+<property>
+  <name>fs.seaweed.filer.jwt.signing.read.key</name>
+  <value>filer read key</value>
+</property>
+<!-- token lifetimes, defaults 10 and 60 seconds:
+     fs.seaweed.filer.jwt.signing.expires.after.seconds
+     fs.seaweed.filer.jwt.signing.read.expires.after.seconds -->
+<!-- or Basic Auth:
+     fs.seaweed.filer.basic.auth.user
+     fs.seaweed.filer.basic.auth.password -->
+```
+
 ## Continuous Integration
 
 For CI environments, tests can be run in two modes:
