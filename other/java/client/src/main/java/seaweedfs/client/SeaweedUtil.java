@@ -90,4 +90,9 @@ public class SeaweedUtil {
         }
         return host + ":" + port;
     }
+
+    // Reports whether a chunk URL addresses a filer's chunk proxy rather than a volume server.
+    public static boolean isProxyChunkUrl(String url) {
+        return url != null && url.contains("proxyChunkId=");
+    }
 }

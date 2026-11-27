@@ -79,6 +79,13 @@ public class FilerJwtTest {
         assertEquals(filerBasic, FilerSecurityContext.getFilerAuthorizationHeaderValue(false));
     }
 
+    @Test
+    public void onlyFilerProxyUrlsAreFilerRequests() {
+        assertTrue(SeaweedUtil.isProxyChunkUrl("http://filer:8888/?proxyChunkId=3,01637037d6"));
+        assertFalse(SeaweedUtil.isProxyChunkUrl("http://volume:8080/3,01637037d6"));
+        assertFalse(SeaweedUtil.isProxyChunkUrl(null));
+    }
+
     private static String[] bearer(String header) {
         assertTrue(header.startsWith("BEARER "));
         return header.substring("BEARER ".length()).split("\\.");
