@@ -122,6 +122,18 @@ pub static VOLUME_GAUGE: LazyLock<GaugeVec> = LazyLock::new(|| {
     .expect("metric can be created")
 });
 
+/// Mounted EC shards whose file on disk is gone or replaced (ghost) or changed size (stale_size).
+pub static EC_SHARD_DISK_MISMATCH_GAUGE: LazyLock<GaugeVec> = LazyLock::new(|| {
+    GaugeVec::new(
+        Opts::new(
+            "SeaweedFS_volumeServer_ec_shard_disk_mismatch",
+            "Mounted EC shards whose file on disk is gone or replaced (ghost) or changed size (stale_size).",
+        ),
+        &["reason"],
+    )
+    .expect("metric can be created")
+});
+
 /// Read-only volumes per collection and type.
 pub static READ_ONLY_VOLUME_GAUGE: LazyLock<GaugeVec> = LazyLock::new(|| {
     GaugeVec::new(
@@ -418,6 +430,7 @@ pub fn register_metrics() {
             Box::new(VACUUMING_DROPPED_NEEDLES_COUNTER.clone()),
             Box::new(VOLUME_GAUGE.clone()),
             Box::new(READ_ONLY_VOLUME_GAUGE.clone()),
+            Box::new(EC_SHARD_DISK_MISMATCH_GAUGE.clone()),
             Box::new(MAX_VOLUMES.clone()),
             Box::new(DISK_SIZE_GAUGE.clone()),
             Box::new(RESOURCE_GAUGE.clone()),

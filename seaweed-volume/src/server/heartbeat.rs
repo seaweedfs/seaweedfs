@@ -1052,6 +1052,7 @@ async fn ec_tick_pass(
 > {
     off_runtime(config, state, |config, state| {
         let store = state.store.read().unwrap();
+        store.check_mounted_ec_shards();
         (
             collect_ec_heartbeat(config, &store),
             collect_ec_shard_delta_messages(&store),

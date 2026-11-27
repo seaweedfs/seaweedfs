@@ -30,6 +30,20 @@ pub fn shard_id_try_from(v: u32) -> Result<ShardId, String> {
     }
 }
 
+pub const EC_SHARD_GHOST: &str = "ghost";
+pub const EC_SHARD_STALE_SIZE: &str = "stale_size";
+
+#[cfg(unix)]
+fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+#[cfg(not(unix))]
+fn same_file(_: &fs::Metadata, _: &fs::Metadata) -> bool {
+    true
+}
+
 /// A single erasure-coded shard file.
 pub struct EcVolumeShard {
     pub volume_id: VolumeId,
@@ -110,6 +124,26 @@ impl EcVolumeShard {
 
     pub fn file_size(&self) -> i64 {
         self.ecd_file_size
+    }
+
+    /// How the shard file on disk disagrees with the mount: `EC_SHARD_GHOST`
+    /// when the path is gone or names another file than the open one,
+    /// `EC_SHARD_STALE_SIZE` when its size changed since the mount.
+    pub fn disk_mismatch(&self) -> Option<&'static str> {
+        let on_disk = match fs::metadata(self.file_name()) {
+            Ok(m) => m,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Some(EC_SHARD_GHOST),
+            Err(_) => return None,
+        };
+        if let Some(open) = self.ecd_file.as_ref().and_then(|f| f.metadata().ok()) {
+            if !same_file(&on_disk, &open) {
+                return Some(EC_SHARD_GHOST);
+            }
+        }
+        if on_disk.len() as i64 != self.ecd_file_size {
+            return Some(EC_SHARD_STALE_SIZE);
+        }
+        None
     }
 
     /// A duplicate of the mounted shard handle, for a reader that has to

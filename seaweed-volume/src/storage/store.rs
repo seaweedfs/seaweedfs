@@ -1113,6 +1113,37 @@ impl Store {
             .sum()
     }
 
+    /// Compares every mounted EC shard with its file on disk, logs each
+    /// mismatch and returns the counts per reason.
+    pub fn check_mounted_ec_shards(&self) -> std::collections::HashMap<&'static str, usize> {
+        use crate::storage::erasure_coding::ec_shard::{EC_SHARD_GHOST, EC_SHARD_STALE_SIZE};
+        let mut counts =
+            std::collections::HashMap::from([(EC_SHARD_GHOST, 0), (EC_SHARD_STALE_SIZE, 0)]);
+        for loc in &self.locations {
+            for (_, ecv) in loc.ec_volumes() {
+                for shard in ecv.shards.iter().flatten() {
+                    if let Some(reason) = shard.disk_mismatch() {
+                        *counts.entry(reason).or_default() += 1;
+                        tracing::warn!(
+                            volume_id = shard.volume_id.0,
+                            shard_id = shard.shard_id,
+                            dir = %loc.directory,
+                            mounted_size = shard.file_size(),
+                            reason,
+                            "mounted ec shard disagrees with its file on disk"
+                        );
+                    }
+                }
+            }
+        }
+        for (reason, n) in &counts {
+            crate::metrics::EC_SHARD_DISK_MISMATCH_GAUGE
+                .with_label_values(&[reason])
+                .set(*n as f64);
+        }
+        counts
+    }
+
     /// Total EC shard count across all locations.
     pub fn ec_shard_count(&self) -> usize {
         self.locations.iter().map(|loc| loc.ec_shard_count()).sum()
@@ -3461,6 +3492,42 @@ mod tests {
         assert_eq!(deleted[0].id, 9);
         assert!(!store.has_ec_volume(VolumeId(9)));
         assert!(!std::path::Path::new(&format!("{}/expired_ec_case_9.ec00", dir)).exists());
+    }
+
+    #[test]
+    fn test_check_mounted_ec_shards_finds_ghost_and_stale_size() {
+        use crate::storage::erasure_coding::ec_shard::{EC_SHARD_GHOST, EC_SHARD_STALE_SIZE};
+        use std::collections::HashMap;
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = make_test_store(&[dir]);
+        std::fs::write(format!("{}/col_42.ecx", dir), [0u8; 16]).unwrap();
+        let shard_path = format!("{}/col_42.ec00", dir);
+        std::fs::write(&shard_path, b"shard bytes").unwrap();
+        store.mount_ec_shards(VolumeId(42), "col", &[0]).unwrap();
+        let counts = |ghost: usize, stale: usize| {
+            HashMap::from([(EC_SHARD_GHOST, ghost), (EC_SHARD_STALE_SIZE, stale)])
+        };
+        assert_eq!(store.check_mounted_ec_shards(), counts(0, 0));
+
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&shard_path)
+            .unwrap();
+        std::io::Write::write_all(&mut f, b"grown").unwrap();
+        drop(f);
+        assert_eq!(store.check_mounted_ec_shards(), counts(0, 1));
+
+        let replacement = format!("{}.new", shard_path);
+        std::fs::write(&replacement, b"shard bytes").unwrap();
+        std::fs::rename(&replacement, &shard_path).unwrap();
+        assert_eq!(store.check_mounted_ec_shards(), counts(1, 0));
+
+        assert!(store.locations[0].reopen_ec_shard(VolumeId(42), 0).unwrap());
+        assert_eq!(store.check_mounted_ec_shards(), counts(0, 0));
+
+        std::fs::remove_file(&shard_path).unwrap();
+        assert_eq!(store.check_mounted_ec_shards(), counts(1, 0));
     }
 
     #[test]
