@@ -189,6 +189,11 @@ public class SeaweedRead {
         CloseableHttpResponse response = SeaweedUtil.getClosableHttpClient().execute(request);
 
         try {
+            int status = response.getStatusLine().getStatusCode();
+            if (status / 100 != 2) {
+                throw new IOException("fetch " + url + ": " + response.getStatusLine());
+            }
+
             HttpEntity entity = response.getEntity();
 
             Header contentEncodingHeader = entity.getContentEncoding();
