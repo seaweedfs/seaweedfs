@@ -20,7 +20,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/security/advancedtls"
 )
 
@@ -79,7 +78,7 @@ func loadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		return nil, nil, nil
 	}
 
-	serverOptions := pemfile.Options{
+	serverOptions := certreload.Options{
 		CertFile:        config.GetString(component + ".cert"),
 		KeyFile:         config.GetString(component + ".key"),
 		RefreshDuration: CredRefreshingInterval,
@@ -94,18 +93,18 @@ func loadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		return nil, nil, err
 	}
 
-	serverIdentityProvider, err := pemfile.NewProvider(serverOptions)
+	serverIdentityProvider, err := certreload.NewProvider(serverOptions)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pemfile.NewProvider(%v) failed: %w", serverOptions, err)
+		return nil, nil, fmt.Errorf("certreload.NewProvider(%v) failed: %w", serverOptions, err)
 	}
 
-	serverRootOptions := pemfile.Options{
+	serverRootOptions := certreload.Options{
 		RootFile:        config.GetString("grpc.ca"),
 		RefreshDuration: CredRefreshingInterval,
 	}
-	serverRootProvider, err := pemfile.NewProvider(serverRootOptions)
+	serverRootProvider, err := certreload.NewProvider(serverRootOptions)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pemfile.NewProvider(%v) failed: %w", serverRootOptions, err)
+		return nil, nil, fmt.Errorf("certreload.NewProvider(%v) failed: %w", serverRootOptions, err)
 	}
 
 	// Start a server and create a client using advancedtls API with Provider.
@@ -219,22 +218,22 @@ func loadClientTLS(config *util.ViperProxy, component, targetComponent string) (
 		return nil, err
 	}
 
-	clientOptions := pemfile.Options{
+	clientOptions := certreload.Options{
 		CertFile:        certFileName,
 		KeyFile:         keyFileName,
 		RefreshDuration: CredRefreshingInterval,
 	}
-	clientProvider, err := pemfile.NewProvider(clientOptions)
+	clientProvider, err := certreload.NewProvider(clientOptions)
 	if err != nil {
-		return nil, fmt.Errorf("pemfile.NewProvider(%v) failed: %w", clientOptions, err)
+		return nil, fmt.Errorf("certreload.NewProvider(%v) failed: %w", clientOptions, err)
 	}
-	clientRootOptions := pemfile.Options{
+	clientRootOptions := certreload.Options{
 		RootFile:        caFileName,
 		RefreshDuration: CredRefreshingInterval,
 	}
-	clientRootProvider, err := pemfile.NewProvider(clientRootOptions)
+	clientRootProvider, err := certreload.NewProvider(clientRootOptions)
 	if err != nil {
-		return nil, fmt.Errorf("pemfile.NewProvider(%v) failed: %w", clientRootOptions, err)
+		return nil, fmt.Errorf("certreload.NewProvider(%v) failed: %w", clientRootOptions, err)
 	}
 	options := &advancedtls.Options{
 		IdentityOptions: advancedtls.IdentityCertificateOptions{
@@ -331,8 +330,8 @@ func LoadClientTLSHTTP(clientCertFile string) *tls.Config {
 	}
 }
 
-// checkTLSFiles validates configured TLS material up front: the pemfile
-// providers read lazily, so without this a typo'd or unparseable file would
+// checkTLSFiles validates configured TLS material up front: the providers
+// read lazily, so without this a typo'd or unparseable file would
 // only surface at handshake time instead of at startup.
 func checkTLSFiles(certFile, keyFile, caFile string) error {
 	if _, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
