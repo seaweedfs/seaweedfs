@@ -8,38 +8,44 @@ on:
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/binaries_dev.yml'
+  workflow_dispatch:
 
+# Let an in-progress dev build finish. A new push replaces only the pending
+# run; cancelling mid-build left the dev release without assets.
 concurrency:
-  group: binaries-dev-${{ github.ref }}
-  cancel-in-progress: true
+  group: binaries-dev-dev
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
 
-  cleanup:
-    permissions:
-      contents: write  # for mknejp/delete-release-assets to delete release assets
+  prepare:
     runs-on: ubuntu-latest
-
+    outputs:
+      build_time: ${{ steps.build_time.outputs.value }}
     steps:
+      - name: Ref guard
+        if: github.ref != 'refs/heads/master'
+        env:
+          GH_REF: ${{ github.ref }}
+        run: |
+          echo "dev builds only publish from master (got $GH_REF)" >&2
+          exit 1
 
-      - name: Delete old release assets
-        uses: mknejp/delete-release-assets@v1
-        continue-on-error: true
-        with:
-          token: ${{ github.token }}
-          tag: dev
-          fail-if-no-assets: false
-          assets: |
-            weed-*
+      - name: Set BUILD_TIME
+        id: build_time
+        run: |
+          echo "value=$(date -u +%Y%m%d-%H%M)" >> "$GITHUB_OUTPUT"
 
   build_dev_linux_windows:
     permissions:
       contents: write  # for wangyoucao577/go-release-action to upload release assets
-    needs: cleanup
+    needs: prepare
     runs-on: ubuntu-latest
+    env:
+      BUILD_TIME: ${{ needs.prepare.outputs.build_time }}
     strategy:
       matrix:
         goos: [linux, windows]
@@ -47,11 +53,12 @@ jobs:
 
     steps:
 
+      - name: Validate BUILD_TIME
+        run: |
+          : "${BUILD_TIME:?prepare output missing}"
+
       - name: Check out code into the Go module directory
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v2
-
-      - name: Set BUILD_TIME env
-        run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> ${GITHUB_ENV}
 
       - name: Go Release Binaries Large Disk
         uses: wangyoucao577/go-release-action@279495102627de7960cbc33434ab01a12bae144b # v1.22
@@ -89,8 +96,10 @@ jobs:
   build_dev_darwin:
     permissions:
       contents: write  # for wangyoucao577/go-release-action to upload release assets
-    needs: build_dev_linux_windows
+    needs: [prepare, build_dev_linux_windows]
     runs-on: ubuntu-latest
+    env:
+      BUILD_TIME: ${{ needs.prepare.outputs.build_time }}
     strategy:
       matrix:
         goos: [darwin]
@@ -98,11 +107,12 @@ jobs:
 
     steps:
 
+      - name: Validate BUILD_TIME
+        run: |
+          : "${BUILD_TIME:?prepare output missing}"
+
       - name: Check out code into the Go module directory
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v2
-
-      - name: Set BUILD_TIME env
-        run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> ${GITHUB_ENV}
 
       - name: Go Release Binaries Large Disk
         uses: wangyoucao577/go-release-action@279495102627de7960cbc33434ab01a12bae144b # v1.22
@@ -136,3 +146,75 @@ jobs:
           project_path: weed
           binary_name: weed-normal-disk
           asset_name: "weed-${{ env.BUILD_TIME }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+
+  prune:
+    needs: [prepare, build_dev_linux_windows, build_dev_darwin]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      BUILD_TIME: ${{ needs.prepare.outputs.build_time }}
+      RELEASE_TAG: dev
+    steps:
+      - name: Delete dev binaries from older builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          : "${BUILD_TIME:?BUILD_TIME is empty}"
+          case "$BUILD_TIME" in
+            [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]) ;;
+            *) echo "Invalid BUILD_TIME: $BUILD_TIME" >&2; exit 1 ;;
+          esac
+
+          release_tag="${RELEASE_TAG:-dev}"
+          if ! release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$release_tag" 2>&1); then
+            case "$release_json" in
+              *"Not Found"*) echo "No $release_tag release; nothing to prune"; exit 0 ;;
+            esac
+            echo "Release lookup failed: $release_json" >&2
+            exit 1
+          fi
+          release_id=$(jq -r '.id // empty' <<<"$release_json")
+          if [ -z "$release_id" ]; then
+            echo "Release lookup returned no id" >&2
+            exit 1
+          fi
+
+          assets_file=$(mktemp)
+          trap 'rm -f "$assets_file"' EXIT
+          if ! gh api "repos/$GITHUB_REPOSITORY/releases/$release_id/assets" --paginate \
+            --jq '.[] | select((.name | startswith("weed-large-disk-")) or (.name | test("^weed-[0-9]"))) | [.id, .name] | @tsv' \
+            > "$assets_file"; then
+            echo "Failed to list release assets" >&2
+            exit 1
+          fi
+
+          total=$(awk 'END{print NR+0}' "$assets_file")
+          matching=$(awk -v s="-$BUILD_TIME-" 'index($0,s){n++} END{print n+0}' "$assets_file")
+          if [ "$matching" -eq 0 ]; then
+            echo "No assets carry stamp $BUILD_TIME; refusing to prune" >&2
+            exit 1
+          fi
+
+          kept=0; deleted=0; gone=0; failed=0
+          while IFS=$'\t' read -r id name || [ -n "${name:-}" ]; do
+            [ -n "${id:-}" ] || continue
+            case "$name" in
+              *"-$BUILD_TIME-"*) kept=$((kept+1)); continue ;;
+            esac
+            if out=$(gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id" </dev/null 2>&1); then
+              deleted=$((deleted+1))
+            else
+              case "$out" in
+                *"Not Found"*) gone=$((gone+1)) ;;
+                *) failed=$((failed+1)); echo "Failed to delete asset $name ($id): $out" >&2 ;;
+              esac
+            fi
+          done < "$assets_file"
+
+          [ "$((kept+deleted+gone+failed))" -eq "$total" ] || { echo "Processed $((kept+deleted+gone+failed)) of $total assets" >&2; exit 1; }
+          echo "Kept $kept assets from this build; deleted $deleted older assets; $gone already gone; $failed failures"
+          [ "$failed" -eq 0 ] || { echo "::warning::prune: $failed deletions failed"; exit 1; }

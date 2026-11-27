@@ -36,6 +36,7 @@ Table of Contents
     * [Docker Compose](#docker-compose)
     * [Kubernetes with Helm](#kubernetes-with-helm)
     * [Build from source](#build-from-source)
+    * [Development builds](#development-builds)
     * [Scale out](#scale-out)
 * [Why SeaweedFS](#why-seaweedfs)
     * [Fast](#fast)
@@ -174,6 +175,15 @@ cd seaweedfs/weed && make install
 ```
 
 `weed` lands in `$GOPATH/bin`. [Getting Started][GettingStarted] covers running master, volume, filer, and S3 as separate processes.
+
+## Development builds ##
+
+Each dev build workflow publishes its latest successful build of `master`:
+
+- **Binaries**: the [`dev` release](https://github.com/seaweedfs/seaweedfs/releases/tag/dev) has Linux amd64, Windows amd64, and macOS amd64/arm64 archives named `weed-<yyyymmdd-HHMM>-<linux|windows|darwin>-<arch>.tar.gz` (`.zip` on Windows) and `weed-large-disk-<yyyymmdd-HHMM>-<linux|windows|darwin>-<arch>`, each with an `.md5` checksum. The Rust volume server is published there too as `weed-volume-*` for Linux amd64 (glibc) and macOS amd64/arm64. The Go archives contain `weed-normal-disk` or `weed-large-disk` (`.exe` on Windows) rather than `weed`, and the Rust archives contain `weed-volume-normal` or `weed-volume-large-disk` rather than `weed-volume`, so rename or symlink the one you want. The `.md5` files are published for the Go archives only.
+- **Containers**: `docker pull chrislusf/seaweedfs:dev` or `ghcr.io/chrislusf/seaweedfs:dev`, built for `linux/amd64` and `linux/arm64`. The [dev compose file](docker/seaweedfs-dev-compose.yml) runs the Docker Hub image as master, volume, filer, S3, WebDAV, and admin.
+
+The timestamp in a binary name is the UTC start time of the run that built it. The Go binaries, the Rust volume server, and the `:dev` image come from three separate path-filtered workflows, so they can carry different timestamps and lag `master` by hours, or much longer when their paths were not touched. The `dev` release is marked pre-release, so it does not appear under [releases/latest](https://github.com/seaweedfs/seaweedfs/releases/latest); these builds come from `master`, can break at any commit, and are not recommended for production.
 
 ## Scale out ##
 

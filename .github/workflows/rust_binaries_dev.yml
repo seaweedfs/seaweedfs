@@ -7,32 +7,43 @@ on:
       - 'seaweed-volume/**'
       - 'seaweed-common/**'
       - '.github/workflows/rust_binaries_dev.yml'
+  workflow_dispatch:
+
+# Serialize dev builds of the shared "dev" release without cancelling a run.
+concurrency:
+  group: rust-binaries-dev-dev
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
 
-  cleanup:
-    permissions:
-      contents: write
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      build_time: ${{ steps.build_time.outputs.value }}
     steps:
-      - name: Delete old Rust volume dev assets
-        uses: mknejp/delete-release-assets@v1
-        continue-on-error: true
-        with:
-          token: ${{ github.token }}
-          tag: dev
-          fail-if-no-assets: false
-          assets: |
-            weed-volume-*
+      - name: Ref guard
+        if: github.ref != 'refs/heads/master'
+        env:
+          GH_REF: ${{ github.ref }}
+        run: |
+          echo "dev builds only publish from master (got $GH_REF)" >&2
+          exit 1
+
+      - name: Set BUILD_TIME
+        id: build_time
+        run: |
+          echo "value=$(date -u +%Y%m%d-%H%M)" >> "$GITHUB_OUTPUT"
 
   build-rust-volume-dev-linux:
     permissions:
       contents: write
-    needs: cleanup
+    needs: prepare
     runs-on: ubuntu-24.04
+    env:
+      BUILD_TIME: ${{ needs.prepare.outputs.build_time }}
     strategy:
       matrix:
         include:
@@ -40,6 +51,11 @@ jobs:
             asset_suffix: linux-amd64
 
     steps:
+
+      - name: Validate BUILD_TIME
+        run: |
+          : "${BUILD_TIME:?prepare output missing}"
+
       - uses: actions/checkout@v7
 
       - name: Install Rust toolchain
@@ -56,9 +72,6 @@ jobs:
           key: rust-dev-${{ matrix.target }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
           restore-keys: |
             rust-dev-${{ matrix.target }}-
-
-      - name: Set BUILD_TIME
-        run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> "$GITHUB_ENV"
 
       - name: Build Rust volume server (large disk)
         env:
@@ -96,8 +109,10 @@ jobs:
   build-rust-volume-dev-darwin:
     permissions:
       contents: write
-    needs: build-rust-volume-dev-linux
+    needs: [prepare, build-rust-volume-dev-linux]
     runs-on: macos-latest
+    env:
+      BUILD_TIME: ${{ needs.prepare.outputs.build_time }}
     strategy:
       matrix:
         include:
@@ -107,6 +122,11 @@ jobs:
             asset_suffix: darwin-amd64
 
     steps:
+
+      - name: Validate BUILD_TIME
+        run: |
+          : "${BUILD_TIME:?prepare output missing}"
+
       - uses: actions/checkout@v7
 
       - name: Install Rust toolchain
@@ -125,9 +145,6 @@ jobs:
           key: rust-dev-${{ matrix.target }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
           restore-keys: |
             rust-dev-${{ matrix.target }}-
-
-      - name: Set BUILD_TIME
-        run: echo BUILD_TIME=$(date -u +%Y%m%d-%H%M) >> "$GITHUB_ENV"
 
       - name: Build Rust volume server (large disk)
         env:
@@ -161,3 +178,75 @@ jobs:
             weed-volume-${{ env.BUILD_TIME }}-${{ matrix.asset_suffix }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  prune:
+    needs: [prepare, build-rust-volume-dev-linux, build-rust-volume-dev-darwin]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      BUILD_TIME: ${{ needs.prepare.outputs.build_time }}
+      RELEASE_TAG: dev
+    steps:
+      - name: Delete Rust dev binaries from older builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          : "${BUILD_TIME:?BUILD_TIME is empty}"
+          case "$BUILD_TIME" in
+            [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]) ;;
+            *) echo "Invalid BUILD_TIME: $BUILD_TIME" >&2; exit 1 ;;
+          esac
+
+          release_tag="${RELEASE_TAG:-dev}"
+          if ! release_json=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$release_tag" 2>&1); then
+            case "$release_json" in
+              *"Not Found"*) echo "No $release_tag release; nothing to prune"; exit 0 ;;
+            esac
+            echo "Release lookup failed: $release_json" >&2
+            exit 1
+          fi
+          release_id=$(jq -r '.id // empty' <<<"$release_json")
+          if [ -z "$release_id" ]; then
+            echo "Release lookup returned no id" >&2
+            exit 1
+          fi
+
+          assets_file=$(mktemp)
+          trap 'rm -f "$assets_file"' EXIT
+          if ! gh api "repos/$GITHUB_REPOSITORY/releases/$release_id/assets" --paginate \
+            --jq '.[] | select(.name | startswith("weed-volume-")) | [.id, .name] | @tsv' \
+            > "$assets_file"; then
+            echo "Failed to list release assets" >&2
+            exit 1
+          fi
+
+          total=$(awk 'END{print NR+0}' "$assets_file")
+          matching=$(awk -v s="-$BUILD_TIME-" 'index($0,s){n++} END{print n+0}' "$assets_file")
+          if [ "$matching" -eq 0 ]; then
+            echo "No assets carry stamp $BUILD_TIME; refusing to prune" >&2
+            exit 1
+          fi
+
+          kept=0; deleted=0; gone=0; failed=0
+          while IFS=$'\t' read -r id name || [ -n "${name:-}" ]; do
+            [ -n "${id:-}" ] || continue
+            case "$name" in
+              *"-$BUILD_TIME-"*) kept=$((kept+1)); continue ;;
+            esac
+            if out=$(gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id" </dev/null 2>&1); then
+              deleted=$((deleted+1))
+            else
+              case "$out" in
+                *"Not Found"*) gone=$((gone+1)) ;;
+                *) failed=$((failed+1)); echo "Failed to delete asset $name ($id): $out" >&2 ;;
+              esac
+            fi
+          done < "$assets_file"
+
+          [ "$((kept+deleted+gone+failed))" -eq "$total" ] || { echo "Processed $((kept+deleted+gone+failed)) of $total assets" >&2; exit 1; }
+          echo "Kept $kept assets from this build; deleted $deleted older assets; $gone already gone; $failed failures"
+          [ "$failed" -eq 0 ] || { echo "::warning::prune: $failed deletions failed"; exit 1; }
