@@ -8,6 +8,10 @@
 //! and [`FipsMode::Strict`] restrict TLS to what Go's `crypto/tls` allows in
 //! FIPS mode (see [`crate::tls`]). This restricts behaviour only: the
 //! cryptography underneath is still the non-validated aws-lc-rs build.
+//!
+//! Each binary reads `fips.mode` with the parser it uses for the rest of
+//! security.toml and hands the value to [`resolve`], so the mode and the JWT
+//! keys are either both read from a file or both missed.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -76,6 +80,9 @@ pub enum FipsModeError {
     Unknown { source: String, value: String },
     /// The process mode was already set to a different mode.
     AlreadySet { set: FipsMode, wanted: FipsMode },
+    /// The security.toml at `path` exists but could not be read or parsed, so
+    /// whether it sets `fips.mode` is unknown.
+    File { path: PathBuf, reason: String },
 }
 
 impl fmt::Display for FipsModeError {
@@ -87,35 +94,16 @@ impl fmt::Display for FipsModeError {
             Self::AlreadySet { set, wanted } => {
                 write!(f, "FIPS mode is already {set}, cannot switch to {wanted}")
             }
+            Self::File { path, reason } => write!(
+                f,
+                "{}: {reason}; cannot tell whether it sets {SETTING}",
+                path.display()
+            ),
         }
     }
 }
 
 impl std::error::Error for FipsModeError {}
-
-/// The `fips.mode` value in security.toml text, `None` when the file does
-/// not set it. Keys match case-insensitively, as viper's do; a non-string
-/// value reads as its TOML text, as viper's `GetString` turns it into one
-/// that then fails [`FipsMode::parse`].
-pub fn setting_in(text: &str) -> Result<Option<String>, String> {
-    let table = text.parse::<toml::Table>().map_err(|e| e.to_string())?;
-    let lookup = |table: &toml::Table, key: &str| {
-        table
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(key))
-            .map(|(_, v)| v.clone())
-    };
-    let Some(section) = lookup(&table, "fips") else {
-        return Ok(None);
-    };
-    let Some(section) = section.as_table() else {
-        return Ok(None);
-    };
-    Ok(lookup(section, "mode").map(|value| match value {
-        toml::Value::String(s) => s,
-        other => other.to_string(),
-    }))
-}
 
 /// A resolved `fips.mode`: the mode, and where it was set (`None` when
 /// nothing set it and the mode is [`FipsMode::Off`]).
@@ -134,23 +122,25 @@ impl fmt::Display for Setting {
     }
 }
 
-/// Resolves the mode for a process that reads `security_toml` (`None` when it
-/// found no file): `WEED_FIPS_MODE` when set and non-empty, else the file's
-/// `fips.mode`, else [`FipsMode::Off`]. An unknown value is an error naming
-/// where it came from. A file that cannot be read or parsed sets nothing, as
-/// viper skips such a file for the Go processes; the binary's own
-/// security.toml loader reports it.
+/// Resolves the mode of a process whose own security.toml loader read
+/// `file_value` for `fips.mode` from `file` (`None` when there is no file or
+/// it does not set the key): `WEED_FIPS_MODE` when set and non-empty, else
+/// `file_value`, else [`FipsMode::Off`]. An unknown value is an error naming
+/// where it came from.
 pub fn resolve(
-    security_toml: Option<&Path>,
+    file: Option<&Path>,
+    file_value: Option<&str>,
     env: &dyn Fn(&str) -> Option<OsString>,
 ) -> Result<Setting, FipsModeError> {
     let from_env = env(ENV)
         .map(|v| v.to_string_lossy().into_owned())
         .filter(|v| !v.is_empty());
     let from_file = || {
-        let path = security_toml?;
-        let value = setting_in(&std::fs::read_to_string(path).ok()?).ok()??;
-        Some((format!("{}: {SETTING}", path.display()), value))
+        let source = match file {
+            Some(path) => format!("{}: {SETTING}", path.display()),
+            None => SETTING.to_string(),
+        };
+        file_value.map(|value| (source, value.to_string()))
     };
     let Some((source, value)) = from_env.map(|v| (ENV.to_string(), v)).or_else(from_file) else {
         return Ok(Setting {
@@ -169,15 +159,6 @@ pub fn resolve(
         }),
         Err(_) => Err(FipsModeError::Unknown { source, value }),
     }
-}
-
-/// The security.toml a process finds where weed looks, for binaries that do
-/// not otherwise read the file.
-pub fn find_security_toml(env: &dyn Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
-    crate::security_config::find(
-        std::env::current_dir().ok().as_deref(),
-        crate::security_config::home_dir(env).as_deref(),
-    )
 }
 
 static PROCESS_MODE: OnceLock<FipsMode> = OnceLock::new();
@@ -211,12 +192,7 @@ mod tests {
         }
     }
 
-    fn file(text: &str) -> (tempfile::TempDir, PathBuf) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("security.toml");
-        std::fs::write(&path, text).unwrap();
-        (dir, path)
-    }
+    const FILE_PATH: &str = "/etc/seaweedfs/security.toml";
 
     #[test]
     fn parse_knows_three_modes_and_empty() {
@@ -234,74 +210,71 @@ mod tests {
             mode: FipsMode::Off,
             source: None,
         };
-        assert_eq!(resolve(None, &env_of(&[])), Ok(off.clone()));
-        let (_dir, path) = file("[grpc]\nca = \"\"\n");
-        assert_eq!(resolve(Some(&path), &env_of(&[])), Ok(off.clone()));
-        let (_dir, path) = file("[fips]\nmode = \"\"\n");
-        assert_eq!(resolve(Some(&path), &env_of(&[])), Ok(off.clone()));
+        assert_eq!(resolve(None, None, &env_of(&[])), Ok(off.clone()));
+        assert_eq!(
+            resolve(Some(Path::new(FILE_PATH)), None, &env_of(&[])),
+            Ok(off.clone())
+        );
+        assert_eq!(
+            resolve(Some(Path::new(FILE_PATH)), Some(""), &env_of(&[])),
+            Ok(off.clone())
+        );
         assert_eq!(off.to_string(), "FIPS mode off (fips.mode unset)");
     }
 
     #[test]
     fn the_file_sets_the_mode() {
-        let (_dir, path) = file("[fips]\nmode = \"strict\"\n");
-        let setting = resolve(Some(&path), &env_of(&[])).unwrap();
+        let setting = resolve(Some(Path::new(FILE_PATH)), Some("strict"), &env_of(&[])).unwrap();
         assert_eq!(setting.mode, FipsMode::Strict);
         assert_eq!(
             setting.to_string(),
-            format!("FIPS mode strict ({}: fips.mode)", path.display())
-        );
-        let (_dir, path) = file("[FIPS]\nMode = 'on' # comment\n");
-        assert_eq!(
-            resolve(Some(&path), &env_of(&[])).unwrap().mode,
-            FipsMode::On
+            "FIPS mode strict (/etc/seaweedfs/security.toml: fips.mode)"
         );
     }
 
     #[test]
     fn the_environment_wins_over_the_file() {
-        let (_dir, path) = file("[fips]\nmode = \"off\"\n");
         let env = env_of(&[("WEED_FIPS_MODE", "on")]);
-        let setting = resolve(Some(&path), &env).unwrap();
+        let setting = resolve(Some(Path::new(FILE_PATH)), Some("off"), &env).unwrap();
         assert_eq!(setting.mode, FipsMode::On);
         assert_eq!(setting.to_string(), "FIPS mode on (WEED_FIPS_MODE)");
-        assert_eq!(resolve(None, &env).unwrap().mode, FipsMode::On);
+        assert_eq!(resolve(None, None, &env).unwrap().mode, FipsMode::On);
+        assert_eq!(
+            resolve(Some(Path::new(FILE_PATH)), Some("[\"strict\"]"), &env)
+                .unwrap()
+                .mode,
+            FipsMode::On
+        );
     }
 
     #[test]
     fn an_empty_environment_variable_counts_as_unset() {
-        let (_dir, path) = file("[fips]\nmode = \"on\"\n");
         let env = env_of(&[("WEED_FIPS_MODE", "")]);
-        assert_eq!(resolve(Some(&path), &env).unwrap().mode, FipsMode::On);
+        assert_eq!(
+            resolve(Some(Path::new(FILE_PATH)), Some("on"), &env)
+                .unwrap()
+                .mode,
+            FipsMode::On
+        );
     }
 
     #[test]
     fn an_unknown_value_is_refused_naming_its_source() {
-        let err = resolve(None, &env_of(&[("WEED_FIPS_MODE", "yes")])).unwrap_err();
+        let err = resolve(None, None, &env_of(&[("WEED_FIPS_MODE", "yes")])).unwrap_err();
         assert_eq!(
             err.to_string(),
             "WEED_FIPS_MODE is \"yes\"; want off, on or strict"
         );
-        let (_dir, path) = file("[fips]\nmode = true\n");
-        let err = resolve(Some(&path), &env_of(&[])).unwrap_err();
+        let err = resolve(
+            Some(Path::new(FILE_PATH)),
+            Some("[\"strict\"]"),
+            &env_of(&[]),
+        )
+        .unwrap_err();
         assert_eq!(
             err.to_string(),
-            format!(
-                "{}: fips.mode is \"true\"; want off, on or strict",
-                path.display()
-            )
+            "/etc/seaweedfs/security.toml: fips.mode is \"[\\\"strict\\\"]\"; want off, on or strict"
         );
-    }
-
-    #[test]
-    fn a_file_that_does_not_parse_sets_nothing() {
-        let (_dir, path) = file("[fips\nmode = \"on\"\n");
-        assert_eq!(
-            resolve(Some(&path), &env_of(&[])).unwrap().mode,
-            FipsMode::Off
-        );
-        let env = env_of(&[("WEED_FIPS_MODE", "strict")]);
-        assert_eq!(resolve(Some(&path), &env).unwrap().mode, FipsMode::Strict);
     }
 
     #[test]

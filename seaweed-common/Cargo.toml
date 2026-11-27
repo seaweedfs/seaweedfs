@@ -25,10 +25,3 @@ needless_update = "allow"
 # trees (the volume server directly, seaweed-worker-core through tonic's
 # `tls-aws-lc`), so this adds no crate to either graph.
 rustls = "0.23"
-# `fips.mode` is read from security.toml. The same requirement as both
-# consumers and seaweed-vector (all locked at 0.8.23), so it adds no crate to
-# any of their graphs.
-toml = "0.8"
-
-[dev-dependencies]
-tempfile = "3"

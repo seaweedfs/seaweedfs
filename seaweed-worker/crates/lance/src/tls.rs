@@ -8,13 +8,20 @@
 pub use seaweed_common::tls::{crypto_provider, install_default_crypto_provider, require_ems};
 
 /// Resolves the FIPS mode of a process that reads `security`
-/// (`WEED_FIPS_MODE`, else its `fips.mode`), installs the matching rustls
-/// provider as the process default and logs the mode. Call it once at
-/// startup, before anything configures TLS.
+/// (`WEED_FIPS_MODE`, else its `fips.mode`, read from the same parsed file
+/// as the JWT keys), installs the matching rustls provider as the process
+/// default and logs the mode. Call it once at startup, before anything
+/// configures TLS.
 pub fn install_for_fips_mode(
     security: &crate::security::Security,
 ) -> anyhow::Result<seaweed_common::fips::FipsMode> {
-    let setting = seaweed_common::fips::resolve(security.path(), &|key| std::env::var_os(key))?;
+    let setting = seaweed_common::fips::resolve(
+        security.path(),
+        security
+            .file_setting(seaweed_common::fips::SETTING)
+            .as_deref(),
+        &|key| std::env::var_os(key),
+    )?;
     seaweed_common::tls::install_process_provider(setting.mode)?;
     if setting.mode.is_fips() {
         tracing::info!(
