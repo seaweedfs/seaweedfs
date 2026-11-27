@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
@@ -229,5 +230,72 @@ func TestVolumeFsckPurgesOnlyForChunksWithinAManifestSpan(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "99,300000001 /short volume not found\n") {
 		t.Fatalf("missing-volume report %q lacks the chunk past /short's span", output.String())
+	}
+}
+
+func TestVolumeFsckListedVolumePurgesOnlyForChunksWithinAManifestSpan(t *testing.T) {
+	chunk := func(fileKey uint64, offset int64) *filer_pb.FileChunk {
+		return &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: fileKey, Cookie: 1}, Offset: offset, Size: 100}
+	}
+	manifest := func(fileKey uint64, size uint64) *filer_pb.FileChunk {
+		return &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: fileKey, Cookie: 1}, Size: size, IsChunkManifest: true}
+	}
+	shortened, whole, both := manifest(1, 100), manifest(4, 200), manifest(7, 100)
+	stub := &stubFilerServer{
+		entries: map[string]*filer_pb.Entry{
+			"/":      {IsDirectory: true},
+			"/short": {Chunks: []*filer_pb.FileChunk{shortened}},
+			"/lost":  {Chunks: []*filer_pb.FileChunk{whole}},
+			"/both":  {Chunks: []*filer_pb.FileChunk{both}},
+		},
+		volumeUrls: map[string]string{"7": startStubManifestVolume(t, map[*filer_pb.FileChunk][]*filer_pb.FileChunk{
+			shortened: {chunk(2, 0), chunk(3, 100)},
+			whole:     {chunk(5, 0), chunk(6, 100)},
+			both:      {chunk(8, 0), chunk(9, 100)},
+		})},
+	}
+	tempDir := t.TempDir()
+	verbose := false
+	findMissing := true
+	var output bytes.Buffer
+	c := &commandVolumeFsck{
+		tempFolder:               tempDir,
+		verbose:                  &verbose,
+		findMissingChunksInFiler: &findMissing,
+		writer:                   &output,
+		env:                      startStubFiler(t, stub),
+		volumeIds:                map[uint32]bool{},
+		knownVolumeIds:           map[uint32]bool{7: true},
+	}
+	var purged []purgeItem
+	queuePurge := func(item purgeItem) { purged = append(purged, item) }
+	if err := c.collectFilerFileIdAndPaths(map[string]map[uint32]VInfo{"dn1": {7: {}}}, false, queuePurge, 0, 0); err != nil {
+		t.Fatalf("collect filer references: %v", err)
+	}
+	// The index lacks 3, past /short's span, 5, within /lost's, and both
+	// 9, past /both's span, and /both's manifest 7, listed after it.
+	db := needle_map.NewMemDb()
+	for _, needleId := range []types.NeedleId{1, 2, 4, 6, 8} {
+		if err := db.Set(needleId, types.ToOffset(16), types.Size(1)); err != nil {
+			t.Fatalf("seed volume idx: %v", err)
+		}
+	}
+	if err := db.SaveToIdx(getVolumeFileIdFile(tempDir, "dn1", 7)); err != nil {
+		t.Fatalf("write volume idx: %v", err)
+	}
+	db.Close()
+
+	if err := c.oneVolumeFileIdsCheckOneVolume("dn1", 7, queuePurge); err != nil {
+		t.Fatalf("check volume: %v", err)
+	}
+	purgedPaths := make(map[util.FullPath]bool)
+	for _, item := range purged {
+		purgedPaths[item.path] = true
+	}
+	if len(purged) != 2 || !purgedPaths["/lost"] || !purgedPaths["/both"] {
+		t.Fatalf("purged paths = %v, want /lost and /both, whose visible chunks are missing", purged)
+	}
+	if !strings.Contains(output.String(), "/short\n") {
+		t.Fatalf("missing-chunk report %q lacks /short", output.String())
 	}
 }

@@ -69,6 +69,7 @@ type commandVolumeFsck struct {
 	verifyNeedle              *bool
 	filerSigningKey           string
 	unresolvedManifestEntries atomic.Int64
+	pastSpanChunks            sync.Map // pastSpanChunk -> struct{}
 	purgedDirsLock            sync.Mutex
 	purgedDirs                map[util.FullPath]struct{}
 }
@@ -150,6 +151,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	// unresolved-manifest counter so a previous failed run can't permanently
 	// suppress -reallyDeleteFromVolume in this session.
 	c.unresolvedManifestEntries.Store(0)
+	c.pastSpanChunks.Clear()
 	c.purgedDirs = make(map[util.FullPath]struct{})
 
 	if err = commandEnv.confirmIsLocked(args); err != nil {
@@ -388,7 +390,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 			// read, so they neither trigger nor claim the purge. If the cut view
 			// cannot be resolved, every resolved chunk counts as past the span.
 			var pastSpan map[string]bool
-			if purgeAbsent && len(manifestChunks) > 0 {
+			if queuePurge != nil && len(manifestChunks) > 0 {
 				visibleData, visibleManifests, visibleErr := filer.ResolveChunkManifest(ctx, lookupFn, entry.Entry.GetChunks(), 0, math.MaxInt64, nil, true)
 				if errors.Is(visibleErr, context.Canceled) || errors.Is(visibleErr, context.DeadlineExceeded) {
 					return visibleErr
@@ -423,11 +425,15 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 				if len(c.volumeIds) > 0 {
 					_, selectedVolume = c.volumeIds[chunk.Fid.VolumeId]
 				}
+				chunkPastSpan := pastSpan[chunk.GetFileIdString()]
+				if chunkPastSpan {
+					c.pastSpanChunks.Store(pastSpanChunk{path: util.NewFullPath(entry.Dir, entry.Entry.Name), volumeId: chunk.Fid.VolumeId, needleId: types.NeedleId(chunk.Fid.FileKey)}, struct{}{})
+				}
 				purgePath := purgeAbsent &&
 					selectedVolume &&
 					!c.knownVolumeIds[chunk.Fid.VolumeId] &&
 					!purgePathQueued && c.collectionMatcher == nil &&
-					!pastSpan[chunk.GetFileIdString()]
+					!chunkPastSpan
 				if purgePath {
 					purgePathQueued = true
 				}
@@ -783,17 +789,21 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 	if err = db.LoadFromIdx(getVolumeFileIdFile(c.tempFolder, dataNodeId, volumeId)); err != nil {
 		return
 	}
-	seenPaths := make(map[util.FullPath]struct{})
+	// path -> whether its purge is queued
+	seenPaths := make(map[util.FullPath]bool)
 	if err = c.readFilerFileIdFile(volumeId, func(needleId types.NeedleId, itemPath util.FullPath, hardLinkId []byte) {
-		if _, found := db.Get(needleId); !found {
-			if _, seen := seenPaths[itemPath]; seen {
-				return
-			}
-			seenPaths[itemPath] = struct{}{}
+		if _, found := db.Get(needleId); found {
+			return
+		}
+		queued, seen := seenPaths[itemPath]
+		if !seen {
 			fmt.Fprintf(c.writer, "%s\n", itemPath)
-			if queuePurge != nil {
-				queuePurge(purgeItem{path: itemPath, hardLinkId: hardLinkId})
-			}
+		}
+		_, pastSpan := c.pastSpanChunks.Load(pastSpanChunk{path: itemPath, volumeId: volumeId, needleId: needleId})
+		purge := !queued && queuePurge != nil && !pastSpan
+		seenPaths[itemPath] = queued || purge
+		if purge {
+			queuePurge(purgeItem{path: itemPath, hardLinkId: hardLinkId})
 		}
 	}); err != nil {
 		return
@@ -804,6 +814,12 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 type purgeItem struct {
 	path       util.FullPath
 	hardLinkId []byte
+}
+
+type pastSpanChunk struct {
+	path     util.FullPath
+	volumeId uint32
+	needleId types.NeedleId
 }
 
 const (
