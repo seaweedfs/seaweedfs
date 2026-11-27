@@ -176,6 +176,11 @@ func (mm *MaintenanceManager) IsRunning() bool {
 	return mm.running
 }
 
+// IsTaskTypeEnabled reports whether the running manager queues tasks of taskType.
+func (mm *MaintenanceManager) IsTaskTypeEnabled(taskType MaintenanceTaskType) bool {
+	return mm.IsRunning() && IsTaskEnabled(mm.scanner.policy, taskType)
+}
+
 // Stop terminates the maintenance manager. It is a no-op when the manager is not
 // running, so a second call cannot close the already closed stop channel.
 func (mm *MaintenanceManager) Stop() {
