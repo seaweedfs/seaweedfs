@@ -19,19 +19,7 @@ import (
 // to delete the default (empty-named) collection.
 func TestCollectionDeleteHandlerRequiresCollection(t *testing.T) {
 	ms := newLeaderMaster()
-	rp, err := super_block.NewReplicaPlacementFromString("000")
-	require.NoError(t, err)
-	dn := ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
-		GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"": 10})
-	v := storage.VolumeInfo{
-		Id:               needle.VolumeId(1),
-		Collection:       "",
-		ReplicaPlacement: rp,
-		Ttl:              needle.EMPTY_TTL,
-		Version:          needle.GetCurrentVersion(),
-	}
-	dn.AddOrUpdateVolume(v)
-	ms.Topo.RegisterVolumeLayout(v, dn)
+	addCollectionVolume(t, ms, 1, "")
 	_, ok := ms.Topo.FindCollection("")
 	require.True(t, ok, "test setup: the default collection should exist")
 
@@ -60,22 +48,49 @@ func TestCollectionDeleteHandlerRequiresCollection(t *testing.T) {
 
 func TestCollectionToDelete(t *testing.T) {
 	cases := []struct {
-		query   string
-		want    string
-		wantErr bool
+		name        string
+		collections []string
+		query       string
+		want        string
+		wantErr     bool
 	}{
-		{query: "", wantErr: true},
-		{query: "collection=", wantErr: true},
-		{query: "collection=_default", want: ""},
-		{query: "collection=photos", want: "photos"},
+		{name: "missing", collections: []string{""}, query: "", wantErr: true},
+		{name: "empty", collections: []string{""}, query: "collection=", wantErr: true},
+		{name: "default keyword", collections: []string{""}, query: "collection=_default", want: ""},
+		{name: "named", collections: []string{"", "photos"}, query: "collection=photos", want: "photos"},
+		{name: "literal keyword name", collections: []string{"_default"}, query: "collection=_default", want: "_default"},
+		{name: "literal keyword name and default", collections: []string{"", "_default"}, query: "collection=_default", wantErr: true},
 	}
 	for _, c := range cases {
-		got, err := collectionToDelete(httptest.NewRequest(http.MethodGet, "/col/delete?"+c.query, nil))
-		if c.wantErr {
-			assert.Error(t, err, c.query)
-			continue
-		}
-		require.NoError(t, err, c.query)
-		assert.Equal(t, c.want, got, c.query)
+		t.Run(c.name, func(t *testing.T) {
+			ms := newLeaderMaster()
+			for i, collection := range c.collections {
+				addCollectionVolume(t, ms, needle.VolumeId(i+1), collection)
+			}
+			got, err := ms.collectionToDelete(httptest.NewRequest(http.MethodGet, "/col/delete?"+c.query, nil))
+			if c.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, c.want, got)
+		})
 	}
+}
+
+func addCollectionVolume(t *testing.T, ms *MasterServer, id needle.VolumeId, collection string) {
+	t.Helper()
+	rp, err := super_block.NewReplicaPlacementFromString("000")
+	require.NoError(t, err)
+	dn := ms.Topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", 8080, 18080, "127.0.0.1", "dn1", map[string]uint32{"": 10})
+	v := storage.VolumeInfo{
+		Id:               id,
+		Collection:       collection,
+		ReplicaPlacement: rp,
+		Ttl:              needle.EMPTY_TTL,
+		Version:          needle.GetCurrentVersion(),
+	}
+	dn.AddOrUpdateVolume(v)
+	ms.Topo.RegisterVolumeLayout(v, dn)
 }

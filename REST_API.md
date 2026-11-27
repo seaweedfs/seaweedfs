@@ -287,7 +287,9 @@ Deletes all volumes of the collection, including erasure-coded shards.
 The `collection` parameter is required: a request without it, or with an
 empty value, gets `400 Bad Request`. To delete the default (empty-named)
 collection, name it explicitly with `collection=_default`, the same keyword
-`weed shell` uses.
+`weed shell` uses. If a collection is literally named `_default`, that name
+deletes it, and when it exists next to the default collection the request
+gets `400 Bad Request`.
 
 ### Health
 

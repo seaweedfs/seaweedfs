@@ -23,7 +23,7 @@ import (
 )
 
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	collectionName, err := collectionToDelete(r)
+	collectionName, err := ms.collectionToDelete(r)
 	if err != nil {
 		writeJsonError(w, r, http.StatusBadRequest, err)
 		return
@@ -49,12 +49,20 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 // default collection is the empty-named one, and an absent or empty parameter
 // also reads as "", so a bare /col/delete would delete the default collection.
 // Require it to be named explicitly, with the keyword weed shell uses for it.
-func collectionToDelete(r *http.Request) (string, error) {
+// A collection literally named that keyword keeps its name, and when both
+// exist the request is refused rather than guessing which one to delete.
+func (ms *MasterServer) collectionToDelete(r *http.Request) (string, error) {
 	switch name := r.FormValue("collection"); name {
 	case "":
 		return "", fmt.Errorf("collection parameter is required; use collection=%s to delete the default (empty-named) collection", wildcard.CollectionDefault)
 	case wildcard.CollectionDefault:
-		return "", nil
+		if _, literal := ms.Topo.FindCollection(name); !literal {
+			return "", nil
+		}
+		if _, hasDefault := ms.Topo.FindCollection(""); hasDefault {
+			return "", fmt.Errorf("collection=%s is ambiguous: both a collection named %s and the default (empty-named) collection exist", name, name)
+		}
+		return name, nil
 	default:
 		return name, nil
 	}
