@@ -295,18 +295,25 @@ func (m *Manager) live(key string) *Set {
 		return nil
 	}
 	now := m.now()
-	var expired []Session
+	// Each expired session is released once, however many ranges it holds.
+	var expired map[Session]struct{}
 	for _, l := range s.locks {
 		ss := l.Session()
 		if ss.Principal == "" {
 			continue
 		}
+		if _, seen := expired[ss]; seen {
+			continue
+		}
 		if deadline, ok := m.leases[ss][key]; ok && now.Before(deadline) {
 			continue
 		}
-		expired = append(expired, ss)
+		if expired == nil {
+			expired = make(map[Session]struct{})
+		}
+		expired[ss] = struct{}{}
 	}
-	for _, ss := range expired {
+	for ss := range expired {
 		s.ReleaseSession(ss)
 		m.deindex(ss, key)
 	}

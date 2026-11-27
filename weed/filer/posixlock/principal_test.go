@@ -167,3 +167,34 @@ func TestManagerReapExpiredDropsScopedLeasesAndKeepsUnleasedUnscopedLocks(t *tes
 		t.Fatal("the unscoped session's index must survive")
 	}
 }
+
+func TestManagerExpiredScopedSessionWithManyRangesIsDroppedWhole(t *testing.T) {
+	m, clock, start := newScopedTestManager()
+	lease := Lease{TTL: 15 * time.Second, NotAfter: start.Add(time.Hour)}
+	keep := Range{Start: 0, End: 9, Type: Read, Sid: 2, Owner: 2, Principal: "b"}
+	if _, granted := m.TryLock("k", keep, lease); !granted {
+		t.Fatal("unexpired holder should be granted")
+	}
+	// Disjoint ranges that never coalesce, interleaved with another session's.
+	for i := uint64(1); i <= 50; i++ {
+		lk := Range{Start: i * 100, End: i*100 + 9, Type: Write, Sid: 1, Owner: 1, Principal: "a"}
+		if _, granted := m.TryLock("k", lk, lease); !granted {
+			t.Fatalf("range %d should be granted", i)
+		}
+	}
+	clock.Set(start.Add(10 * time.Second))
+	m.Renew("k", keep.Session(), lease)
+	clock.Set(start.Add(16 * time.Second))
+
+	other := Range{Start: 100, End: 5009, Type: Write, Sid: 3, Owner: 3, Principal: "c"}
+	if c, granted := m.TryLock("k", other, lease); !granted {
+		t.Fatalf("expired session's ranges should be gone, conflict %+v", c)
+	}
+	expired := Session{Principal: "a", Sid: 1}
+	if _, indexed := m.bySession[expired]; indexed {
+		t.Fatal("expired session is still indexed")
+	}
+	if got := m.Snapshot()["k"]; len(got) != 2 || got[0] != keep {
+		t.Fatalf("unexpired holder or new grant missing: %+v", got)
+	}
+}
