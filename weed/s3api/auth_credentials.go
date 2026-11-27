@@ -88,6 +88,11 @@ type IdentityAccessManagement struct {
 	// evaluate that mirror. Set by NewS3ApiServer; nil in tests.
 	primeBucketForIAM func(bucket string) s3err.ErrorCode
 
+	// objectEntryForPolicy returns the extended attributes of the object a
+	// request names, for bucket policy conditions on its existing tags. Set by
+	// NewS3ApiServer; nil in tests.
+	objectEntryForPolicy func(r *http.Request, bucket, object string) (map[string][]byte, bool)
+
 	// Cached policy engine for IAM policy fallback evaluation.
 	// Keyed by policy name, kept in sync by PutPolicy/DeletePolicy.
 	iamPolicyEngine *policy_engine.PolicyEngine
@@ -2130,7 +2135,11 @@ func (iam *IdentityAccessManagement) authorizeRequest(r *http.Request, identity 
 			if isBucketListingRequest(r, action) {
 				policyObject = ""
 			}
-			allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, policyObject, string(action), principal, r, claims, nil)
+			if iam.primeBucketForIAM != nil && policyObject != "" && policyObject != "/" {
+				iam.primeBucketForIAM(bucket)
+			}
+			policyReq, allowed, evaluated, err := iam.evaluateBucketPolicy(bucket, policyObject, string(action), principal, r, claims)
+			r = policyReq
 
 			if err != nil {
 				// SECURITY: Fail-close on policy evaluation errors
@@ -3215,6 +3224,30 @@ func objectKeyPolicyRequest(r *http.Request, method, bucket, objectKey, versionI
 	return keyReq
 }
 
+// evaluateBucketPolicy evaluates the bucket policy before the handler reads
+// the object. Read that early, a negated condition on s3:ExistingObjectTag
+// sees no tag and would deny an object whose tag satisfies it, so a Deny is
+// decided again on the tags the object has. The returned request carries
+// those tags to the identity checks, which evaluate the mirrored bucket
+// policy again.
+func (iam *IdentityAccessManagement) evaluateBucketPolicy(bucket, object, action, principal string, r *http.Request, claims map[string]interface{}) (policyReq *http.Request, allowed, evaluated bool, err error) {
+	allowed, evaluated, err = iam.policyEngine.EvaluatePolicy(bucket, object, action, principal, r, claims, nil)
+	if err != nil || !evaluated || allowed || object == "" || object == "/" ||
+		iam.objectEntryForPolicy == nil || !iam.policyEngine.HasExistingObjectTagDeny(bucket) {
+		return r, allowed, evaluated, err
+	}
+	extended, found := servedObjectEntry(r, bucket, object)
+	if !found {
+		extended, found = iam.objectEntryForPolicy(r, bucket, object)
+	}
+	if !found {
+		return r, allowed, evaluated, err
+	}
+	r = r.WithContext(policy_engine.WithExistingObjectTags(r.Context(), extended))
+	allowed, evaluated, err = iam.policyEngine.EvaluatePolicy(bucket, object, action, principal, r, claims, extended)
+	return r, allowed, evaluated, err
+}
+
 func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, identity *Identity, method string, action Action, bucket, objectKey, versionId string) s3err.ErrorCode {
 	if identity == nil {
 		return s3err.ErrAccessDenied
@@ -3232,7 +3265,8 @@ func (iam *IdentityAccessManagement) authorizeObjectKeyAction(r *http.Request, i
 			}
 		}
 		principal := buildPrincipalARN(identity, keyReq)
-		allowed, evaluated, err := iam.policyEngine.EvaluatePolicy(bucket, objectKey, string(action), principal, keyReq, identity.Claims, nil)
+		policyReq, allowed, evaluated, err := iam.evaluateBucketPolicy(bucket, objectKey, string(action), principal, keyReq, identity.Claims)
+		keyReq = policyReq
 		if err != nil {
 			glog.Errorf("policy evaluation failed for %s %s/%s: %v - denying", action, bucket, objectKey, err)
 			return s3err.ErrAccessDenied
