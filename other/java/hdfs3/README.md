@@ -158,7 +158,9 @@ when it has the filer's `jwt.filer_signing` key (writes) or
 credentials. These credentials are sent only to the filer, never to volume servers. gRPC mTLS
 comes from the `[grpc]` section as before, but it does not cover these HTTP chunk requests:
 to keep the credentials off plain HTTP, serve the filer HTTP port over HTTPS (`[https.filer]`
-on the filer) and enable `[https.client]` here.
+on the filer) and enable `[https.client]` here. The client checks the certificate chain but
+not the host name, so set `https.client.ca` to a CA that issues certificates only for your
+SeaweedFS servers.
 
 `security.toml` (read from `./`, `~/.seaweedfs/` or `/etc/seaweedfs/`), using the filer's
 own values:
