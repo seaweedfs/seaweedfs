@@ -155,8 +155,10 @@ With `fs.seaweed.volume.server.access` set to `filerProxy`, chunk reads and writ
 filer's HTTP port, so they need the filer's HTTP credentials. The client signs a filer JWT
 when it has the filer's `jwt.filer_signing` key (writes) or
 `jwt.filer_signing.read` key (reads), and otherwise sends the `[filer.basic_auth]`
-credentials. These credentials are sent only to the filer, never to volume servers. gRPC mTLS
-comes from the `[grpc]` section as before, but it does not cover these HTTP chunk requests:
+credentials. These credentials are sent only to the filer, never to volume servers. In `direct`
+and `publicUrl` modes chunk requests go straight to volume servers, so the filer's HTTP
+credentials are not used; writes carry the volume token from the volume assignment as before.
+gRPC mTLS comes from the `[grpc]` section as before, but it does not cover these HTTP chunk requests:
 to keep the credentials off plain HTTP, serve the filer HTTP port over HTTPS (`[https.filer]`
 on the filer) and enable `[https.client]` here. The client checks the certificate chain but
 not the host name, so set `https.client.ca` to a CA that issues certificates only for your
