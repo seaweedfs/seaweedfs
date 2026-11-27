@@ -153,8 +153,16 @@ func TestMaintenanceManager_IsTaskTypeEnabled(t *testing.T) {
 	manager.mutex.Lock()
 	manager.running = true
 	manager.mutex.Unlock()
+	if manager.IsTaskTypeEnabled("ec_balance") {
+		t.Fatal("no registered worker can run ec_balance")
+	}
+	manager.queue.workers["w1"] = &MaintenanceWorker{ID: "w1", Status: "active", Capabilities: []MaintenanceTaskType{"vacuum"}}
+	if manager.IsTaskTypeEnabled("ec_balance") {
+		t.Fatal("the only worker cannot run ec_balance")
+	}
+	manager.queue.workers["w2"] = &MaintenanceWorker{ID: "w2", Status: "busy", Capabilities: []MaintenanceTaskType{"ec_balance"}}
 	if !manager.IsTaskTypeEnabled("ec_balance") {
-		t.Fatal("ec_balance is enabled in the policy")
+		t.Fatal("ec_balance is enabled and a worker can run it")
 	}
 	if manager.IsTaskTypeEnabled("vacuum") || manager.IsTaskTypeEnabled("balance") {
 		t.Fatal("disabled and missing task types are not enabled")

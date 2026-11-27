@@ -925,6 +925,22 @@ func (mq *MaintenanceQueue) GetWorkers() []*MaintenanceWorker {
 	return workers
 }
 
+func (mq *MaintenanceQueue) hasWorkerFor(taskType MaintenanceTaskType) bool {
+	mq.mutex.RLock()
+	defer mq.mutex.RUnlock()
+	for _, worker := range mq.workers {
+		if worker.Status != "active" && worker.Status != "busy" {
+			continue
+		}
+		for _, capability := range worker.Capabilities {
+			if capability == taskType {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // GetWorkerSlots returns used/max task slots per worker ID, snapshotted under
 // the lock so callers don't read live worker fields that task updates mutate.
 // Keyed by ID so callers can merge this registry with the plugin worker
