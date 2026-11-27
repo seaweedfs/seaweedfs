@@ -9,6 +9,7 @@ import (
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer/posixlock"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 func TestPosixLockTypeMapping(t *testing.T) {
@@ -92,5 +93,25 @@ func TestPosixLockHint(t *testing.T) {
 	h.drop(1, 3)
 	if _, ok := h.m[1]; ok {
 		t.Fatal("inode entry should be removed when its last owner drops")
+	}
+}
+
+func TestNotePosixLockLossWarnsOncePerLoss(t *testing.T) {
+	wfs := &WFS{}
+	lost := &filer_pb.PosixLockRange{Start: 0, End: 99, Pid: 7}
+	if !wfs.notePosixLockLoss("k", lost) {
+		t.Fatal("first loss on a key should warn")
+	}
+	if wfs.notePosixLockLoss("k", lost) {
+		t.Fatal("a loss already reported should not warn again on every keepalive")
+	}
+	if !wfs.notePosixLockLoss("other", lost) {
+		t.Fatal("a loss on another key should warn")
+	}
+	if wfs.notePosixLockLoss("k", nil) {
+		t.Fatal("a successful re-assertion should not warn")
+	}
+	if !wfs.notePosixLockLoss("k", lost) {
+		t.Fatal("a new loss after a successful re-assertion should warn again")
 	}
 }

@@ -151,7 +151,8 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 	case filer_pb.PosixLockOp_KEEP_ALIVE:
 		// A re-assertion carries the mount's held locks on this key so the owner
 		// can rebuild its in-memory state after an ownership change or restart; a
-		// bare keepalive just renews the lease.
+		// bare keepalive just renews the lease. A lock another session now holds
+		// is reported back as a conflict, so the mount learns it lost it.
 		if len(req.Locks) > 0 {
 			held := make([]posixlock.Range, 0, len(req.Locks))
 			for _, l := range req.Locks {
@@ -159,6 +160,8 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 			}
 			if conflicts := fs.posixLocks.Reassert(req.Key, session, held, lease); len(conflicts) > 0 {
 				glog.Warningf("posix reassert %s sid %d: %d lock(s) lost to another session", req.Key, lk.Sid, len(conflicts))
+				resp.HasConflict = true
+				resp.Conflict = posixRangeToPb(conflicts[0])
 			}
 		} else {
 			fs.posixLocks.Renew(req.Key, session, lease)

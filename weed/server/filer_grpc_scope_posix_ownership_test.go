@@ -312,6 +312,26 @@ func TestScopedPosixLockTokenWithNewIdCannotAdoptPreviousLocks(t *testing.T) {
 	}
 }
 
+func TestScopedPosixLockReassertionReportsALostLock(t *testing.T) {
+	h := newPosixOwnershipHarness(t, 0)
+	holder := h.client(scopedToken("holder", time.Hour, []string{"/locks"}, nil))
+	h.must(holder, posixOwnershipKey, filer_pb.PosixLockOp_TRY_LOCK, pbLock(0, 99, posixlock.Write, 1, 2, 7, false))
+	if resp := h.must(holder, posixOwnershipKey, filer_pb.PosixLockOp_KEEP_ALIVE, &filer_pb.PosixLockRange{Sid: 1}, pbLock(0, 99, posixlock.Write, 1, 2, 7, false)); resp.HasConflict {
+		t.Fatalf("the holder's own re-assertion reported a loss: %+v", resp.Conflict)
+	}
+
+	// The holder's lease lapses and another token takes the range.
+	h.at(16 * time.Second)
+	other := h.client(scopedToken("other", time.Hour, []string{"/locks"}, nil))
+	if !h.must(other, posixOwnershipKey, filer_pb.PosixLockOp_TRY_LOCK, pbLock(0, 49, posixlock.Write, 3, 4, 9, false)).Granted {
+		t.Fatal("the lapsed range should be grantable")
+	}
+	resp := h.must(holder, posixOwnershipKey, filer_pb.PosixLockOp_KEEP_ALIVE, &filer_pb.PosixLockRange{Sid: 1}, pbLock(0, 99, posixlock.Write, 1, 2, 7, false))
+	if !resp.HasConflict || resp.Conflict.GetPid() != 9 || resp.Conflict.GetEnd() != 49 {
+		t.Fatalf("re-assertion of a lock another session holds should report it, got %+v", resp)
+	}
+}
+
 // Ownership is per token id: tokens sharing an id, such as a remount reusing
 // its credential, act for the same holder, even under a fresh sid.
 func TestScopedPosixLockTokensSharingAnIdShareItsLocks(t *testing.T) {

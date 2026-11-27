@@ -373,8 +373,10 @@ func (wfs *WFS) hasPosixOwner(inode, owner uint64) bool {
 
 // callPosixReassert sends the mount's held locks on key to the key's current
 // owner filer as a KEEP_ALIVE, which renews the lease and lets the owner rebuild
-// its in-memory state after a takeover or restart.
-func (wfs *WFS) callPosixReassert(ctx context.Context, key string, locks []posixlock.Range) error {
+// its in-memory state after a takeover or restart. It returns a lock another
+// session now holds in place of one of this mount's, or nil; filers that do not
+// report losses always return nil.
+func (wfs *WFS) callPosixReassert(ctx context.Context, key string, locks []posixlock.Range) (lost *filer_pb.PosixLockRange, err error) {
 	pbLocks := make([]*filer_pb.PosixLockRange, 0, len(locks))
 	for _, l := range locks {
 		pbLocks = append(pbLocks, &filer_pb.PosixLockRange{
@@ -382,15 +384,36 @@ func (wfs *WFS) callPosixReassert(ctx context.Context, key string, locks []posix
 			Sid: l.Sid, Owner: l.Owner, Pid: l.Pid, IsFlock: l.IsFlock,
 		})
 	}
-	return wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
-		_, e := client.PosixLock(ctx, &filer_pb.PosixLockRequest{
+	err = wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		resp, e := client.PosixLock(ctx, &filer_pb.PosixLockRequest{
 			Key:   key,
 			Op:    filer_pb.PosixLockOp_KEEP_ALIVE,
 			Lock:  &filer_pb.PosixLockRange{Sid: wfs.posixSid},
 			Locks: pbLocks,
 		})
+		if e == nil && resp.GetHasConflict() {
+			lost = resp.GetConflict()
+		}
 		return e
 	})
+	return lost, err
+}
+
+// notePosixLockLoss warns once when a re-assertion finds that another session
+// holds a lock this mount still believes it holds on key, typically after the
+// mount's lease lapsed, and forgets the loss once a re-assertion succeeds. The
+// application is not told: POSIX has no signal for a lost lock. It reports
+// whether it warned.
+func (wfs *WFS) notePosixLockLoss(key string, lost *filer_pb.PosixLockRange) bool {
+	if lost == nil {
+		wfs.posixLostKeys.Delete(key)
+		return false
+	}
+	if _, warned := wfs.posixLostKeys.LoadOrStore(key, struct{}{}); warned {
+		return false
+	}
+	glog.Warningf("posix lock on %s lost: another session holds [%d, %d]; this mount's application may still believe it holds the lock", key, lost.GetStart(), lost.GetEnd())
+	return true
 }
 
 // posixKeepaliveConcurrency bounds the parallel keepalive RPCs per tick. A mount
@@ -420,11 +443,21 @@ func (wfs *WFS) loopRenewPosixLeases() {
 				// and get reaped.
 				ctx, cancel := context.WithTimeout(context.Background(), posixLockReleaseTimeout)
 				defer cancel()
-				if err := wfs.callPosixReassert(ctx, key, locks); err != nil {
+				lost, err := wfs.callPosixReassert(ctx, key, locks)
+				if err != nil {
 					glog.V(2).Infof("posix reassert %s: %v", key, err)
+					return
 				}
+				wfs.notePosixLockLoss(key, lost)
 			}()
 		}
 		wg.Wait()
+		// Forget losses on keys this mount no longer holds locks on.
+		wfs.posixLostKeys.Range(func(key, _ any) bool {
+			if _, stillHeld := held[key.(string)]; !stillHeld {
+				wfs.posixLostKeys.Delete(key)
+			}
+			return true
+		})
 	}
 }
