@@ -429,6 +429,13 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		_, code := s3ApiServer.getBucketConfig(bucket)
 		return code
 	}
+	iam.objectEntryForPolicy = func(r *http.Request, bucket, object string) (map[string][]byte, bool) {
+		entry, err := s3ApiServer.resolveObjectEntry(bucket, object, r.URL.Query().Get("versionId"))
+		if err != nil || entry == nil {
+			return nil, false
+		}
+		return entry.Extended, true
+	}
 
 	// Initialize advanced IAM system if config is provided or explicitly enabled
 	if option.IamConfig != "" || option.EnableIam {
