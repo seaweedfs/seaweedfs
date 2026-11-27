@@ -199,6 +199,9 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 		return err
 	}
 	if merged != nil {
+		// Install what the filer stored, which becomes the base: it may have
+		// folded the merged chunks the request sent unfolded.
+		merged = wfs.ackedBase(resp, merged)
 		fh.rebaseEntry(merged, requestEntry)
 		baseSnapshot = merged
 	}

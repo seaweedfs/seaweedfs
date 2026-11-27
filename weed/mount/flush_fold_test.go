@@ -200,3 +200,68 @@ func TestFlushMergeAfterFoldLeavesThePeersRewrite(t *testing.T) {
 	require.Equal(t, 1, keys[contentChunkKey(rewrite)])
 	require.Equal(t, 1, keys[contentChunkKey(appended)])
 }
+
+// refoldingFiler folds the small chunks of a create before it stores and
+// acknowledges it, as the filer's cleanupChunks does.
+type refoldingFiler struct {
+	foldMergeFiler
+	saver foldMergeSaver
+}
+
+func (s *refoldingFiler) CreateEntry(ctx context.Context, r *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	r = proto.Clone(r).(*filer_pb.CreateEntryRequest)
+	folded, err := filer.MaybeManifestize(s.saver.save, nil, r.Entry.Chunks)
+	if err != nil {
+		return nil, err
+	}
+	r.Entry.Chunks = folded
+	return s.foldMergeFiler.CreateEntry(ctx, r)
+}
+
+// A peer's chmod refuses the flush's first commit; the merged retry sends the
+// handle's 256 small chunks unfolded and the filer folds them before storing.
+// The handle must hold what the filer stored, which is also its base: holding
+// the flat chunks against a base that lists a manifest, a later merge would
+// take them for writes of its own, after a peer truncated the file too.
+func TestFlushMergeInstallsTheEntryTheFilerStored(t *testing.T) {
+	const n = filer.SmallChunkManifestBatch - 1
+	wfs := newInvalidateTestWFS(t)
+	wfs.option.ConcurrentWriters = 4
+	wfs.option.uniqueCacheDirForWrite = t.TempDir()
+	wfs.concurrentWriters = util.NewLimitedConcurrentExecutor(4)
+	fake := &refoldingFiler{foldMergeFiler: foldMergeFiler{volume: newVolumeStub(t)}, saver: foldMergeSaver{saved: 500}}
+	startFakeFiler(t, wfs, fake)
+	wfs.option.VolumeServerAccess = "direct"
+	wfs.filerClient = wdclient.NewFilerClient(wfs.option.FilerAddresses, wfs.option.GrpcDialOption, "")
+
+	attrs := &filer_pb.FuseAttributes{Inode: 42, FileMode: 0644, Uid: 2000, Gid: 20, FileSize: n * 300}
+	base := &filer_pb.Entry{Name: "file", Attributes: attrs}
+	for i := 0; i < n; i++ {
+		base.Chunks = append(base.Chunks, &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: uint64(i + 1), Cookie: 1}, Offset: int64(i) * 300, Size: 300, ModifiedTsNs: int64(100 + i)})
+	}
+	peer := proto.Clone(base).(*filer_pb.Entry)
+	peer.Attributes.FileMode = 0600 // a chmod on another mount
+	fake.entry = peer
+
+	live := proto.Clone(base).(*filer_pb.Entry)
+	live.Chunks = append(live.Chunks, &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: n + 1, Cookie: 1}, Offset: n * 300, Size: 300, ModifiedTsNs: 100 + n})
+	live.Attributes.FileSize = (n + 1) * 300
+	observed := proto.Clone(base).(*filer_pb.Entry)
+	wfs.mapPbIdFromFilerToLocal(observed)
+	wfs.mapPbIdFromFilerToLocal(live)
+	fh := newFileHandle(wfs, 1, 42, live)
+	t.Cleanup(func() { fh.dirtyPages.Destroy() })
+	fh.baseEntry.Store(observed)
+	fh.RememberPath(util.FullPath("/dir/file"))
+	fh.dirtyMetadata = true
+
+	require.Equal(t, fuse.OK, wfs.doFlush(context.Background(), fh, 1000, 20, false, 0))
+
+	fake.mu.Lock()
+	stored := referenceCounts(fake.entry.Chunks)
+	fake.mu.Unlock()
+	manifests, _ := filer.SeparateManifestChunks(fake.entry.Chunks)
+	require.Len(t, manifests, 1, "the filer folded the merged chunks")
+	require.Equal(t, stored, referenceCounts(fh.GetEntry().GetEntry().Chunks), "the handle holds what the filer stored")
+	require.Equal(t, stored, referenceCounts(fh.baseEntry.Load().Chunks), "the base is what the filer stored")
+}
