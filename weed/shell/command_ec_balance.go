@@ -100,13 +100,17 @@ func newEcBalanceFlagSet(name string) (*flag.FlagSet, *ecBalanceFlags) {
 	}
 }
 
-// EcBalanceArgsApply reports whether ec.balance accepts these arguments and applies its plan.
-func EcBalanceArgsApply(args []string) bool {
-	fs, f := newEcBalanceFlagSet("ec.balance")
+func (c *commandEcBalance) argsApply(args []string) bool {
+	fs, f := newEcBalanceFlagSet(c.Name())
 	fs.SetOutput(io.Discard)
 	if fs.Parse(args) != nil {
 		return false
 	}
 	handleDeprecatedForceFlag(io.Discard, fs, f.force, f.apply)
+	if *f.volumeIds != "" {
+		if _, err := parseVolumeIdsFlag(*f.volumeIds); err != nil {
+			return false
+		}
+	}
 	return *f.apply
 }

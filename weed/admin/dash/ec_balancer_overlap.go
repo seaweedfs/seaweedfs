@@ -47,7 +47,7 @@ func scriptAppliesECBalance(script string) bool {
 		}
 		for _, chunk := range strings.Split(line, ";") {
 			name, args, ok := shell.SplitScriptCommand(strings.TrimSpace(chunk))
-			if ok && name == "ec.balance" && shell.EcBalanceArgsApply(args) {
+			if ok && name == "ec.balance" && shell.CommandArgsApply(name, args) {
 				return true
 			}
 		}
