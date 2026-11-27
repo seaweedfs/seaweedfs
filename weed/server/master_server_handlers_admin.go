@@ -56,16 +56,20 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 // Require it to be named explicitly, with the keyword weed shell uses for it.
 // A collection literally named that keyword keeps its name, and when both
 // exist the request is refused rather than guessing which one to delete.
+// The "_default_" spelling weed shell collection.delete also accepts always
+// means the default collection.
 func (ms *MasterServer) collectionToDelete(r *http.Request) (string, error) {
 	switch name := r.FormValue("collection"); name {
 	case "":
 		return "", fmt.Errorf("collection parameter is required; use collection=%s to delete the default (empty-named) collection", wildcard.CollectionDefault)
+	case wildcard.CollectionDefault + "_":
+		return "", nil
 	case wildcard.CollectionDefault:
 		if _, literal := ms.Topo.FindCollection(name); !literal {
 			return "", nil
 		}
 		if _, hasDefault := ms.Topo.FindCollection(""); hasDefault {
-			return "", fmt.Errorf("collection=%s is ambiguous: both a collection named %s and the default (empty-named) collection exist", name, name)
+			return "", fmt.Errorf("collection=%s is ambiguous: both a collection named %s and the default (empty-named) collection exist; use collection=%s_ to delete the default collection", name, name, name)
 		}
 		return name, nil
 	default:
