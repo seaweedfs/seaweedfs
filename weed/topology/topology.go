@@ -707,15 +707,16 @@ const DefaultNeedleSizeEstimate uint64 = 1024 * 1024 // 1 MB
 func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption, volumeLayout *VolumeLayout, expectedDataSize uint64) (fileId string, count uint64, volumeLocationList *VolumeLocationList, shouldGrow bool, err error) {
 	var vid needle.VolumeId
 	vid, count, volumeLocationList, shouldGrow, err = volumeLayout.PickForWrite(requestedCount, option)
+	// Its volumes are about to be deleted: a write placed there is lost, and a
+	// grow queued for it would recreate the collection after the delete.
+	if c, found := t.FindCollection(option.Collection); found && c.isDeleting() {
+		return "", 0, nil, false, fmt.Errorf("collection %q is being deleted", option.Collection)
+	}
 	if err != nil {
 		return "", 0, nil, shouldGrow, fmt.Errorf("failed to find writable volumes for collection:%s replication:%s ttl:%s error: %v", option.Collection, option.ReplicaPlacement.String(), option.Ttl.String(), err)
 	}
 	if volumeLocationList == nil || volumeLocationList.Length() == 0 {
 		return "", 0, nil, shouldGrow, fmt.Errorf("%s available for collection:%s replication:%s ttl:%s", NoWritableVolumes, option.Collection, option.ReplicaPlacement.String(), option.Ttl.String())
-	}
-	// Its volumes are about to be deleted, and a write placed there is lost.
-	if c, found := t.FindCollection(option.Collection); found && c.isDeleting() {
-		return "", 0, nil, false, fmt.Errorf("collection %q is being deleted", option.Collection)
 	}
 	// Track estimated assigned bytes to spread load between heartbeats. A flat
 	// fallback overcharges a small-file workload enough to mark near-empty

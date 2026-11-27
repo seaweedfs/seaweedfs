@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
@@ -117,6 +118,18 @@ func TestAssignStaysOutOfACollectionBeingDeleted(t *testing.T) {
 	unfence()
 	if _, _, _, _, err := topo.PickForWrite(1, option, vl, 0); err != nil {
 		t.Errorf("assign still refused after a failed delete lifted the fence: %v", err)
+	}
+}
+
+func TestAssignQueuesNoGrowthForACollectionBeingDeleted(t *testing.T) {
+	topo, option := newGrowthFenceTopology()
+	option.ReplicaPlacement, _ = super_block.NewReplicaPlacementFromString("000")
+	option.Ttl = needle.EMPTY_TTL
+	vl := topo.GetVolumeLayout("bucket", option.ReplicaPlacement, option.Ttl, types.HardDriveType)
+
+	option.collection.FenceGrowth()
+	if _, _, _, shouldGrow, err := topo.PickForWrite(1, option, vl, 0); err == nil || shouldGrow {
+		t.Errorf("pick from an empty layout of a collection being deleted: shouldGrow %v, err %v", shouldGrow, err)
 	}
 }
 
