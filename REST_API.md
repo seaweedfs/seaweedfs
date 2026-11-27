@@ -291,7 +291,11 @@ collection, name it explicitly with `collection=_default` or
 `collection=_default_`, the keywords `weed shell collection.delete` accepts.
 If a collection is literally named a keyword, that name deletes it, and when
 it exists next to the default collection the request gets
-`400 Bad Request`; use the other keyword for the default collection.
+`400 Bad Request`; use the other keyword for the default collection. If both
+keyword names are literal collections next to the default collection, both
+keywords get `400 Bad Request`; delete the default collection with
+`weed shell` `collection.delete -collection _default -apply`, where the
+keywords always mean the default collection.
 
 ### Health
 
