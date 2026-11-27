@@ -19,6 +19,9 @@ func TestCommandArgsApply(t *testing.T) {
 		{"volume.balance", []string{"-volumeBy=SOME", "-apply"}, false},
 		{"volume.balance", []string{"-maxParallelization=0", "-apply"}, false},
 		{"volume.balance", []string{"-apply", "-force=false"}, false},
+		{"ec.encode", nil, true},
+		{"ec.encode", []string{"-collection=a", "-quietFor=1h"}, true},
+		{"ec.encode", []string{"-quietFor=soon"}, false},
 		{"volume.list", []string{"-apply"}, false},
 		{"no.such.command", []string{"-apply"}, false},
 	}
