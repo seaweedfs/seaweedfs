@@ -198,3 +198,37 @@ func TestManagerExpiredScopedSessionWithManyRangesIsDroppedWhole(t *testing.T) {
 		t.Fatalf("unexpired holder or new grant missing: %+v", got)
 	}
 }
+
+func TestManagerSeveralExpiredScopedSessionsAreDroppedTogether(t *testing.T) {
+	m, clock, start := newScopedTestManager()
+	lease := Lease{TTL: 15 * time.Second, NotAfter: start.Add(time.Hour)}
+	keep := Range{Start: 0, End: 9, Type: Read, Sid: 9, Owner: 9, Principal: "keep"}
+	m.TryLock("k", keep, lease)
+	for i := uint64(1); i <= 20; i++ {
+		principal := []string{"a", "b", "c"}[i%3]
+		lk := Range{Start: i * 100, End: i*100 + 9, Type: Read, Sid: i % 3, Owner: 1, Principal: principal}
+		if _, granted := m.TryLock("k", lk, lease); !granted {
+			t.Fatalf("range %d should be granted", i)
+		}
+	}
+	clock.Set(start.Add(10 * time.Second))
+	m.Renew("k", keep.Session(), lease)
+	clock.Set(start.Add(16 * time.Second))
+
+	if got := m.Snapshot()["k"]; len(got) != 21 {
+		t.Fatalf("snapshot should not reap, got %d ranges", len(got))
+	}
+	if _, found := m.GetLk("k", Range{Start: 100, End: 2009, Type: Write, Sid: 5, Owner: 5, Principal: "w"}); found {
+		t.Fatal("ranges of the expired sessions are still held")
+	}
+	for _, p := range []string{"a", "b", "c"} {
+		for sid := uint64(0); sid < 3; sid++ {
+			if _, indexed := m.bySession[Session{Principal: p, Sid: sid}]; indexed {
+				t.Fatalf("expired session %s/%d is still indexed", p, sid)
+			}
+		}
+	}
+	if got := m.Snapshot()["k"]; len(got) != 1 || got[0] != keep {
+		t.Fatalf("only the renewed holder should remain: %+v", got)
+	}
+}

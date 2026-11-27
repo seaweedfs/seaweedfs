@@ -1,6 +1,7 @@
 package posixlock
 
 import (
+	"math"
 	"sync"
 	"time"
 )
@@ -295,7 +296,8 @@ func (m *Manager) live(key string) *Set {
 		return nil
 	}
 	now := m.now()
-	// Each expired session is released once, however many ranges it holds.
+	// One pass finds the expired sessions and one more drops all their ranges,
+	// however many sessions expired and ranges they hold.
 	var expired map[Session]struct{}
 	for _, l := range s.locks {
 		ss := l.Session()
@@ -313,9 +315,14 @@ func (m *Manager) live(key string) *Set {
 		}
 		expired[ss] = struct{}{}
 	}
-	for ss := range expired {
-		s.ReleaseSession(ss)
-		m.deindex(ss, key)
+	if expired != nil {
+		s.remove(func(h Range) bool {
+			_, gone := expired[h.Session()]
+			return gone
+		}, 0, math.MaxUint64)
+		for ss := range expired {
+			m.deindex(ss, key)
+		}
 	}
 	if s.Empty() {
 		delete(m.byKey, key)
