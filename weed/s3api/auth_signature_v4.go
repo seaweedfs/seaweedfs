@@ -1301,18 +1301,20 @@ func getCanonicalHeaders(signedHeaders http.Header, trim func(string) string) st
 	return buf.String()
 }
 
-// SigV4 clients disagree on Trimall for whitespace other than the ASCII
-// space. The AWS SDK for Go v2 collapses only ' ' and trims the edges with
-// strings.TrimSpace, so a U+00A0 or U+202F inside a value (an x-amz-meta-*
-// filename, say) stays; botocore turns every whitespace character into ' '
-// (str.split). Signatures are verified with each in turn; the second is only
-// tried when it gives a different canonical request.
-var signV4HeaderValueTrims = []func(string) string{signV4TrimAll, signV4TrimAllWhitespace}
+// SigV4 clients disagree on Trimall for whitespace other than the ASCII space,
+// so a signature is checked against each client's form in turn.
+var signV4HeaderValueTrims = []func(string) string{signV4TrimAll, signV4TrimAllASCIIWhitespace, signV4TrimAllWhitespace}
 
 // signV4TrimAll compresses sequential ASCII spaces in a header value to one and
 // trims leading and trailing whitespace, as the AWS SDK for Go v2 does.
 func signV4TrimAll(input string) string {
 	return strings.TrimSpace(strings.Join(strings.FieldsFunc(input, func(r rune) bool { return r == ' ' }), " "))
+}
+
+// signV4TrimAllASCIIWhitespace turns every run of spaces and tabs into a single
+// space and keeps other whitespace, as the AWS SDK for Java does.
+func signV4TrimAllASCIIWhitespace(input string) string {
+	return strings.Join(strings.FieldsFunc(input, func(r rune) bool { return r == ' ' || r == '\t' }), " ")
 }
 
 // signV4TrimAllWhitespace turns every run of whitespace into a single space and

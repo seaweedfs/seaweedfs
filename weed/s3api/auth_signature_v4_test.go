@@ -770,23 +770,24 @@ func TestSignatureV4WithForwardedPrefixUnicodeKey(t *testing.T) {
 	}
 }
 
-// The two Trimall variants clients use: the AWS SDK for Go v2 collapses only
-// ASCII spaces (Unicode spaces inside a value stay, the edges are trimmed),
-// botocore collapses every whitespace character.
 func TestSignV4TrimAll(t *testing.T) {
 	tests := []struct {
-		in, sdkGoV2, botocore string
+		in, sdkGoV2, sdkJava, botocore string
 	}{
-		{"  a   b  ", "a b", "a b"},
-		{"plain", "plain", "plain"},
-		{"tab\tkept", "tab\tkept", "tab kept"},
-		{"at 2.20.09\u202fPM.png", "at 2.20.09\u202fPM.png", "at 2.20.09 PM.png"},
-		{"news\u00a0| headline.txt", "news\u00a0| headline.txt", "news | headline.txt"},
-		{" report.txt\u00a0 ", "report.txt", "report.txt"},
+		{"  a   b  ", "a b", "a b", "a b"},
+		{"plain", "plain", "plain", "plain"},
+		{"tab\tkept", "tab\tkept", "tab kept", "tab kept"},
+		{"at 2.20.09\u202fPM.png", "at 2.20.09\u202fPM.png", "at 2.20.09\u202fPM.png", "at 2.20.09 PM.png"},
+		{"news\u00a0| headline.txt", "news\u00a0| headline.txt", "news\u00a0| headline.txt", "news | headline.txt"},
+		{" report.txt\u00a0 ", "report.txt", "report.txt\u00a0", "report.txt"},
+		{"at 2.20.09\u202fPM\tcopy.png", "at 2.20.09\u202fPM\tcopy.png", "at 2.20.09\u202fPM copy.png", "at 2.20.09 PM copy.png"},
 	}
 	for _, tt := range tests {
 		if got := signV4TrimAll(tt.in); got != tt.sdkGoV2 {
 			t.Errorf("signV4TrimAll(%q) = %q, want %q", tt.in, got, tt.sdkGoV2)
+		}
+		if got := signV4TrimAllASCIIWhitespace(tt.in); got != tt.sdkJava {
+			t.Errorf("signV4TrimAllASCIIWhitespace(%q) = %q, want %q", tt.in, got, tt.sdkJava)
 		}
 		if got := signV4TrimAllWhitespace(tt.in); got != tt.botocore {
 			t.Errorf("signV4TrimAllWhitespace(%q) = %q, want %q", tt.in, got, tt.botocore)
@@ -794,8 +795,6 @@ func TestSignV4TrimAll(t *testing.T) {
 	}
 }
 
-// A signature made with either client's Trimall verifies, so a Unicode space
-// or tab inside a signed header value works from both SDKs.
 func TestCalculateAndVerifySignatureTrimVariants(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("Host", "bucket.domain.com")
@@ -806,8 +805,9 @@ func TestCalculateAndVerifySignatureTrimVariants(t *testing.T) {
 	signingKey := getSigningKey(secret, date.Format(yyyymmdd), "us-east-1", "s3")
 
 	for name, trim := range map[string]func(string) string{
-		"sdk-go-v2": signV4TrimAll,
-		"botocore":  signV4TrimAllWhitespace,
+		"sdk-go-v2":   signV4TrimAll,
+		"sdk-java-v2": signV4TrimAllASCIIWhitespace,
+		"botocore":    signV4TrimAllWhitespace,
 	} {
 		t.Run(name, func(t *testing.T) {
 			canonical := getCanonicalRequest(headers, payload, "", "/bucket/key", http.MethodPut, trim)
