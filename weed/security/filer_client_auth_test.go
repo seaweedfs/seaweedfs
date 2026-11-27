@@ -390,6 +390,40 @@ func TestFilerAdminTokenFromFileUsesIndependentRotatingSources(t *testing.T) {
 	}
 }
 
+// TestFilerAdminTokenFromFileIgnoresEnvironmentOverrides covers filer.sync
+// between two clusters: a process-wide WEED_ key must not replace either
+// endpoint's key, or one cluster would receive a token valid on the other.
+func TestFilerAdminTokenFromFileIgnoresEnvironmentOverrides(t *testing.T) {
+	readFilerClientKeysEveryCall(t)
+	dir := t.TempDir()
+	pathA := filepath.Join(dir, "endpoint-a.yaml")
+	pathB := filepath.Join(dir, "endpoint-b.yaml")
+	keyA := testSigningKey(t)
+	keyB := testSigningKey(t)
+	envKey := testSigningKey(t)
+	writeFilerSecurityConfig(t, pathA, keyA, SigningKey(""))
+	writeFilerSecurityConfig(t, pathB, SigningKey(""), keyB)
+	t.Setenv("WEED_JWT_FILER_SIGNING_GRPC_KEY", string(envKey))
+	t.Setenv("WEED_JWT_FILER_SIGNING_KEY", string(envKey))
+
+	for _, endpoint := range []struct {
+		path string
+		key  SigningKey
+	}{{pathA, keyA}, {pathB, keyB}} {
+		token, err := FilerAdminTokenFromFile(endpoint.path)(context.Background())
+		if err != nil || !IsFilerAdminToken(endpoint.key, token) || IsFilerAdminToken(envKey, token) {
+			t.Fatalf("%s: token valid for its own key=%v, for the environment key=%v, err=%v",
+				filepath.Base(endpoint.path), IsFilerAdminToken(endpoint.key, token), IsFilerAdminToken(envKey, token), err)
+		}
+	}
+	// A file without keys stays keyless rather than adopting the environment's.
+	keyless := filepath.Join(dir, "keyless.yaml")
+	writeFilerSecurityConfig(t, keyless, SigningKey(""), SigningKey(""))
+	if token, err := FilerAdminTokenFromFile(keyless)(context.Background()); err != nil || token != "" {
+		t.Fatalf("keyless endpoint returned token=%t err=%v", token != "", err)
+	}
+}
+
 func TestFilerAdminTokenFromFileFailsClosedForMissingOrMalformedConfig(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "missing.yaml")

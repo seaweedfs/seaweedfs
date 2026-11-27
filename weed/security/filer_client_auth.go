@@ -134,9 +134,10 @@ func FilerAdminToken(ctx context.Context) (EncodedJwt, error) {
 
 // FilerAdminTokenFromFile selects an endpoint's existing security file instead
 // of the process-wide configuration. An unreadable file fails closed without
-// using another endpoint's key. WEED_ environment overrides apply, as they do
-// for the endpoint's other security settings. An empty path selects
-// FilerAdminToken.
+// using another endpoint's key. WEED_ environment overrides do not apply: they
+// are process-wide, so honoring them would sign every endpoint's admin token
+// with one key and hand one cluster a token valid on the other. An empty path
+// selects FilerAdminToken.
 func FilerAdminTokenFromFile(path string) FilerTokenSource {
 	if path == "" {
 		return FilerAdminToken
@@ -144,15 +145,12 @@ func FilerAdminTokenFromFile(path string) FilerTokenSource {
 	keys := &filerClientKeys{load: func() (interface{ GetString(string) string }, error) {
 		v := viper.New()
 		v.SetConfigFile(path)
-		v.AutomaticEnv()
-		v.SetEnvPrefix("weed")
-		v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 		if err := v.ReadInConfig(); err != nil {
 			// Parser errors can contain configuration values. Do not expose them.
 			return nil, errFilerClientConfig
 		}
 		return v, nil
-	}, stamp: filerClientKeyEnvStamp}
+	}}
 	return keys.token
 }
 
