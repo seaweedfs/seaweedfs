@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::broadcast;
@@ -1040,6 +1040,8 @@ async fn maybe_adjust_volume_max(
 
 /// The EC heartbeat and the shard list later deltas are diffed against,
 /// under one guard so no mount lands between them unreported.
+static EC_SHARD_CHECK_RUNNING: AtomicBool = AtomicBool::new(false);
+
 async fn ec_tick_pass(
     config: &HeartbeatConfig,
     state: &Arc<VolumeServerState>,
@@ -1050,9 +1052,15 @@ async fn ec_tick_pass(
     ),
     tokio::task::JoinError,
 > {
+    if !EC_SHARD_CHECK_RUNNING.swap(true, Ordering::AcqRel) {
+        let state = state.clone();
+        tokio::task::spawn_blocking(move || {
+            state.store.read().unwrap().check_mounted_ec_shards();
+            EC_SHARD_CHECK_RUNNING.store(false, Ordering::Release);
+        });
+    }
     off_runtime(config, state, |config, state| {
         let store = state.store.read().unwrap();
-        store.check_mounted_ec_shards();
         (
             collect_ec_heartbeat(config, &store),
             collect_ec_shard_delta_messages(&store),
