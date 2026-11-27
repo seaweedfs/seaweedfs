@@ -28,6 +28,14 @@ func TestScriptAppliesECBalance(t *testing.T) {
 		{"volume.list; ec.balance -collection=a -apply", true},
 		{"ec.rebuild -apply\r\nec.balance -apply\r\n", true},
 		{"ec.balancer -apply", false},
+		{"ec.balance -apply=maybe -force", false},
+		{"ec.balance -apply -force=maybe", false},
+		{"ec.balance -apply -force=false", false},
+		{"ec.balance -force=false -apply", false},
+		{"ec.balance -apply -apply=false", false},
+		{"ec.balance -collection x -apply", true},
+		{"ec.balance -collection -apply", false},
+		{"ec.balance x -apply", false},
 	}
 	for _, c := range cases {
 		if got := scriptAppliesECBalance(c.script); got != c.want {
