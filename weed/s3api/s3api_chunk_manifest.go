@@ -42,14 +42,15 @@ func (s3a *S3ApiServer) manifestizeChunks(filePath string, bucket string, ttlSec
 	return folded
 }
 
-// flattenManifestChunks resolves manifest chunks into flat data chunks,
-// returning the resolved-away manifests for callers that must delete the
-// superseded blobs once they own the data chunks.
+// flattenManifestChunks resolves manifest chunks into flat data chunks, cut to
+// each manifest's span since the flat list no longer carries it, returning the
+// resolved-away manifests for callers that must delete the superseded blobs
+// once they own the data chunks.
 func (s3a *S3ApiServer) flattenManifestChunks(ctx context.Context, entry *filer_pb.Entry) ([]*filer_pb.FileChunk, error) {
 	if entry == nil || !filer.HasChunkManifest(entry.GetChunks()) {
 		return nil, nil
 	}
-	dataChunks, manifestChunks, err := filer.ResolveChunkManifest(ctx, s3a.createLookupFileIdFunction(), entry.GetChunks(), 0, math.MaxInt64, s3a.filerClient, false)
+	dataChunks, manifestChunks, err := filer.ResolveChunkManifest(ctx, s3a.createLookupFileIdFunction(), entry.GetChunks(), 0, math.MaxInt64, s3a.filerClient, true)
 	if err != nil {
 		return nil, err
 	}
