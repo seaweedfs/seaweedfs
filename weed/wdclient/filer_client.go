@@ -1037,7 +1037,7 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 				timeoutCtx, cancel := context.WithTimeout(ctx, fc.grpcTimeout)
 				defer cancel() // Always clean up context, even on panic or early return
 
-				return pb.WithGrpcFilerClientAuth(false, fc.clientId, filerAddress, fc.grpcDialOption, fc.tokenSource, func(client filer_pb.SeaweedFilerClient) error {
+				return pb.WithGrpcFilerClient(false, fc.clientId, filerAddress, fc.grpcDialOption, fc.tokenSource, func(client filer_pb.SeaweedFilerClient) error {
 					resp, err := client.LookupVolume(timeoutCtx, &filer_pb.LookupVolumeRequest{
 						VolumeIds: volumeIds,
 					})

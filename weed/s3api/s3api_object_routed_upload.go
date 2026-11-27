@@ -80,7 +80,7 @@ func (u uploadFilerClient) list(parentDirectoryPath, prefix, startFrom string, i
 	}
 	var priorEntries []*filer_pb.Entry
 	priorLast := false
-	priorErr := pb.WithGrpcFilerClientAuth(true, 0, prior, u.s3a.option.GrpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
+	priorErr := pb.WithGrpcFilerClient(true, 0, prior, u.s3a.option.GrpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		return filer_pb.SeaweedList(context.Background(), client, parentDirectoryPath, prefix, func(entry *filer_pb.Entry, isLastEntry bool) error {
 			priorEntries = append(priorEntries, entry)
 			priorLast = priorLast || isLastEntry

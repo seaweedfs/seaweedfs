@@ -423,7 +423,7 @@ var _ = filer_pb.FilerClient(&FilerMetaBackupOptions{})
 
 func (metaBackup *FilerMetaBackupOptions) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
-	return pb.WithGrpcFilerClientAuth(streamingMode, metaBackup.clientId, pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClient(streamingMode, metaBackup.clientId, pb.ServerAddress(*metaBackup.filerAddress), metaBackup.grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		return fn(client)
 	})
 

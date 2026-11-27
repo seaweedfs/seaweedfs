@@ -72,7 +72,7 @@ func (store *FilerEtcStore) withFilerClient(fn func(client filer_pb.SeaweedFiler
 	}
 
 	// Use the pb.WithGrpcFilerClient helper similar to existing code
-	return pb.WithGrpcFilerClientAuth(false, 0, filerAddress, dialOption, security.FilerAdminToken, fn)
+	return pb.WithGrpcFilerClient(false, 0, filerAddress, dialOption, security.FilerAdminToken, fn)
 }
 
 func (store *FilerEtcStore) Shutdown() {

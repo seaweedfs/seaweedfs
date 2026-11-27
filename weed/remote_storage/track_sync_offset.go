@@ -31,7 +31,7 @@ const syncOffsetTimeout = 30 * time.Second
 
 func GetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir string, tokenSource ...security.FilerTokenSource) (lastOffsetTsNs int64, readErr error) {
 
-	readErr = pb.WithGrpcFilerClientAuth(false, 0, filer, grpcDialOption, firstTokenSource(tokenSource), func(client filer_pb.SeaweedFilerClient) error {
+	readErr = pb.WithGrpcFilerClient(false, 0, filer, grpcDialOption, firstTokenSource(tokenSource), func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithTimeout(context.Background(), syncOffsetTimeout)
 		defer cancel()
 		resp, err := client.KvGet(ctx, &filer_pb.KvGetRequest{Key: SyncOffsetKey(dir)})
@@ -57,7 +57,7 @@ func GetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir s
 
 func SetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir string, offsetTsNs int64, tokenSource ...security.FilerTokenSource) error {
 
-	return pb.WithGrpcFilerClientAuth(false, 0, filer, grpcDialOption, firstTokenSource(tokenSource), func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClient(false, 0, filer, grpcDialOption, firstTokenSource(tokenSource), func(client filer_pb.SeaweedFilerClient) error {
 
 		valueBuf := make([]byte, 8)
 		util.Uint64toBytes(valueBuf, uint64(offsetTsNs))

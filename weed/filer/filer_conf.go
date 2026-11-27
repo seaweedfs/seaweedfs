@@ -56,7 +56,7 @@ func ReadFilerConfFromFilers(filerGrpcAddresses []pb.ServerAddress, grpcDialOpti
 	if len(tokenSource) > 0 {
 		source = tokenSource[0]
 	}
-	if err := pb.WithOneOfGrpcFilerClientsAuth(false, filerGrpcAddresses, grpcDialOption, source, func(client filer_pb.SeaweedFilerClient) error {
+	if err := pb.WithOneOfGrpcFilerClients(false, filerGrpcAddresses, grpcDialOption, source, func(client filer_pb.SeaweedFilerClient) error {
 		if masterClient != nil {
 			var buf bytes.Buffer
 			if err := ReadEntry(masterClient, client, DirectoryEtcSeaweedFS, FilerConfName, &buf); err != nil {

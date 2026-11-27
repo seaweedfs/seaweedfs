@@ -580,7 +580,7 @@ func (f *FilerRoleStore) withFilerClient(filerAddress string, fn func(filer_pb.S
 	if filerAddress == "" {
 		return fmt.Errorf("filer address is required for FilerRoleStore")
 	}
-	return pb.WithGrpcFilerClientAuth(false, 0, pb.ServerAddress(filerAddress), f.grpcDialOption, security.FilerAdminToken, fn)
+	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddress), f.grpcDialOption, security.FilerAdminToken, fn)
 }
 
 // CachedFilerRoleStore implements RoleStore with TTL caching on top of FilerRoleStore

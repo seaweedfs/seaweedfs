@@ -90,7 +90,7 @@ type scanFilerClient struct {
 }
 
 func (c *scanFilerClient) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithGrpcFilerClientAuth(streamingMode, c.signature, c.address, c.grpcDialOption, security.FilerAdminToken, fn)
+	return pb.WithGrpcFilerClient(streamingMode, c.signature, c.address, c.grpcDialOption, security.FilerAdminToken, fn)
 }
 
 func (c *scanFilerClient) AdjustedUrl(location *filer_pb.Location) string { return location.Url }

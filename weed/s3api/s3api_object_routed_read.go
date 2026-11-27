@@ -210,7 +210,7 @@ func (s3a *S3ApiServer) lookupEntryPreferringOwner(owner pb.ServerAddress, dir, 
 // lookupEntryOnFiler resolves dir/name against a single filer, without failover.
 func (s3a *S3ApiServer) lookupEntryOnFiler(ctx context.Context, filer pb.ServerAddress, dir, name string) (*filer_pb.Entry, error) {
 	var entry *filer_pb.Entry
-	err := pb.WithGrpcFilerClientAuth(false, 0, filer, s3a.option.GrpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
+	err := pb.WithGrpcFilerClient(false, 0, filer, s3a.option.GrpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		resp, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: dir,
 			Name:      name,

@@ -154,7 +154,7 @@ func (f *FilerAuditSink) Emit(ctx context.Context, event *OIDCProviderAuditEvent
 	arnHash.Write([]byte(event.ARN))
 	name := fmt.Sprintf("%d-%s-%s.json", event.OccurredAt.UnixNano(), event.Type, hex.EncodeToString(arnHash.Sum(nil)[:8]))
 	occurredAt := event.OccurredAt.Unix()
-	return pb.WithGrpcFilerClientAuth(false, 0, pb.ServerAddress(addr), f.grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(addr), f.grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		err := filer_pb.CreateEntry(ctx, client, &filer_pb.CreateEntryRequest{
 			Directory: f.basePath,
 			Entry: &filer_pb.Entry{

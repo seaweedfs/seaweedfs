@@ -160,7 +160,7 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 		}
 		return s3err.ErrNone
 	}
-	if err := pb.WithGrpcFilerClientAuth(false, 0, priorOwner, s3a.option.GrpcDialOption, security.FilerAdminToken, deleteMarker); err != nil {
+	if err := pb.WithGrpcFilerClient(false, 0, priorOwner, s3a.option.GrpcDialOption, security.FilerAdminToken, deleteMarker); err != nil {
 		glog.Errorf("deleteDirectoryMarker: failed to delete %s/%s on prior owner %s: %v", bucket, object, priorOwner, err)
 		return s3err.ErrInternalError
 	}

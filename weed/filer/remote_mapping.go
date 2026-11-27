@@ -30,7 +30,7 @@ func FindMountedRemoteMapping(mappings *remote_pb.RemoteStorageMapping, dir stri
 
 func ReadMountMappings(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, tokenSource ...security.FilerTokenSource) (mappings *remote_pb.RemoteStorageMapping, readErr error) {
 	var oldContent []byte
-	if readErr = pb.WithGrpcFilerClientAuth(false, 0, filerAddress, grpcDialOption, firstTokenSource(tokenSource), func(client filer_pb.SeaweedFilerClient) error {
+	if readErr = pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, firstTokenSource(tokenSource), func(client filer_pb.SeaweedFilerClient) error {
 		oldContent, readErr = ReadInsideFiler(context.Background(), client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
 		return readErr
 	}); readErr != nil {

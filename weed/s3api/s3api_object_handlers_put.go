@@ -1099,7 +1099,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			// its ring view agrees — exactly what is not guaranteed after an
 			// ambiguous write. The create goes to the owner alone; an
 			// unreachable owner leaves the outcome uncertain.
-			createErr = pb.WithGrpcFilerClientAuth(false, 0, owner, s3a.option.GrpcDialOption, security.FilerAdminToken, create)
+			createErr = pb.WithGrpcFilerClient(false, 0, owner, s3a.option.GrpcDialOption, security.FilerAdminToken, create)
 			switch status.Code(createErr) {
 			case codes.Unavailable, codes.Canceled, codes.DeadlineExceeded:
 				s3a.markOwnerUnreachable(owner)

@@ -50,7 +50,7 @@ func startRetryingAuthFiler(t *testing.T) (*retryingAuthFiler, ServerAddress) {
 	return filer, NewServerAddressWithGrpcPort(listener.Addr().String(), grpcPort)
 }
 
-func TestWithOneOfGrpcFilerClientsAuthPreservesFailoverAndPerCallSource(t *testing.T) {
+func TestWithOneOfGrpcFilerClientsPreservesFailoverAndPerCallSource(t *testing.T) {
 	first, firstAddress := startRetryingAuthFiler(t)
 	second, secondAddress := startAuthRecordingFiler(t)
 	t.Cleanup(func() {
@@ -63,7 +63,7 @@ func TestWithOneOfGrpcFilerClientsAuthPreservesFailoverAndPerCallSource(t *testi
 		security.GenJwtForFilerAdmin(keys[1], 60),
 	}
 	resolutions := 0
-	err := WithOneOfGrpcFilerClientsAuth(false, []ServerAddress{firstAddress, secondAddress}, grpc.WithTransportCredentials(insecure.NewCredentials()), func(context.Context) (security.EncodedJwt, error) {
+	err := WithOneOfGrpcFilerClients(false, []ServerAddress{firstAddress, secondAddress}, grpc.WithTransportCredentials(insecure.NewCredentials()), func(context.Context) (security.EncodedJwt, error) {
 		token := tokens[resolutions]
 		resolutions++
 		return token, nil

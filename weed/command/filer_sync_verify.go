@@ -190,7 +190,7 @@ type simpleFilerClient struct {
 }
 
 func (c *simpleFilerClient) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithGrpcFilerClientAuth(streamingMode, 0, c.grpcAddress, c.grpcDialOption, c.tokenSource, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClient(streamingMode, 0, c.grpcAddress, c.grpcDialOption, c.tokenSource, func(client filer_pb.SeaweedFilerClient) error {
 		return fn(client)
 	})
 }

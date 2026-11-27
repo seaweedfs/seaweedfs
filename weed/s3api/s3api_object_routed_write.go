@@ -168,7 +168,7 @@ func (s3a *S3ApiServer) objectTxnOnFiler(owner pb.ServerAddress, req *filer_pb.O
 		return e
 	}
 	if s3a.filerClient == nil {
-		err := pb.WithGrpcFilerClientAuth(false, 0, owner, s3a.option.GrpcDialOption, security.FilerAdminToken, txn)
+		err := pb.WithGrpcFilerClient(false, 0, owner, s3a.option.GrpcDialOption, security.FilerAdminToken, txn)
 		return resp, err
 	}
 	// Skip an owner whose recent write hit a transport error so a dead/stale
@@ -193,7 +193,7 @@ func (s3a *S3ApiServer) withWriteOwnerFilerClient(owner pb.ServerAddress, fn fun
 		return s3a.WithFilerClient(false, fn)
 	}
 	if s3a.filerClient == nil {
-		return pb.WithGrpcFilerClientAuth(false, 0, owner, s3a.option.GrpcDialOption, security.FilerAdminToken, fn)
+		return pb.WithGrpcFilerClient(false, 0, owner, s3a.option.GrpcDialOption, security.FilerAdminToken, fn)
 	}
 	preferred := owner
 	if s3a.ownerRecentlyUnreachable(owner) {
@@ -396,7 +396,7 @@ func (s3a *S3ApiServer) routedSelfCopy(ctx context.Context, owner pb.ServerAddre
 	}
 	var err error
 	if s3a.filerClient == nil {
-		err = pb.WithGrpcFilerClientAuth(false, 0, owner, s3a.option.GrpcDialOption, security.FilerAdminToken, update)
+		err = pb.WithGrpcFilerClient(false, 0, owner, s3a.option.GrpcDialOption, security.FilerAdminToken, update)
 	} else {
 		err = s3a.withFilerClientFailover(ctx, owner, false, false, update)
 	}

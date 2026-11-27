@@ -103,7 +103,7 @@ func startAuthRecordingFiler(t *testing.T) (*authRecordingFiler, ServerAddress) 
 
 func callLookupWithAuth(t *testing.T, address ServerAddress, source security.FilerTokenSource) error {
 	t.Helper()
-	return WithGrpcFilerClientAuth(false, 0, address, grpc.WithTransportCredentials(insecure.NewCredentials()), source, func(client filer_pb.SeaweedFilerClient) error {
+	return WithGrpcFilerClient(false, 0, address, grpc.WithTransportCredentials(insecure.NewCredentials()), source, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{Directory: "/", Name: "entry"})
 		return err
 	})
@@ -120,7 +120,7 @@ func pooledFilerConnection(t *testing.T, address ServerAddress) *grpc.ClientConn
 	return client.ClientConn
 }
 
-func TestWithGrpcFilerClientAuthPooledUnaryAuthAnonymousBothOrders(t *testing.T) {
+func TestWithGrpcFilerClientPooledUnaryAuthAnonymousBothOrders(t *testing.T) {
 	for _, firstAuth := range []bool{false, true} {
 		t.Run(map[bool]string{false: "anonymous-first", true: "authenticated-first"}[firstAuth], func(t *testing.T) {
 			server, address := startAuthRecordingFiler(t)
@@ -171,7 +171,7 @@ func TestWithGrpcFilerClientAuthPooledUnaryAuthAnonymousBothOrders(t *testing.T)
 	}
 }
 
-func TestWithGrpcFilerClientAuthResolvesPooledTokenOnEveryUnaryCall(t *testing.T) {
+func TestWithGrpcFilerClientResolvesPooledTokenOnEveryUnaryCall(t *testing.T) {
 	server, address := startAuthRecordingFiler(t)
 	t.Cleanup(func() { InvalidateGrpcConnection(address.ToGrpcAddress()) })
 	keys := []security.SigningKey{
@@ -210,7 +210,7 @@ func TestWithGrpcFilerClientAuthResolvesPooledTokenOnEveryUnaryCall(t *testing.T
 	}
 }
 
-func TestWithGrpcFilerClientAuthStreamingReopensWithFreshToken(t *testing.T) {
+func TestWithGrpcFilerClientStreamingReopensWithFreshToken(t *testing.T) {
 	server, address := startAuthRecordingFiler(t)
 	keys := []security.SigningKey{filerAuthTestKey(t), filerAuthTestKey(t)}
 	tokens := []security.EncodedJwt{
@@ -224,7 +224,7 @@ func TestWithGrpcFilerClientAuthStreamingReopensWithFreshToken(t *testing.T) {
 		return token, nil
 	}
 	for i := range tokens {
-		err := WithGrpcFilerClientAuth(true, 0, address, grpc.WithTransportCredentials(insecure.NewCredentials()), source, func(client filer_pb.SeaweedFilerClient) error {
+		err := WithGrpcFilerClient(true, 0, address, grpc.WithTransportCredentials(insecure.NewCredentials()), source, func(client filer_pb.SeaweedFilerClient) error {
 			stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{Directory: "/"})
 			if err != nil {
 				return err
@@ -253,7 +253,7 @@ func TestWithGrpcFilerClientAuthStreamingReopensWithFreshToken(t *testing.T) {
 	}
 }
 
-func TestWithGrpcFilerClientAuthStreamingListEntriesCarriesToken(t *testing.T) {
+func TestWithGrpcFilerClientStreamingListEntriesCarriesToken(t *testing.T) {
 	server, address := startAuthRecordingFiler(t)
 	key := filerAuthTestKey(t)
 	token := security.GenJwtForFilerAdmin(key, 60)
@@ -262,7 +262,7 @@ func TestWithGrpcFilerClientAuthStreamingListEntriesCarriesToken(t *testing.T) {
 		sourceCalls++
 		return token, nil
 	}
-	err := WithGrpcFilerClientAuth(true, 0, address, grpc.WithTransportCredentials(insecure.NewCredentials()), source, func(client filer_pb.SeaweedFilerClient) error {
+	err := WithGrpcFilerClient(true, 0, address, grpc.WithTransportCredentials(insecure.NewCredentials()), source, func(client filer_pb.SeaweedFilerClient) error {
 		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{Directory: "/"})
 		if err != nil {
 			return err

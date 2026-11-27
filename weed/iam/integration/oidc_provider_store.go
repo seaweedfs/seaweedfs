@@ -604,7 +604,7 @@ func (f *FilerOIDCProviderStore) deleteProviderEntryIfUnchanged(ctx context.Cont
 }
 
 func (f *FilerOIDCProviderStore) withFilerClient(ctx context.Context, filerAddress string, fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithGrpcFilerClientAuth(false, 0, pb.ServerAddress(filerAddress), f.grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddress), f.grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		if err := f.names.ensure(ctx, filerAddress, client); err != nil {
 			return err
 		}

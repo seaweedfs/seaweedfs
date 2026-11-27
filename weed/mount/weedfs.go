@@ -423,7 +423,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			option.PeerEnabled = false
 		} else {
 			dial := func(ctx context.Context, addr pb.ServerAddress, fn func(client filer_pb.SeaweedFilerClient) error) error {
-				return pb.WithGrpcFilerClient(false, 0, addr, option.GrpcDialOption, fn)
+				return pb.WithGrpcFilerClient(false, 0, addr, option.GrpcDialOption, nil, fn)
 			}
 			wfs.peerRegistrar = NewPeerRegistrar(option.FilerAddresses, dial, selfAddr, option.PeerDataCenter, option.PeerRack)
 			if err := wfs.peerRegistrar.Start(context.Background()); err != nil {

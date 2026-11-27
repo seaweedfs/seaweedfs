@@ -554,7 +554,7 @@ func getSignaturePrefixByPath(sourcePath, targetPath string) string {
 
 func getOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, tokenSource security.FilerTokenSource, signaturePrefix string, signature int32) (lastOffsetTsNs int64, readErr error) {
 
-	readErr = pb.WithGrpcFilerClientAuth(false, signature, filer, grpcDialOption, tokenSource, func(client filer_pb.SeaweedFilerClient) error {
+	readErr = pb.WithGrpcFilerClient(false, signature, filer, grpcDialOption, tokenSource, func(client filer_pb.SeaweedFilerClient) error {
 		syncKey := []byte(signaturePrefix + "____")
 		util.Uint32toBytes(syncKey[len(signaturePrefix):len(signaturePrefix)+4], uint32(signature))
 
@@ -655,7 +655,7 @@ func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, tokenSour
 	}
 	checkpoint.lastSeq = seq
 
-	return pb.WithGrpcFilerClientAuth(false, signature, filer, grpcDialOption, tokenSource, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClient(false, signature, filer, grpcDialOption, tokenSource, func(client filer_pb.SeaweedFilerClient) error {
 
 		valueBuf := make([]byte, 8)
 		util.Uint64toBytes(valueBuf, uint64(offsetTsNs))

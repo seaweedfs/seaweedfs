@@ -163,7 +163,7 @@ func (ce *CommandEnv) WithFilerClient(streamingMode bool, fn func(filer_pb.Seawe
 // The token source is attached to the logical client, so pooled connections
 // remain shared while each RPC resolves current credentials independently.
 func (ce *CommandEnv) WithFilerClientAt(address pb.ServerAddress, streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithGrpcFilerClientAuth(streamingMode, 0, address, ce.option.GrpcDialOption, ce.option.FilerTokenSource, fn)
+	return pb.WithGrpcFilerClient(streamingMode, 0, address, ce.option.GrpcDialOption, ce.option.FilerTokenSource, fn)
 }
 
 // FilerAddress returns the discovered or configured filer, running discovery

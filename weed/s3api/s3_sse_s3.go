@@ -804,7 +804,7 @@ func (k *KeyManagerFilerClient) WithFilerClient(streamingMode bool, fn func(file
 	if filerAddress == "" {
 		return fmt.Errorf("no filer available")
 	}
-	return pb.WithGrpcFilerClientAuth(streamingMode, 0, filerAddress, k.grpcDialOption, security.FilerAdminToken, fn)
+	return pb.WithGrpcFilerClient(streamingMode, 0, filerAddress, k.grpcDialOption, security.FilerAdminToken, fn)
 }
 
 // InitializeGlobalSSES3KeyManager initializes the global key manager with

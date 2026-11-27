@@ -192,7 +192,7 @@ func (b *MessageQueueBroker) GetFiler() pb.ServerAddress {
 }
 
 func (b *MessageQueueBroker) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithGrpcFilerClientAuth(streamingMode, 0, b.GetFiler(), b.grpcDialOption, security.FilerAdminToken, fn)
+	return pb.WithGrpcFilerClient(streamingMode, 0, b.GetFiler(), b.grpcDialOption, security.FilerAdminToken, fn)
 
 }
 

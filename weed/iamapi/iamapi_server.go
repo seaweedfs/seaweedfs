@@ -187,7 +187,7 @@ func (iama *IamS3ApiConfigure) PutS3ApiConfigurationToCredentialManager(s3cfg *i
 
 func (iama *IamS3ApiConfigure) GetS3ApiConfigurationFromFiler(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
 	var buf bytes.Buffer
-	err = pb.WithOneOfGrpcFilerClientsAuth(false, iama.option.Filers, iama.option.GrpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		if err = filer.ReadEntry(iama.masterClient, client, filer.IamConfigDirectory, filer.IamIdentityFile, &buf); err != nil {
 			return err
 		}
@@ -209,7 +209,7 @@ func (iama *IamS3ApiConfigure) PutS3ApiConfigurationToFiler(s3cfg *iam_pb.S3ApiC
 	if err := filer.ProtoToText(&buf, s3cfg); err != nil {
 		return fmt.Errorf("ProtoToText: %s", err)
 	}
-	return pb.WithOneOfGrpcFilerClientsAuth(false, iama.option.Filers, iama.option.GrpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		err = util.Retry("saveIamIdentity", func() error {
 			return filer.SaveInsideFiler(context.Background(), client, filer.IamConfigDirectory, filer.IamIdentityFile, buf.Bytes())
 		})
@@ -259,7 +259,7 @@ func (iama *IamS3ApiConfigure) GetPolicies(policies *Policies) (err error) {
 	// conflict (per name / per (user, name) / per (group, name)) so we never
 	// produce duplicates.
 	var buf bytes.Buffer
-	rErr := pb.WithOneOfGrpcFilerClientsAuth(false, iama.option.Filers, iama.option.GrpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
+	rErr := pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		return filer.ReadEntry(iama.masterClient, client, filer.IamConfigDirectory, filer.IamPoliciesFile, &buf)
 	})
 	if rErr != nil && rErr != filer_pb.ErrNotFound {
@@ -406,7 +406,7 @@ func (iama *IamS3ApiConfigure) writeLegacyPolicies(ctx context.Context, p *Polic
 	if err != nil {
 		return fmt.Errorf("marshal legacy policies: %w", err)
 	}
-	return pb.WithOneOfGrpcFilerClientsAuth(false, iama.option.Filers, iama.option.GrpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		return filer.SaveInsideFiler(ctx, client, filer.IamConfigDirectory, filer.IamPoliciesFile, b)
 	})
 }

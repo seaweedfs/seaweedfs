@@ -188,7 +188,7 @@ func metadataEventTarget(key string, newEntry *filer_pb.Entry, newParentPath str
 // ReadFilerSignature returns the filer's signature and the digest it reports,
 // empty for a filer that predates the setting.
 func ReadFilerSignature(grpcDialOption grpc.DialOption, filer pb.ServerAddress, tokenSource security.FilerTokenSource) (filerSignature int32, digest string, readErr error) {
-	if readErr = pb.WithGrpcFilerClientAuth(false, 0, filer, grpcDialOption, tokenSource, func(client filer_pb.SeaweedFilerClient) error {
+	if readErr = pb.WithGrpcFilerClient(false, 0, filer, grpcDialOption, tokenSource, func(client filer_pb.SeaweedFilerClient) error {
 		if resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{}); err != nil {
 			return fmt.Errorf("GetFilerConfiguration %s: %v", filer, err)
 		} else {

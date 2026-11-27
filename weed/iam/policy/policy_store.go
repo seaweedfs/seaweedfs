@@ -408,7 +408,7 @@ func (s *FilerPolicyStore) withFilerClient(filerAddress string, fn func(client f
 	}
 
 	// Use the pb.WithGrpcFilerClient helper similar to existing SeaweedFS code
-	return pb.WithGrpcFilerClientAuth(false, 0, pb.ServerAddress(filerAddress), s.grpcDialOption, security.FilerAdminToken, fn)
+	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddress), s.grpcDialOption, security.FilerAdminToken, fn)
 }
 
 // getPolicyPath returns the full path for a policy

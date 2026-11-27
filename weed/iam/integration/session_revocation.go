@@ -263,7 +263,7 @@ func (f *FilerSessionRevocationStore) Purge(ctx context.Context, filerAddress st
 }
 
 func (f *FilerSessionRevocationStore) withFilerClient(ctx context.Context, filerAddress string, fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithGrpcFilerClientAuth(false, 0, pb.ServerAddress(filerAddress), f.grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddress), f.grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		if err := f.names.ensure(ctx, filerAddress, client); err != nil {
 			return err
 		}

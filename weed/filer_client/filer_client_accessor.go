@@ -131,7 +131,7 @@ func (fca *FilerClientAccessor) withMultipleFilers(streamingMode bool, fn func(f
 	for _, filerAddress := range healthyFilers {
 		health := fca.getOrCreateFilerHealth(filerAddress)
 
-		err := pb.WithGrpcFilerClientAuth(streamingMode, 0, filerAddress, fca.GetGrpcDialOption(), fca.TokenSource, fn)
+		err := pb.WithGrpcFilerClient(streamingMode, 0, filerAddress, fca.GetGrpcDialOption(), fca.TokenSource, fn)
 		if err == nil {
 			// Success - record it and return
 			health.recordSuccess()
@@ -152,7 +152,7 @@ func (fca *FilerClientAccessor) withMultipleFilers(streamingMode bool, fn func(f
 		for _, filerAddress := range backoffFilers {
 			health := fca.getOrCreateFilerHealth(filerAddress)
 
-			err := pb.WithGrpcFilerClientAuth(streamingMode, 0, filerAddress, fca.GetGrpcDialOption(), fca.TokenSource, fn)
+			err := pb.WithGrpcFilerClient(streamingMode, 0, filerAddress, fca.GetGrpcDialOption(), fca.TokenSource, fn)
 			if err == nil {
 				// Success - record it and return
 				health.recordSuccess()

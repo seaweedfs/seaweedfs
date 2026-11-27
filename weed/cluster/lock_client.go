@@ -440,7 +440,7 @@ func (lock *LiveLock) StopShortLivedLock() error {
 	defer func() {
 		atomic.StoreInt32(&lock.isLocked, 0)
 	}()
-	return pb.WithGrpcFilerClientAuth(false, 0, lock.hostFiler, lock.grpcDialOption, lock.lc.TokenSource, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, lock.lc.TokenSource, func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithTimeout(context.Background(), lock.lc.lockRpcTimeout)
 		defer cancel()
 		if lock.lc.RequestContext != nil {
@@ -499,7 +499,7 @@ func (lock *LiveLock) doLock(lockDuration, attemptTimeout time.Duration) (errorM
 	previousHostFiler := lock.hostFiler
 	previousOwner := lock.owner
 
-	err = pb.WithGrpcFilerClientAuth(false, 0, lock.hostFiler, lock.grpcDialOption, lock.lc.TokenSource, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithGrpcFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, lock.lc.TokenSource, func(client filer_pb.SeaweedFilerClient) error {
 		// Bound each attempt: a ring member that is reachable from the masters
 		// but not from this filer would otherwise block on the connect timeout.
 		ctx, cancel := context.WithTimeout(context.Background(), attemptTimeout)
