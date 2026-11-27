@@ -88,6 +88,7 @@ func (s3a *S3ApiServer) streamCopyChunkRange(
 	isFullChunk bool,
 	assignResult *filer_pb.AssignVolumeResponse,
 	digestWriter io.Writer,
+	objectPath string,
 ) error {
 	// Range header takes int64, but mirror the int32 bound from
 	// downloadChunkData so the two paths reject the same inputs.
@@ -178,6 +179,9 @@ func (s3a *S3ApiServer) streamCopyChunkRange(
 		return fmt.Errorf("create POST request: %w", err)
 	}
 	req.Header.Set("Content-Type", contentType)
+	for k, v := range contentLocationPairMap(objectPath) {
+		req.Header.Set(k, v)
+	}
 	if dstJwt != "" {
 		req.Header.Set("Authorization", security.BearerPrefix+string(dstJwt))
 	}

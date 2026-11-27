@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -38,7 +39,7 @@ func TestNewChunkUploadOption_AvoidsBytePool(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			data := make([]byte, c.chunkLen)
-			opt := newChunkUploadOption(data, assign, false)
+			opt := newChunkUploadOption(data, assign, false, "")
 
 			if opt.BytesBuffer == nil {
 				t.Fatalf("BytesBuffer must be non-nil so chunk uploads bypass " +
@@ -59,6 +60,23 @@ func TestNewChunkUploadOption_AvoidsBytePool(t *testing.T) {
 	}
 }
 
+// TestNewChunkUploadOption_ContentLocation checks that copied chunks record the
+// destination object path, and record nothing when it is unknown.
+func TestNewChunkUploadOption_ContentLocation(t *testing.T) {
+	assign := &filer_pb.AssignVolumeResponse{
+		FileId:   "3,01",
+		Location: &filer_pb.Location{Url: "v:8080"},
+	}
+
+	want := map[string]string{"Seaweed-Content-Location": "/buckets/b/a%20b"}
+	if got := newChunkUploadOption(nil, assign, false, "/buckets/b/a b").PairMap; !reflect.DeepEqual(got, want) {
+		t.Errorf("PairMap = %v, want %v", got, want)
+	}
+	if got := newChunkUploadOption(nil, assign, false, "").PairMap; got != nil {
+		t.Errorf("PairMap for unknown path = %v, want nil", got)
+	}
+}
+
 // TestNewChunkUploadOption_PerCallIsolation verifies each call returns a
 // distinct buffer. Sharing one buffer across concurrent uploads would
 // corrupt the multipart bodies under concurrent UploadPartCopy.
@@ -68,8 +86,8 @@ func TestNewChunkUploadOption_PerCallIsolation(t *testing.T) {
 		Location: &filer_pb.Location{Url: "127.0.0.1:8080"},
 	}
 
-	o1 := newChunkUploadOption(nil, assign, false)
-	o2 := newChunkUploadOption(nil, assign, false)
+	o1 := newChunkUploadOption(nil, assign, false, "")
+	o2 := newChunkUploadOption(nil, assign, false, "")
 	if o1.BytesBuffer == o2.BytesBuffer {
 		t.Fatalf("newChunkUploadOption must hand each caller a distinct buffer; " +
 			"sharing one across concurrent uploads would corrupt the multipart bodies")
