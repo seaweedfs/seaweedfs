@@ -3977,8 +3977,26 @@ impl VolumeServer for VolumeGrpcService {
                 reason,
                 status.message()
             );
-        }
-        result
+        };
+        let task_report = report.clone();
+        tokio::spawn(async move {
+            let _lifecycle = lifecycle;
+            let copy = svc.volume_ec_shards_copy_locked(req, vid, shard_ids);
+            let result = match request_id {
+                Some(id) => crate::server::request_id::scope_request_id(id, copy).await,
+                None => copy.await,
+            };
+            if let Err(status) = &result {
+                task_report(status);
+            }
+            result
+        })
+        .await
+        .map_err(|e| {
+            let status = Status::internal(format!("VolumeEcShardsCopy volume {}: {}", vid, e));
+            report(&status);
+            status
+        })?
     }
 
     /// Allowed in maintenance mode: like `volume_delete` it only removes data, and
