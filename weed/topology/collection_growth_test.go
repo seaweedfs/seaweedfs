@@ -6,6 +6,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 func newGrowthFenceTopology() (*Topology, *VolumeGrowOption) {
@@ -116,5 +117,18 @@ func TestAssignStaysOutOfACollectionBeingDeleted(t *testing.T) {
 	unfence()
 	if _, _, _, _, err := topo.PickForWrite(1, option, vl, 0); err != nil {
 		t.Errorf("assign still refused after a failed delete lifted the fence: %v", err)
+	}
+}
+
+func TestFailedGrowListsNoCollection(t *testing.T) {
+	topo := NewTopology("test", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	option := &VolumeGrowOption{Collection: "archive", ReplicaPlacement: rp, DiskType: types.HardDriveType}
+
+	if _, err := NewDefaultVolumeGrowth().GrowByCountAndType(nil, 1, option, topo); err == nil {
+		t.Fatal("grow succeeded on a topology with no volume servers")
+	}
+	if got := topo.ListCollections(true, false); len(got) != 0 {
+		t.Errorf("a grow that created nothing left collections %v listed", got)
 	}
 }

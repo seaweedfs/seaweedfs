@@ -818,7 +818,11 @@ func (t *Topology) ListCollections(includeNormalVolumes, includeEcVolumes bool) 
 
 	if includeNormalVolumes {
 		for _, c := range t.collectionMap.Items() {
-			found[c.(*Collection).Name] = true
+			// A grow request publishes its collection before its first volume
+			// registers, and one that fails leaves it empty.
+			if len(c.(*Collection).GetAllVolumeLayouts()) > 0 {
+				found[c.(*Collection).Name] = true
+			}
 		}
 	}
 
