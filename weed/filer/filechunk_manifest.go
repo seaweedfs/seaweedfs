@@ -578,7 +578,8 @@ func foldSmallChunks(saveFunc SaveDataAsChunkFunctionType, inputChunks []*filer_
 	if len(manifests) == 0 {
 		return inputChunks, nil
 	}
-	chunks := make([]*filer_pb.FileChunk, 0, len(inputChunks)-len(folded)+len(manifests))
+	// Each manifest takes the place of SmallChunkManifestBatch chunks.
+	chunks := make([]*filer_pb.FileChunk, 0, len(inputChunks))
 	for _, chunk := range inputChunks {
 		if !folded[chunk] {
 			chunks = append(chunks, chunk)
