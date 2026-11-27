@@ -2,6 +2,8 @@ package sftpd
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/http"
@@ -14,10 +16,12 @@ import (
 	"github.com/pkg/sftp"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/sftpd/user"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -52,11 +56,33 @@ func TestPutFileEscapesQueryInjection(t *testing.T) {
 
 type fakeListFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
-	names    []string
-	failFrom int // ListEntries fails after sending this many entries, when > 0
+	names          []string
+	failFrom       int // ListEntries fails after sending this many entries, when > 0
+	authKey        security.SigningKey
+	authResultChan chan bool
+}
+
+func (f *fakeListFiler) checkAuth(ctx context.Context) error {
+	if len(f.authKey) == 0 {
+		return nil
+	}
+	md, _ := metadata.FromIncomingContext(ctx)
+	values := md.Get("authorization")
+	valid := len(values) == 1 && strings.HasPrefix(values[0], security.BearerPrefix) &&
+		security.IsFilerAdminToken(f.authKey, security.EncodedJwt(strings.TrimPrefix(values[0], security.BearerPrefix)))
+	if f.authResultChan != nil {
+		f.authResultChan <- valid
+	}
+	if !valid {
+		return status.Error(codes.Unauthenticated, "missing or invalid filer authorization")
+	}
+	return nil
 }
 
 func (f *fakeListFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream grpc.ServerStreamingServer[filer_pb.ListEntriesResponse]) error {
+	if err := f.checkAuth(stream.Context()); err != nil {
+		return err
+	}
 	sent := 0
 	for _, name := range f.names {
 		if name <= req.StartFromFileName || sent >= int(req.Limit) {
@@ -74,7 +100,19 @@ func (f *fakeListFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream grp
 }
 
 func (f *fakeListFiler) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if err := f.checkAuth(ctx); err != nil {
+		return nil, err
+	}
 	return &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{Name: req.Name, Attributes: &filer_pb.FuseAttributes{}}}, nil
+}
+
+func sftpTestSigningKey(t *testing.T) security.SigningKey {
+	t.Helper()
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		t.Fatal(err)
+	}
+	return security.SigningKey(hex.EncodeToString(bytes))
 }
 
 func newListTestServer(t *testing.T, filer *fakeListFiler) *SftpServer {
@@ -176,5 +214,29 @@ func TestListAllPagesContinuesPastFullyHiddenPage(t *testing.T) {
 	}
 	if names[0] != fmt.Sprintf("f%05d", defaultListLimit) {
 		t.Fatalf("unexpected first entry %q", names[0])
+	}
+}
+
+func TestWithFilerClientSendsAdminToken(t *testing.T) {
+	key := sftpTestSigningKey(t)
+	t.Setenv("WEED_JWT_FILER_SIGNING_GRPC_KEY", string(key))
+	t.Setenv("WEED_JWT_FILER_SIGNING_KEY", "")
+
+	filer := &fakeListFiler{authKey: key, authResultChan: make(chan bool, 1)}
+	fs := newListTestServer(t, filer)
+	err := fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		_, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{Directory: "/", Name: "entry"})
+		return err
+	})
+	if err != nil {
+		t.Fatalf("WithFilerClient: %v", err)
+	}
+	select {
+	case valid := <-filer.authResultChan:
+		if !valid {
+			t.Fatal("filer rejected the per-call admin token")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("filer did not receive the request")
 	}
 }

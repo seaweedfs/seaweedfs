@@ -2474,7 +2474,7 @@ func ensureMiniBuckets(bucketSpec string) error {
 	// Derive from miniClientsCtx so Ctrl+C cancels the bucket RPCs, and bound
 	// with a short timeout (per bucket) so a stalled filer cannot block the
 	// welcome message indefinitely.
-	return pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClientAuth(false, 0, filerAddress, grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		for _, name := range names {
 			if err := s3bucket.VerifyS3BucketName(name); err != nil {
 				glog.Warningf("invalid bucket name %q: %v", name, err)
@@ -2552,7 +2552,7 @@ func createMiniTableBuckets(servable []tableBucketEntry) ([]tableBucketEntry, er
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	var ready []tableBucketEntry
-	err := pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err := pb.WithGrpcFilerClientAuth(false, 0, filerAddress, grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		manager := s3tables.NewManager()
 		mgrClient := s3tables.NewManagerClient(client)
 		for _, bucket := range servable {

@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
@@ -33,6 +34,7 @@ type BrokerClient struct {
 	filerAddress   string
 	brokerAddress  string
 	grpcDialOption grpc.DialOption
+	tokenSource    security.FilerTokenSource
 }
 
 // NewBrokerClient creates a new MQ broker client
@@ -45,6 +47,7 @@ func NewBrokerClient(masterHTTPAddress string) *BrokerClient {
 	return &BrokerClient{
 		masterAddress:  masterGRPCAddress,
 		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		tokenSource:    security.FilerAdminToken,
 	}
 }
 
@@ -103,7 +106,7 @@ func (c *BrokerClient) findBrokerBalancer() error {
 	}
 	defer conn.Close()
 
-	client := filer_pb.NewSeaweedFilerClient(conn)
+	client := filer_pb.NewSeaweedFilerClient(security.WithFilerClientAuth(conn, c.tokenSource))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -129,6 +132,7 @@ func (c *BrokerClient) GetFilerClient() (filer_pb.FilerClient, error) {
 	return &filerClientImpl{
 		filerAddress:   c.filerAddress,
 		grpcDialOption: c.grpcDialOption,
+		tokenSource:    c.tokenSource,
 	}, nil
 }
 
@@ -136,6 +140,7 @@ func (c *BrokerClient) GetFilerClient() (filer_pb.FilerClient, error) {
 type filerClientImpl struct {
 	filerAddress   string
 	grpcDialOption grpc.DialOption
+	tokenSource    security.FilerTokenSource
 }
 
 // WithFilerClient executes a function with a connected filer client
@@ -146,7 +151,7 @@ func (f *filerClientImpl) WithFilerClient(followRedirect bool, fn func(client fi
 	}
 	defer conn.Close()
 
-	client := filer_pb.NewSeaweedFilerClient(conn)
+	client := filer_pb.NewSeaweedFilerClient(security.WithFilerClientAuth(conn, f.tokenSource))
 	return fn(client)
 }
 

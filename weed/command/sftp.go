@@ -137,7 +137,7 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 
 	// Connect to the filer service and try to retrieve basic configuration.
 	for {
-		err := pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithGrpcFilerClientAuth(false, 0, filerAddress, grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)

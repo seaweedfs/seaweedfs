@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -113,6 +117,36 @@ func startFilerAuthTestServer(t *testing.T, serverImpl *filerAuthTestServer) pb.
 	address := pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", listener.Addr().(*net.TCPAddr).Port))
 	pb.InvalidateGrpcConnection(address.ToGrpcAddress())
 	return address
+}
+
+func startProtectedFilerAuthTestServer(t *testing.T, delegate filer_pb.SeaweedFilerServer) (*filerAuthTestServer, pb.ServerAddress) {
+	t.Helper()
+	auth := &filerAuthTestServer{}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+			if err := auth.recordAuthorization(ctx); err != nil {
+				return nil, err
+			}
+			return handler(ctx, req)
+		}),
+		grpc.StreamInterceptor(func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+			if err := auth.recordAuthorization(stream.Context()); err != nil {
+				return err
+			}
+			return handler(srv, stream)
+		}),
+	)
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, delegate)
+	go func() { _ = grpcServer.Serve(listener) }()
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		_ = listener.Close()
+	})
+	return auth, pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", listener.Addr().(*net.TCPAddr).Port))
 }
 
 func setFilerAuthTestKey(t *testing.T, key string) {
@@ -241,5 +275,47 @@ func TestS3FilerConfReadCarriesAdminAuth(t *testing.T) {
 	values := server.authorizationValues()
 	if len(values) != 1 || len(values[0]) != 1 || !strings.HasPrefix(values[0][0], security.BearerPrefix) {
 		t.Fatal("filer.conf read did not carry one bearer authorization")
+	}
+}
+
+func TestS3MultipartHandlerCarriesAdminAuthToProtectedFiler(t *testing.T) {
+	setFilerAuthTestKey(t, string(testFilerAuthKey))
+	volume := startFakeVolumeServer(t)
+	impl := &ambiguousPutFiler{
+		volume:  volume,
+		entries: map[string]*filer_pb.Entry{},
+		apply:   true,
+	}
+	impl.entries["/buckets/b"] = &filer_pb.Entry{
+		Name:        "b",
+		IsDirectory: true,
+		Attributes:  &filer_pb.FuseAttributes{},
+	}
+	auth, address := startProtectedFilerAuthTestServer(t, impl)
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	s3a := newPutTestServer(t, address)
+	s3a.filerClient = wdclient.NewFilerClient([]pb.ServerAddress{address}, dialOption, "", &wdclient.FilerClientOption{
+		FilerTokenSource: security.FilerAdminToken,
+	})
+	s3a.iam = NewIdentityAccessManagementWithStore(s3a.option, nil, "memory")
+	t.Cleanup(s3a.iam.Shutdown)
+	s3a.bucketConfigCache = NewBucketConfigCache(time.Minute)
+	s3a.bucketConfigCache.Set("b", &BucketConfig{Name: "b"})
+
+	req := httptest.NewRequest(http.MethodPost, "http://s3/b/o?uploads", nil)
+	req = mux.SetURLVars(req, map[string]string{"bucket": "b", "object": "o"})
+	response := httptest.NewRecorder()
+	s3a.NewMultipartUploadHandler(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("multipart initiation status = %d, want 200: %s", response.Code, response.Body.String())
+	}
+	values := auth.authorizationValues()
+	if len(values) == 0 {
+		t.Fatal("multipart initiation made no filer calls")
+	}
+	for i, authorization := range values {
+		if len(authorization) != 1 || !strings.HasPrefix(authorization[0], security.BearerPrefix) {
+			t.Fatalf("filer call %d did not carry one bearer authorization", i)
+		}
 	}
 }

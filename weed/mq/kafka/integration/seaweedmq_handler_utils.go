@@ -78,6 +78,7 @@ func NewSeaweedMQBrokerHandler(masters string, filerGroup string, clientHost str
 		filerAddresses,
 		grpcDialOption,
 	)
+	sharedFilerAccessor.TokenSource = security.FilerAdminToken
 
 	// For now, use the first broker (can be enhanced later for load balancing)
 	brokerAddress := brokerAddresses[0]

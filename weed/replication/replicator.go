@@ -34,7 +34,9 @@ func NewReplicator(sourceConfig util.Configuration, configPrefix string, dataSin
 	}
 
 	dataSink.SetSourceFiler(source)
-	if tokenSink, ok := dataSink.(interface{ SetFilerTokenSource(security.FilerTokenSource) }); ok {
+	if tokenSink, ok := dataSink.(interface {
+		SetFilerTokenSource(security.FilerTokenSource)
+	}); ok {
 		tokenSink.SetFilerTokenSource(security.FilerAdminToken)
 	}
 
