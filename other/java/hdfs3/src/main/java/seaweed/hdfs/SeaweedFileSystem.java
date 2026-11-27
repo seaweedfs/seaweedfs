@@ -10,7 +10,7 @@ import org.apache.hadoop.util.Progressable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import seaweedfs.client.FilerProto;
-import seaweedfs.client.FilerSecurityContext;
+import seaweedfs.client.FilerCredentials;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -73,24 +73,23 @@ public class SeaweedFileSystem extends FileSystem {
 
         String cn = conf.get(FS_SEAWEED_FILER_CN, "");
 
-        applyFilerCredentials(conf);
         seaweedFileSystemStore = new SeaweedFileSystemStore(host, port, grpcPort, cn, conf);
     }
 
     // Options set here override the [filer.basic_auth] and [jwt.filer_signing] values of security.toml.
-    static void applyFilerCredentials(Configuration conf) throws IOException {
+    static void applyFilerCredentials(Configuration conf, FilerCredentials credentials) throws IOException {
         String user = conf.get(FS_SEAWEED_FILER_BASIC_AUTH_USER, "");
         String password = secret(conf, FS_SEAWEED_FILER_BASIC_AUTH_PASSWORD);
         if (!user.isEmpty() || password != null) {
-            FilerSecurityContext.setFilerBasicAuth(user, password);
+            credentials.setBasicAuth(user, password);
         }
         String key = secret(conf, FS_SEAWEED_FILER_JWT_SIGNING_KEY);
         if (key != null) {
-            FilerSecurityContext.setFilerJwtSigningKey(key, conf.getLong(FS_SEAWEED_FILER_JWT_SIGNING_EXPIRES, 0));
+            credentials.setJwtSigningKey(key, conf.getLong(FS_SEAWEED_FILER_JWT_SIGNING_EXPIRES, 0));
         }
         String readKey = secret(conf, FS_SEAWEED_FILER_JWT_SIGNING_READ_KEY);
         if (readKey != null) {
-            FilerSecurityContext.setFilerJwtReadSigningKey(readKey, conf.getLong(FS_SEAWEED_FILER_JWT_SIGNING_READ_EXPIRES, 0));
+            credentials.setJwtReadSigningKey(readKey, conf.getLong(FS_SEAWEED_FILER_JWT_SIGNING_READ_EXPIRES, 0));
         }
     }
 

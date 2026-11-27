@@ -135,7 +135,7 @@ public class SeaweedWrite {
             cipherKeyString = ByteString.copyFrom(cipherKey);
         }
 
-        String etag = multipartUpload(targetUrl, auth, bytes, bytesOffset, bytesLength, cipherKey);
+        String etag = multipartUpload(filerClient, targetUrl, auth, bytes, bytesOffset, bytesLength, cipherKey);
 
         return FilerProto.FileChunk.newBuilder()
                 .setFileId(fileId)
@@ -167,7 +167,8 @@ public class SeaweedWrite {
         }
     }
 
-    private static String multipartUpload(String targetUrl,
+    private static String multipartUpload(FilerClient filerClient,
+            String targetUrl,
             String auth,
             final byte[] bytes,
             final long bytesOffset, final long bytesLength,
@@ -194,7 +195,7 @@ public class SeaweedWrite {
 
         HttpPost post = new HttpPost(targetUrl);
         String filerAuthHeader = SeaweedUtil.isProxyChunkUrl(targetUrl)
-                ? FilerSecurityContext.getFilerAuthorizationHeaderValue(true) : null;
+                ? filerClient.getFilerCredentials().getAuthorizationHeaderValue(true) : null;
         if (filerAuthHeader != null) {
             post.addHeader("Authorization", filerAuthHeader);
         } else if (auth != null && auth.length() != 0) {

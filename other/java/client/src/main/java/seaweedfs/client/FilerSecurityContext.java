@@ -19,8 +19,6 @@ import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
 import java.util.Base64;
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 
 public abstract class FilerSecurityContext extends SslContext {
 //extends Netty SslContext to access its protected static utility methods in
@@ -45,13 +43,7 @@ public abstract class FilerSecurityContext extends SslContext {
     // volume/proxy HTTP requests. Precomputed so per-chunk requests don't re-encode.
     private static volatile String basicAuthHeaderValue;
 
-    // Credentials for the filer's own HTTP port ([filer.basic_auth], [jwt.filer_signing],
-    // [jwt.filer_signing.read]), sent only on requests addressed to the filer.
-    private static volatile String filerBasicAuthHeaderValue;
-    private static volatile FilerSigningKey filerSigningKey;
-    private static volatile FilerSigningKey filerReadSigningKey;
-    private static final long DEFAULT_FILER_SIGNING_EXPIRES_AFTER_SECONDS = 10;
-    private static final long DEFAULT_FILER_READ_SIGNING_EXPIRES_AFTER_SECONDS = 60;
+    private static final FilerCredentials filerCredentials = new FilerCredentials();
 
 
     static {
@@ -74,10 +66,10 @@ public abstract class FilerSecurityContext extends SslContext {
 
             basicAuthHeaderValue = computeBasicAuthHeaderValue(
                     toml.getString("basic_auth.username"), toml.getString("basic_auth.password"));
-            setFilerBasicAuth(toml.getString("filer.basic_auth.user"), toml.getString("filer.basic_auth.password"));
-            setFilerJwtSigningKey(toml.getString("jwt.filer_signing.key"),
+            filerCredentials.setBasicAuth(toml.getString("filer.basic_auth.user"), toml.getString("filer.basic_auth.password"));
+            filerCredentials.setJwtSigningKey(toml.getString("jwt.filer_signing.key"),
                     toml.getLong("jwt.filer_signing.expires_after_seconds", 0L));
-            setFilerJwtReadSigningKey(toml.getString("jwt.filer_signing.read.key"),
+            filerCredentials.setJwtReadSigningKey(toml.getString("jwt.filer_signing.read.key"),
                     toml.getLong("jwt.filer_signing.read.expires_after_seconds", 0L));
 
             grpcTrustCertCollectionFilePath = toml.getString("grpc.ca");
@@ -161,68 +153,9 @@ public abstract class FilerSecurityContext extends SslContext {
         return basicAuthHeaderValue;
     }
 
-    // Configure the filer's [filer.basic_auth] credentials programmatically. Like the
-    // filer, an empty password turns them off and an empty user is allowed.
-    public static void setFilerBasicAuth(String username, String password) {
-        filerBasicAuthHeaderValue = Strings.isNullOrEmpty(password) ? null
-                : encodeBasicAuth(Strings.nullToEmpty(username), password);
-    }
-
-    // Configure jwt.filer_signing.key programmatically; expiresAfterSeconds <= 0 uses 10.
-    public static void setFilerJwtSigningKey(String key, long expiresAfterSeconds) {
-        filerSigningKey = FilerSigningKey.of(key, expiresAfterSeconds, DEFAULT_FILER_SIGNING_EXPIRES_AFTER_SECONDS);
-    }
-
-    // Configure jwt.filer_signing.read.key programmatically; expiresAfterSeconds <= 0 uses 60.
-    public static void setFilerJwtReadSigningKey(String key, long expiresAfterSeconds) {
-        filerReadSigningKey = FilerSigningKey.of(key, expiresAfterSeconds, DEFAULT_FILER_READ_SIGNING_EXPIRES_AFTER_SECONDS);
-    }
-
-    // Returns the Authorization header value for an HTTP request addressed to the filer:
-    // a filer JWT for the access level when its key is set, else [filer.basic_auth], else
-    // [basic_auth]; null when none is configured. The filer reads GET and HEAD with the read key.
-    public static String getFilerAuthorizationHeaderValue(boolean isWrite) {
-        FilerSigningKey key = isWrite ? filerSigningKey : filerReadSigningKey;
-        if (key != null) {
-            return "BEARER " + genJwtForFilerServer(key.key, key.expiresAfterSeconds);
-        }
-        if (filerBasicAuthHeaderValue != null) {
-            return filerBasicAuthHeaderValue;
-        }
-        return basicAuthHeaderValue;
-    }
-
-    // Mints an HS256 token with only an "exp" claim, like security.GenJwtForFilerServer.
-    static String genJwtForFilerServer(byte[] signingKey, long expiresAfterSeconds) {
-        Base64.Encoder encoder = Base64.getUrlEncoder().withoutPadding();
-        long exp = System.currentTimeMillis() / 1000 + expiresAfterSeconds;
-        String signingInput = encoder.encodeToString("{\"alg\":\"HS256\",\"typ\":\"JWT\"}".getBytes(StandardCharsets.UTF_8))
-                + "." + encoder.encodeToString(("{\"exp\":" + exp + "}").getBytes(StandardCharsets.UTF_8));
-        try {
-            Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(signingKey, "HmacSHA256"));
-            return signingInput + "." + encoder.encodeToString(mac.doFinal(signingInput.getBytes(StandardCharsets.UTF_8)));
-        } catch (GeneralSecurityException e) {
-            throw new IllegalStateException("cannot sign filer jwt", e);
-        }
-    }
-
-    private static final class FilerSigningKey {
-        final byte[] key;
-        final long expiresAfterSeconds;
-
-        private FilerSigningKey(byte[] key, long expiresAfterSeconds) {
-            this.key = key;
-            this.expiresAfterSeconds = expiresAfterSeconds;
-        }
-
-        static FilerSigningKey of(String key, long expiresAfterSeconds, long defaultExpiresAfterSeconds) {
-            if (Strings.isNullOrEmpty(key)) {
-                return null;
-            }
-            return new FilerSigningKey(key.getBytes(StandardCharsets.UTF_8),
-                    expiresAfterSeconds > 0 ? expiresAfterSeconds : defaultExpiresAfterSeconds);
-        }
+    // The filer credentials read from security.toml; each FilerClient copies them.
+    static FilerCredentials getFilerCredentials() {
+        return filerCredentials;
     }
 
     private static String computeBasicAuthHeaderValue(String username, String password) {
@@ -232,7 +165,7 @@ public abstract class FilerSecurityContext extends SslContext {
         return encodeBasicAuth(username, password == null ? "" : password);
     }
 
-    private static String encodeBasicAuth(String username, String password) {
+    static String encodeBasicAuth(String username, String password) {
         String credentials = username + ":" + password;
         return "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
     }

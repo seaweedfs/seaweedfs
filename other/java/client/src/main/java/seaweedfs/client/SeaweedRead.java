@@ -136,7 +136,7 @@ public class SeaweedRead {
             for (FilerProto.Location location : locations.getLocationsList()) {
                 String url = filerClient.getChunkUrl(chunkView.fileId, location.getUrl(), location.getPublicUrl());
                 try {
-                    byte[] fetched = doFetchOneFullChunkData(chunkView, url);
+                    byte[] fetched = doFetchOneFullChunkData(filerClient, chunkView, url);
                     // An empty (or null) body for a chunk we are reading from is never
                     // valid; treat it as a transient failure so the retry loop tries
                     // another location and backs off, rather than caching an empty chunk.
@@ -171,14 +171,14 @@ public class SeaweedRead {
 
     }
 
-    private static byte[] doFetchOneFullChunkData(ChunkView chunkView, String url) throws IOException {
+    private static byte[] doFetchOneFullChunkData(FilerClient filerClient, ChunkView chunkView, String url) throws IOException {
 
         HttpGet request = new HttpGet(url);
 
         request.setHeader(HttpHeaders.ACCEPT_ENCODING, "gzip");
 
         String authHeader = SeaweedUtil.isProxyChunkUrl(url)
-                ? FilerSecurityContext.getFilerAuthorizationHeaderValue(false)
+                ? filerClient.getFilerCredentials().getAuthorizationHeaderValue(false)
                 : FilerSecurityContext.getBasicAuthHeaderValue();
         if (authHeader != null) {
             request.setHeader(HttpHeaders.AUTHORIZATION, authHeader);

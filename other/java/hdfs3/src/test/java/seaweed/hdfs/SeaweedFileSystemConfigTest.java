@@ -4,7 +4,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.junit.Before;
 import org.junit.Test;
-import seaweedfs.client.FilerSecurityContext;
+import seaweedfs.client.FilerCredentials;
 
 import static org.junit.Assert.*;
 
@@ -91,26 +91,21 @@ public class SeaweedFileSystemConfigTest {
 
     @Test
     public void testFilerCredentialsFromConfiguration() throws Exception {
-        try {
-            conf.set(SeaweedFileSystem.FS_SEAWEED_FILER_BASIC_AUTH_USER, "alice");
-            conf.set(SeaweedFileSystem.FS_SEAWEED_FILER_BASIC_AUTH_PASSWORD, "s3cret");
-            SeaweedFileSystem.applyFilerCredentials(conf);
-            String basic = "Basic " + java.util.Base64.getEncoder()
-                    .encodeToString("alice:s3cret".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            assertEquals(basic, FilerSecurityContext.getFilerAuthorizationHeaderValue(true));
+        FilerCredentials credentials = new FilerCredentials();
+        conf.set(SeaweedFileSystem.FS_SEAWEED_FILER_BASIC_AUTH_USER, "alice");
+        conf.set(SeaweedFileSystem.FS_SEAWEED_FILER_BASIC_AUTH_PASSWORD, "s3cret");
+        SeaweedFileSystem.applyFilerCredentials(conf, credentials);
+        String basic = "Basic " + java.util.Base64.getEncoder()
+                .encodeToString("alice:s3cret".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        assertEquals(basic, credentials.getAuthorizationHeaderValue(true));
 
-            conf.set(SeaweedFileSystem.FS_SEAWEED_FILER_JWT_SIGNING_KEY, "write-key");
-            SeaweedFileSystem.applyFilerCredentials(conf);
-            assertTrue(FilerSecurityContext.getFilerAuthorizationHeaderValue(true).startsWith("BEARER "));
-            assertEquals(basic, FilerSecurityContext.getFilerAuthorizationHeaderValue(false));
+        conf.set(SeaweedFileSystem.FS_SEAWEED_FILER_JWT_SIGNING_KEY, "write-key");
+        SeaweedFileSystem.applyFilerCredentials(conf, credentials);
+        assertTrue(credentials.getAuthorizationHeaderValue(true).startsWith("BEARER "));
+        assertEquals(basic, credentials.getAuthorizationHeaderValue(false));
 
-            conf.set(SeaweedFileSystem.FS_SEAWEED_FILER_JWT_SIGNING_READ_KEY, "read-key");
-            SeaweedFileSystem.applyFilerCredentials(conf);
-            assertTrue(FilerSecurityContext.getFilerAuthorizationHeaderValue(false).startsWith("BEARER "));
-        } finally {
-            FilerSecurityContext.setFilerBasicAuth(null, null);
-            FilerSecurityContext.setFilerJwtSigningKey(null, 0);
-            FilerSecurityContext.setFilerJwtReadSigningKey(null, 0);
-        }
+        conf.set(SeaweedFileSystem.FS_SEAWEED_FILER_JWT_SIGNING_READ_KEY, "read-key");
+        SeaweedFileSystem.applyFilerCredentials(conf, credentials);
+        assertTrue(credentials.getAuthorizationHeaderValue(false).startsWith("BEARER "));
     }
 }

@@ -50,6 +50,7 @@ public class FilerGrpcClient {
     private String replication = "";
     private int volumeServerAccess = VOLUME_SERVER_ACCESS_DIRECT;
     private String filerAddress;
+    private final FilerCredentials filerCredentials = new FilerCredentials(FilerSecurityContext.getFilerCredentials());
 
     public FilerGrpcClient(String host, int port, int grpcPort, String cn) {
         this(host, port, grpcPort, cn, sslContext);
@@ -152,6 +153,11 @@ public class FilerGrpcClient {
 
     public SeaweedFilerGrpc.SeaweedFilerFutureStub getFutureStub() {
         return SeaweedFilerGrpc.newFutureStub(getChannel());
+    }
+
+    // Credentials for this client's requests to the filer's HTTP port; changes affect only this client.
+    public FilerCredentials getFilerCredentials() {
+        return filerCredentials;
     }
 
     public void setAccessVolumeServerDirectly() {

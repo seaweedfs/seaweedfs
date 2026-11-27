@@ -18,19 +18,23 @@ import static org.junit.Assert.assertTrue;
 
 public class FilerJwtTest {
 
+    private FilerCredentials credentials;
+
     @Before
-    @After
     public void clearCredentials() {
         FilerSecurityContext.setBasicAuth(null, null);
-        FilerSecurityContext.setFilerBasicAuth(null, null);
-        FilerSecurityContext.setFilerJwtSigningKey(null, 0);
-        FilerSecurityContext.setFilerJwtReadSigningKey(null, 0);
+        credentials = new FilerCredentials();
+    }
+
+    @After
+    public void clearProxyBasicAuth() {
+        FilerSecurityContext.setBasicAuth(null, null);
     }
 
     @Test
     public void filerJwtIsSignedHs256WithExp() throws Exception {
         long before = System.currentTimeMillis() / 1000;
-        String token = FilerSecurityContext.genJwtForFilerServer("write-key".getBytes(StandardCharsets.UTF_8), 10);
+        String token = FilerCredentials.genJwtForFilerServer("write-key".getBytes(StandardCharsets.UTF_8), 10);
         long after = System.currentTimeMillis() / 1000;
 
         String[] parts = token.split("\\.");
@@ -44,21 +48,21 @@ public class FilerJwtTest {
 
     @Test
     public void noCredentialsMeansNoFilerHeader() {
-        assertNull(FilerSecurityContext.getFilerAuthorizationHeaderValue(true));
-        assertNull(FilerSecurityContext.getFilerAuthorizationHeaderValue(false));
+        assertNull(credentials.getAuthorizationHeaderValue(true));
+        assertNull(credentials.getAuthorizationHeaderValue(false));
     }
 
     @Test
     public void accessLevelPicksItsSigningKey() throws Exception {
-        FilerSecurityContext.setFilerJwtSigningKey("write-key", 0);
-        FilerSecurityContext.setFilerJwtReadSigningKey("read-key", 0);
+        credentials.setJwtSigningKey("write-key", 0);
+        credentials.setJwtReadSigningKey("read-key", 0);
         long now = System.currentTimeMillis() / 1000;
 
-        String[] write = bearer(FilerSecurityContext.getFilerAuthorizationHeaderValue(true));
+        String[] write = bearer(credentials.getAuthorizationHeaderValue(true));
         assertEquals(sign("write-key", write[0] + "." + write[1]), write[2]);
         assertTrue(exp(decode(write[1])) - now <= 11);
 
-        String[] read = bearer(FilerSecurityContext.getFilerAuthorizationHeaderValue(false));
+        String[] read = bearer(credentials.getAuthorizationHeaderValue(false));
         assertEquals(sign("read-key", read[0] + "." + read[1]), read[2]);
         assertTrue(exp(decode(read[1])) - now >= 60);
     }
@@ -67,26 +71,59 @@ public class FilerJwtTest {
     public void basicAuthCoversAccessLevelsWithoutKey() {
         FilerSecurityContext.setBasicAuth("proxy", "proxy-pass");
         assertEquals(FilerSecurityContext.getBasicAuthHeaderValue(),
-                FilerSecurityContext.getFilerAuthorizationHeaderValue(false));
+                credentials.getAuthorizationHeaderValue(false));
 
-        FilerSecurityContext.setFilerBasicAuth("filer", "filer-pass");
+        credentials.setBasicAuth("filer", "filer-pass");
         String filerBasic = "Basic " + Base64.getEncoder()
                 .encodeToString("filer:filer-pass".getBytes(StandardCharsets.UTF_8));
-        assertEquals(filerBasic, FilerSecurityContext.getFilerAuthorizationHeaderValue(false));
+        assertEquals(filerBasic, credentials.getAuthorizationHeaderValue(false));
 
-        FilerSecurityContext.setFilerJwtSigningKey("write-key", 5);
-        assertTrue(FilerSecurityContext.getFilerAuthorizationHeaderValue(true).startsWith("BEARER "));
-        assertEquals(filerBasic, FilerSecurityContext.getFilerAuthorizationHeaderValue(false));
+        credentials.setJwtSigningKey("write-key", 5);
+        assertTrue(credentials.getAuthorizationHeaderValue(true).startsWith("BEARER "));
+        assertEquals(filerBasic, credentials.getAuthorizationHeaderValue(false));
     }
 
     @Test
     public void filerBasicAuthFollowsThePassword() {
-        FilerSecurityContext.setFilerBasicAuth("filer", "");
-        assertNull(FilerSecurityContext.getFilerAuthorizationHeaderValue(false));
+        credentials.setBasicAuth("filer", "");
+        assertNull(credentials.getAuthorizationHeaderValue(false));
 
-        FilerSecurityContext.setFilerBasicAuth("", "only-pass");
+        credentials.setBasicAuth("", "only-pass");
         assertEquals("Basic " + Base64.getEncoder().encodeToString(":only-pass".getBytes(StandardCharsets.UTF_8)),
-                FilerSecurityContext.getFilerAuthorizationHeaderValue(false));
+                credentials.getAuthorizationHeaderValue(false));
+    }
+
+    @Test
+    public void nullKeepsTheCurrentValue() throws Exception {
+        credentials.setBasicAuth("filer", "old-pass");
+        credentials.setBasicAuth(null, "new-pass");
+        assertEquals("Basic " + Base64.getEncoder().encodeToString("filer:new-pass".getBytes(StandardCharsets.UTF_8)),
+                credentials.getAuthorizationHeaderValue(false));
+
+        credentials.setJwtSigningKey("write-key", 0);
+        credentials.setJwtSigningKey(null, 300);
+        long now = System.currentTimeMillis() / 1000;
+        String[] write = bearer(credentials.getAuthorizationHeaderValue(true));
+        assertEquals(sign("write-key", write[0] + "." + write[1]), write[2]);
+        assertTrue(exp(decode(write[1])) - now >= 300);
+
+        credentials.setJwtSigningKey("", 0);
+        assertTrue(credentials.getAuthorizationHeaderValue(true).startsWith("Basic "));
+    }
+
+    @Test
+    public void copiesSignIndependently() throws Exception {
+        credentials.setJwtSigningKey("shared-key", 0);
+        FilerCredentials a = new FilerCredentials(credentials);
+        FilerCredentials b = new FilerCredentials(credentials);
+        b.setJwtSigningKey("b-key", 0);
+
+        String[] fromA = bearer(a.getAuthorizationHeaderValue(true));
+        String[] fromB = bearer(b.getAuthorizationHeaderValue(true));
+        assertEquals(sign("shared-key", fromA[0] + "." + fromA[1]), fromA[2]);
+        assertEquals(sign("b-key", fromB[0] + "." + fromB[1]), fromB[2]);
+        String[] fromDefaults = bearer(credentials.getAuthorizationHeaderValue(true));
+        assertEquals(sign("shared-key", fromDefaults[0] + "." + fromDefaults[1]), fromDefaults[2]);
     }
 
     @Test
