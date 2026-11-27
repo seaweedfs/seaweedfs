@@ -1,6 +1,7 @@
 package dash
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
@@ -50,11 +51,17 @@ func scriptAppliesECBalance(script string) bool {
 				continue
 			}
 			for _, arg := range fields[1:] {
+				if strings.HasPrefix(arg, "#") {
+					break
+				}
 				name, value, hasValue := strings.Cut(strings.TrimLeft(strings.Trim(arg, "\"'"), "-"), "=")
 				if name != "apply" && name != "force" {
 					continue
 				}
-				if !hasValue || (value != "false" && value != "0") {
+				if !hasValue {
+					return true
+				}
+				if on, err := strconv.ParseBool(value); err == nil && on {
 					return true
 				}
 			}
