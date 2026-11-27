@@ -319,7 +319,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 			replaced = current
 		}
 	}
-	chunks, garbage, err2 := fs.cleanupChunksReplacing(ctx, string(fullpath), nil, replaced, req.Entry)
+	chunks, garbage, err2 := fs.cleanupChunks(ctx, string(fullpath), nil, replaced, req.Entry)
 	if err2 != nil {
 		return &filer_pb.CreateEntryResponse{}, fmt.Errorf("CreateEntry cleanupChunks %s %s: %v", req.Directory, req.Entry.Name, err2)
 	}
@@ -1000,7 +1000,9 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		}
 	}
 
-	return fs.updateEntry(ctx, req, fullpath, fs.cleanupChunks)
+	return fs.updateEntry(ctx, req, fullpath, func(ctx context.Context, fullpath string, existing *filer.Entry, entry *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error) {
+		return fs.cleanupChunks(ctx, fullpath, existing, existing, entry)
+	})
 }
 
 func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest, fullpath string,
@@ -1237,17 +1239,13 @@ func validateUpdateEntryPreconditions(entry *filer.Entry, expectedExtended map[s
 	return nil
 }
 
-func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, existingEntry *filer.Entry, newEntry *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error) {
-	return fs.cleanupChunksReplacing(ctx, fullpath, existingEntry, existingEntry, newEntry)
-}
-
-// cleanupChunksReplacing compacts newEntry's chunks and folds them into
+// cleanupChunks compacts newEntry's chunks and folds them into
 // manifests. garbage holds the chunks it drops and those of existingEntry the
 // new list no longer holds. replaced is the entry the commit replaces, read
 // under the path lock: the new list keeps its manifests whose chunks it lists
 // flat (filer.ReuseStoredManifests). A create passes it with no existingEntry,
 // since filer.CreateEntry deletes the replaced entry's chunks itself.
-func (fs *FilerServer) cleanupChunksReplacing(ctx context.Context, fullpath string, existingEntry, replaced *filer.Entry, newEntry *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error) {
+func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, existingEntry, replaced *filer.Entry, newEntry *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error) {
 
 	// files with manifest chunks are usually large and append only, skip calculating covered chunks
 	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(newEntry.GetChunks())

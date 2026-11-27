@@ -80,6 +80,7 @@ func TestCleanupChunksKeepsScopedListFlat(t *testing.T) {
 		withScopeKeepOnly(context.Background()),
 		"/test/obj",
 		nil,
+		nil,
 		&filer_pb.Entry{
 			Name:       "obj",
 			Attributes: &filer_pb.FuseAttributes{FileMode: 0644},
