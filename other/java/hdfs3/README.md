@@ -156,8 +156,9 @@ filer's HTTP port, so they need the filer's HTTP credentials. The client signs a
 when it has the filer's `jwt.filer_signing` key (writes) or
 `jwt.filer_signing.read` key (reads), and otherwise sends the `[filer.basic_auth]`
 credentials. These credentials are sent only to the filer, never to volume servers. gRPC mTLS
-comes from the `[grpc]` section as before. To keep these credentials off plain HTTP, serve the
-filer over HTTPS and enable `[https.client]`.
+comes from the `[grpc]` section as before, but it does not cover these HTTP chunk requests:
+to keep the credentials off plain HTTP, serve the filer HTTP port over HTTPS (`[https.filer]`
+on the filer) and enable `[https.client]` here.
 
 `security.toml` (read from `./`, `~/.seaweedfs/` or `/etc/seaweedfs/`), using the filer's
 own values:
@@ -180,10 +181,17 @@ ca = "/etc/seaweedfs/ca.crt"
 [grpc.client]
 cert = "/etc/seaweedfs/client.crt"
 key = "/etc/seaweedfs/client.key"
+
+[https.client]
+enabled = true
+ca = "/etc/seaweedfs/ca.crt"
+cert = "/etc/seaweedfs/client.crt"
+key = "/etc/seaweedfs/client.key"
 ```
 
-The same values can be set in `core-site.xml`, where they override `security.toml`. The
-secrets can also come from a Hadoop credential provider:
+The same values can be set in `core-site.xml`. Each option overrides only its own
+`security.toml` value (for example, a password alone keeps the `security.toml` user), and
+applies only to that filesystem. The secrets can also come from a Hadoop credential provider:
 
 ```xml
 <property>
