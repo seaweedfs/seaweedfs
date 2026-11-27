@@ -125,7 +125,7 @@ func TestVersioningHealEventVocabulary(t *testing.T) {
 		"produced", "surfaced", "healed", "enqueue",
 		"drain", "retry", "gave_up", "anomaly",
 		"clear_failed", "heal_persist_failed", "teardown_failed",
-		"queue_full",
+		"queue_full", "deferred",
 	}
 	// Just assert the list itself stays explicit and non-empty.
 	assert.NotEmpty(t, known)

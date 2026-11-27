@@ -2339,6 +2339,14 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		return nil, scanErr
 	}
 
+	if versionPointerInFlight(versionsEntry) {
+		versioningHealInfof("deferred", "bucket=%s key=%s mode=recent_pointer missing_file=%s", bucket, normalizedObject, stalePointerFile)
+		if latestEntry == nil {
+			return nil, fmt.Errorf("%w: no remaining version in %s", filer_pb.ErrNotFound, versionsDir)
+		}
+		return attachResolvedVersionId(latestEntry, latestVersionId), nil
+	}
+
 	if latestEntry == nil {
 		// No version remains: remove the residue directory outright so future
 		// reads take the clean ErrNotFound path instead of re-entering this
@@ -2420,6 +2428,17 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		versioningHealWarningf("heal_persist_failed", "bucket=%s key=%s err=%v (returning rescanned entry)", bucket, normalizedObject, updateErr)
 	}
 	return latestEntry, nil
+}
+
+// staleVersionPointerGrace leaves a pointer to a recently minted version as it
+// is: its file can still be on its way, e.g. when filer.sync applies the
+// .versions directory before the version file, and a local removal or repair
+// then would replicate back and delete or roll back the version on the peer.
+const staleVersionPointerGrace = 10 * time.Minute
+
+func versionPointerInFlight(versionsEntry *filer_pb.Entry) bool {
+	ts := getVersionTimestamp(string(versionsEntry.GetExtended()[s3_constants.ExtLatestVersionIdKey]))
+	return ts > 0 && time.Since(time.Unix(0, ts)) < staleVersionPointerGrace
 }
 
 // conditionalUpdateEntryRouted persists the repair on the object's write

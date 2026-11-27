@@ -29,6 +29,7 @@ const versioningHealLogPrefix = "[versioning-heal]"
 //	event=produced  — stranded state was created (or would have been before this PR's fixes)
 //	event=surfaced  — read-path heal triggered for an already-stranded key
 //	event=healed    — pointer was successfully repaired or cleared
+//	event=deferred  — pointer to a recently minted version left unrepaired
 //	event=enqueue   — reconciler queued a candidate
 //	event=drain     — reconciler successfully drained a candidate
 //	event=retry     — reconciler attempt failed, will retry
@@ -271,6 +272,9 @@ func (s3a *S3ApiServer) healVersionsPointer(bucket, object string) error {
 		return nil
 	}
 	latestFile := string(fileBytes)
+	if versionPointerInFlight(versionsEntry) {
+		return nil
+	}
 	if _, probeErr := s3a.getEntry(bucketDir+"/"+versionsObjectPath, latestFile); probeErr == nil {
 		// Pointer is consistent.
 		return nil
