@@ -23,6 +23,11 @@ import (
 )
 
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		w.Header().Set("Allow", http.MethodDelete)
+		writeJsonError(w, r, http.StatusMethodNotAllowed, fmt.Errorf("/col/delete requires the DELETE method"))
+		return
+	}
 	collectionName, err := ms.collectionToDelete(r)
 	if err != nil {
 		writeJsonError(w, r, http.StatusBadRequest, err)

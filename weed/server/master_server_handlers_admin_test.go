@@ -3,8 +3,6 @@ package weed_server
 import (
 	"net/http"
 	"net/http/httptest"
-	"net/url"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,15 +22,8 @@ func TestCollectionDeleteHandlerRequiresCollection(t *testing.T) {
 	require.True(t, ok, "test setup: the default collection should exist")
 
 	requests := map[string]*http.Request{
-		"GET without parameter":  httptest.NewRequest(http.MethodGet, "/col/delete", nil),
-		"GET with empty value":   httptest.NewRequest(http.MethodGet, "/col/delete?collection=", nil),
-		"POST without parameter": httptest.NewRequest(http.MethodPost, "/col/delete", nil),
-		"POST with empty form value": func() *http.Request {
-			r := httptest.NewRequest(http.MethodPost, "/col/delete",
-				strings.NewReader(url.Values{"collection": {""}}.Encode()))
-			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			return r
-		}(),
+		"DELETE without parameter": httptest.NewRequest(http.MethodDelete, "/col/delete", nil),
+		"DELETE with empty value":  httptest.NewRequest(http.MethodDelete, "/col/delete?collection=", nil),
 	}
 	for name, r := range requests {
 		t.Run(name, func(t *testing.T) {
@@ -42,6 +33,21 @@ func TestCollectionDeleteHandlerRequiresCollection(t *testing.T) {
 			assert.Contains(t, w.Body.String(), "collection parameter is required")
 			_, ok := ms.Topo.FindCollection("")
 			assert.True(t, ok, "the default collection must survive")
+		})
+	}
+}
+
+func TestCollectionDeleteHandlerRequiresDeleteMethod(t *testing.T) {
+	ms := newLeaderMaster()
+	addCollectionVolume(t, ms, 1, "photos")
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut} {
+		t.Run(method, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			ms.collectionDeleteHandler(w, httptest.NewRequest(method, "/col/delete?collection=photos", nil))
+			assert.Equal(t, http.StatusMethodNotAllowed, w.Code, w.Body.String())
+			assert.Equal(t, http.MethodDelete, w.Header().Get("Allow"))
+			_, ok := ms.Topo.FindCollection("photos")
+			assert.True(t, ok, "the collection must survive")
 		})
 	}
 }

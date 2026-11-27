@@ -278,11 +278,12 @@ automatic vacuum or another request is running does nothing and gets
 ### Delete a collection
 
 ```bash
-curl "http://localhost:9333/col/delete?collection=benchmark"
+curl -X DELETE "http://localhost:9333/col/delete?collection=benchmark"
 ```
 
 Deletes all volumes of the collection, including erasure-coded shards.
-`204 No Content` on success.
+`204 No Content` on success. Only the `DELETE` method is accepted; any other
+method gets `405 Method Not Allowed`.
 
 The `collection` parameter is required: a request without it, or with an
 empty value, gets `400 Bad Request`. To delete the default (empty-named)

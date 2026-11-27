@@ -102,7 +102,7 @@ var cmdBenchmark = &Command{
     http://localhost:9333/vol/grow?collection=benchmark&count=5
 
   After benchmarking, you can clean up the written data by deleting the benchmark collection
-    http://localhost:9333/col/delete?collection=benchmark
+    curl -X DELETE "http://localhost:9333/col/delete?collection=benchmark"
 
   `,
 }
