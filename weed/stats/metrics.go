@@ -757,6 +757,14 @@ var (
 			Help:      "Reads of an EC interval served by reconstructing from other shards; success means reconstruction produced data, not that the needle passed validation.",
 		}, []string{"result"})
 
+	VolumeServerEcShardCopyFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemVolumeServer,
+			Name:      "ec_shard_copy_failures_total",
+			Help:      "Counter of failed EC shard copies into this server by collection and reason.",
+		}, []string{"collection", "reason"})
+
 	S3RequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -1195,6 +1203,7 @@ func init() {
 	Gather.MustRegister(VolumeServerECRebuildHistogram)
 	Gather.MustRegister(VolumeServerECRebuildCounter)
 	Gather.MustRegister(VolumeServerECReconstructedIntervalCounter)
+	Gather.MustRegister(VolumeServerEcShardCopyFailures)
 	Gather.MustRegister(MasterUnderReplicatedVolumes)
 	Gather.MustRegister(MasterWritableVolumesPerDisk)
 	Gather.MustRegister(MasterVolumeCreationCounter)
