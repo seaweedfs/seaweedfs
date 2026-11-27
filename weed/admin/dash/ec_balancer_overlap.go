@@ -45,19 +45,9 @@ func scriptAppliesECBalance(script string) bool {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		for _, command := range strings.Split(line, ";") {
-			fields := strings.Fields(command)
-			if len(fields) == 0 || fields[0] != "ec.balance" {
-				continue
-			}
-			var args []string
-			for _, arg := range fields[1:] {
-				if strings.HasPrefix(arg, "#") {
-					break
-				}
-				args = append(args, strings.Trim(arg, "\"'"))
-			}
-			if shell.EcBalanceArgsApply(args) {
+		for _, chunk := range strings.Split(line, ";") {
+			name, args, ok := shell.SplitScriptCommand(strings.TrimSpace(chunk))
+			if ok && name == "ec.balance" && shell.EcBalanceArgsApply(args) {
 				return true
 			}
 		}
