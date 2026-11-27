@@ -106,7 +106,6 @@ func (ms *MasterServer) doDeleteNormalCollection(ctx context.Context, collection
 		finish(false)
 		return err
 	}
-	ms.Topo.DeleteCollection(collectionName)
 	finish(true)
 
 	return nil

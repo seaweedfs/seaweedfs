@@ -173,9 +173,8 @@ func TestOverlappingDeletesRemoveOnlyTheFencedCollection(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	topo.DeleteCollection("bucket")
-	replacement := topo.getOrCreateCollection("bucket")
 	finishFirst(true)
+	replacement := topo.getOrCreateCollection("bucket")
 
 	select {
 	case got := <-second:
@@ -223,6 +222,47 @@ func TestDeleteAfterAFailedOneTakesOverTheCollection(t *testing.T) {
 	got.finish(false)
 	if c.isDeleting() {
 		t.Error("growth stayed fenced after both deletes failed")
+	}
+}
+
+// A delete that read the collection but had not checked its publication yet
+// when another delete removed it must stop there, not go on to the collection a
+// write recreated under the name since.
+func TestDeleteFindsNothingOnceAnotherDeleteRemovedTheCollection(t *testing.T) {
+	topo, option := newGrowthFenceTopology()
+	c := option.collection
+
+	_, finishFirst, _ := topo.FenceGrowth("bucket")
+	c.growth.lock.RLock()
+	type result struct {
+		c     *Collection
+		found bool
+	}
+	second := make(chan result, 1)
+	go func() {
+		fc, _, found := topo.FenceGrowth("bucket")
+		second <- result{fc, found}
+	}()
+	for deadline := time.Now().Add(5 * time.Second); c.growth.deleting.Load() < 2; {
+		if time.Now().After(deadline) {
+			t.Fatal("second delete never fenced the collection")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	finishFirst(true)
+	replacement := topo.getOrCreateCollection("bucket")
+	c.growth.lock.RUnlock()
+
+	select {
+	case got := <-second:
+		if got.found || got.c != nil {
+			t.Fatal("second delete went on to the collection recreated under the name")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("second delete did not return")
+	}
+	if replacement.isDeleting() {
+		t.Error("the recreated collection was fenced")
 	}
 }
 
