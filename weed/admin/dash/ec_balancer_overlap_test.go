@@ -36,6 +36,9 @@ func TestScriptAppliesECBalance(t *testing.T) {
 		{"ec.balance -collection x -apply", true},
 		{"ec.balance -collection -apply", false},
 		{"ec.balance x -apply", false},
+		{"ec.balance -bogus -apply", false},
+		{"ec.balance -maxParallelization=x -apply", false},
+		{"ec.balance -maxParallelization 4 -apply", true},
 	}
 	for _, c := range cases {
 		if got := scriptAppliesECBalance(c.script); got != c.want {

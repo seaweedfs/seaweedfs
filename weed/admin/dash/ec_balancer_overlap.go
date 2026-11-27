@@ -1,11 +1,11 @@
 package dash
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/shell"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
 
@@ -47,46 +47,22 @@ func scriptAppliesECBalance(script string) bool {
 		}
 		for _, command := range strings.Split(line, ";") {
 			fields := strings.Fields(command)
-			if len(fields) > 0 && fields[0] == "ec.balance" && ecBalanceArgsApply(fields[1:]) {
+			if len(fields) == 0 || fields[0] != "ec.balance" {
+				continue
+			}
+			var args []string
+			for _, arg := range fields[1:] {
+				if strings.HasPrefix(arg, "#") {
+					break
+				}
+				args = append(args, strings.Trim(arg, "\"'"))
+			}
+			if shell.EcBalanceArgsApply(args) {
 				return true
 			}
 		}
 	}
 	return false
-}
-
-// ecBalanceArgsApply follows ec.balance's flag parsing: an invalid boolean fails the
-// whole command, the last value of a flag wins, and -force overrides -apply.
-func ecBalanceArgsApply(args []string) bool {
-	values := map[string]bool{}
-	for i := 0; i < len(args); i++ {
-		arg := strings.Trim(args[i], "\"'")
-		if strings.HasPrefix(arg, "#") || arg == "--" || len(arg) < 2 || arg[0] != '-' {
-			break
-		}
-		name, value, hasValue := strings.Cut(strings.TrimPrefix(arg[1:], "-"), "=")
-		if name == "" || strings.HasPrefix(name, "-") {
-			return false
-		}
-		if name != "apply" && name != "force" {
-			if !hasValue {
-				i++
-			}
-			continue
-		}
-		on := true
-		if hasValue {
-			var err error
-			if on, err = strconv.ParseBool(value); err != nil {
-				return false
-			}
-		}
-		values[name] = on
-	}
-	if force, ok := values["force"]; ok {
-		return force
-	}
-	return values["apply"]
 }
 
 func (s *AdminServer) collectECBalancerState() ecBalancerState {
