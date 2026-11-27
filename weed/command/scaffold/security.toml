@@ -203,12 +203,14 @@ allowed_wildcard_domain = "" # .mycompany.com
 allowed_server_commonNames = ""      # comma-separated server identities
 allowed_server_wildcard_domain = ""  # .mycompany.com
 # Client certificate common names that every mTLS gRPC server accepts for the
-# standard grpc.health.v1.Health service only. Give a monitoring probe
-# (blackbox_exporter grpc prober, grpc_health_probe, Kubernetes grpc probe) a
-# CA-signed client certificate with one of these names: it can check that the
-# port serves and that the server certificate is valid, but any other RPC is
-# refused with PermissionDenied. The names need no place in allowed_commonNames,
-# and a name listed here stays confined even if it is.
+# standard grpc.health.v1.Health service only. Give a monitoring probe a
+# CA-signed client certificate with one of these names, e.g. blackbox_exporter's
+# grpc prober, or grpc_health_probe with -tls-client-cert run as a Kubernetes
+# exec probe (the built-in Kubernetes grpc probe cannot present a client
+# certificate). The probe can check that the port serves and that the server
+# certificate is valid, but any other RPC is refused with PermissionDenied. The
+# names need no place in allowed_commonNames, and a name listed here stays
+# confined even if it is.
 health_check_commonNames = ""   # comma-separated, e.g. "blackbox-exporter"
 
 # Volume server gRPC options (server-side)
