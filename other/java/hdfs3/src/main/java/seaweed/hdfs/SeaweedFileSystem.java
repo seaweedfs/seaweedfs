@@ -10,6 +10,7 @@ import org.apache.hadoop.util.Progressable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import seaweedfs.client.FilerProto;
+import seaweedfs.client.FilerSecurityContext;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -30,6 +31,12 @@ public class SeaweedFileSystem extends FileSystem {
     public static final String FS_SEAWEED_VOLUME_SERVER_ACCESS = "fs.seaweed.volume.server.access";
     public static final int FS_SEAWEED_DEFAULT_BUFFER_SIZE = 4 * 1024 * 1024;
     public static final String FS_SEAWEED_FILER_CN = "fs.seaweed.filer.cn";
+    public static final String FS_SEAWEED_FILER_BASIC_AUTH_USER = "fs.seaweed.filer.basic.auth.user";
+    public static final String FS_SEAWEED_FILER_BASIC_AUTH_PASSWORD = "fs.seaweed.filer.basic.auth.password";
+    public static final String FS_SEAWEED_FILER_JWT_SIGNING_KEY = "fs.seaweed.filer.jwt.signing.key";
+    public static final String FS_SEAWEED_FILER_JWT_SIGNING_EXPIRES = "fs.seaweed.filer.jwt.signing.expires.after.seconds";
+    public static final String FS_SEAWEED_FILER_JWT_SIGNING_READ_KEY = "fs.seaweed.filer.jwt.signing.read.key";
+    public static final String FS_SEAWEED_FILER_JWT_SIGNING_READ_EXPIRES = "fs.seaweed.filer.jwt.signing.read.expires.after.seconds";
 
     private static final Logger LOG = LoggerFactory.getLogger(SeaweedFileSystem.class);
 
@@ -66,7 +73,29 @@ public class SeaweedFileSystem extends FileSystem {
 
         String cn = conf.get(FS_SEAWEED_FILER_CN, "");
 
+        applyFilerCredentials(conf);
         seaweedFileSystemStore = new SeaweedFileSystemStore(host, port, grpcPort, cn, conf);
+    }
+
+    // Options set here override the [filer.basic_auth] and [jwt.filer_signing] values of security.toml.
+    static void applyFilerCredentials(Configuration conf) throws IOException {
+        String user = conf.get(FS_SEAWEED_FILER_BASIC_AUTH_USER, "");
+        if (!user.isEmpty()) {
+            FilerSecurityContext.setFilerBasicAuth(user, secret(conf, FS_SEAWEED_FILER_BASIC_AUTH_PASSWORD));
+        }
+        String key = secret(conf, FS_SEAWEED_FILER_JWT_SIGNING_KEY);
+        if (key != null) {
+            FilerSecurityContext.setFilerJwtSigningKey(key, conf.getLong(FS_SEAWEED_FILER_JWT_SIGNING_EXPIRES, 0));
+        }
+        String readKey = secret(conf, FS_SEAWEED_FILER_JWT_SIGNING_READ_KEY);
+        if (readKey != null) {
+            FilerSecurityContext.setFilerJwtReadSigningKey(readKey, conf.getLong(FS_SEAWEED_FILER_JWT_SIGNING_READ_EXPIRES, 0));
+        }
+    }
+
+    private static String secret(Configuration conf, String name) throws IOException {
+        char[] value = conf.getPassword(name);
+        return value == null || value.length == 0 ? null : new String(value);
     }
 
     @Override
