@@ -5,6 +5,7 @@ use tracing::{error, info, warn};
 use seaweed_volume::config::{self, VolumeServerConfig};
 use seaweed_volume::metrics;
 use seaweed_volume::pb::volume_server_pb::volume_server_server::VolumeServerServer;
+use seaweed_volume::security::health_check_access::HealthCheckOnlyLayer;
 use seaweed_volume::security::tls::{
     GrpcClientAuthPolicy, TlsPolicy, build_rustls_server_config,
     build_rustls_server_config_with_grpc_client_auth, install_default_crypto_provider,
@@ -226,6 +227,7 @@ fn build_grpc_server_tls_acceptor(
     tls_policy: &TlsPolicy,
     allowed_wildcard_domain: &str,
     allowed_common_names: &[String],
+    health_check_common_names: &[String],
 ) -> Result<Option<TlsAcceptor>, Box<dyn std::error::Error>> {
     if cert_path.is_empty() && key_path.is_empty() {
         return Ok(None);
@@ -239,6 +241,7 @@ fn build_grpc_server_tls_acceptor(
     let client_auth_policy = GrpcClientAuthPolicy {
         allowed_common_names: allowed_common_names.to_vec(),
         allowed_wildcard_domain: allowed_wildcard_domain.to_string(),
+        health_check_common_names: health_check_common_names.to_vec(),
     };
     let mut server_config = build_rustls_server_config_with_grpc_client_auth(
         cert_path,
@@ -565,6 +568,7 @@ async fn run(
         &config.tls_policy,
         &config.grpc_allowed_wildcard_domain,
         &config.grpc_volume_allowed_common_names,
+        &config.grpc_health_check_common_names,
     )?;
 
     info!("Starting HTTP server on {}", admin_addr);
@@ -724,6 +728,7 @@ async fn run(
     let grpc_handle = {
         let grpc_state = state.clone();
         let grpc_tls_acceptor = grpc_tls_acceptor.clone();
+        let health_check_only = HealthCheckOnlyLayer::new(&config.grpc_health_check_common_names);
         let mut shutdown_rx = shutdown_tx.subscribe();
         let shutdown_tx_grpc = shutdown_tx.clone();
         tokio::spawn(async move {
@@ -744,6 +749,7 @@ async fn run(
                     grpc_tls_incoming(grpc_listener, tls_acceptor, GRPC_TLS_HANDSHAKE_TIMEOUT);
                 info!("gRPC server listening on {} (TLS enabled)", grpc_local_addr);
                 build_grpc_server_builder()
+                    .layer(health_check_only)
                     .layer(GrpcRequestIdLayer)
                     .add_service(reflection_v1)
                     .add_service(reflection_v1alpha)
@@ -1233,7 +1239,7 @@ mod tests {
         let ca = write_pem(dir, "ca.pem", TEST_CA_PEM);
         let cert = write_pem(dir, "leaf.pem", TEST_LEAF_PEM);
         let key = write_pem(dir, "leaf.key", TEST_LEAF_KEY_PEM);
-        build_grpc_server_tls_acceptor(&cert, &key, &ca, &TlsPolicy::default(), "", &[])
+        build_grpc_server_tls_acceptor(&cert, &key, &ca, &TlsPolicy::default(), "", &[], &[])
             .unwrap()
             .unwrap()
     }
@@ -1315,9 +1321,76 @@ mod tests {
         );
 
         assert!(
-            build_grpc_server_tls_acceptor(&cert, &key, "", &TlsPolicy::default(), "", &[])
+            build_grpc_server_tls_acceptor(&cert, &key, "", &TlsPolicy::default(), "", &[], &[])
                 .is_err()
         );
+    }
+
+    /// A certificate on grpc.health_check_commonNames passes the handshake even
+    /// with allowed_commonNames set, and reaches only the health service.
+    #[tokio::test]
+    async fn test_grpc_health_check_common_name_reaches_only_health() {
+        use seaweed_volume::pb::volume_server_pb::{
+            VolumeServerStatusRequest, volume_server_client::VolumeServerClient,
+        };
+        use seaweed_volume::security::health_check_access::HealthCheckOnlyLayer;
+        use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity};
+        use tonic_health::pb::{HealthCheckRequest, health_client::HealthClient};
+
+        seaweed_volume::security::tls::install_default_crypto_provider();
+        let dir = tempfile::tempdir().unwrap();
+        let cert = write_pem(&dir, "leaf.pem", TEST_LEAF_PEM);
+        let key = write_pem(&dir, "leaf.key", TEST_LEAF_KEY_PEM);
+        let ca = write_pem(&dir, "ca.pem", TEST_CA_PEM);
+        let health_names = vec!["localhost".to_string()];
+        let acceptor = build_grpc_server_tls_acceptor(
+            &cert,
+            &key,
+            &ca,
+            &TlsPolicy::default(),
+            "",
+            &["volume".to_string()],
+            &health_names,
+        )
+        .unwrap()
+        .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let incoming = grpc_tls_incoming(listener, acceptor, GRPC_TLS_HANDSHAKE_TIMEOUT);
+        let health_service = super::build_grpc_health_service().await;
+        tokio::spawn(
+            tonic::transport::Server::builder()
+                .layer(HealthCheckOnlyLayer::new(&health_names))
+                .add_service(health_service)
+                .serve_with_incoming(incoming),
+        );
+
+        let tls = ClientTlsConfig::new()
+            .ca_certificate(Certificate::from_pem(TEST_CA_PEM))
+            .identity(Identity::from_pem(TEST_LEAF_PEM, TEST_LEAF_KEY_PEM))
+            .domain_name("localhost");
+        let channel = Endpoint::from_shared(format!("https://{}", addr))
+            .unwrap()
+            .tls_config(tls)
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let response = HealthClient::new(channel.clone())
+            .check(HealthCheckRequest {
+                service: String::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            response.into_inner().status,
+            tonic_health::pb::health_check_response::ServingStatus::Serving as i32
+        );
+        let err = VolumeServerClient::new(channel)
+            .volume_server_status(VolumeServerStatusRequest {})
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::PermissionDenied, "{}", err);
     }
 
     #[test]
@@ -1329,6 +1402,7 @@ mod tests {
                 "/missing/ca.crt",
                 &TlsPolicy::default(),
                 "",
+                &[],
                 &[],
             )
             .is_err()
@@ -1365,6 +1439,7 @@ mod tests {
                     cipher_suites: String::new(),
                 },
                 "",
+                &[],
                 &[],
             )
             .is_err()

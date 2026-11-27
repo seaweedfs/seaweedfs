@@ -454,6 +454,7 @@ mod tests {
             grpc_ca_file: String::new(),
             grpc_allowed_wildcard_domain: String::new(),
             grpc_volume_allowed_common_names: vec![],
+            grpc_health_check_common_names: vec![],
             tls_policy: TlsPolicy::default(),
             security_file: String::new(),
         }
