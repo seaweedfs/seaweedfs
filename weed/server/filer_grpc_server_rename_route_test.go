@@ -213,3 +213,38 @@ func TestForwardedRenameWaitsForOwnerEvents(t *testing.T) {
 		})
 	}
 }
+
+// A rename that must not replace its target is refused when this filer has
+// the target, even though the owner has not replayed it.
+func TestForwardedAtomicRenameEntryTargetExistsHere(t *testing.T) {
+	c := newTwoFilers(t)
+	storeB := separateStores(c)
+	sharedWriteRing(c)
+	p := c.keyOwnedBy(t, c.addrB, c.addrB)
+	dir, name := p.DirAndName()
+	ctx := context.Background()
+
+	create := &filer_pb.CreateEntryRequest{Directory: dir, OExcl: true, Entry: &filer_pb.Entry{
+		Name: name, Attributes: &filer_pb.FuseAttributes{Mtime: 1700000000, FileMode: 0644},
+	}}
+	if resp, err := c.fsA.CreateEntry(ctx, create); err != nil || resp.GetError() != "" {
+		t.Fatalf("create via A: resp=%v err=%v", resp, err)
+	}
+	target := p + ".target"
+	if err := c.store.InsertEntry(ctx, newFileEntry(string(target), 7)); err != nil {
+		t.Fatalf("seed A's target: %v", err)
+	}
+
+	_, err := c.fsA.AtomicRenameEntry(ctx, &filer_pb.AtomicRenameEntryRequest{
+		OldDirectory: dir, OldName: name, NewDirectory: dir, NewName: target.Name(), FailIfTargetExists: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), filer_pb.ErrEntryAlreadyExists.Error()) {
+		t.Fatalf("rename over a target A has: %v", err)
+	}
+	if _, err := storeB.FindEntry(ctx, p); err != nil {
+		t.Fatalf("a refused rename moved the source on the owner: %v", err)
+	}
+	if _, err := storeB.FindEntry(ctx, target); err != filer_pb.ErrNotFound {
+		t.Fatalf("a refused rename wrote the target on the owner: %v", err)
+	}
+}

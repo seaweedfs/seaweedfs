@@ -2,8 +2,10 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -75,7 +77,17 @@ func (fs *FilerServer) forwardDeleteEntry(ctx context.Context, req *filer_pb.Del
 // forwardAtomicRenameEntry sends the rename to its source's write owner.
 // handled=false means this filer is the owner and applies it.
 func (fs *FilerServer) forwardAtomicRenameEntry(ctx context.Context, req *filer_pb.AtomicRenameEntryRequest, oldPath util.FullPath) (*filer_pb.AtomicRenameEntryResponse, bool, error) {
+	newPath := util.FullPath(filepath.ToSlash(req.NewDirectory)).Child(req.NewName)
 	handled, err := fs.forwardToWriteOwner(ctx, entryRouteKey(oldPath), func(owner pb.ServerAddress) error {
+		// The owner checks the target against its own store, which may not
+		// have replayed one this filer already has.
+		if req.FailIfTargetExists && newPath != oldPath {
+			if _, findErr := fs.filer.FindEntry(ctx, newPath); findErr == nil {
+				return fmt.Errorf("%s: %w", newPath, filer_pb.ErrEntryAlreadyExists)
+			} else if findErr != filer_pb.ErrNotFound {
+				return findErr
+			}
+		}
 		glog.V(2).InfofCtx(ctx, "AtomicRenameEntry %s: forwarding to owner %s", oldPath, owner)
 		req.IsMoved = true
 		return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
