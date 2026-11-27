@@ -376,11 +376,13 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	}
 
 	// no chunk deleter here: a failed fold reports the blobs it saved
+	unfolded := chunks
 	chunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), nil, chunks)
 	if manifestErr != nil {
 		// not good, but should be ok
 		glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
 	}
+	fold := newChunkFold(unfolded, chunks)
 	if rewrote {
 		fh.installRewrittenChunks(snapshot, append(chunks, manifestChunks...))
 	} else {
@@ -415,9 +417,10 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	// moved entry must keep room for them.
 	buffered := fh.dirtyPages.HasPendingUploads()
 	commitCtx, end := commit.begin(ctx)
-	resp, merged, err := wfs.createContentEntry(commitCtx, fh, request, baseSnapshot, buffered, publication)
+	resp, merged, err := wfs.createContentEntry(commitCtx, fh, request, baseSnapshot, buffered, publication, fold)
 	end()
 	if err != nil {
+		fold.revert(fh)
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
 		return &contentPublicationError{cause: fmt.Errorf("fh flush create %s: %w", fileFullPath, err), request: proto.Clone(request).(*filer_pb.CreateEntryRequest)}
 	}
@@ -501,7 +504,7 @@ func (wfs *WFS) flushTarget(fh *FileHandle, dir, name string) (util.FullPath, st
 // replayed onto it and published against it, so a peer's acknowledged chunks
 // survive. merged is that entry in local ids; nil when the request went as is.
 // With writes still buffered, the merge must keep room for them.
-func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request *filer_pb.CreateEntryRequest, local *filer_pb.Entry, buffered bool, publication *contentPublication) (resp *filer_pb.CreateEntryResponse, merged *filer_pb.Entry, err error) {
+func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request *filer_pb.CreateEntryRequest, local *filer_pb.Entry, buffered bool, publication *contentPublication, fold *chunkFold) (resp *filer_pb.CreateEntryResponse, merged *filer_pb.Entry, err error) {
 	base := fh.baseEntry.Load()
 	guard := &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS}
 	if base != nil {
@@ -535,8 +538,10 @@ func (wfs *WFS) createContentEntry(ctx context.Context, fh *FileHandle, request 
 			return resp, nil, err
 		}
 		mark := fh.markSince(base)
-		next, ok := mergeContentEntry(stored, base, local, sent, mark.truncatedTo, mark.rewrote)
-		if !ok || buffered && !mergeKeepsBuffered(next, local) {
+		// The flush's own fold is no change of content: merge the chunks.
+		unfoldedLocal := fold.unfold(local)
+		next, ok := mergeContentEntry(stored, base, unfoldedLocal, fold.unfold(sent), mark.truncatedTo, mark.rewrote)
+		if !ok || buffered && !mergeKeepsBuffered(next, unfoldedLocal) {
 			return resp, nil, err
 		}
 		glog.V(1).Infof("content flush %s/%s: entry changed since the handle's base, merging", request.Directory, request.Entry.Name)
