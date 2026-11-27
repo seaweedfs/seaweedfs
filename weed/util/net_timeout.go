@@ -245,9 +245,16 @@ func PauseIdleTimeoutWhileHandling(h http.Handler) http.Handler {
 		} else {
 			// net/http starts the background read in the same body read
 			// that returns io.EOF. WithContext gives a shallow copy, so the
-			// Request the server passed in stays as it is.
+			// Request the server passed in stays as it is. net/http removes
+			// the temporary files of a multipart form parsed on that Request
+			// only, so remove those of one parsed on the copy.
 			withBody := r.WithContext(r.Context())
 			withBody.Body = &pauseAtBodyEnd{ReadCloser: r.Body, pause: pause}
+			defer func(orig *http.Request) {
+				if withBody.MultipartForm != nil && withBody.MultipartForm != orig.MultipartForm {
+					_ = withBody.MultipartForm.RemoveAll()
+				}
+			}(r)
 			r = withBody
 		}
 		h.ServeHTTP(w, r)

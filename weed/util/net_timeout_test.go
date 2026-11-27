@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -529,5 +530,51 @@ func TestPauseEndsOnceAndNotAfterTheHandler(t *testing.T) {
 	defer c.mu.Unlock()
 	if c.handling != 0 {
 		t.Fatalf("handling = %d, want 0", c.handling)
+	}
+}
+
+// TestPauseRemovesMultipartTempFiles checks that a multipart form the
+// handler parses into temporary files is removed when the handler returns:
+// net/http removes only those of a form parsed on the Request it passed in,
+// not on the copy the pause hands the handler.
+func TestPauseRemovesMultipartTempFiles(t *testing.T) {
+	tmp := t.TempDir()
+	for _, k := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(k, tmp)
+	}
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	c := &Conn{Conn: a, Timeout: time.Second}
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("file", "big.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fw.Write(bytes.Repeat([]byte("x"), 4096))
+	mw.Close()
+	r := httptest.NewRequest(http.MethodPost, "/upload", &body)
+	r.Header.Set("Content-Type", mw.FormDataContentType())
+	r = r.WithContext(context.WithValue(r.Context(), connContextKey{}, c))
+
+	h := PauseIdleTimeoutWhileHandling(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1); err != nil {
+			t.Errorf("parse: %v", err)
+			return
+		}
+		if entries, _ := os.ReadDir(tmp); len(entries) == 0 {
+			t.Errorf("form parsed without a temporary file")
+		}
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), r)
+
+	entries, err := os.ReadDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		t.Errorf("left behind %s", e.Name())
 	}
 }
