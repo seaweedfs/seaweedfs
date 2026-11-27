@@ -307,16 +307,30 @@ fn build_volume_grpc_service(
         .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE)
 }
 
-async fn build_grpc_health_service()
--> tonic_health::pb::health_server::HealthServer<impl tonic_health::pb::health_server::Health> {
+const GRPC_HEALTH_SERVICES: [&str; 3] = [
+    "",
+    <VolumeServerServer<VolumeGrpcService> as tonic::server::NamedService>::NAME,
+    <tonic_health::pb::health_server::HealthServer<tonic_health::server::HealthService> as tonic::server::NamedService>::NAME,
+];
+
+async fn build_grpc_health_service() -> (
+    tonic_health::server::HealthReporter,
+    tonic_health::pb::health_server::HealthServer<impl tonic_health::pb::health_server::Health>,
+) {
     let (reporter, service) = tonic_health::server::health_reporter();
-    reporter
-        .set_serving::<VolumeServerServer<VolumeGrpcService>>()
-        .await;
-    reporter
-        .set_serving::<tonic_health::pb::health_server::HealthServer<tonic_health::server::HealthService>>()
-        .await;
-    service
+    for name in GRPC_HEALTH_SERVICES {
+        reporter
+            .set_service_status(name, tonic_health::ServingStatus::Serving)
+            .await;
+    }
+    (reporter, service)
+}
+
+/// Ends open Watch streams, which graceful shutdown would otherwise wait on.
+async fn end_grpc_health_watches(mut reporter: tonic_health::server::HealthReporter) {
+    for name in GRPC_HEALTH_SERVICES {
+        reporter.clear_service_status(name).await;
+    }
 }
 
 fn apply_idle_timeout<S>(
@@ -743,7 +757,7 @@ async fn run(
                 .register_encoded_file_descriptor_set(seaweed_volume::pb::FILE_DESCRIPTOR_SET)
                 .build_v1alpha()
                 .expect("Failed to build gRPC reflection v1alpha service");
-            let health_service = build_grpc_health_service().await;
+            let (health_reporter, health_service) = build_grpc_health_service().await;
             let result = if let Some(tls_acceptor) = grpc_tls_acceptor {
                 let incoming =
                     grpc_tls_incoming(grpc_listener, tls_acceptor, GRPC_TLS_HANDSHAKE_TIMEOUT);
@@ -757,6 +771,7 @@ async fn run(
                     .add_service(build_volume_grpc_service(grpc_service))
                     .serve_with_incoming_shutdown(incoming, async move {
                         let _ = shutdown_rx.recv().await;
+                        end_grpc_health_watches(health_reporter).await;
                     })
                     .await
             } else {
@@ -770,6 +785,7 @@ async fn run(
                     .add_service(build_volume_grpc_service(grpc_service))
                     .serve_with_incoming_shutdown(incoming, async move {
                         let _ = shutdown_rx.recv().await;
+                        end_grpc_health_watches(health_reporter).await;
                     })
                     .await
             };
@@ -1164,7 +1180,7 @@ mod tests {
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let health_service = super::build_grpc_health_service().await;
+        let (health_reporter, health_service) = super::build_grpc_health_service().await;
         tokio::spawn(
             tonic::transport::Server::builder()
                 .add_service(health_service)
@@ -1197,6 +1213,20 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), tonic::Code::NotFound);
+
+        let mut watch = client
+            .watch(HealthCheckRequest {
+                service: String::new(),
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(watch.message().await.unwrap().is_some());
+        super::end_grpc_health_watches(health_reporter).await;
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(5), watch.message())
+            .await
+            .expect("Watch still open after end_grpc_health_watches");
+        assert!(matches!(ended, Ok(None)), "{:?}", ended);
     }
 
     #[tokio::test(start_paused = true)]
@@ -1357,7 +1387,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let incoming = grpc_tls_incoming(listener, acceptor, GRPC_TLS_HANDSHAKE_TIMEOUT);
-        let health_service = super::build_grpc_health_service().await;
+        let (_health_reporter, health_service) = super::build_grpc_health_service().await;
         tokio::spawn(
             tonic::transport::Server::builder()
                 .layer(HealthCheckOnlyLayer::new(&health_names))
