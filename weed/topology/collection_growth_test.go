@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
+	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -80,9 +81,9 @@ func TestEmptiedCollectionStaysPublishedWhileHeld(t *testing.T) {
 	topo, option := newGrowthFenceTopology()
 	c := option.collection
 	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	dn := NewDataNode("dn1")
 	emptyLayout := func() {
-		topo.GetVolumeLayout("bucket", rp, needle.EMPTY_TTL, types.HardDriveType)
-		topo.DeleteLayout("bucket", rp, needle.EMPTY_TTL, types.HardDriveType)
+		topo.UnRegisterVolumeLayout(storage.VolumeInfo{Id: 1, Collection: "bucket", ReplicaPlacement: rp, Ttl: needle.EMPTY_TTL}, dn)
 	}
 
 	if !topo.lockForGrowth(option) {
