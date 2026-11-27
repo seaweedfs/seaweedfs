@@ -70,14 +70,32 @@ func fipsModeSource(file string) string {
 	return file + ": " + FipsModeSetting
 }
 
+// FipsModeValue returns fips.mode from v, the environment's value when
+// WEED_FIPS_MODE is set, "" when neither sets it. A value that is not a
+// string, such as an array or a table, is an error naming source: viper's
+// GetString would read it as "" and so skip the check.
+func FipsModeValue(source string, v interface{ Get(string) interface{} }) (string, error) {
+	switch value := v.Get(FipsModeSetting).(type) {
+	case nil:
+		return "", nil
+	case string:
+		return value, nil
+	default:
+		return "", fmt.Errorf("%s is %v, a %T, not a string; want %s, %s or %s", source, value, value, FipsModeOff, FipsModeOn, FipsModeStrict)
+	}
+}
+
 // RequireFipsMode exits when fips.mode, from the environment or the
-// security.toml merged into the shared configuration, fails CheckFipsMode, so
-// a process never runs in a FIPS mode other than the one the deployment
-// states. Call it after loading security.toml.
+// security.toml merged into the shared configuration, is not a string or
+// fails CheckFipsMode, so a process never runs in a FIPS mode other than the
+// one the deployment states. Call it after loading security.toml.
 func RequireFipsMode() {
-	mode := GetViper().GetString(FipsModeSetting)
 	source := fipsModeSource(securityConfigFile())
-	if err := CheckFipsMode(source, mode); err != nil {
+	mode, err := FipsModeValue(source, GetViper())
+	if err == nil {
+		err = CheckFipsMode(source, mode)
+	}
+	if err != nil {
 		glog.Fatalf("%v", err)
 	}
 	if mode != "" {

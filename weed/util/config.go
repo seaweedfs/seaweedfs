@@ -148,6 +148,14 @@ func (vp *ViperProxy) AutomaticEnv() {
 	vp.v.AutomaticEnv()
 }
 
+// Get returns the value at key as viper holds it, without converting it, so
+// a caller can tell a string from an array or a table.
+func (vp *ViperProxy) Get(key string) interface{} {
+	vp.Lock()
+	defer vp.Unlock()
+	return deepCopyValue(vp.v.Get(key))
+}
+
 func (vp *ViperProxy) GetString(key string) string {
 	vp.Lock()
 	defer vp.Unlock()

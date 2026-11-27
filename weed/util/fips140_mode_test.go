@@ -3,6 +3,8 @@ package util
 import (
 	"strings"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 // setFIPS140Godebug makes this test see the fips140 GODEBUG value godebug
@@ -63,6 +65,74 @@ func TestFipsModeSourceNamesTheEnvironmentWhenSet(t *testing.T) {
 	t.Setenv(FipsModeEnv, "strict")
 	if got := fipsModeSource("/etc/seaweedfs/security.toml"); got != FipsModeEnv {
 		t.Errorf("with %s: got %q", FipsModeEnv, got)
+	}
+}
+
+// securityToml returns a ViperProxy over toml as security.toml, with the
+// WEED_ environment overrides LoadConfiguration applies.
+func securityToml(t *testing.T, toml string) *ViperProxy {
+	t.Helper()
+	v := viper.New()
+	setEnvOverrides(v)
+	v.SetConfigType("toml")
+	if err := v.ReadConfig(strings.NewReader(toml)); err != nil {
+		t.Fatal(err)
+	}
+	return NewViperProxy(v)
+}
+
+func TestFipsModeValueRefusesValuesThatAreNotStrings(t *testing.T) {
+	t.Setenv(FipsModeEnv, "")
+	for _, toml := range []string{
+		`[fips]
+mode = ["strict"]
+`,
+		`[fips]
+mode = { value = "strict" }
+`,
+		`[fips]
+mode = true
+`,
+	} {
+		mode, err := FipsModeValue("security.toml: fips.mode", securityToml(t, toml))
+		if err == nil || !strings.HasPrefix(err.Error(), "security.toml: fips.mode is ") || !strings.Contains(err.Error(), "not a string") {
+			t.Errorf("%q: got mode %q, error %v; want a not-a-string error", toml, mode, err)
+		}
+	}
+}
+
+func TestFipsModeValueReadsStringsAndUnset(t *testing.T) {
+	t.Setenv(FipsModeEnv, "")
+	cases := []struct{ toml, want string }{
+		{"", ""},
+		{`[grpc]
+ca = ""
+`, ""},
+		{`[fips]
+mode = ""
+`, ""},
+		{`[fips]
+mode = "strict"
+`, "strict"},
+		{`[FIPS]
+Mode = 'on'
+`, "on"},
+	}
+	for _, tc := range cases {
+		mode, err := FipsModeValue("security.toml: fips.mode", securityToml(t, tc.toml))
+		if err != nil || mode != tc.want {
+			t.Errorf("%q: got %q, %v; want %q", tc.toml, mode, err, tc.want)
+		}
+	}
+}
+
+func TestFipsModeEnvironmentWinsOverANonStringFile(t *testing.T) {
+	t.Setenv(FipsModeEnv, "on")
+	mode, err := FipsModeValue(FipsModeEnv, securityToml(t, `[fips]
+mode = ["strict"]
+`))
+	if err != nil || mode != "on" {
+		t.Fatalf("got %q, %v; want %q from %s", mode, err, "on", FipsModeEnv)
 	}
 }
 
