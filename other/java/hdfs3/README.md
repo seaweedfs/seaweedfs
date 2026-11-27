@@ -156,7 +156,8 @@ filer's HTTP port, so they need the filer's HTTP credentials. The client signs a
 when it has the filer's `jwt.filer_signing` key (writes) or
 `jwt.filer_signing.read` key (reads), and otherwise sends the `[filer.basic_auth]`
 credentials. These credentials are sent only to the filer, never to volume servers. gRPC mTLS
-comes from the `[grpc]` section as before.
+comes from the `[grpc]` section as before. To keep these credentials off plain HTTP, serve the
+filer over HTTPS and enable `[https.client]`.
 
 `security.toml` (read from `./`, `~/.seaweedfs/` or `/etc/seaweedfs/`), using the filer's
 own values:
