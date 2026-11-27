@@ -879,7 +879,7 @@ func (t *Topology) DeleteLayout(collectionName string, rp *super_block.ReplicaPl
 	}
 	collection.DeleteVolumeLayout(rp, ttl, diskType)
 	if len(collection.storageType2VolumeLayout.Items()) == 0 {
-		t.DeleteCollection(collectionName)
+		t.deleteEmptyCollection(collection)
 	}
 }
 

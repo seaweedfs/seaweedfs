@@ -74,6 +74,37 @@ func TestGrowthFollowsACollectionDroppedForBeingEmpty(t *testing.T) {
 	}
 }
 
+func TestEmptiedCollectionStaysPublishedWhileHeld(t *testing.T) {
+	topo, option := newGrowthFenceTopology()
+	c := option.collection
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	emptyLayout := func() {
+		topo.GetVolumeLayout("bucket", rp, needle.EMPTY_TTL, types.HardDriveType)
+		topo.DeleteLayout("bucket", rp, needle.EMPTY_TTL, types.HardDriveType)
+	}
+
+	if !topo.lockForGrowth(option) {
+		t.Fatal("growth refused by a collection nothing is deleting")
+	}
+	emptyLayout()
+	if published, _ := topo.FindCollection("bucket"); published != c {
+		t.Error("collection dropped while growth was creating a volume in it")
+	}
+	c.unlockForGrowth()
+
+	unfence := c.FenceGrowth()
+	emptyLayout()
+	if published, _ := topo.FindCollection("bucket"); published != c {
+		t.Error("collection being deleted dropped before the delete listed its servers")
+	}
+	unfence()
+
+	emptyLayout()
+	if _, found := topo.FindCollection("bucket"); found {
+		t.Error("idle empty collection still published")
+	}
+}
+
 func TestAssignStaysOutOfACollectionBeingDeleted(t *testing.T) {
 	layout := `
 {

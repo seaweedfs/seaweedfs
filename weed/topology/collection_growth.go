@@ -54,6 +54,19 @@ func (t *Topology) lockForGrowth(option *VolumeGrowOption) bool {
 	}
 }
 
+// deleteEmptyCollection keeps a collection that growth or a delete holds
+// published: the volume in flight registers by name, and must land where the
+// delete lists the servers, not in a new collection under the same name.
+func (t *Topology) deleteEmptyCollection(c *Collection) {
+	if !c.growth.lock.TryLock() {
+		return
+	}
+	defer c.growth.lock.Unlock()
+	if !c.isDeleting() {
+		t.DeleteCollection(c.Name)
+	}
+}
+
 func (t *Topology) getOrCreateCollection(collectionName string) *Collection {
 	return t.collectionMap.Get(collectionName, func() interface{} {
 		c := NewCollection(collectionName, t.volumeSizeLimit, t.replicationAsMin)
