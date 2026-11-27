@@ -40,8 +40,8 @@ fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
 }
 
 #[cfg(not(unix))]
-fn same_file(_: &fs::Metadata, _: &fs::Metadata) -> bool {
-    true
+fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    a.created().ok() == b.created().ok() && a.modified().ok() == b.modified().ok()
 }
 
 /// A single erasure-coded shard file.
