@@ -215,3 +215,31 @@ func TestMergeRefusesTruncateExpansionOverPeerTruncate(t *testing.T) {
 	require.True(t, ok)
 	require.Contains(t, spans(merged.Chunks), [3]int64{100, 100, 0})
 }
+
+// An interrupt while the truncate reads a manifest answers EINTR, which the
+// caller retries, not EIO.
+func TestTruncateInterruptedReadingAManifestAnswersEINTR(t *testing.T) {
+	w := newInvalidateTestWFS(t)
+	entry := &filer_pb.Entry{
+		Name:       "file",
+		Attributes: &filer_pb.FuseAttributes{Inode: 42, FileMode: 0644, FileSize: 1000},
+		Chunks:     []*filer_pb.FileChunk{manifestChunk(7, 0, 1000)},
+	}
+	w.inodeToPath.Lookup("/dir", 1, true, false, 0, false)
+	w.inodeToPath.Lookup("/dir/file", 1, false, false, 42, true)
+	w.inodeToPath.MarkChildrenCached("/dir")
+	require.NoError(t, w.metaCache.InsertEntry(context.Background(), filer.FromPbEntry("/dir", entry), 1))
+
+	cancel := make(chan struct{})
+	saved := truncateManifestResolver
+	t.Cleanup(func() { truncateManifestResolver = saved })
+	truncateManifestResolver = func(ctx context.Context, _ *WFS, _ *filer_pb.FileChunk) ([]*filer_pb.FileChunk, error) {
+		close(cancel)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	in := &fuse.SetAttrIn{}
+	in.NodeId, in.Valid, in.Size = 42, fuse.FATTR_SIZE, 500
+	require.Equal(t, fuse.EINTR, w.SetAttr(cancel, in, &fuse.AttrOut{}))
+}

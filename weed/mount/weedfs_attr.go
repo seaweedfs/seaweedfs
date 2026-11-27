@@ -148,6 +148,9 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 			// A manifest the cut goes through is cut as the chunks it holds.
 			cut, expanded, err := wfs.cutThroughManifests(ctx, path, entry.GetChunks(), int64(size))
 			if err != nil {
+				if ctx.Err() != nil {
+					return fuse.EINTR
+				}
 				glog.Warningf("%v truncate to %d: %v", path, size, err)
 				return fuse.EIO
 			}
