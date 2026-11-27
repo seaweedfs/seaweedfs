@@ -110,6 +110,30 @@ func (engine *PolicyEngine) HasPolicyForBucket(bucketName string) bool {
 	return exists
 }
 
+// HasExistingObjectTagDeny reports whether the bucket policy has a Deny
+// statement conditioned on s3:ExistingObjectTag/<key>.
+func (engine *PolicyEngine) HasExistingObjectTagDeny(bucketName string) bool {
+	engine.mutex.RLock()
+	context, exists := engine.contexts[bucketName]
+	engine.mutex.RUnlock()
+	if !exists {
+		return false
+	}
+	for _, stmt := range context.policy.Statements {
+		if stmt.Statement.Effect != PolicyEffectDeny {
+			continue
+		}
+		for _, conditionMap := range stmt.Statement.Condition {
+			for key := range conditionMap {
+				if strings.HasPrefix(key, ExistingObjectTagPrefix) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // EvaluatePolicy evaluates a policy for the given arguments
 func (engine *PolicyEngine) EvaluatePolicy(bucketName string, args *PolicyEvaluationArgs) PolicyEvaluationResult {
 	engine.mutex.RLock()
@@ -446,6 +470,14 @@ func WithRequestTime(ctx context.Context, t time.Time) context.Context {
 	return context.WithValue(ctx, requestTimeKey{}, t)
 }
 
+type existingObjectTagsKey struct{}
+
+// WithExistingObjectTags makes RequestConditionValues report the tags held in
+// an object entry's extended attributes as s3:ExistingObjectTag/<key>.
+func WithExistingObjectTags(ctx context.Context, extended map[string][]byte) context.Context {
+	return context.WithValue(ctx, existingObjectTagsKey{}, extended)
+}
+
 // RequestConditionValues returns the condition keys read from the request
 // itself, leaving out aws:SourceIp and the bucket-listing keys, which depend
 // on the caller's proxy and listing handling.
@@ -472,8 +504,13 @@ func RequestConditionValues(r *http.Request) map[string][]string {
 		values["aws:Referer"] = []string{referer}
 	}
 
-	// Note: s3:ExistingObjectTag/<key> conditions are evaluated using objectEntry
-	// passed to EvaluatePolicy, not extracted from the request.
+	if extended, ok := r.Context().Value(existingObjectTagsKey{}).(map[string][]byte); ok {
+		for key, value := range extended {
+			if tagKey, found := strings.CutPrefix(key, s3_constants.AmzObjectTaggingPrefix); found && tagKey != "" {
+				values[ExistingObjectTagPrefix+tagKey] = []string{string(value)}
+			}
+		}
+	}
 
 	if tags := requestObjectTags(r); len(tags) > 0 {
 		for key, value := range tags {

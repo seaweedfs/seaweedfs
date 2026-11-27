@@ -5,6 +5,7 @@ import (
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 /**
@@ -70,8 +71,9 @@ func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut)
 	defer cancelFunc()
 	fileHandle, openFh, status = wfs.AcquireHandle(ctx, in.NodeId, in.Flags, in.Uid, in.Gid)
 	if status == fuse.OK {
-		encrypted := openFlagsToAccessMask(in.Flags)&fuse.R_OK != 0 && fileHandle.GetEntry().hasSSES3Data()
-		if encrypted && wfs.option.SSES3Reader == nil {
+		sse := fileHandle.GetEntry().sseType()
+		encrypted := openFlagsToAccessMask(in.Flags)&fuse.R_OK != 0 && sse != filer_pb.SSEType_NONE
+		if encrypted && (sse != filer_pb.SSEType_SSE_S3 || wfs.option.SSES3Reader == nil) {
 			wfs.ReleaseHandle(openFh)
 			return fuse.ENOTSUP
 		}

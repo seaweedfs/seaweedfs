@@ -80,12 +80,19 @@ func (s3a *S3ApiServer) startBucketSizeMetricsLoop(ctx context.Context) {
 			glog.V(1).Infof("Stopping bucket size metrics collection")
 			return
 		case <-ticker.C:
-			// Only collect metrics if we hold the lock
-			if lock.IsLocked() {
-				s3a.collectAndUpdateBucketSizeMetrics(ctx)
-			}
+			s3a.bucketSizeMetricsTick(ctx, lock.IsLocked())
 		}
 	}
+}
+
+// bucketSizeMetricsTick drops the bucket gauges while this instance does not
+// hold the lock; otherwise it would keep exporting the values it last collected.
+func (s3a *S3ApiServer) bucketSizeMetricsTick(ctx context.Context, locked bool) {
+	if !locked {
+		stats.ResetBucketSizeMetrics()
+		return
+	}
+	s3a.collectAndUpdateBucketSizeMetrics(ctx)
 }
 
 // collectAndUpdateBucketSizeMetrics collects bucket sizes from master topology

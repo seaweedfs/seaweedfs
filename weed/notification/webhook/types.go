@@ -50,7 +50,7 @@ func newWebhookMessage(key string, message proto.Message) *webhookMessage {
 	return &webhookMessage{
 		Key:          key,
 		EventType:    eventType,
-		Notification: notification,
+		Notification: filer_pb.ScrubEventCipherKeys(notification),
 	}
 }
 

@@ -386,6 +386,24 @@ func TestRenamePendingEntryAgainCopiesFromItsSource(t *testing.T) {
 	assert.Equal(t, `"copy"`, c.Remote.RemoteETag)
 }
 
+func TestRenamePendingEntryCopyErrorOmitsItsSource(t *testing.T) {
+	client := copyingRenameRemoteClient{&renameRemoteClient{copyErr: errors.New("copy s3 origin/src/a.jpg: access denied")}}
+	server, store := newRenameRemoteTestServer(t, client)
+	store.entries["/buckets/b/src/a.jpg"] = remoteOnlyRenameEntry("/buckets/b/src/a.jpg", 101)
+	store.entries["/buckets/b/dst/a.jpg"] = remoteOnlyRenameEntry("/buckets/b/dst/a.jpg", 202)
+	require.NoError(t, renameFile(server, "/buckets/b/src/a.jpg", "/buckets/b/dst/a.jpg"))
+
+	err := renameFile(server, "/buckets/b/dst/a.jpg", "/buckets/b/dst/c.jpg")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "src/a.jpg")
+	assert.Contains(t, err.Error(), "/buckets/b/dst/a.jpg")
+
+	store.entries["/buckets/b/src/b.jpg"] = remoteOnlyRenameEntry("/buckets/b/src/b.jpg", 303)
+	err = renameFile(server, "/buckets/b/src/b.jpg", "/buckets/b/dst/b.jpg")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "access denied", "an entry reading its own key keeps the backend error")
+}
+
 func TestRemoteSourcePathStaysInTheMount(t *testing.T) {
 	server, _ := newRenameRemoteTestServer(t, &renameRemoteClient{})
 	entry := remoteOnlyRenameEntry("/buckets/b/x.jpg", 101)

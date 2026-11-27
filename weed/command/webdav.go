@@ -156,7 +156,7 @@ func (wo *WebDavOption) startWebDav() bool {
 		glog.Fatalf("WebDav Server startup error: %v", webdavServer_err)
 	}
 
-	httpS := &http.Server{Handler: ws.Handler}
+	httpS := newHttpServer(ws.Handler, nil)
 
 	idleTimeout := idleTimeoutSeconds(wo.idleTimeout)
 

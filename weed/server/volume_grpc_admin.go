@@ -41,6 +41,9 @@ import (
 // allow-all branch in IsWhiteListed accepts them, with a whitelist they're
 // denied as expected.
 //
+// Callers on the local gRPC socket of weed server/mini are processes on this
+// host, such as the in-process master allocating volumes.
+//
 // Failed authorization attempts are logged so an operator running with a
 // configured whitelist can spot misconfigured callers and probe attempts.
 func (vs *VolumeServer) checkGrpcAdminAuth(ctx context.Context) error {
@@ -53,6 +56,9 @@ func (vs *VolumeServer) checkGrpcAdminAuth(ctx context.Context) error {
 		// who the caller is, deny.
 		glog.V(0).Infof("gRPC admin auth failed: no peer info")
 		return status.Error(codes.PermissionDenied, "no peer info")
+	}
+	if _, ok := pr.Addr.(*net.UnixAddr); ok {
+		return nil
 	}
 	addr := pr.Addr.String()
 	var host string

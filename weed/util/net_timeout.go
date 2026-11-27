@@ -3,7 +3,9 @@ package util
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -48,6 +50,9 @@ func (l *Listener) Accept() (net.Conn, error) {
 // deadline is in force on a direction the activity extension for that
 // direction is suspended; it resumes once the caller clears the deadline
 // (sets the zero time).
+//
+// While a handler works on a request it has read in full, the read side is
+// out of the timeout as well, see PauseIdleTimeoutWhileHandling.
 type Conn struct {
 	net.Conn
 	Timeout  time.Duration
@@ -56,6 +61,9 @@ type Conn struct {
 	mu                    sync.Mutex
 	externalReadDeadline  bool
 	externalWriteDeadline bool
+	// handling counts the requests on this connection whose body has been
+	// read to its end and whose handler has not returned yet.
+	handling int
 
 	readEndedByServer atomic.Bool
 }
@@ -89,26 +97,49 @@ func (c *Conn) SetWriteDeadline(t time.Time) error {
 // time out and cancel the in-flight request). Each direction is extended
 // independently: an externally-managed deadline on one side (e.g. a
 // server WriteTimeout) must not leave the other side's deadline stale.
+// While a handler works on a request it has read in full, the read side
+// keeps no deadline (see pauseIdleTimeout).
 func (c *Conn) extendDeadline() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.Timeout <= 0 {
 		return nil
 	}
-	if !c.externalReadDeadline && !c.externalWriteDeadline {
-		return c.Conn.SetDeadline(time.Now().Add(c.Timeout))
-	}
-	if !c.externalReadDeadline {
-		if err := c.Conn.SetReadDeadline(time.Now().Add(c.Timeout)); err != nil {
-			return err
-		}
-	}
-	if !c.externalWriteDeadline {
-		if err := c.Conn.SetWriteDeadline(time.Now().Add(c.Timeout)); err != nil {
-			return err
-		}
+	extendRead := !c.externalReadDeadline && c.handling == 0
+	extendWrite := !c.externalWriteDeadline
+	deadline := time.Now().Add(c.Timeout)
+	switch {
+	case extendRead && extendWrite:
+		return c.Conn.SetDeadline(deadline)
+	case extendRead:
+		return c.Conn.SetReadDeadline(deadline)
+	case extendWrite:
+		return c.Conn.SetWriteDeadline(deadline)
 	}
 	return nil
+}
+
+// pauseIdleTimeout takes reading out of the activity timeout while a handler
+// works on a request it has read in full, and lifts the deadline that the
+// read already waiting (net/http's background read) got from it.
+func (c *Conn) pauseIdleTimeout() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.handling++
+	if c.handling == 1 && c.Timeout > 0 && !c.externalReadDeadline {
+		_ = c.Conn.SetReadDeadline(time.Time{})
+	}
+}
+
+// resumeIdleTimeout puts reading back under the activity timeout once the
+// last such handler has returned, including a read that is already waiting.
+func (c *Conn) resumeIdleTimeout() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.handling--
+	if c.handling == 0 && c.Timeout > 0 && !c.externalReadDeadline {
+		_ = c.Conn.SetReadDeadline(time.Now().Add(c.Timeout))
+	}
 }
 
 func (c *Conn) Read(b []byte) (count int, e error) {
@@ -147,8 +178,8 @@ func (c *Conn) Close() error {
 
 type connContextKey struct{}
 
-// ConnContext is an http.Server.ConnContext hook that lets ClientGone see the
-// connection serving a request.
+// ConnContext is an http.Server.ConnContext hook that lets ClientGone and
+// PauseIdleTimeoutWhileHandling see the connection serving a request.
 func ConnContext(ctx context.Context, c net.Conn) context.Context {
 	if tlsConn, ok := c.(interface{ NetConn() net.Conn }); ok {
 		c = tlsConn.NetConn()
@@ -175,6 +206,104 @@ func ConnFromContext(ctx context.Context) net.Conn {
 		return tc
 	}
 	return nil
+}
+
+// PauseIdleTimeoutWhileHandling wraps the handler of an http.Server that
+// serves a Listener and has ConnContext as its ConnContext hook. From the
+// moment a request's body has been read to its end (at once when it has
+// none) until its handler returns, the connection's activity timeout no
+// longer applies to reading: the client is waiting for the answer, so a
+// connection that carries nothing means the server is still at work, not
+// that the client is idle. Reading a body, writing an answer and waiting
+// for the next request stay under the timeout.
+//
+// Without it, a request the server works on for longer than the timeout
+// without sending a byte (a large CopyObject into a versioned bucket, which
+// answers only once the copy is done) lets the timeout end net/http's
+// background read, the read the server keeps waiting while a handler runs,
+// to see a client hang up. net/http takes that as the client's connection
+// failing and cancels the connection's context: the request in progress,
+// and every later request the client sends on the kept-alive connection,
+// then run with a canceled context.
+//
+// Only HTTP/1.x requests are paused. HTTP/2 has no background read: when
+// its connection carries nothing for the timeout, the frame reader's
+// deadline closes the connection, and no later request runs on it. That
+// deadline is also what ends a stream whose client stopped reading, since
+// such a stream waits for flow-control credit, not on the socket.
+func PauseIdleTimeoutWhileHandling(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tc, _ := r.Context().Value(connContextKey{}).(*Conn)
+		if tc == nil || tc.Timeout <= 0 || r.ProtoMajor != 1 {
+			h.ServeHTTP(w, r)
+			return
+		}
+		pause := &idleTimeoutPause{conn: tc}
+		defer pause.end()
+		if r.Body == nil || r.Body == http.NoBody {
+			pause.begin()
+		} else {
+			// net/http starts the background read in the same body read
+			// that returns io.EOF. WithContext gives a shallow copy, so the
+			// Request the server passed in stays as it is. net/http removes
+			// the temporary files of a multipart form parsed on that Request
+			// only, so remove those of one parsed on the copy.
+			withBody := r.WithContext(r.Context())
+			withBody.Body = &pauseAtBodyEnd{ReadCloser: r.Body, pause: pause}
+			defer func(orig *http.Request) {
+				if withBody.MultipartForm != nil && withBody.MultipartForm != orig.MultipartForm {
+					_ = withBody.MultipartForm.RemoveAll()
+				}
+			}(r)
+			r = withBody
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+// idleTimeoutPause holds a connection's activity timeout off reading for
+// one request, from begin until end, at most once.
+type idleTimeoutPause struct {
+	conn *Conn
+
+	mu     sync.Mutex
+	paused bool
+	ended  bool
+}
+
+func (p *idleTimeoutPause) begin() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.paused || p.ended {
+		return
+	}
+	p.paused = true
+	p.conn.pauseIdleTimeout()
+}
+
+func (p *idleTimeoutPause) end() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.ended = true
+	if p.paused {
+		p.paused = false
+		p.conn.resumeIdleTimeout()
+	}
+}
+
+// pauseAtBodyEnd begins the pause when the request body has been read to
+// its end.
+type pauseAtBodyEnd struct {
+	io.ReadCloser
+	pause *idleTimeoutPause
+}
+
+func (b *pauseAtBodyEnd) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err == io.EOF {
+		b.pause.begin()
+	}
+	return n, err
 }
 
 func NewListener(addr string, timeout time.Duration) (ipListener net.Listener, err error) {

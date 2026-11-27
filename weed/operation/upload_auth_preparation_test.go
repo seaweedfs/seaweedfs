@@ -86,7 +86,9 @@ func TestUploadPreparesBeforeAssignment(t *testing.T) {
 				first := len(stored) == 1
 				mu.Unlock()
 				if first {
-					w.WriteHeader(http.StatusServiceUnavailable)
+					// A transient fault retried on the same fid. Not a 503: that
+					// is an overload, which goes back for a fresh assignment.
+					w.WriteHeader(http.StatusInternalServerError)
 					_, _ = io.WriteString(w, `{"error":"busy"}`)
 					return
 				}

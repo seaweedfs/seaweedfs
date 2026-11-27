@@ -15,10 +15,14 @@ func TestNativeReadSSES3(t *testing.T) {
 	content := []byte("test payload")
 	header := s3_constants.AmzServerSideEncryption
 	key := s3_constants.SeaweedFSSSES3Key
+	kmsKey := s3_constants.SeaweedFSSSEKMSKey
+	customer := s3_constants.AmzServerSideEncryptionCustomerAlgorithm
+	iv := s3_constants.SeaweedFSSSEIV
 	for _, tc := range []struct {
 		name     string
 		extended map[string][]byte
 		chunks   []*filer_pb.FileChunk
+		reader   bool
 		want     fuse.Status
 	}{
 		{name: "plain", want: fuse.OK},
@@ -26,10 +30,19 @@ func TestNativeReadSSES3(t *testing.T) {
 		{name: "native cipher key", chunks: []*filer_pb.FileChunk{{CipherKey: []byte("native test key")}}, want: fuse.OK},
 		{name: "object metadata", extended: map[string][]byte{header: []byte("AES256"), key: []byte("test metadata")}, want: fuse.ENOTSUP},
 		{name: "multipart chunk metadata", chunks: []*filer_pb.FileChunk{{}, {SseType: filer_pb.SSEType_SSE_S3, SseMetadata: []byte("test metadata")}}, want: fuse.ENOTSUP},
+		{name: "stale kms header", extended: map[string][]byte{header: []byte("aws:kms")}, want: fuse.OK},
+		{name: "kms object metadata", extended: map[string][]byte{header: []byte("aws:kms"), kmsKey: []byte("test metadata")}, reader: true, want: fuse.ENOTSUP},
+		{name: "kms chunk metadata", chunks: []*filer_pb.FileChunk{{SseType: filer_pb.SSEType_SSE_KMS, SseMetadata: []byte("test metadata")}}, reader: true, want: fuse.ENOTSUP},
+		{name: "sse-c object metadata", extended: map[string][]byte{customer: []byte("AES256"), iv: []byte("test iv")}, reader: true, want: fuse.ENOTSUP},
+		{name: "sse-c chunk metadata", chunks: []*filer_pb.FileChunk{{SseType: filer_pb.SSEType_SSE_C, SseMetadata: []byte("test metadata")}}, reader: true, want: fuse.ENOTSUP},
+		{name: "sse-s3 object with a kms part", extended: map[string][]byte{header: []byte("AES256"), key: []byte("test metadata")}, chunks: []*filer_pb.FileChunk{{SseType: filer_pb.SSEType_SSE_S3}, {SseType: filer_pb.SSEType_SSE_KMS}}, reader: true, want: fuse.ENOTSUP},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wfs := newInvalidateTestWFS(t)
 			wfs.openMtimeCache = make(map[uint64][2]int64)
+			if tc.reader {
+				wfs.option.SSES3Reader = gatewayReader(t, "")
+			}
 			inode := wfs.inodeToPath.Lookup(util.FullPath("/file"), 1, false, false, 0, false)
 			entry := &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{FileSize: uint64(len(content)), FileMode: 0o644}, Content: content}
 			fh, id, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 0, 0)
@@ -70,5 +83,36 @@ func TestNativeReadSSES3(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTruncateClearsS3Encryption(t *testing.T) {
+	for _, tc := range []struct {
+		size uint64
+		want filer_pb.SSEType
+	}{
+		{size: 4, want: filer_pb.SSEType_SSE_KMS},
+		{size: 0, want: filer_pb.SSEType_NONE},
+	} {
+		wfs, inode, fh := newUnlinkedOpenFile(t)
+		fh.entry.SetEntry(&filer_pb.Entry{
+			Name:       "file",
+			Attributes: &filer_pb.FuseAttributes{FileMode: 0o644, FileSize: 8},
+			Extended:   map[string][]byte{s3_constants.AmzServerSideEncryption: []byte("aws:kms"), s3_constants.SeaweedFSSSEKMSKey: []byte("test metadata")},
+			Chunks:     []*filer_pb.FileChunk{{FileId: "1,01", Size: 8, SseType: filer_pb.SSEType_SSE_KMS}},
+		})
+		if got := fh.GetEntry().sseType(); got != filer_pb.SSEType_SSE_KMS {
+			t.Fatalf("before truncate: sse = %v", got)
+		}
+		in := &fuse.SetAttrIn{}
+		in.NodeId = inode
+		in.Valid = fuse.FATTR_SIZE
+		in.Size = tc.size
+		if status := wfs.SetAttr(nil, in, &fuse.AttrOut{}); status != fuse.OK {
+			t.Fatalf("truncate to %d: %v", tc.size, status)
+		}
+		if got := fh.GetEntry().sseType(); got != tc.want {
+			t.Errorf("truncate to %d: sse = %v, want %v", tc.size, got, tc.want)
+		}
 	}
 }

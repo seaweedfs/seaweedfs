@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
 // deleteCollectionTimeout bounds one DeleteCollection RPC to a volume server, so
@@ -39,6 +40,9 @@ func (ms *MasterServer) CollectionList(ctx context.Context, req *master_pb.Colle
 }
 
 func (ms *MasterServer) CollectionDelete(ctx context.Context, req *master_pb.CollectionDeleteRequest) (*master_pb.CollectionDeleteResponse, error) {
+	if err := ms.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 
 	if !ms.Topo.IsLeader() {
 		return nil, raft.NotLeaderError
@@ -62,8 +66,16 @@ func (ms *MasterServer) deleteCollection(ctx context.Context, collectionName str
 	// running to come back for them. Each RPC is bounded on its own.
 	ctx = context.WithoutCancel(ctx)
 
-	normalErr := ms.doDeleteNormalCollection(ctx, collectionName)
+	// Before listing the servers, and held through both passes: a grow still
+	// running, or an assign or grow under the name, would otherwise place a
+	// volume on a server one pass misses, or one that a pass then deletes by name.
+	collection, finish, ok := ms.Topo.FenceGrowth(collectionName)
+	if !ok {
+		return nil
+	}
+	normalErr := ms.doDeleteNormalCollection(ctx, collection)
 	ecErr := ms.doDeleteEcCollection(ctx, collectionName)
+	finish(normalErr == nil)
 
 	if normalErr != nil {
 		if ecErr != nil {
@@ -75,12 +87,7 @@ func (ms *MasterServer) deleteCollection(ctx context.Context, collectionName str
 	return ecErr
 }
 
-func (ms *MasterServer) doDeleteNormalCollection(ctx context.Context, collectionName string) error {
-
-	collection, ok := ms.Topo.FindCollection(collectionName)
-	if !ok {
-		return nil
-	}
+func (ms *MasterServer) doDeleteNormalCollection(ctx context.Context, collection *topology.Collection) error {
 
 	// One RPC per server, not one per replica: ListVolumeServers reports a node
 	// once for every replica it holds, while DeleteCollection removes the whole
@@ -97,12 +104,7 @@ func (ms *MasterServer) doDeleteNormalCollection(ctx context.Context, collection
 		servers = append(servers, address)
 	}
 
-	if err := ms.deleteCollectionFrom(ctx, collectionName, servers); err != nil {
-		return err
-	}
-	ms.Topo.DeleteCollection(collectionName)
-
-	return nil
+	return ms.deleteCollectionFrom(ctx, collection.Name, servers)
 }
 
 func (ms *MasterServer) doDeleteEcCollection(ctx context.Context, collectionName string) error {

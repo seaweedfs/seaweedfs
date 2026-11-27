@@ -867,13 +867,13 @@ func hasStaleBackupChunk(existing, reference *filer_pb.Entry) bool {
 	}
 	refFids := make(map[string]bool, len(reference.GetChunks()))
 	for _, c := range reference.GetChunks() {
-		refFids[c.GetFileIdString()] = true
+		refFids[filer.ChunkIdentity(c.GetFileIdString())] = true
 	}
 	for _, c := range existing.GetChunks() {
 		if c.SourceFileId == "" {
 			continue // not backup-written → do not judge staleness
 		}
-		if !refFids[c.SourceFileId] {
+		if !refFids[filer.ChunkIdentity(c.SourceFileId)] {
 			return true
 		}
 	}

@@ -109,7 +109,7 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	if fhIn.entry.IsDirectory || fhOut.entry.IsDirectory {
 		return 0, fuse.EISDIR
 	}
-	if fhIn.entry.hasSSES3Data() {
+	if fhIn.entry.sseType() != filer_pb.SSEType_NONE {
 		return 0, fuse.ENOTSUP
 	}
 
@@ -167,7 +167,7 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 		numBytesRead, err := readDataByFileHandle(
 			buff[:readLen], fhIn, offsetIn)
 		if err != nil {
-			if err == errNativeSSES3Read {
+			if err == errNativeSSERead {
 				return 0, fuse.ENOTSUP
 			}
 			glog.Warningf("file handle read %s %d (total %d): %v",

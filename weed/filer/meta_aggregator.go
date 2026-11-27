@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"google.golang.org/grpc"
@@ -762,12 +761,12 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		// below stops promptly on removal or shutdown.
 		atomic.AddInt32(&ma.filer.UniqueFilerEpoch, 1)
 		// Construct a log file reader that reads chunks via the peer filer's LookupVolume.
-		lookupFn := LookupFn(filerClient{client})
+		lookupFn := LookupFn(filerClient{peerLookupClient{client, ma.filer.peerCallContext}})
 		logFileReaderFn := func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
 			return NewChunkStreamReaderFromLookup(ctx, lookupFn, chunks), nil
 		}
 
-		stream, err := client.SubscribeLocalMetadata(security.WithMetadataSubscriptionCredentials(ctx, nil), &filer_pb.SubscribeMetadataRequest{
+		stream, err := client.SubscribeLocalMetadata(ma.filer.peerSubscriptionContext(ctx), &filer_pb.SubscribeMetadataRequest{
 			ClientName:                   "filer:" + string(self),
 			PathPrefix:                   "/",
 			SinceNs:                      lastTsNs,
@@ -927,7 +926,7 @@ var errPeerSubscriptionStopped = errors.New("peer subscription stopped")
 // out-wait a long traversal.
 func (ma *MetaAggregator) traversePeerMetadata(ctx context.Context, f *Filer, peer pb.ServerAddress) error {
 	return pb.WithFilerClient(true, 0, peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		stream, err := client.TraverseBfsMetadata(ctx, &filer_pb.TraverseBfsMetadataRequest{
+		stream, err := client.TraverseBfsMetadata(f.peerCallContext(ctx), &filer_pb.TraverseBfsMetadataRequest{
 			Directory:        "/",
 			ExcludedPrefixes: []string{SystemLogDir},
 		})
@@ -1013,7 +1012,7 @@ func (f *Filer) applyTraversedEntry(ctx context.Context, entry *Entry, peerTsNs 
 // digest it reports, empty for a filer that predates the setting.
 func (ma *MetaAggregator) readFilerStoreSignature(ctx context.Context, peer pb.ServerAddress) (sig int32, digest string, err error) {
 	err = pb.WithFilerClient(false, 0, peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
+		resp, err := client.GetFilerConfiguration(ma.filer.peerCallContext(ctx), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return err
 		}

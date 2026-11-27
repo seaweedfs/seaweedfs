@@ -271,7 +271,7 @@ func preSignV4(iam *IdentityAccessManagement, req *http.Request, accessKey, secr
 	extractedSignedHeaders["host"] = []string{req.Host}
 
 	// Get canonical request
-	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, req.URL.RawQuery, req.URL.Path, req.Method)
+	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, req.URL.RawQuery, req.URL.Path, req.Method, signV4TrimAll)
 
 	// Get string to sign
 	stringToSign := getStringToSign(canonicalRequest, now, scope)
@@ -1033,7 +1033,7 @@ func preSignV4WithPath(iam *IdentityAccessManagement, req *http.Request, accessK
 	extractedSignedHeaders["host"] = []string{extractHostHeader(req, "")}
 
 	// Get canonical request with custom path
-	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, req.URL.RawQuery, urlPath, req.Method)
+	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, req.URL.RawQuery, urlPath, req.Method, signV4TrimAll)
 
 	// Get string to sign
 	stringToSign := getStringToSign(canonicalRequest, now, scope)
@@ -1076,7 +1076,7 @@ func signV4WithPath(req *http.Request, accessKey, secretKey, urlPath string) {
 	hashedPayload := getContentSha256Cksum(req)
 
 	// Get canonical request with custom path
-	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, req.URL.RawQuery, urlPath, req.Method)
+	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, req.URL.RawQuery, urlPath, req.Method, signV4TrimAll)
 
 	// Get string to sign
 	stringToSign := getStringToSign(canonicalRequest, now, scope)

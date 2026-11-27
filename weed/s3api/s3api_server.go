@@ -429,6 +429,13 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		_, code := s3ApiServer.getBucketConfig(bucket)
 		return code
 	}
+	iam.objectEntryForPolicy = func(r *http.Request, bucket, object string) (map[string][]byte, bool) {
+		entry, err := s3ApiServer.resolveObjectEntry(bucket, object, r.URL.Query().Get("versionId"))
+		if err != nil || entry == nil {
+			return nil, false
+		}
+		return entry.Extended, true
+	}
 
 	// Initialize advanced IAM system if config is provided or explicitly enabled
 	if option.IamConfig != "" || option.EnableIam {
@@ -703,6 +710,7 @@ func (s3a *S3ApiServer) checkPolicyWithEntry(r *http.Request, bucket, object, ac
 //
 // Returns s3err.ErrNone if allowed, or an error code if denied or on error.
 func (s3a *S3ApiServer) recheckPolicyWithObjectEntry(r *http.Request, bucket, object, action string, objectEntry map[string][]byte, handlerName string) s3err.ErrorCode {
+	recordServedObjectEntry(r, bucket, object, objectEntry)
 	if isAnonymousObjectRead(r) {
 		// Refined like writeAnonymousAwareNotFound's masked miss, so a denied
 		// existing key and a missing key answer alike on a malformed name.

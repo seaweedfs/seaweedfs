@@ -126,8 +126,11 @@ func TestUploadLimitTimeoutAndReplicateBypass(t *testing.T) {
 		t.Fatalf("normal upload request failed: %v", err)
 	}
 	_ = framework.ReadAllAndClose(t, normalResp)
-	if normalResp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("normal upload expected 429 while limit blocked, got %d", normalResp.StatusCode)
+	if normalResp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("normal upload expected 503 while limit blocked, got %d", normalResp.StatusCode)
+	}
+	if got := normalResp.Header.Get("Retry-After"); got == "" {
+		t.Fatalf("normal upload 503 expected a Retry-After header")
 	}
 
 	close(unblockFirstUpload)
@@ -262,8 +265,11 @@ func TestUploadLimitTimeoutThenRecovery(t *testing.T) {
 	timeoutFID := framework.NewFileID(volumeID, 880802, 0x7A2B3C4E)
 	timeoutResp := framework.UploadBytes(t, &http.Client{Timeout: 10 * time.Second}, clusterHarness.VolumeAdminURL(), timeoutFID, []byte("should-timeout"))
 	_ = framework.ReadAllAndClose(t, timeoutResp)
-	if timeoutResp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("second upload under blocked pressure expected 429, got %d", timeoutResp.StatusCode)
+	if timeoutResp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("second upload under blocked pressure expected 503, got %d", timeoutResp.StatusCode)
+	}
+	if got := timeoutResp.Header.Get("Retry-After"); got == "" {
+		t.Fatalf("second upload 503 expected a Retry-After header")
 	}
 
 	close(unblockFirstUpload)

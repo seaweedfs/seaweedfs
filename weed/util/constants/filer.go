@@ -11,6 +11,7 @@ const (
 	ErrMsgAppendSaveInsideChunked = "append saved inside the entry to a chunked file is not supported"
 	ErrMsgAppendInlineMode        = "append to inline content with this storage mode is not supported"
 	ErrMsgOffsetWriteInline       = "offset write to inline small file is not supported yet"
+	ErrMsgPartialWriteRemoteOnly  = "append or offset write to a remote-only entry is not supported; cache it first"
 	// Suffix appended to a path, e.g. "/buckets/b/foo/bar is a file"
 	ErrMsgIsAFile = " is a file"
 	// Prefix + suffix, e.g. "existing /buckets/b/foo is a directory"

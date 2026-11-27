@@ -843,12 +843,12 @@ func assertLiveGapFrozen(t *testing.T, before, after map[diskKey]int, placed map
 // Existing 4-1-2 / within-rack 2-disk cases stay in the tests above.
 func TestPlace10Plus4ImbalanceTiebreak(t *testing.T) {
 	cases := []struct {
-		name              string
+		name                   string
 		racks, machines, disks int
-		remainderZero     bool
-		fatFirstGetsZero  bool
-		rackExtras        bool
-		fatRacksTwoPlusOne bool
+		remainderZero          bool
+		fatFirstGetsZero       bool
+		rackExtras             bool
+		fatRacksTwoPlusOne     bool
 	}{
 		{name: "1-1-4", racks: 1, machines: 1, disks: 4},
 		{name: "1-1-6", racks: 1, machines: 1, disks: 6},

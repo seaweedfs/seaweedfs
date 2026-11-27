@@ -245,7 +245,7 @@ func TestPrebufferedSignedBodyChecksContentMd5(t *testing.T) {
 			"x-amz-date":   {req.Header.Get("X-Amz-Date")},
 		}
 		sum := sha256.Sum256(body)
-		canonical := getCanonicalRequest(signed, hex.EncodeToString(sum[:]), "", "/", http.MethodPost)
+		canonical := getCanonicalRequest(signed, hex.EncodeToString(sum[:]), "", "/", http.MethodPost, signV4TrimAll)
 		signature := getSignature(getSigningKey("secret_key_1", now.Format(yyyymmdd), "us-east-1", "iam"), getStringToSign(canonical, now, scope))
 		req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=access_key_1/"+scope+", SignedHeaders=content-md5;content-type;host;x-amz-date, Signature="+signature)
 		return req

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 
@@ -144,13 +145,29 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		}
 		oldFileSize := filer.FileSize(entry)
 		if size < oldFileSize {
+			// A manifest the cut goes through is cut as the chunks it holds.
+			cut, expanded, err := wfs.cutThroughManifests(ctx, path, entry.GetChunks(), int64(size))
+			if err != nil {
+				if ctx.Err() != nil {
+					return fuse.EINTR
+				}
+				glog.Warningf("%v truncate to %d: %v", path, size, err)
+				return fuse.EIO
+			}
 			if fh != nil {
 				fh.noteTruncate(size)
+				if expanded {
+					// Its chunks are not in the handle's base: a merge would take
+					// them for writes of this handle and put back the ones a
+					// peer's truncate dropped. Like a rewrite, they cannot go over
+					// a peer's chunk change.
+					fh.noteRewrite()
+				}
 			}
 			// fmt.Printf("truncate %v \n", fullPath)
 			var chunks []*filer_pb.FileChunk
 			var truncatedChunks []*filer_pb.FileChunk
-			for _, chunk := range entry.GetChunks() {
+			for _, chunk := range cut {
 				int64Size := int64(chunk.Size)
 				if chunk.Offset+int64Size > int64(size) {
 					// this chunk is truncated
@@ -178,6 +195,12 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		entry.Attributes.Mtime = truncNow.Unix()
 		entry.Attributes.MtimeNs = int32(truncNow.Nanosecond())
 		entry.Attributes.FileSize = size
+		if size == 0 {
+			clearS3Encryption(entry)
+			if fh != nil {
+				fh.entry.sseCheck = sync.Once{}
+			}
+		}
 		if size > oldFileSize {
 			// The writes that fill the range will not grow the file, so they
 			// charge nothing; the growth is counted here or the quota never

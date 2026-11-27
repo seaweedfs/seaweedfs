@@ -60,7 +60,9 @@ type scopeBackend interface {
 type scopeConfig struct {
 	signingKey        func() security.SigningKey
 	verificationKeys  func() (security.SigningKey, security.SigningKey)
+	adminKeys         func() (security.SigningKey, security.SigningKey)
 	subscriptionScope func(context.Context, string) (*security.MetadataSubscriptionScope, error)
+	requireToken      func() bool
 	leeway            func() time.Duration
 	assignLifetime    func() time.Duration
 }
@@ -162,6 +164,22 @@ func (s *filerGrpcScope) verificationKeys() (security.SigningKey, security.Signi
 	return nil, nil
 }
 
+// isFilerAdminTokenWithLeeway applies the scope verifier's clock policy to the
+// shared filer-admin fallback. Keep the claim-shape checks here instead of
+// changing security.IsFilerAdminToken, whose callers intentionally use strict
+// JWT time validation.
+func isFilerAdminTokenWithLeeway(signingKey, previousKey security.SigningKey, token security.EncodedJwt, leeway time.Duration) bool {
+	if len(signingKey) == 0 || token == "" {
+		return false
+	}
+	claims := &security.SeaweedFilerAdminClaims{}
+	parsed, err := security.DecodeJwtWith(signingKey, previousKey, token, claims, leeway)
+	if err != nil || parsed == nil || !parsed.Valid {
+		return false
+	}
+	return claims.SessionId == "" && len(claims.AllowedPrefixes) == 0 && len(claims.AllowedMethods) == 0 && len(claims.ReadPrefixes) == 0
+}
+
 func (s *filerGrpcScope) proven(sc *scope, chunkAuth map[string]string, fid, collection string) bool {
 	raw := chunkAuth[fid]
 	if raw == "" {
@@ -190,8 +208,12 @@ func (s *filerGrpcScope) proofVerifier(ctx context.Context, sc *scope, chunkAuth
 // resolve authenticates the call. It returns (nil, nil) for an unscoped call,
 // a *scope for a scoped token, and an error that refuses the call.
 func (s *filerGrpcScope) resolve(ctx context.Context) (*scope, error) {
+	requireToken := s.cfg.requireToken != nil && s.cfg.requireToken()
 	key, previous := s.verificationKeys()
 	if len(key) == 0 {
+		if requireToken {
+			return nil, status.Error(codes.Unauthenticated, "filer: gRPC token authentication is required")
+		}
 		return nil, nil
 	}
 	raw, authErr := bearerFromMetadata(ctx)
@@ -199,6 +221,9 @@ func (s *filerGrpcScope) resolve(ctx context.Context) (*scope, error) {
 		return nil, authErr
 	}
 	if raw == "" {
+		if requireToken {
+			return nil, status.Error(codes.Unauthenticated, "filer: gRPC token authentication is required")
+		}
 		return nil, nil
 	}
 	leeway := time.Duration(0)
@@ -210,6 +235,14 @@ func (s *filerGrpcScope) resolve(ctx context.Context) (*scope, error) {
 	}
 	claims := &security.SeaweedFilerClaims{}
 	token, err := security.DecodeJwtWith(key, previous, security.EncodedJwt(raw), claims, leeway)
+	// Filer-owned RPCs use the shared admin key even when scoped callers have
+	// a dedicated gRPC key. Only an unscoped admin token can cross that boundary.
+	if (err != nil || token == nil || !token.Valid) && s.cfg.adminKeys != nil {
+		adminKey, previousAdminKey := s.cfg.adminKeys()
+		if isFilerAdminTokenWithLeeway(adminKey, previousAdminKey, security.EncodedJwt(raw), leeway) {
+			return nil, nil
+		}
+	}
 	if errors.Is(err, jwt.ErrTokenExpired) {
 		// The claims are parsed before validation, so the id names the holder.
 		glog.V(1).Infof("filer grpc: token %s (%s) expired", claims.ID, scopePeer(ctx))
@@ -271,13 +304,56 @@ func (sc *scope) checkProtectedPath(method, p string, descendants bool) error {
 	return nil
 }
 
+// scopeEntryEqualRefusal keeps a scoped client from guessing the hidden
+// filer-owned state of a pending remote rename. The caller supplies the
+// stored extended attributes so admission and the locked handler check can
+// share the same rule without changing the global comparator.
+func scopeEntryEqualRefusal(ctx context.Context, condition *filer_pb.WriteCondition, extended map[string][]byte) error {
+	if !scopeKeepOnly(ctx) {
+		return nil
+	}
+	if _, marked := extended[filer.ExtRemoteRenameSourceKey]; !marked {
+		return nil
+	}
+	if scopeHasEntryEqual(condition) {
+		return status.Error(codes.FailedPrecondition, "filer: scoped IF_ENTRY_EQUAL cannot be used while a remote rename is pending")
+	}
+	return nil
+}
+
+// scopeNamesRemoteRenameSource reports a condition or expected attribute that
+// compares against the hidden remote rename source.
+func scopeNamesRemoteRenameSource(condition *filer_pb.WriteCondition, expectedExtended map[string][]byte) bool {
+	if _, ok := expectedExtended[filer.ExtRemoteRenameSourceKey]; ok {
+		return true
+	}
+	for _, clause := range condition.GetClauses() {
+		if clause.GetExtKey() == filer.ExtRemoteRenameSourceKey || clause.GetGateKey() == filer.ExtRemoteRenameSourceKey {
+			return true
+		}
+	}
+	return false
+}
+
+func scopeHasEntryEqual(condition *filer_pb.WriteCondition) bool {
+	for _, clause := range condition.GetClauses() {
+		if clause != nil && clause.GetKind() == filer_pb.WriteCondition_IF_ENTRY_EQUAL {
+			return true
+		}
+	}
+	return false
+}
+
 // checkClientEntry admits retained chunks or chunks with valid assignment proofs.
 // A hard-link id may be retained there, or a fresh id may be introduced by an
 // update of an existing unlinked entry. Attaching another path's id is refused.
 // Client signatures stay allowed so mounts can filter their own events.
-func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method, p string, e *filer_pb.Entry, chunkAuth map[string]string, allowNewHardLink bool) error {
+func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method, p string, e *filer_pb.Entry, condition *filer_pb.WriteCondition, chunkAuth map[string]string, allowNewHardLink bool) error {
 	if err := scopeCheckEntryShape(e); err != nil {
 		return sc.deny(method, err.Error())
+	}
+	if _, ok := e.GetExtended()[filer.ExtRemoteRenameSourceKey]; ok {
+		return sc.deny(method, "remote rename source is filer-owned")
 	}
 	if err := sc.checkProtectedPath(method, p, false); err != nil {
 		return err
@@ -296,6 +372,9 @@ func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method
 		}
 		if err := scopeWritesSharedHardLink(stored, e); err != nil {
 			return sc.deny(method, err.Error())
+		}
+		if err := scopeEntryEqualRefusal(ctx, condition, stored.GetExtended()); err != nil {
+			return err
 		}
 		return nil
 	}
@@ -316,6 +395,11 @@ func (s *filerGrpcScope) checkClientEntry(ctx context.Context, sc *scope, method
 			if err := scopeCheckAppendState(stored, e.GetChunks()); err != nil {
 				return sc.deny(method, err.Error())
 			}
+		}
+	}
+	if scopeHasEntryEqual(condition) {
+		if err := load(); err != nil {
+			return err
 		}
 	}
 
@@ -348,6 +432,9 @@ func (s *filerGrpcScope) checkCreate(ctx context.Context, sc *scope, m string, r
 	if req.GetIsFromOtherCluster() || req.GetIsMoved() {
 		return sc.deny(m, "is_from_other_cluster and is_moved are not allowed")
 	}
+	if scopeNamesRemoteRenameSource(req.GetCondition(), nil) {
+		return sc.deny(m, "remote rename source is filer-owned")
+	}
 	p, err := sc.checkPath(m, req.GetDirectory(), req.GetEntry().GetName(), true)
 	if err != nil {
 		return err
@@ -357,7 +444,10 @@ func (s *filerGrpcScope) checkCreate(ctx context.Context, sc *scope, m string, r
 			return err
 		}
 	}
-	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), req.GetChunkAuth(), false)
+	// CreateEntry reports precondition refusals in its coded response, also on
+	// StreamMutateEntry. Leave this check to the locked handler so mount clients
+	// recognize the verdict and fence writeback publication.
+	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), nil, req.GetChunkAuth(), false)
 }
 
 func (s *filerGrpcScope) checkUpdate(ctx context.Context, sc *scope, m string, req *filer_pb.UpdateEntryRequest) error {
@@ -367,11 +457,14 @@ func (s *filerGrpcScope) checkUpdate(ctx context.Context, sc *scope, m string, r
 	if req.GetIsFromOtherCluster() || req.GetIsMoved() {
 		return sc.deny(m, "is_from_other_cluster and is_moved are not allowed")
 	}
+	if scopeNamesRemoteRenameSource(req.GetCondition(), req.GetExpectedExtended()) {
+		return sc.deny(m, "remote rename source is filer-owned")
+	}
 	p, err := sc.checkPath(m, req.GetDirectory(), req.GetEntry().GetName(), true)
 	if err != nil {
 		return err
 	}
-	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), req.GetChunkAuth(), true)
+	return s.checkClientEntry(ctx, sc, m, p, req.GetEntry(), req.GetCondition(), req.GetChunkAuth(), true)
 }
 
 func (s *filerGrpcScope) checkAppend(ctx context.Context, sc *scope, m string, req *filer_pb.AppendToEntryRequest) error {
@@ -382,7 +475,7 @@ func (s *filerGrpcScope) checkAppend(ctx context.Context, sc *scope, m string, r
 	if err := s.checkAncestors(ctx, sc, m, p); err != nil {
 		return err
 	}
-	return s.checkClientEntry(ctx, sc, m, p, &filer_pb.Entry{Name: req.GetEntryName(), Chunks: req.GetChunks()}, req.GetChunkAuth(), false)
+	return s.checkClientEntry(ctx, sc, m, p, &filer_pb.Entry{Name: req.GetEntryName(), Chunks: req.GetChunks()}, nil, req.GetChunkAuth(), false)
 }
 
 // checkAncestors refuses a write at p that would make an ancestor outside the
@@ -410,6 +503,9 @@ func (s *filerGrpcScope) checkAncestors(ctx context.Context, sc *scope, m, p str
 func (sc *scope) checkDelete(m string, req *filer_pb.DeleteEntryRequest) error {
 	if req.GetIsFromOtherCluster() || req.GetIsMoved() {
 		return sc.deny(m, "is_from_other_cluster and is_moved are not allowed")
+	}
+	if scopeNamesRemoteRenameSource(nil, req.GetExpectedExtended()) {
+		return sc.deny(m, "remote rename source is filer-owned")
 	}
 	p, err := sc.checkPath(m, req.GetDirectory(), req.GetName(), true)
 	if err != nil {
@@ -509,7 +605,11 @@ func (s *filerGrpcScope) unary(ctx context.Context, req any, info *grpc.UnarySer
 	if !ok || reflect.TypeOf(req) != expected {
 		return nil, sc.deny(info.FullMethod, "not available to a scoped token")
 	}
-	return s.unaryScoped(s.withWriteAuthority(ctx, sc), sc, req, handler)
+	resp, err := s.unaryScoped(s.withWriteAuthority(ctx, sc), sc, req, handler)
+	if err != nil {
+		return resp, err
+	}
+	return scopeRedactResponse(resp), nil
 }
 
 // isScopeFilerConf reports whether (dir, name) is the filer's per-path config

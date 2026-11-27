@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -83,6 +84,13 @@ func (s3a *S3ApiServer) mapCopyErrorToS3Error(err error) s3err.ErrorCode {
 		// Bucket is read-only due to quota enforcement or other configuration
 		// Return 403 Forbidden per S3 semantics (similar to MinIO's quota enforcement)
 		return s3err.ErrAccessDenied
+	}
+
+	// A destination volume short of upload budget, or a chunk write that
+	// stalled through its retries, is load the client should back off from:
+	// SlowDown, as for PutObject, not a 500 it cannot tell from a fault.
+	if operation.IsUploadOverloaded(err) || errors.Is(err, operation.ErrUploadStalled) {
+		return s3err.ErrTooManyRequest
 	}
 
 	// Check for KMS errors first

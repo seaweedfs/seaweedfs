@@ -504,6 +504,9 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	if !s3a.iam.untrackInFlight(r) {
+		return
+	}
 	// The filer resolves and drops the bucket's collection inside the delete;
 	// it keeps a shared one rather than risk another bucket's volumes.
 	err := s3a.rm(r.Context(), s3a.option.BucketsPath, bucket, false, true)

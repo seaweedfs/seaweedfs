@@ -286,6 +286,46 @@ func TestAbortRequestsDeniedByBucketPolicy(t *testing.T) {
 	assert.NoError(t, downloadResult(t, other, 5*time.Second), "no policy covers other")
 }
 
+// A request that untracks itself before storing its change to access keeps
+// running when that change denies it, while a read the change denies is
+// aborted. A request aborted before it untracks itself must not store it.
+func TestUntrackInFlightBeforeOwnChange(t *testing.T) {
+	iam := newRevokeIAM(t, revokeIdentity("bob", revokeKeyB, revokeSecretB, "Admin"))
+	iam.policyEngine = NewBucketPolicyEngine()
+	started := make(chan struct{}, 2)
+	read := download(t, serveRevokeS3(t, started, authRead(iam))+"/bkt/object", revokeKeyB, revokeSecretB)
+	change := download(t, serveRevokeS3(t, started, func(f http.HandlerFunc) http.HandlerFunc {
+		return iam.Auth(func(w http.ResponseWriter, r *http.Request) {
+			if iam.untrackInFlight(r) {
+				f(w, r)
+			}
+		}, s3_constants.ACTION_PUT_BUCKET_POLICY)
+	})+"/bkt/object", revokeKeyB, revokeSecretB)
+	waitStarted(t, started, 2)
+
+	require.NoError(t, iam.policyEngine.engine.SetBucketPolicy("bkt",
+		`{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"s3:*","Resource":["arn:aws:s3:::bkt","arn:aws:s3:::bkt/*"]}]}`))
+	iam.revalidateBucketInFlight("bkt")
+
+	assert.Error(t, downloadResult(t, read, time.Second), "the bucket policy denies the read")
+	assert.NoError(t, downloadResult(t, change, 5*time.Second), "the change untracked itself first")
+
+	r := mux.SetURLVars(httptest.NewRequest(http.MethodPut, "/bkt?policy", nil), map[string]string{"bucket": "bkt"})
+	r.Header.Set(s3_constants.AmzAuthType, "SigV4")
+	r = r.WithContext(s3_constants.SetAccessKeyIdInContext(r.Context(), revokeKeyB))
+	stored := true
+	iam.abortWhenRevoked(func(w http.ResponseWriter, r *http.Request) {
+		iam.revalidateBucketInFlight("bkt")
+		select {
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+			t.Fatal("the denied request was not aborted")
+		}
+		stored = iam.untrackInFlight(r)
+	}, iam.lookupByIdentityName("bob"), s3_constants.ACTION_PUT_BUCKET_POLICY, iam.inFlightGeneration())(httptest.NewRecorder(), r)
+	assert.False(t, stored, "an aborted request must not store its change")
+}
+
 // A re-check judges time conditions as of when the request was admitted, so a
 // grant that expires while the request runs does not abort it.
 func TestAbortRevokedRequestsJudgesTimeAsOfAdmission(t *testing.T) {

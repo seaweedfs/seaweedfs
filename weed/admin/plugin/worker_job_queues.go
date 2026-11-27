@@ -178,6 +178,7 @@ func (r *Plugin) assignJobsToWorkerQueues(
 //  1. own home queue
 //  2. steal from another home if len>=K, or orphan past OrphanRehomeGrace
 //  3. homeless leftover FIFO
+//
 // No-home worker (no matching replica, no home-queue identity):
 //  1. homeless leftover FIFO
 //  2. only if leftover empty: steal (K / orphan), same rules

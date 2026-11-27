@@ -231,6 +231,9 @@ func (fs *FilerServer) doUpload(ctx context.Context, urlLocation string, limited
 		PairMap:           pairMap,
 		Jwt:               auth,
 		Md5:               contentMd5,
+		// The chunk loop holds the client's chunk buffer: a crawling link is
+		// cut and handed back as back-pressure rather than waited on.
+		BodyDeadline: true,
 	}
 
 	uploader, err := operation.NewUploader()
@@ -258,12 +261,7 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 	var uploadResult *operation.UploadResult
 	var failedFileChunks []*filer_pb.FileChunk
 
-	// Each attempt assigns anew, so also retry the errors a fresh volume dodges:
-	// a target gone read-only or full mid-write 5xxs until the master notices.
-	shouldRetry := func(err error) bool {
-		return util.IsTransientError(err) || operation.ShouldReassignUpload(err)
-	}
-	err := util.RetryOnError("filerDataToChunk", shouldRetry, func() error {
+	err := util.RetryOnError("filerDataToChunk", newChunkUploadRetryGate(), func() error {
 		// assign one file id for one chunk
 		fileId, urlLocation, auth, uploadErr = fs.assignNewFileInfo(ctx, so, uint64(len(data)))
 		if uploadErr != nil {
@@ -319,4 +317,25 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 	}
 
 	return []*filer_pb.FileChunk{chunk}, nil
+}
+
+// newChunkUploadRetryGate decides, for one chunk, whether another attempt
+// (with a fresh assignment) is worth it.
+func newChunkUploadRetryGate() func(error) bool {
+	backpressureRetried := false
+	// Each attempt assigns anew, so also retry the errors a fresh volume dodges:
+	// a target gone read-only or full mid-write 5xxs until the master notices.
+	// Back-pressure (an overload, or a body cut at the body deadline) gets one
+	// fresh assignment only: retrying a cluster short of upload budget or link
+	// rate every second while holding the chunk adds to the load.
+	return func(err error) bool {
+		if operation.IsUploadBackpressure(err) {
+			if backpressureRetried {
+				return false
+			}
+			backpressureRetried = true
+			return true
+		}
+		return util.IsTransientError(err) || operation.ShouldReassignUpload(err)
+	}
 }

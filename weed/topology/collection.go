@@ -16,6 +16,7 @@ type Collection struct {
 	replicationAsMin         bool
 	maxWritableVolumes       int
 	storageType2VolumeLayout *util.ConcurrentReadMap
+	growth                   growthFence
 }
 
 func NewCollection(name string, volumeSizeLimit uint64, replicationAsMin bool) *Collection {

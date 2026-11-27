@@ -1,7 +1,6 @@
 package weed_server
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -22,11 +21,11 @@ func leaseAdminLock(ms *MasterServer, client string, prev *master_pb.LeaseAdminT
 	if prev != nil {
 		req.PreviousToken, req.PreviousLockTime = prev.Token, prev.LockTsNs
 	}
-	return ms.LeaseAdminToken(context.Background(), req)
+	return ms.LeaseAdminToken(ctxFromHost("127.0.0.1"), req)
 }
 
 func releaseAdminLock(ms *MasterServer, lease *master_pb.LeaseAdminTokenResponse) error {
-	_, err := ms.ReleaseAdminToken(context.Background(), &master_pb.ReleaseAdminTokenRequest{
+	_, err := ms.ReleaseAdminToken(ctxFromHost("127.0.0.1"), &master_pb.ReleaseAdminTokenRequest{
 		LockName: "admin", PreviousToken: lease.Token, PreviousLockTime: lease.LockTsNs,
 	})
 	return err

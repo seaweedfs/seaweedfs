@@ -331,6 +331,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		glog.Warningf("filer: guard.white_list is configured but the IP whitelist feature is currently disabled. See https://github.com/seaweedfs/seaweedfs/issues/7094")
 	}
 	fs.filerGuard = security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec, v.GetString("jwt.filer_signing.previous_key"), v.GetString("jwt.filer_signing.read.previous_key"))
+	fs.filer.PeerContext = fs.peerContext
+	fs.filer.PeerSubscriptionContext = fs.peerSubscriptionContext
 	basicAuth, basicAuthFile := loadBasicAuth(nil, "")
 	fs.basicAuth.Store(basicAuth)
 	fs.basicAuthFile = basicAuthFile
@@ -338,8 +340,10 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 
 	fs.loadGrpcScopeConfig(v)
 	fs.grpcScope = newFilerGrpcScope(scopeConfig{
+		adminKeys:         func() (security.SigningKey, security.SigningKey) { return fs.filerGuard.VerificationKeys(true) },
 		verificationKeys:  fs.grpcScopeVerificationKeys,
 		subscriptionScope: fs.metadataSubscriptionScope,
+		requireToken:      func() bool { return fs.grpcScopeSettings.Load().requireToken },
 		leeway:            func() time.Duration { return fs.grpcScopeSettings.Load().leeway },
 		assignLifetime:    func() time.Duration { return fs.grpcScopeSettings.Load().assignLifetime },
 	}, fs)
@@ -835,6 +839,7 @@ func (fs *FilerServer) Reload() {
 type grpcScopeSettings struct {
 	key            security.SigningKey
 	previousKey    security.SigningKey
+	requireToken   bool
 	leeway         time.Duration
 	assignLifetime time.Duration
 }
@@ -842,6 +847,7 @@ type grpcScopeSettings struct {
 func (fs *FilerServer) loadGrpcScopeConfig(v *util.ViperProxy) {
 	v.SetDefault("jwt.filer_signing.assign_expires_after_seconds", int(security.DefaultAssignTokenLifetime/time.Second))
 	v.SetDefault("jwt.filer_signing.clock_leeway_seconds", 30)
+	v.SetDefault("jwt.filer_signing.grpc_require_token", false)
 	key := security.SigningKey(v.GetString("jwt.filer_signing.grpc_key"))
 	previousKey := security.SigningKey(v.GetString("jwt.filer_signing.grpc_previous_key"))
 	lifetime := time.Duration(v.GetInt("jwt.filer_signing.assign_expires_after_seconds")) * time.Second
@@ -859,6 +865,7 @@ func (fs *FilerServer) loadGrpcScopeConfig(v *util.ViperProxy) {
 	fs.grpcScopeSettings.Store(&grpcScopeSettings{
 		key:            key,
 		previousKey:    previousKey,
+		requireToken:   v.GetBool("jwt.filer_signing.grpc_require_token"),
 		leeway:         leeway,
 		assignLifetime: lifetime,
 	})

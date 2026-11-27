@@ -176,7 +176,7 @@ func sseObjectETag(entry *filer_pb.Entry) string {
 func (r *SSES3Reader) readAt(ctx context.Context, fullPath, etag, version string, size int64, buf []byte, offset int64) (int64, error) {
 	key, ok := strings.CutPrefix(fullPath, r.root)
 	if !ok || key == "" || key == "." || key == ".." || path.IsAbs(key) || path.Clean(key) != key || strings.HasPrefix(key, "../") {
-		return 0, errNativeSSES3Read
+		return 0, errNativeSSERead
 	}
 	versionFile := false
 	if dir, name := path.Split(key); version != "" && name == "v_"+version {

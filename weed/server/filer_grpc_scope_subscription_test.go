@@ -2,12 +2,14 @@ package weed_server
 
 import (
 	"context"
+	"io"
 	"net"
 	"reflect"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -18,6 +20,208 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestGeneralScopedSubscriptionHidesRemoteRenameSourceKey(t *testing.T) {
+	token := scopeSubscriptionToken(t, time.Minute, []string{"/t/allowed"}, nil)
+	h := newScopeSubscriptionGRPCHarness(t, token)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := h.client.SubscribeLocalMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
+		ClientName: "scope-subscription-remote-source",
+		ClientId:   77,
+		PathPrefix: "/t/allowed",
+	})
+	if err != nil {
+		t.Fatalf("start subscription: %v", err)
+	}
+	entry := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Extended: map[string][]byte{
+			filer.ExtRemoteRenameSourceKey: []byte("/buckets/t1/source"),
+			"client-tag":                   []byte("keep"),
+		}}
+	}
+	nested := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/t/allowed",
+		TsNs:      2,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: entry("nested-old"),
+			NewEntry: entry("nested-new"),
+		},
+	}
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/t/allowed",
+		TsNs:      1,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      entry("old"),
+			NewEntry:      entry("new"),
+			NewParentPath: "/t/allowed",
+		},
+		Events: []*filer_pb.SubscribeMetadataResponse{nested},
+	}
+	appendScopeSubscriptionMetadataEvent(h.subscribeHarness, event)
+
+	resp := nextScopeSubscriptionEvent(t, stream)
+	checkEntry := func(where string, got *filer_pb.Entry) {
+		t.Helper()
+		if got == nil {
+			t.Fatalf("%s entry missing", where)
+		}
+		if marker := got.GetExtended()[filer.ExtRemoteRenameSourceKey]; len(marker) != 0 {
+			t.Fatalf("%s exposed remote rename source %q", where, marker)
+		}
+		if tag := string(got.GetExtended()["client-tag"]); tag != "keep" {
+			t.Fatalf("%s lost client metadata %q", where, tag)
+		}
+	}
+	checkEntry("old", resp.GetEventNotification().GetOldEntry())
+	checkEntry("new", resp.GetEventNotification().GetNewEntry())
+	redacted := scopeRedactMetadataResponse(event)
+	if len(redacted.GetEvents()) != 1 {
+		t.Fatalf("redacted subscription batch events = %d, want 1", len(redacted.GetEvents()))
+	}
+	checkEntry("nested old", redacted.GetEvents()[0].GetEventNotification().GetOldEntry())
+	checkEntry("nested new", redacted.GetEvents()[0].GetEventNotification().GetNewEntry())
+	for _, source := range []*filer_pb.Entry{
+		event.GetEventNotification().GetOldEntry(), event.GetEventNotification().GetNewEntry(),
+		event.GetEvents()[0].GetEventNotification().GetOldEntry(), event.GetEvents()[0].GetEventNotification().GetNewEntry(),
+	} {
+		if marker := source.GetExtended()[filer.ExtRemoteRenameSourceKey]; len(marker) == 0 {
+			t.Fatalf("redaction mutated the source event")
+		}
+	}
+}
+
+func TestGeneralScopedSubscriptionRedactsDeliveredBatchTail(t *testing.T) {
+	base := time.Now().Add(-time.Hour).UnixNano()
+	entry := func(name string) *filer_pb.Entry {
+		return &filer_pb.Entry{Name: name, Extended: map[string][]byte{
+			filer.ExtRemoteRenameSourceKey: []byte("/buckets/t1/source"),
+			"client-tag":                   []byte("keep"),
+		}}
+	}
+	events := []*filer_pb.SubscribeMetadataResponse{
+		{Directory: "/t/allowed", TsNs: base, EventNotification: &filer_pb.EventNotification{NewEntry: entry("batch-000")}},
+		{Directory: "/t/allowed", TsNs: base + 1, EventNotification: &filer_pb.EventNotification{NewEntry: entry("batch-001")}},
+	}
+	sources := proto.Clone(&filer_pb.SubscribeMetadataResponse{Events: events}).(*filer_pb.SubscribeMetadataResponse)
+	h := newScopeSubscriptionGRPCServerWithService(t, func(fs *FilerServer) filer_pb.SeaweedFilerServer {
+		return &prefilledLocalMetadataServer{FilerServer: fs, events: events}
+	})
+	h.client = h.clientForToken(t, scopeSubscriptionToken(t, time.Minute, []string{"/t/allowed"}, nil))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := h.client.SubscribeLocalMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
+		ClientName:             "scope-subscription-batch-redaction",
+		ClientId:               78,
+		PathPrefix:             "/t/allowed",
+		ClientSupportsBatching: true,
+	})
+	if err != nil {
+		t.Fatalf("start subscription: %v", err)
+	}
+	resp, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("receive metadata batch: %v", err)
+	}
+	if len(resp.GetEvents()) != 1 {
+		t.Fatalf("delivered Events tail length = %d, want 1: %+v", len(resp.GetEvents()), resp)
+	}
+	if got := resp.GetEventNotification().GetNewEntry().GetName(); got != "batch-000" {
+		t.Fatalf("delivered batch head = %q, want batch-000", got)
+	}
+	if got := resp.GetEvents()[0].GetEventNotification().GetNewEntry().GetName(); got != "batch-001" {
+		t.Fatalf("delivered Events tail = %q, want batch-001", got)
+	}
+	checkEntry := func(where string, entry *filer_pb.Entry) {
+		t.Helper()
+		if entry == nil {
+			t.Fatalf("%s entry missing", where)
+		}
+		if marker := entry.GetExtended()[filer.ExtRemoteRenameSourceKey]; len(marker) != 0 {
+			t.Fatalf("%s exposed remote rename source %q", where, marker)
+		}
+		if tag := string(entry.GetExtended()["client-tag"]); tag != "keep" {
+			t.Fatalf("%s lost client metadata %q", where, tag)
+		}
+	}
+	checkEntry("head", resp.GetEventNotification().GetNewEntry())
+	checkEntry("tail", resp.GetEvents()[0].GetEventNotification().GetNewEntry())
+	if _, err := stream.Recv(); err != io.EOF {
+		t.Fatalf("second metadata response error = %v, want EOF", err)
+	}
+	if !proto.Equal(events[0], sources.GetEvents()[0]) || !proto.Equal(events[1], sources.GetEvents()[1]) {
+		t.Fatal("scoped batch redaction mutated the source events")
+	}
+}
+
+func TestDedicatedSubscriptionHidesRemoteRenameSourceKey(t *testing.T) {
+	event := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/t/allowed",
+		EventNotification: &filer_pb.EventNotification{NewEntry: &filer_pb.Entry{
+			Name:     "legacy",
+			Extended: map[string][]byte{filer.ExtRemoteRenameSourceKey: []byte("/buckets/t1/source")},
+		}},
+	}
+	scoped, cancel := newScopedMetadataStream(context.Background(), &security.MetadataSubscriptionScope{
+		Prefixes:  []string{"/t/allowed"},
+		ExpiresAt: time.Now().Add(time.Minute),
+	})
+	defer cancel()
+	var got *filer_pb.SubscribeMetadataResponse
+	if err := scoped.send(event, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		got = resp
+		return nil
+	}); err != nil {
+		t.Fatalf("dedicated subscription send: %v", err)
+	}
+	if got == event {
+		t.Fatal("dedicated subscription response was not cloned")
+	}
+	if marker := got.GetEventNotification().GetNewEntry().GetExtended()[filer.ExtRemoteRenameSourceKey]; len(marker) != 0 {
+		t.Fatalf("dedicated subscription exposed remote rename source %q", marker)
+	}
+	if marker := event.GetEventNotification().GetNewEntry().GetExtended()[filer.ExtRemoteRenameSourceKey]; len(marker) == 0 {
+		t.Fatal("dedicated subscription redaction mutated the source event")
+	}
+}
+
+type prefilledLocalMetadataServer struct {
+	*FilerServer
+	events []*filer_pb.SubscribeMetadataResponse
+}
+
+func (s *prefilledLocalMetadataServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeLocalMetadataServer) error {
+	subscription, err := s.metadataSubscriptionScope(stream.Context(), security.MethodSubscribeLocalMetadata)
+	if err != nil {
+		return err
+	}
+	if subscription == nil {
+		return s.FilerServer.SubscribeLocalMetadata(req, stream)
+	}
+
+	req.ClientSupportsMetadataChunks = false
+	req.ClientId = s.unusedClientId()
+	req.ClientEpoch = scopedClientEpoch
+	scoped, cancel := newScopedMetadataStream(stream.Context(), subscription)
+	defer cancel()
+	scopedStream := &scopedSubscribeLocalStream{
+		SeaweedFiler_SubscribeLocalMetadataServer: stream,
+		scopedMetadataStream:                      scoped,
+	}
+	sender := &pipelinedSender{
+		ctx:      scoped.Context(),
+		sendCh:   make(chan *filer_pb.SubscribeMetadataResponse, len(s.events)),
+		errCh:    make(chan error, 1),
+		done:     make(chan struct{}),
+		canBatch: req.GetClientSupportsBatching(),
+		scope:    "local",
+	}
+	for _, event := range s.events {
+		sender.sendCh <- event
+	}
+	go sender.sendLoop(scopedStream)
+	return scoped.endErr(sender.Close())
+}
 
 const (
 	scopeSubscriptionScopeKey     = "scope-subscription-scope-signing-key"
@@ -39,6 +243,10 @@ func newScopeSubscriptionGRPCHarness(t *testing.T, token string) *scopeSubscript
 }
 
 func newScopeSubscriptionGRPCServer(t *testing.T) *scopeSubscriptionGRPCHarness {
+	return newScopeSubscriptionGRPCServerWithService(t, nil)
+}
+
+func newScopeSubscriptionGRPCServerWithService(t *testing.T, serviceFactory func(*FilerServer) filer_pb.SeaweedFilerServer) *scopeSubscriptionGRPCHarness {
 	t.Helper()
 	h := newSubscribeHarness(t)
 	h.fs.filerGuard = security.NewGuard(nil, scopeSubscriptionFilerKey, 0, scopeSubscriptionFilerKey, 0, "", "")
@@ -59,7 +267,11 @@ func newScopeSubscriptionGRPCServer(t *testing.T) *scopeSubscriptionGRPCHarness 
 		t.Fatalf("listen: %v", err)
 	}
 	server := grpc.NewServer(h.fs.grpcScope.ServerOptions()...)
-	filer_pb.RegisterSeaweedFilerServer(server, h.fs)
+	service := filer_pb.SeaweedFilerServer(h.fs)
+	if serviceFactory != nil {
+		service = serviceFactory(h.fs)
+	}
+	filer_pb.RegisterSeaweedFilerServer(server, service)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() {
 		server.Stop()

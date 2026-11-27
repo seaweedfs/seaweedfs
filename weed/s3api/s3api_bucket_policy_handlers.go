@@ -115,6 +115,9 @@ func (s3a *S3ApiServer) PutBucketPolicyHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	if !s3a.iam.untrackInFlight(r) {
+		return
+	}
 	// Store bucket policy
 	if err := s3a.setBucketPolicy(bucket, &policyDoc); err != nil {
 		if errors.Is(err, ErrBucketNotFound) {
@@ -178,6 +181,9 @@ func (s3a *S3ApiServer) DeleteBucketPolicyHandler(w http.ResponseWriter, r *http
 		return
 	}
 
+	if !s3a.iam.untrackInFlight(r) {
+		return
+	}
 	// Delete bucket policy
 	if err := s3a.deleteBucketPolicy(bucket); err != nil {
 		if errors.Is(err, ErrBucketNotFound) {

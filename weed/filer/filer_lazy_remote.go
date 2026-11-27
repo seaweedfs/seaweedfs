@@ -392,7 +392,13 @@ func (f *Filer) CopyRemoteOnlyEntry(ctx context.Context, entry *Entry, oldPath, 
 	}
 	remoteEntry, err := copier.CopyFile(src, dst)
 	if err != nil {
-		return nil, fmt.Errorf("copy remote %s to %s: %w", remote_storage.FormatLocation(src), remote_storage.FormatLocation(dst), err)
+		copyErr := fmt.Errorf("copy remote %s to %s: %w", remote_storage.FormatLocation(src), remote_storage.FormatLocation(dst), err)
+		if f.RemoteSourcePath(entry, oldPath) != oldPath {
+			// the pending source is filer-owned, and backend errors name it too
+			glog.WarningfCtx(ctx, "rename %s to %s: %v", oldPath, newPath, copyErr)
+			return nil, fmt.Errorf("copy remote object of %s to %s failed", oldPath, newPath)
+		}
+		return nil, copyErr
 	}
 	glog.V(3).InfofCtx(ctx, "CopyRemoteOnlyEntry: copied %s to %s", remote_storage.FormatLocation(src), remote_storage.FormatLocation(dst))
 	return remoteEntry, nil
