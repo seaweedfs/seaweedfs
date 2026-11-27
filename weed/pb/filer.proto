@@ -575,6 +575,9 @@ message StreamRenameEntryRequest {
     string new_directory = 3;
     string new_name = 4;
     repeated int32 signatures = 5;
+    // Set on a rename forwarded to the source's write owner, so it is not
+    // forwarded again.
+    bool is_moved = 6;
 }
 message StreamRenameEntryResponse {
     string directory = 1;

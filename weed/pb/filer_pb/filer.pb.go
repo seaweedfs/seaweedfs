@@ -3162,12 +3162,15 @@ func (*AtomicRenameEntryResponse) Descriptor() ([]byte, []int) {
 }
 
 type StreamRenameEntryRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	OldDirectory  string                 `protobuf:"bytes,1,opt,name=old_directory,json=oldDirectory,proto3" json:"old_directory,omitempty"`
-	OldName       string                 `protobuf:"bytes,2,opt,name=old_name,json=oldName,proto3" json:"old_name,omitempty"`
-	NewDirectory  string                 `protobuf:"bytes,3,opt,name=new_directory,json=newDirectory,proto3" json:"new_directory,omitempty"`
-	NewName       string                 `protobuf:"bytes,4,opt,name=new_name,json=newName,proto3" json:"new_name,omitempty"`
-	Signatures    []int32                `protobuf:"varint,5,rep,packed,name=signatures,proto3" json:"signatures,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	OldDirectory string                 `protobuf:"bytes,1,opt,name=old_directory,json=oldDirectory,proto3" json:"old_directory,omitempty"`
+	OldName      string                 `protobuf:"bytes,2,opt,name=old_name,json=oldName,proto3" json:"old_name,omitempty"`
+	NewDirectory string                 `protobuf:"bytes,3,opt,name=new_directory,json=newDirectory,proto3" json:"new_directory,omitempty"`
+	NewName      string                 `protobuf:"bytes,4,opt,name=new_name,json=newName,proto3" json:"new_name,omitempty"`
+	Signatures   []int32                `protobuf:"varint,5,rep,packed,name=signatures,proto3" json:"signatures,omitempty"`
+	// Set on a rename forwarded to the source's write owner, so it is not
+	// forwarded again.
+	IsMoved       bool `protobuf:"varint,6,opt,name=is_moved,json=isMoved,proto3" json:"is_moved,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3235,6 +3238,13 @@ func (x *StreamRenameEntryRequest) GetSignatures() []int32 {
 		return x.Signatures
 	}
 	return nil
+}
+
+func (x *StreamRenameEntryRequest) GetIsMoved() bool {
+	if x != nil {
+		return x.IsMoved
+	}
+	return false
 }
 
 type StreamRenameEntryResponse struct {
@@ -7769,7 +7779,7 @@ const file_filer_proto_rawDesc = "" +
 	"signatures\x18\x05 \x03(\x05R\n" +
 	"signatures\x121\n" +
 	"\x15fail_if_target_exists\x18\x06 \x01(\bR\x12failIfTargetExists\"\x1b\n" +
-	"\x19AtomicRenameEntryResponse\"\xba\x01\n" +
+	"\x19AtomicRenameEntryResponse\"\xd5\x01\n" +
 	"\x18StreamRenameEntryRequest\x12#\n" +
 	"\rold_directory\x18\x01 \x01(\tR\foldDirectory\x12\x19\n" +
 	"\bold_name\x18\x02 \x01(\tR\aoldName\x12#\n" +
@@ -7777,7 +7787,8 @@ const file_filer_proto_rawDesc = "" +
 	"\bnew_name\x18\x04 \x01(\tR\anewName\x12\x1e\n" +
 	"\n" +
 	"signatures\x18\x05 \x03(\x05R\n" +
-	"signatures\"\x9a\x01\n" +
+	"signatures\x12\x19\n" +
+	"\bis_moved\x18\x06 \x01(\bR\aisMoved\"\x9a\x01\n" +
 	"\x19StreamRenameEntryResponse\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12J\n" +
 	"\x12event_notification\x18\x02 \x01(\v2\x1b.filer_pb.EventNotificationR\x11eventNotification\x12\x13\n" +
