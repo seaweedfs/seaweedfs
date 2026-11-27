@@ -290,16 +290,21 @@ func (fs *FilerSink) entryMissing(key string) (bool, error) {
 		if lookupErr == nil {
 			return nil
 		}
-		// The string check is a deliberate compatibility fallback: a cross-cluster
-		// gRPC error often arrives as a plain status string that no longer wraps the
-		// filer_pb.ErrNotFound sentinel, so errors.Is alone would miss it.
-		if errors.Is(lookupErr, filer_pb.ErrNotFound) || strings.Contains(lookupErr.Error(), filer_pb.ErrNotFound.Error()) {
+		if isEntryNotFound(lookupErr) {
 			missing = true
 			return nil
 		}
 		return lookupErr
 	})
 	return missing, err
+}
+
+// isEntryNotFound reports a lookup not-found. The string check is a deliberate
+// compatibility fallback: a cross-cluster gRPC error often arrives as a plain
+// status string that no longer wraps the filer_pb.ErrNotFound sentinel, so
+// errors.Is alone would miss it.
+func isEntryNotFound(err error) bool {
+	return errors.Is(err, filer_pb.ErrNotFound) || strings.Contains(err.Error(), filer_pb.ErrNotFound.Error())
 }
 
 func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
@@ -420,7 +425,10 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 	})
 
 	if err != nil {
-		return false, fmt.Errorf("lookup %s: %w", key, err)
+		// Only a real not-found lets the caller delete and recreate the key; any
+		// other lookup error must be retried, or a transient failure would wipe
+		// a directory with everything under it.
+		return !isEntryNotFound(err), fmt.Errorf("lookup %s: %w", key, err)
 	}
 
 	glog.V(4).Infof("entry %s: old %q new %q existing %q", key, oldEntry.GetName(), newEntry.GetName(), existingEntry.GetName())
