@@ -613,18 +613,24 @@ func (iam *IdentityAccessManagement) vendedSessionKeyLive(owner, accessKey, fing
 // calculateAndVerifySignature contains the core logic for creating the canonical request,
 // string-to-sign, and comparing the final signature.
 func calculateAndVerifySignature(secretKey, method, urlPath, queryStr string, extractedSignedHeaders http.Header, authInfo *v4AuthInfo) (string, s3err.ErrorCode) {
-	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, authInfo.HashedPayload, queryStr, urlPath, method)
-	stringToSign := getStringToSign(canonicalRequest, authInfo.Date, authInfo.Scope)
 	signingKey := getSigningKey(secretKey, authInfo.Date.Format(yyyymmdd), authInfo.Region, authInfo.Service)
-	newSignature := getSignature(signingKey, stringToSign)
-
-	if !compareSignatureV4(newSignature, authInfo.Signature) {
-		glog.V(4).Infof("Signature mismatch. Details:\n- CanonicalRequest: %q\n- StringToSign: %q\n- Calculated: %s, Provided: %s",
-			canonicalRequest, stringToSign, newSignature, authInfo.Signature)
-		return "", s3err.ErrSignatureDoesNotMatch
+	var canonicalRequest, stringToSign, newSignature string
+	for i, trim := range signV4HeaderValueTrims {
+		cr := getCanonicalRequest(extractedSignedHeaders, authInfo.HashedPayload, queryStr, urlPath, method, trim)
+		if i > 0 && cr == canonicalRequest {
+			continue // same canonical request, same signature
+		}
+		canonicalRequest = cr
+		stringToSign = getStringToSign(canonicalRequest, authInfo.Date, authInfo.Scope)
+		newSignature = getSignature(signingKey, stringToSign)
+		if compareSignatureV4(newSignature, authInfo.Signature) {
+			return newSignature, s3err.ErrNone
+		}
 	}
 
-	return newSignature, s3err.ErrNone
+	glog.V(4).Infof("Signature mismatch. Details:\n- CanonicalRequest: %q\n- StringToSign: %q\n- Calculated: %s, Provided: %s",
+		canonicalRequest, stringToSign, newSignature, authInfo.Signature)
+	return "", s3err.ErrSignatureDoesNotMatch
 }
 
 func extractV4AuthInfo(r *http.Request) (*v4AuthInfo, s3err.ErrorCode) {
@@ -1224,14 +1230,14 @@ func getScope(t time.Time, region string, service string) string {
 //	<CanonicalHeaders>\n
 //	<SignedHeaders>\n
 //	<HashedPayload>
-func getCanonicalRequest(extractedSignedHeaders http.Header, payload, queryStr, urlPath, method string) string {
+func getCanonicalRequest(extractedSignedHeaders http.Header, payload, queryStr, urlPath, method string, trim func(string) string) string {
 	rawQuery := strings.Replace(queryStr, "+", "%20", -1)
 	encodedPath := encodePath(urlPath)
 	canonicalRequest := strings.Join([]string{
 		method,
 		encodedPath,
 		rawQuery,
-		getCanonicalHeaders(extractedSignedHeaders),
+		getCanonicalHeaders(extractedSignedHeaders, trim),
 		getSignedHeaders(extractedSignedHeaders),
 		payload,
 	}, "\n")
@@ -1269,7 +1275,7 @@ func getSigningKey(secretKey string, time string, region string, service string)
 }
 
 // getCanonicalHeaders generate a list of request headers with their values
-func getCanonicalHeaders(signedHeaders http.Header) string {
+func getCanonicalHeaders(signedHeaders http.Header, trim func(string) string) string {
 	var headers []string
 	vals := make(http.Header)
 	for k, vv := range signedHeaders {
@@ -1288,18 +1294,32 @@ func getCanonicalHeaders(signedHeaders http.Header) string {
 			if idx > 0 {
 				buf.WriteByte(',')
 			}
-			buf.WriteString(signV4TrimAll(v))
+			buf.WriteString(trim(v))
 		}
 		buf.WriteByte('\n')
 	}
 	return buf.String()
 }
 
-// signV4TrimAll trims leading and trailing spaces from each string in the slice, and trims sequential spaces.
+// SigV4 clients disagree on Trimall for whitespace other than the ASCII space,
+// so a signature is checked against each client's form in turn.
+var signV4HeaderValueTrims = []func(string) string{signV4TrimAll, signV4TrimAllASCIIWhitespace, signV4TrimAllWhitespace}
+
+// signV4TrimAll compresses sequential ASCII spaces in a header value to one and
+// trims leading and trailing whitespace, as the AWS SDK for Go v2 does.
 func signV4TrimAll(input string) string {
-	// Compress adjacent spaces (a space is determined by
-	// unicode.IsSpace() internally here) to a single space and trim
-	// leading and trailing spaces.
+	return strings.TrimSpace(strings.Join(strings.FieldsFunc(input, func(r rune) bool { return r == ' ' }), " "))
+}
+
+// signV4TrimAllASCIIWhitespace turns every run of spaces and tabs into a single
+// space and keeps other whitespace, as the AWS SDK for Java does.
+func signV4TrimAllASCIIWhitespace(input string) string {
+	return strings.Join(strings.FieldsFunc(input, func(r rune) bool { return r == ' ' || r == '\t' }), " ")
+}
+
+// signV4TrimAllWhitespace turns every run of whitespace into a single space and
+// trims the edges, as botocore does.
+func signV4TrimAllWhitespace(input string) string {
 	return strings.Join(strings.Fields(input), " ")
 }
 
