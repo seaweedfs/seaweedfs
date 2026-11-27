@@ -1,13 +1,24 @@
 package seaweedfs.client;
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import io.grpc.Server;
+import io.grpc.ServerBuilder;
+import io.grpc.stub.StreamObserver;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -131,6 +142,64 @@ public class FilerJwtTest {
         assertTrue(SeaweedUtil.isProxyChunkUrl("http://filer:8888/?proxyChunkId=3,01637037d6"));
         assertFalse(SeaweedUtil.isProxyChunkUrl("http://volume:8080/3,01637037d6"));
         assertFalse(SeaweedUtil.isProxyChunkUrl(null));
+    }
+
+    @Test
+    public void proxyChunkReadDoesNotFollowRedirects() throws Exception {
+        AtomicInteger targetHits = new AtomicInteger();
+        HttpServer target = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        target.createContext("/", exchange -> {
+            targetHits.incrementAndGet();
+            respond(exchange, 200, "leaked");
+        });
+        List<String> filerAuth = new CopyOnWriteArrayList<>();
+        HttpServer filer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        filer.createContext("/", exchange -> {
+            filerAuth.add(exchange.getRequestHeaders().getFirst("Authorization"));
+            if (filerAuth.size() == 1) {
+                exchange.getResponseHeaders().set("Location", "http://127.0.0.1:" + target.getAddress().getPort() + "/");
+                respond(exchange, 302, "");
+            } else {
+                respond(exchange, 200, "chunk");
+            }
+        });
+        Server filerGrpc = ServerBuilder.forPort(0).addService(new SeaweedFilerGrpc.SeaweedFilerImplBase() {
+            @Override
+            public void getFilerConfiguration(FilerProto.GetFilerConfigurationRequest request,
+                    StreamObserver<FilerProto.GetFilerConfigurationResponse> observer) {
+                observer.onNext(FilerProto.GetFilerConfigurationResponse.getDefaultInstance());
+                observer.onCompleted();
+            }
+        }).build().start();
+        target.start();
+        filer.start();
+        FilerClient filerClient = new FilerClient("127.0.0.1", filer.getAddress().getPort(), filerGrpc.getPort(), "");
+        try {
+            filerClient.setAccessVolumeServerByFilerProxy();
+            filerClient.getFilerCredentials().setJwtReadSigningKey("read-key", 0);
+            FilerProto.Locations locations = FilerProto.Locations.newBuilder()
+                    .addLocations(FilerProto.Location.newBuilder().setUrl("volume:8080")).build();
+
+            byte[] data = SeaweedRead.doFetchFullChunkData(filerClient,
+                    new SeaweedRead.ChunkView("3,01637037d6", 0, 5, 0, true, null, false), locations);
+
+            assertEquals("chunk", new String(data, StandardCharsets.UTF_8));
+            assertEquals(0, targetHits.get());
+            assertEquals(2, filerAuth.size());
+            assertTrue(filerAuth.get(0).startsWith("BEARER "));
+        } finally {
+            filerClient.shutdown();
+            filerGrpc.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+            filer.stop(0);
+            target.stop(0);
+        }
+    }
+
+    private static void respond(HttpExchange exchange, int status, String body) throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.sendResponseHeaders(status, bytes.length == 0 ? -1 : bytes.length);
+        exchange.getResponseBody().write(bytes);
+        exchange.close();
     }
 
     private static String[] bearer(String header) {

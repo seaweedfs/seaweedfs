@@ -177,9 +177,11 @@ public class SeaweedRead {
 
         request.setHeader(HttpHeaders.ACCEPT_ENCODING, "gzip");
 
-        String authHeader = SeaweedUtil.isProxyChunkUrl(url)
-                ? filerClient.getFilerCredentials().getAuthorizationHeaderValue(false)
-                : FilerSecurityContext.getBasicAuthHeaderValue();
+        String authHeader = FilerSecurityContext.getBasicAuthHeaderValue();
+        if (SeaweedUtil.isProxyChunkUrl(url)) {
+            authHeader = filerClient.getFilerCredentials().getAuthorizationHeaderValue(false);
+            request.setConfig(SeaweedUtil.PROXY_CHUNK_REQUEST_CONFIG);
+        }
         if (authHeader != null) {
             request.setHeader(HttpHeaders.AUTHORIZATION, authHeader);
         }
