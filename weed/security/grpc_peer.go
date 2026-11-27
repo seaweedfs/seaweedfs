@@ -44,7 +44,7 @@ var (
 func FilerAdminKeys() (signingKey, previousKey SigningKey) {
 	filerAdminKeysMu.Lock()
 	defer filerAdminKeysMu.Unlock()
-	if fresh, used := util.ReadConfiguration("security", ""); used != "" {
+	if fresh, used, _ := util.ReadConfiguration("security", ""); used != "" {
 		lastFilerAdminKeys = &[2]SigningKey{SigningKey(freshKey(fresh, "jwt.filer_signing.key")), SigningKey(fresh.GetString("jwt.filer_signing.previous_key"))}
 		return lastFilerAdminKeys[0], lastFilerAdminKeys[1]
 	}

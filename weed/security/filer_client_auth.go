@@ -109,7 +109,7 @@ func (k *filerClientKeys) token(ctx context.Context) (EncodedJwt, error) {
 // could never read the file keeps its existing tokenless behavior.
 var globalFilerClientKeys = &filerClientKeys{
 	load: func() (interface{ GetString(string) string }, error) {
-		v, _, err := util.ReadConfigurationWithError("security", "")
+		v, _, err := util.ReadConfiguration("security", "")
 		if err != nil {
 			var notFound viper.ConfigFileNotFoundError
 			if !errors.As(err, &notFound) {
