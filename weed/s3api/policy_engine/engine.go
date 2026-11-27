@@ -110,6 +110,30 @@ func (engine *PolicyEngine) HasPolicyForBucket(bucketName string) bool {
 	return exists
 }
 
+// HasExistingObjectTagDeny reports whether the bucket policy has a Deny
+// statement conditioned on s3:ExistingObjectTag/<key>.
+func (engine *PolicyEngine) HasExistingObjectTagDeny(bucketName string) bool {
+	engine.mutex.RLock()
+	context, exists := engine.contexts[bucketName]
+	engine.mutex.RUnlock()
+	if !exists {
+		return false
+	}
+	for _, stmt := range context.policy.Statements {
+		if stmt.Statement.Effect != PolicyEffectDeny {
+			continue
+		}
+		for _, conditionMap := range stmt.Statement.Condition {
+			for key := range conditionMap {
+				if strings.HasPrefix(key, ExistingObjectTagPrefix) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // EvaluatePolicy evaluates a policy for the given arguments
 func (engine *PolicyEngine) EvaluatePolicy(bucketName string, args *PolicyEvaluationArgs) PolicyEvaluationResult {
 	engine.mutex.RLock()
