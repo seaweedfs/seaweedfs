@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sort"
 	"sync"
 	"time"
 
@@ -508,10 +509,11 @@ const (
 	smallChunkSize          = 1 << 20
 )
 
-// MaybeManifestize folds a flat chunk list into manifest chunks: chunks under
-// smallChunkSize once SmallChunkManifestBatch of them build up, and the rest
-// once they pass ManifestBatch, so an entry's chunk list stays within what the
-// metadata store will hold. A fold that fails partway returns inputChunks
+// MaybeManifestize folds a flat chunk list into manifest chunks: runs of chunks
+// under smallChunkSize that lie end to end, SmallChunkManifestBatch at a time
+// (see foldSmallChunks), and the rest once they pass ManifestBatch, so an
+// entry's chunk list stays within what the metadata store will hold. A fold
+// that fails partway returns inputChunks
 // unchanged -- never the half-folded list, which drops the manifests the caller
 // came in with -- and hands the blobs it had already saved to deleteChunks,
 // since the flat list it returns references none of them. deleteChunks may be
@@ -544,23 +546,85 @@ func MaybeManifestize(saveFunc SaveDataAsChunkFunctionType, deleteChunks func([]
 	return inputChunks, err
 }
 
+// foldSmallChunks folds runs of small chunks that lie end to end, with no other
+// chunk overlapping them, SmallChunkManifestBatch at a time; what is left of a
+// run stays flat. Appends make such runs. Other small chunks stay flat, for two
+// reasons:
+//   - Chunks in a manifest are never compacted again. A small chunk that a later
+//     write overlaps would stay stored, and referenced, after the write hid it.
+//   - A manifest counts as its span wherever the bytes it holds are not read
+//     (a mount's bloat check sums chunk sizes, manifests by span). A manifest
+//     over scattered chunks would span bytes held by other chunks, and the file
+//     would look bloated enough to be read back and stored again whole.
+//
+// A run's manifest spans exactly the bytes its chunks hold, so neither applies.
+// The manifests come after the chunks left flat, in the order of their runs.
 func foldSmallChunks(saveFunc SaveDataAsChunkFunctionType, inputChunks []*filer_pb.FileChunk) ([]*filer_pb.FileChunk, error) {
-	var smallChunks, otherChunks []*filer_pb.FileChunk
-	for _, chunk := range inputChunks {
-		if !chunk.IsChunkManifest && chunk.Size < smallChunkSize {
-			smallChunks = append(smallChunks, chunk)
-		} else {
-			otherChunks = append(otherChunks, chunk)
+	var manifests []*filer_pb.FileChunk
+	folded := make(map[*filer_pb.FileChunk]bool)
+	for _, run := range smallChunkRuns(inputChunks) {
+		for i := 0; i+SmallChunkManifestBatch <= len(run); i += SmallChunkManifestBatch {
+			batch := run[i : i+SmallChunkManifestBatch]
+			manifest, err := mergeIntoManifest(saveFunc, batch)
+			if err != nil {
+				return inputChunks, err
+			}
+			manifests = append(manifests, manifest)
+			for _, chunk := range batch {
+				folded[chunk] = true
+			}
 		}
 	}
-	if len(smallChunks) < SmallChunkManifestBatch {
+	if len(manifests) == 0 {
 		return inputChunks, nil
 	}
-	folded, err := doMaybeManifestize(saveFunc, smallChunks, SmallChunkManifestBatch, mergeIntoManifest)
-	if err != nil {
-		return inputChunks, err
+	chunks := make([]*filer_pb.FileChunk, 0, len(inputChunks)-len(folded)+len(manifests))
+	for _, chunk := range inputChunks {
+		if !folded[chunk] {
+			chunks = append(chunks, chunk)
+		}
 	}
-	return append(otherChunks, folded...), nil
+	return append(chunks, manifests...), nil
+}
+
+// smallChunkRuns returns the chunks foldSmallChunks may fold, grouped into runs
+// in offset order: data chunks of 1 byte to smallChunkSize-1 bytes that no
+// other chunk overlaps, a run ending where the next such chunk does not start
+// at the end of the one before it.
+func smallChunkRuns(chunks []*filer_pb.FileChunk) (runs [][]*filer_pb.FileChunk) {
+	sorted := append([]*filer_pb.FileChunk(nil), chunks...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Offset < sorted[j].Offset })
+	var run []*filer_pb.FileChunk
+	var runEnd int64
+	reach := int64(math.MinInt64) // furthest end of the chunks before sorted[i]
+	for i, chunk := range sorted {
+		end := chunkEnd(chunk)
+		alone := chunk.Offset >= reach && (i+1 == len(sorted) || sorted[i+1].Offset >= end)
+		small := !chunk.IsChunkManifest && chunk.Offset >= 0 && chunk.Size > 0 && chunk.Size < smallChunkSize
+		if !alone || !small || len(run) > 0 && chunk.Offset != runEnd {
+			if len(run) >= SmallChunkManifestBatch {
+				runs = append(runs, run)
+			}
+			run = nil
+		}
+		if alone && small {
+			run = append(run, chunk)
+			runEnd = end
+		}
+		reach = max(reach, end)
+	}
+	if len(run) >= SmallChunkManifestBatch {
+		runs = append(runs, run)
+	}
+	return runs
+}
+
+// chunkEnd is where a chunk's span ends, saturating instead of wrapping.
+func chunkEnd(chunk *filer_pb.FileChunk) int64 {
+	if chunk.Size > uint64(math.MaxInt64) || chunk.Offset > math.MaxInt64-int64(chunk.Size) {
+		return math.MaxInt64
+	}
+	return chunk.Offset + int64(chunk.Size)
 }
 
 func doMaybeManifestize(saveFunc SaveDataAsChunkFunctionType, inputChunks []*filer_pb.FileChunk, mergeFactor int, mergefn func(saveFunc SaveDataAsChunkFunctionType, dataChunks []*filer_pb.FileChunk) (manifestChunk *filer_pb.FileChunk, err error)) (chunks []*filer_pb.FileChunk, err error) {

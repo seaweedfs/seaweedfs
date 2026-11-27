@@ -857,7 +857,7 @@ func TestMaybeManifestizeLeavesLargeChunksToManifestBatch(t *testing.T) {
 	var offset int64
 	for i := 0; i < 3*SmallChunkManifestBatch; i++ {
 		size := uint64(smallChunkSize)
-		if i%2 == 0 {
+		if i >= SmallChunkManifestBatch {
 			size = 100
 		}
 		chunks = append(chunks, testChunk(1, uint64(i+1), uint32(i+1), offset, size, int64(i+1)))
@@ -868,19 +868,98 @@ func TestMaybeManifestizeLeavesLargeChunksToManifestBatch(t *testing.T) {
 	require.NoError(t, err)
 
 	manifests, flat := SeparateManifestChunks(packed)
-	require.Len(t, manifests, 1)
-	assert.Len(t, flat, len(chunks)-SmallChunkManifestBatch)
+	require.Len(t, manifests, 2)
+	assert.Len(t, flat, len(chunks)-2*SmallChunkManifestBatch)
 	for _, chunk := range flat {
-		if chunk.Size < smallChunkSize {
-			continue
-		}
 		assert.Equal(t, uint64(smallChunkSize), chunk.Size)
 	}
-	folded, err := store.resolve(manifests[0])
+	for _, manifest := range manifests {
+		folded, err := store.resolve(manifest)
+		require.NoError(t, err)
+		require.Len(t, folded, SmallChunkManifestBatch)
+		for _, chunk := range folded {
+			assert.Equal(t, uint64(100), chunk.Size)
+		}
+		assert.Equal(t, uint64(100*SmallChunkManifestBatch), manifest.Size, "a run's manifest spans exactly the bytes it holds")
+	}
+}
+
+// Small chunks between full-size ones are no run: a manifest of them would
+// span the full-size chunks too, and a mount's bloat check counts manifests
+// by span.
+func TestMaybeManifestizeLeavesInterleavedSmallChunksFlat(t *testing.T) {
+	store := newTestManifestStore()
+	var chunks []*filer_pb.FileChunk
+	var offset int64
+	for i := 0; i < 3*SmallChunkManifestBatch; i++ {
+		size := uint64(smallChunkSize)
+		if i%2 == 0 {
+			size = 100
+		}
+		chunks = append(chunks, testChunk(1, uint64(i+1), uint32(i+1), offset, size, int64(i+1)))
+		offset += int64(size)
+	}
+
+	packed, err := MaybeManifestize(store.saveFunc(), nil, chunks)
 	require.NoError(t, err)
-	require.Len(t, folded, SmallChunkManifestBatch)
-	for _, chunk := range folded {
-		assert.Equal(t, uint64(100), chunk.Size)
+	assert.Zero(t, store.nextID)
+	assertEqualChunks(t, chunks, packed)
+}
+
+// Random small writes overlap one another. Folding them would keep every
+// overwritten chunk stored, since a manifest's chunks are not compacted again.
+func TestMaybeManifestizeLeavesOverlappedSmallChunksFlat(t *testing.T) {
+	store := newTestManifestStore()
+	var chunks []*filer_pb.FileChunk
+	for i := 0; i < 4*SmallChunkManifestBatch; i++ {
+		page := int64(i*7919) % 300
+		chunks = append(chunks, testChunk(1, uint64(i+1), uint32(i+1), page*4096, 8192, int64(i+1)))
+	}
+
+	packed, err := MaybeManifestize(store.saveFunc(), nil, chunks)
+	require.NoError(t, err)
+	assert.Zero(t, store.nextID)
+	assertEqualChunks(t, chunks, packed)
+}
+
+func TestMaybeManifestizeFoldsEachRunOnItsOwn(t *testing.T) {
+	store := newTestManifestStore()
+	var chunks []*filer_pb.FileChunk
+	key := uint64(0)
+	appendRun := func(offset int64, n int) {
+		for i := 0; i < n; i++ {
+			key++
+			chunks = append(chunks, testChunk(1, key, uint32(key), offset+int64(i)*300, 300, int64(key)))
+		}
+	}
+	appendRun(0, SmallChunkManifestBatch+44)
+	appendRun(10<<20, SmallChunkManifestBatch+4) // a hole before it
+	// an overwrite in the second run's tail: it and what it overlaps stay flat
+	key++
+	overwrite := testChunk(1, key, uint32(key), 10<<20+int64(SmallChunkManifestBatch)*300+100, 50, int64(key))
+	chunks = append(chunks, overwrite)
+
+	packed, err := MaybeManifestize(store.saveFunc(), nil, chunks)
+	require.NoError(t, err)
+
+	manifests, flat := SeparateManifestChunks(packed)
+	require.Len(t, manifests, 2)
+	assert.Len(t, flat, 44+4+1)
+	assert.Equal(t, int64(0), manifests[0].Offset)
+	assert.Equal(t, int64(10<<20), manifests[1].Offset)
+	for _, manifest := range manifests {
+		assert.Equal(t, uint64(300*SmallChunkManifestBatch), manifest.Size)
+	}
+
+	resolved, _, err := store.resolveAll(packed)
+	require.NoError(t, err)
+	require.Len(t, resolved, len(chunks))
+	seen := make(map[string]bool)
+	for _, chunk := range resolved {
+		seen[chunk.GetFileIdString()] = true
+	}
+	for _, chunk := range chunks {
+		assert.True(t, seen[chunk.GetFileIdString()], "chunk %s lost", chunk.GetFileIdString())
 	}
 }
 
