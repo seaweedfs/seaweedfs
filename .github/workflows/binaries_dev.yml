@@ -13,7 +13,7 @@ on:
 # Let an in-progress dev build finish. A new push replaces only the pending
 # run; cancelling mid-build left the dev release without assets.
 concurrency:
-  group: binaries-dev-dev
+  group: binaries-dev-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:

@@ -11,7 +11,7 @@ on:
 
 # Serialize dev builds of the shared "dev" release without cancelling a run.
 concurrency:
-  group: rust-binaries-dev-dev
+  group: rust-binaries-dev-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
