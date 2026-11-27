@@ -19,10 +19,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	collectionName := r.FormValue("collection")
+	collectionName, err := collectionToDelete(r)
+	if err != nil {
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
 	if _, ok := ms.Topo.FindCollection(collectionName); !ok {
 		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("collection %s does not exist", collectionName))
 		return
@@ -38,6 +43,21 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 
 	w.WriteHeader(http.StatusNoContent)
 	return
+}
+
+// collectionToDelete reads the collection a /col/delete request names. The
+// default collection is the empty-named one, and an absent or empty parameter
+// also reads as "", so a bare /col/delete would delete the default collection.
+// Require it to be named explicitly, with the keyword weed shell uses for it.
+func collectionToDelete(r *http.Request) (string, error) {
+	switch name := r.FormValue("collection"); name {
+	case "":
+		return "", fmt.Errorf("collection parameter is required; use collection=%s to delete the default (empty-named) collection", wildcard.CollectionDefault)
+	case wildcard.CollectionDefault:
+		return "", nil
+	default:
+		return name, nil
+	}
 }
 
 func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request) {

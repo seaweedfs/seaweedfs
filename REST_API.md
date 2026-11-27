@@ -284,6 +284,11 @@ curl "http://localhost:9333/col/delete?collection=benchmark"
 Deletes all volumes of the collection, including erasure-coded shards.
 `204 No Content` on success.
 
+The `collection` parameter is required: a request without it, or with an
+empty value, gets `400 Bad Request`. To delete the default (empty-named)
+collection, name it explicitly with `collection=_default`, the same keyword
+`weed shell` uses.
+
 ### Health
 
 ```bash
