@@ -195,7 +195,7 @@ public class SeaweedWrite {
 
         HttpPost post = new HttpPost(targetUrl);
         String filerAuthHeader = null;
-        if (SeaweedUtil.isProxyChunkUrl(targetUrl)) {
+        if (filerClient.isProxyChunkUrl(targetUrl)) {
             filerAuthHeader = filerClient.getFilerCredentials().getAuthorizationHeaderValue(true);
             post.setConfig(SeaweedUtil.PROXY_CHUNK_REQUEST_CONFIG);
         }

@@ -92,11 +92,6 @@ public class SeaweedUtil {
         return host + ":" + port;
     }
 
-    // Reports whether a chunk URL addresses a filer's chunk proxy rather than a volume server.
-    public static boolean isProxyChunkUrl(String url) {
-        return url != null && url.contains("proxyChunkId=");
-    }
-
     // Redirects would carry the filer credential to the redirect target.
     static final RequestConfig PROXY_CHUNK_REQUEST_CONFIG = RequestConfig.custom().setRedirectsEnabled(false).build();
 }

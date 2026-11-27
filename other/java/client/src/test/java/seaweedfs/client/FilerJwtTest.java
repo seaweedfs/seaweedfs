@@ -138,10 +138,24 @@ public class FilerJwtTest {
     }
 
     @Test
-    public void onlyFilerProxyUrlsAreFilerRequests() {
-        assertTrue(SeaweedUtil.isProxyChunkUrl("http://filer:8888/?proxyChunkId=3,01637037d6"));
-        assertFalse(SeaweedUtil.isProxyChunkUrl("http://volume:8080/3,01637037d6"));
-        assertFalse(SeaweedUtil.isProxyChunkUrl(null));
+    public void onlyFilerProxyUrlsAreFilerRequests() throws Exception {
+        Server filerGrpc = startFilerGrpc();
+        FilerClient filerClient = new FilerClient("127.0.0.1", 8888, filerGrpc.getPort(), "");
+        try {
+            String proxyUrl = "http://127.0.0.1:8888/?proxyChunkId=3,01637037d6";
+            assertFalse(filerClient.isProxyChunkUrl(proxyUrl));
+
+            filerClient.setAccessVolumeServerByFilerProxy();
+            assertEquals(proxyUrl, filerClient.getChunkUrl("3,01637037d6", "volume:8080", "volume:8080"));
+            assertTrue(filerClient.isProxyChunkUrl(proxyUrl));
+            assertFalse(filerClient.isProxyChunkUrl("http://volume:8080/3,01637037d6"));
+            assertFalse(filerClient.isProxyChunkUrl("http://volume:8080/?proxyChunkId=/3,01637037d6"));
+            assertFalse(filerClient.isProxyChunkUrl("http://127.0.0.1:8888.example/?proxyChunkId=3,01637037d6"));
+            assertFalse(filerClient.isProxyChunkUrl(null));
+        } finally {
+            filerClient.shutdown();
+            filerGrpc.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+        }
     }
 
     @Test
@@ -163,14 +177,7 @@ public class FilerJwtTest {
                 respond(exchange, 200, "chunk");
             }
         });
-        Server filerGrpc = ServerBuilder.forPort(0).addService(new SeaweedFilerGrpc.SeaweedFilerImplBase() {
-            @Override
-            public void getFilerConfiguration(FilerProto.GetFilerConfigurationRequest request,
-                    StreamObserver<FilerProto.GetFilerConfigurationResponse> observer) {
-                observer.onNext(FilerProto.GetFilerConfigurationResponse.getDefaultInstance());
-                observer.onCompleted();
-            }
-        }).build().start();
+        Server filerGrpc = startFilerGrpc();
         target.start();
         filer.start();
         FilerClient filerClient = new FilerClient("127.0.0.1", filer.getAddress().getPort(), filerGrpc.getPort(), "");
@@ -193,6 +200,17 @@ public class FilerJwtTest {
             filer.stop(0);
             target.stop(0);
         }
+    }
+
+    private static Server startFilerGrpc() throws IOException {
+        return ServerBuilder.forPort(0).addService(new SeaweedFilerGrpc.SeaweedFilerImplBase() {
+            @Override
+            public void getFilerConfiguration(FilerProto.GetFilerConfigurationRequest request,
+                    StreamObserver<FilerProto.GetFilerConfigurationResponse> observer) {
+                observer.onNext(FilerProto.GetFilerConfigurationResponse.getDefaultInstance());
+                observer.onCompleted();
+            }
+        }).build().start();
     }
 
     private static void respond(HttpExchange exchange, int status, String body) throws IOException {

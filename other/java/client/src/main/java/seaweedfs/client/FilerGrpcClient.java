@@ -189,9 +189,18 @@ public class FilerGrpcClient {
             case VOLUME_SERVER_ACCESS_PUBLIC_URL:
                 return String.format("%s://%s/%s", protocol, publicUrl, chunkId);
             case VOLUME_SERVER_ACCESS_FILER_PROXY:
-                return String.format("%s://%s/?proxyChunkId=%s", protocol, this.filerAddress, chunkId);
+                return proxyChunkUrlPrefix() + chunkId;
             default:
                 return String.format("%s://%s/%s", protocol, url, chunkId);
         }
+    }
+
+    // Reports whether a chunk URL addresses this client's filer chunk proxy rather than a volume server.
+    public boolean isProxyChunkUrl(String url) {
+        return isAccessVolumeServerByFilerProxy() && url != null && url.startsWith(proxyChunkUrlPrefix());
+    }
+
+    private String proxyChunkUrlPrefix() {
+        return String.format("%s://%s/?proxyChunkId=", protocol, this.filerAddress);
     }
 }
