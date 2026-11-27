@@ -768,3 +768,22 @@ func TestSignatureV4WithForwardedPrefixUnicodeKey(t *testing.T) {
 		t.Fatalf("signature verification failed for unicode key behind forwarded prefix: code %d", int(errCode))
 	}
 }
+
+// Trimall touches only the ASCII space, like the AWS SDKs; a Unicode space
+// inside a signed value (macOS puts U+202F in screenshot names) must survive,
+// or the canonical request no longer matches the client's.
+func TestSignV4TrimAll(t *testing.T) {
+	tests := map[string]string{
+		"  a   b  ":                "a b",
+		"plain":                    "plain",
+		"tab\tkept":                "tab\tkept",
+		"at 2.20.09\u202fPM.png":   "at 2.20.09\u202fPM.png",
+		"news\u00a0| headline.txt": "news\u00a0| headline.txt",
+		" trailing nbsp\u00a0 ":    "trailing nbsp\u00a0",
+	}
+	for in, want := range tests {
+		if got := signV4TrimAll(in); got != want {
+			t.Errorf("signV4TrimAll(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -1295,12 +1295,15 @@ func getCanonicalHeaders(signedHeaders http.Header) string {
 	return buf.String()
 }
 
-// signV4TrimAll trims leading and trailing spaces from each string in the slice, and trims sequential spaces.
+// signV4TrimAll trims leading and trailing spaces from a header value and
+// compresses sequential spaces to one, as SigV4's Trimall does.
+//
+// Only the ASCII space counts, as in the AWS SDKs: strings.Fields would also
+// split on Unicode spaces such as U+00A0 or U+202F inside a value (an
+// x-amz-meta-* filename, for example), and the canonical request would then no
+// longer match the one the client signed.
 func signV4TrimAll(input string) string {
-	// Compress adjacent spaces (a space is determined by
-	// unicode.IsSpace() internally here) to a single space and trim
-	// leading and trailing spaces.
-	return strings.Join(strings.Fields(input), " ")
+	return strings.Join(strings.FieldsFunc(input, func(r rune) bool { return r == ' ' }), " ")
 }
 
 // getSignedHeaders generate a string i.e alphabetically sorted, semicolon-separated list of lowercase request header names
