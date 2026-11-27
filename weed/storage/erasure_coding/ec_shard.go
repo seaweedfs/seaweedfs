@@ -108,6 +108,31 @@ func (shard *EcVolumeShard) Size() int64 {
 	return shard.ecdFileSize
 }
 
+const (
+	EcShardGhost     = "ghost"
+	EcShardStaleSize = "stale_size"
+)
+
+// DiskMismatch names how the shard file on disk disagrees with the mount:
+// EcShardGhost when the path is gone or names another file than the open one,
+// EcShardStaleSize when the file size changed since the mount, "" otherwise.
+func (shard *EcVolumeShard) DiskMismatch() string {
+	onDisk, err := os.Stat(shard.FileName() + ToExt(int(shard.ShardId)))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return EcShardGhost
+		}
+		return ""
+	}
+	if open, err := shard.ecdFile.Stat(); err == nil && !os.SameFile(onDisk, open) {
+		return EcShardGhost
+	}
+	if onDisk.Size() != shard.ecdFileSize {
+		return EcShardStaleSize
+	}
+	return ""
+}
+
 func (shard *EcVolumeShard) String() string {
 	return fmt.Sprintf("ec shard %v:%v, dir:%s, Collection:%s", shard.VolumeId, shard.ShardId, shard.dir, shard.Collection)
 }

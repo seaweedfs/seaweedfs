@@ -504,6 +504,7 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 			}
 		case <-ecShardTickChan.C:
 			glog.V(4).Infof("volume server %s:%d ec heartbeat", vs.store.Ip, vs.store.Port)
+			vs.store.CheckMountedEcShards()
 			if err = stream.Send(vs.store.CollectErasureCodingHeartbeat()); err != nil {
 				glog.V(0).Infof("Volume Server Failed to talk with master %s: %v", masterAddress, err)
 				return "", err
