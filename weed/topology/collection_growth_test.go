@@ -266,6 +266,28 @@ func TestDeleteFindsNothingOnceAnotherDeleteRemovedTheCollection(t *testing.T) {
 	}
 }
 
+// A name with EC shards only has no collection to fence. The delete fences an
+// empty one, which an assign under the name finds and is refused by, and which
+// is gone again once the delete is done.
+func TestDeleteFencesANameWithoutACollection(t *testing.T) {
+	topo := NewTopology("test", sequence.NewMemorySequencer(), 32*1024, 5, false)
+
+	c, finish, found := topo.FenceGrowth("ec-only")
+	if !found {
+		t.Fatal("the delete fenced nothing for a name with no collection")
+	}
+	if published, _ := topo.FindCollection("ec-only"); published != c || !c.isDeleting() {
+		t.Fatal("the name is not fenced while the delete runs")
+	}
+	if names := topo.ListCollections(true, false); len(names) != 0 {
+		t.Errorf("ListCollections = %v, want no collection for the fence", names)
+	}
+	finish(true)
+	if _, found := topo.FindCollection("ec-only"); found {
+		t.Error("the fence outlived the delete")
+	}
+}
+
 func TestAssignStaysOutOfACollectionBeingDeleted(t *testing.T) {
 	layout := `
 {

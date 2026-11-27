@@ -30,19 +30,19 @@ func (c *Collection) FenceGrowth() (unfence func()) {
 	}
 }
 
-// FenceGrowth fences the collection published under the name. A collection
-// unpublished for being empty before its fence went up is let go, and the one
-// published since, where growth registers its volumes, is fenced instead.
-// It then waits for a delete already running on the collection. Once another
-// delete removed the collection it finds nothing, so a delete never reaches a
-// collection recreated under the name after that. finish ends the delete:
-// deleted unpublishes the collection, otherwise growth is let back in.
+// FenceGrowth fences the collection published under the name, an empty one for
+// a name with EC shards only, so no assign or grow places a volume under the
+// name while a delete runs. A collection unpublished for being empty before its
+// fence went up is let go, and the one published since, where growth registers
+// its volumes, is fenced instead. It then waits for a delete already running on
+// the collection. Once another delete removed the collection it finds nothing,
+// so a delete never reaches a collection recreated under the name after that.
+// finish ends the delete: deleted unpublishes the collection, otherwise growth
+// is let back in.
 func (t *Topology) FenceGrowth(collectionName string) (c *Collection, finish func(deleted bool), found bool) {
 	var unfence func()
 	for {
-		if c, found = t.FindCollection(collectionName); !found {
-			return nil, nil, false
-		}
+		c = t.getOrCreateCollection(collectionName)
 		unfence = c.FenceGrowth()
 		if published, stillFound := t.FindCollection(collectionName); stillFound && published == c {
 			break
