@@ -21,9 +21,12 @@ type FilerTokenSource func(context.Context) (EncodedJwt, error)
 // grpc_require_token is a receiver policy, not a switch for presenting a key
 // the client already holds. Previous keys are for verification, not signing.
 func FilerAdminToken(context.Context) (EncodedJwt, error) {
-	v, used := util.ReadConfiguration("security", "")
-	if used == "" {
-		v = util.GetViper()
+	v, _, err := util.ReadConfigurationWithError("security", "")
+	if err != nil {
+		var notFound viper.ConfigFileNotFoundError
+		if !errors.As(err, &notFound) {
+			return "", errors.New("filer: cannot read client security configuration")
+		}
 	}
 	return filerAdminToken(v), nil
 }

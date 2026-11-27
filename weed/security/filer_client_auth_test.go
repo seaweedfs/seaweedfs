@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -246,6 +247,60 @@ func TestFilerAdminTokenHasTenSecondExpiry(t *testing.T) {
 	remaining := time.Until(claims.ExpiresAt.Time)
 	if remaining < 9*time.Second || remaining > 10*time.Second {
 		t.Fatal("admin token expiry was outside the ten-second window")
+	}
+}
+
+func writeFilerSecurityToml(t *testing.T, path string, grpcKey, httpKey SigningKey) {
+	t.Helper()
+	contents := "[jwt.filer_signing]\n"
+	if len(grpcKey) > 0 {
+		contents += "grpc_key = \"" + string(grpcKey) + "\"\n"
+	}
+	if len(httpKey) > 0 {
+		contents += "key = \"" + string(httpKey) + "\"\n"
+	}
+	if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFilerAdminTokenReloadsConfigurationAndFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	savedDirectory := util.ConfigurationFileDirectory
+	util.ConfigurationFileDirectory = util.DirectoryValueType(dir)
+	t.Cleanup(func() { util.ConfigurationFileDirectory = savedDirectory })
+	path := filepath.Join(dir, "security.toml")
+	keyA := testSigningKey(t)
+	keyB := testSigningKey(t)
+	writeFilerSecurityToml(t, path, keyA, SigningKey(""))
+
+	token, err := FilerAdminToken(context.Background())
+	if err != nil || !IsFilerAdminToken(keyA, token) {
+		t.Fatal("global source did not use the configured current key")
+	}
+	writeFilerSecurityToml(t, path, keyB, SigningKey(""))
+	token, err = FilerAdminToken(context.Background())
+	if err != nil || !IsFilerAdminToken(keyB, token) || IsFilerAdminToken(keyA, token) {
+		t.Fatal("global source did not reload the rotated key")
+	}
+	writeFilerSecurityToml(t, path, SigningKey(""), SigningKey(""))
+	token, err = FilerAdminToken(context.Background())
+	if err != nil || token != "" {
+		t.Fatalf("keyless configuration returned token=%t err=%v", token != "", err)
+	}
+	if err := os.WriteFile(path, []byte("[jwt.filer_signing\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	token, err = FilerAdminToken(context.Background())
+	if err == nil || token != "" {
+		t.Fatalf("malformed configuration returned token=%t err=%v", token != "", err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	token, err = FilerAdminToken(context.Background())
+	if err != nil || token != "" {
+		t.Fatalf("deleted configuration returned token=%t err=%v", token != "", err)
 	}
 }
 

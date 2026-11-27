@@ -243,6 +243,9 @@ func (s *filerGrpcScope) resolve(ctx context.Context) (*scope, error) {
 			return nil, nil
 		}
 	}
+	if errors.Is(err, jwt.ErrTokenSignatureInvalid) {
+		return nil, status.Error(codes.Unauthenticated, "filer: bearer signing key does not match an accepted filer key")
+	}
 	if errors.Is(err, jwt.ErrTokenExpired) {
 		// The claims are parsed before validation, so the id names the holder.
 		glog.V(1).Infof("filer grpc: token %s (%s) expired", claims.ID, scopePeer(ctx))

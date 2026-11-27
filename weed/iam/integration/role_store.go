@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -579,7 +580,7 @@ func (f *FilerRoleStore) withFilerClient(filerAddress string, fn func(filer_pb.S
 	if filerAddress == "" {
 		return fmt.Errorf("filer address is required for FilerRoleStore")
 	}
-	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddress), f.grpcDialOption, fn)
+	return pb.WithGrpcFilerClientAuth(false, 0, pb.ServerAddress(filerAddress), f.grpcDialOption, security.FilerAdminToken, fn)
 }
 
 // CachedFilerRoleStore implements RoleStore with TTL caching on top of FilerRoleStore

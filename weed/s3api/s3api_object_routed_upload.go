@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 )
 
 // uploadFilerClient reads and writes one multipart upload's .uploads/<id>
@@ -79,7 +80,7 @@ func (u uploadFilerClient) list(parentDirectoryPath, prefix, startFrom string, i
 	}
 	var priorEntries []*filer_pb.Entry
 	priorLast := false
-	priorErr := pb.WithFilerClient(true, 0, prior, u.s3a.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	priorErr := pb.WithGrpcFilerClientAuth(true, 0, prior, u.s3a.option.GrpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		return filer_pb.SeaweedList(context.Background(), client, parentDirectoryPath, prefix, func(entry *filer_pb.Entry, isLastEntry bool) error {
 			priorEntries = append(priorEntries, entry)
 			priorLast = priorLast || isLastEntry

@@ -86,12 +86,14 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 	return true
 }
 
-// ReadConfiguration reads configFileName into a new viper with the WEED_
-// environment overrides. Unlike LoadConfiguration it does not merge, so a key
-// the file no longer sets reads as unset. A non-empty configFile is read in
-// place of searching the configuration directories. used is the file read, or
-// empty when none could be; the environment still applies then.
-func ReadConfiguration(configFileName, configFile string) (v *ViperProxy, used string) {
+// ReadConfigurationWithError reads configFileName into a new viper with the
+// WEED_ environment overrides. Unlike LoadConfiguration it does not merge, so
+// a key the file no longer sets reads as unset. A non-empty configFile is read
+// in place of searching the configuration directories. used is the file read,
+// or empty when none could be; the environment still applies then. It does not
+// log a read error so callers that handle credentials can keep parser details
+// out of logs.
+func ReadConfigurationWithError(configFileName, configFile string) (v *ViperProxy, used string, readErr error) {
 	fresh := viper.New()
 	setEnvOverrides(fresh)
 	if configFile != "" {
@@ -100,10 +102,23 @@ func ReadConfiguration(configFileName, configFile string) (v *ViperProxy, used s
 		setConfigurationPaths(fresh, configFileName)
 	}
 	if err := fresh.ReadInConfig(); err != nil {
-		glog.V(1).Infof("Reading %s: %v", configFileName, err)
-		return NewViperProxy(fresh), ""
+		return NewViperProxy(fresh), "", err
 	}
-	return NewViperProxy(fresh), fresh.ConfigFileUsed()
+	return NewViperProxy(fresh), fresh.ConfigFileUsed(), nil
+}
+
+// ReadConfiguration reads configFileName into a new viper with the WEED_
+// environment overrides. Unlike LoadConfiguration it does not merge, so a key
+// the file no longer sets reads as unset. A non-empty configFile is read in
+// place of searching the configuration directories. used is the file read, or
+// empty when none could be; the environment still applies then.
+func ReadConfiguration(configFileName, configFile string) (v *ViperProxy, used string) {
+	v, used, err := ReadConfigurationWithError(configFileName, configFile)
+	if err != nil {
+		glog.V(1).Infof("Reading %s: %v", configFileName, err)
+		return v, ""
+	}
+	return v, used
 }
 
 func setConfigurationPaths(v *viper.Viper, configFileName string) {

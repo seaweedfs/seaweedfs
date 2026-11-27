@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -50,6 +51,7 @@ type FilerClient struct {
 	peerUpdates        uint64                        // pushed filer updates applied; protected by filerAddressesMu
 	deferredLeaves     map[pb.ServerAddress]struct{} // leaves suppressed while the filer was the last known; protected by filerAddressesMu
 	grpcDialOption     grpc.DialOption
+	tokenSource        security.FilerTokenSource
 	urlPreference      UrlPreference
 	grpcTimeout        time.Duration
 	cacheSize          int           // Number of historical vidMap snapshots to keep
@@ -109,6 +111,9 @@ type FilerClientOption struct {
 	// the client returns to it once its circuit breaker resets, backing off if it
 	// keeps failing. Embedded S3 gateways set it to their local filer.
 	HomeFiler pb.ServerAddress
+	// FilerTokenSource supplies per-call authorization for filer RPCs. A nil
+	// value preserves the existing anonymous behavior.
+	FilerTokenSource security.FilerTokenSource
 }
 
 // NewFilerClient creates a new client that queries filer(s) for volume locations
@@ -131,6 +136,7 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 	var masterClient *MasterClient
 	var filerGroup string
 	var homeFiler pb.ServerAddress
+	var tokenSource security.FilerTokenSource
 	discoveryInterval := 5 * time.Minute // Default: refresh every 5 minutes
 
 	// Override with provided options
@@ -161,6 +167,9 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 			retryBackoffFactor = opt.RetryBackoffFactor
 		}
 		homeFiler = opt.HomeFiler
+		if opt.FilerTokenSource != nil {
+			tokenSource = opt.FilerTokenSource
+		}
 		if opt.MasterClient != nil {
 			masterClient = opt.MasterClient
 			filerGroup = opt.FilerGroup
@@ -181,6 +190,7 @@ func NewFilerClient(filerAddresses []pb.ServerAddress, grpcDialOption grpc.DialO
 		filerIndex:         0,
 		filerHealth:        health,
 		grpcDialOption:     grpcDialOption,
+		tokenSource:        tokenSource,
 		urlPreference:      urlPref,
 		grpcTimeout:        grpcTimeout,
 		cacheSize:          cacheSize,
@@ -1027,7 +1037,7 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 				timeoutCtx, cancel := context.WithTimeout(ctx, fc.grpcTimeout)
 				defer cancel() // Always clean up context, even on panic or early return
 
-				return pb.WithGrpcFilerClient(false, fc.clientId, filerAddress, fc.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+				return pb.WithGrpcFilerClientAuth(false, fc.clientId, filerAddress, fc.grpcDialOption, fc.tokenSource, func(client filer_pb.SeaweedFilerClient) error {
 					resp, err := client.LookupVolume(timeoutCtx, &filer_pb.LookupVolumeRequest{
 						VolumeIds: volumeIds,
 					})

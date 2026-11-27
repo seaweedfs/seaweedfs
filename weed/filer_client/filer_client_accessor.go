@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc"
 )
 
@@ -53,6 +54,9 @@ func (fh *filerHealth) recordSuccess() {
 type FilerClientAccessor struct {
 	GetGrpcDialOption func() grpc.DialOption
 	GetFilers         func() []pb.ServerAddress // Returns multiple filer addresses for failover
+	// TokenSource supplies per-call filer authorization for this logical client.
+	// A nil source preserves the existing anonymous behavior.
+	TokenSource security.FilerTokenSource
 
 	// Health tracking for smart failover
 	filerHealthMap sync.Map // map[pb.ServerAddress]*filerHealth
@@ -127,7 +131,7 @@ func (fca *FilerClientAccessor) withMultipleFilers(streamingMode bool, fn func(f
 	for _, filerAddress := range healthyFilers {
 		health := fca.getOrCreateFilerHealth(filerAddress)
 
-		err := pb.WithFilerClient(streamingMode, 0, filerAddress, fca.GetGrpcDialOption(), fn)
+		err := pb.WithGrpcFilerClientAuth(streamingMode, 0, filerAddress, fca.GetGrpcDialOption(), fca.TokenSource, fn)
 		if err == nil {
 			// Success - record it and return
 			health.recordSuccess()
@@ -148,7 +152,7 @@ func (fca *FilerClientAccessor) withMultipleFilers(streamingMode bool, fn func(f
 		for _, filerAddress := range backoffFilers {
 			health := fca.getOrCreateFilerHealth(filerAddress)
 
-			err := pb.WithFilerClient(streamingMode, 0, filerAddress, fca.GetGrpcDialOption(), fn)
+			err := pb.WithGrpcFilerClientAuth(streamingMode, 0, filerAddress, fca.GetGrpcDialOption(), fca.TokenSource, fn)
 			if err == nil {
 				// Success - record it and return
 				health.recordSuccess()

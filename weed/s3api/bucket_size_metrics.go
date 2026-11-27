@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
@@ -63,6 +64,7 @@ func (s3a *S3ApiServer) startBucketSizeMetricsLoop(ctx context.Context) {
 	}
 	filer := s3a.option.Filers[0]
 	lockClient := cluster.NewLockClient(s3a.option.GrpcDialOption, filer)
+	lockClient.TokenSource = security.FilerAdminToken
 	owner := string(filer) + "-s3-metrics"
 
 	// Start long-lived lock - this S3 instance will only collect metrics when it holds the lock
@@ -135,7 +137,7 @@ func (s3a *S3ApiServer) enforceBucketQuotas(ctx context.Context, buckets []*file
 		return
 	}
 
-	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil)
+	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil, security.FilerAdminToken)
 	if err != nil {
 		glog.V(1).Infof("read filer.conf for quota enforcement: %v", err)
 		return

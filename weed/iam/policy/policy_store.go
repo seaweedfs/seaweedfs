@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -407,7 +408,7 @@ func (s *FilerPolicyStore) withFilerClient(filerAddress string, fn func(client f
 	}
 
 	// Use the pb.WithGrpcFilerClient helper similar to existing SeaweedFS code
-	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddress), s.grpcDialOption, fn)
+	return pb.WithGrpcFilerClientAuth(false, 0, pb.ServerAddress(filerAddress), s.grpcDialOption, security.FilerAdminToken, fn)
 }
 
 // getPolicyPath returns the full path for a policy
