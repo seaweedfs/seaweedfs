@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -788,4 +789,26 @@ func TestEvaluateBucketPolicyHandsOnObjectTags(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, evaluated, "no statement matches an object tagged CLEAN")
 	assert.Equal(t, []string{"CLEAN"}, policy_engine.RequestConditionValues(policyReq)["s3:ExistingObjectTag/ScanStatus"])
+}
+
+// A tracked request is checked again on the version it is serving, not on
+// the one that became current while it ran.
+func TestEvaluateBucketPolicyRechecksTheServedVersion(t *testing.T) {
+	const bucket = "scan-bucket"
+	engine := NewBucketPolicyEngine()
+	require.NoError(t, engine.engine.SetBucketPolicy(bucket, `{"Version":"2012-10-17","Statement":[{
+		"Effect":"Deny","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::`+bucket+`/*",
+		"Condition":{"StringNotEquals":{"s3:ExistingObjectTag/ScanStatus":"CLEAN"}}}]}`))
+	iam := &IdentityAccessManagement{policyEngine: engine}
+	iam.objectEntryForPolicy = func(*http.Request, string, string) (map[string][]byte, bool) {
+		return map[string][]byte{s3_constants.AmzObjectTaggingPrefix + "ScanStatus": []byte("CLEAN")}, true
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/a.txt", nil)
+	req = req.WithContext(context.WithValue(req.Context(), servedObjectEntriesKey{}, &sync.Map{}))
+	recordServedObjectEntry(req, bucket, "/a.txt", map[string][]byte{s3_constants.AmzObjectTaggingPrefix + "ScanStatus": []byte("INFECTED")})
+
+	_, allowed, evaluated, err := iam.evaluateBucketPolicy(bucket, "/a.txt", string(s3_constants.ACTION_READ), "*", req, nil)
+	require.NoError(t, err)
+	assert.True(t, evaluated && !allowed, "the served version is not tagged CLEAN")
 }

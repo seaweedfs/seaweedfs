@@ -3233,7 +3233,10 @@ func (iam *IdentityAccessManagement) evaluateBucketPolicy(bucket, object, action
 		iam.objectEntryForPolicy == nil || !iam.policyEngine.HasExistingObjectTagDeny(bucket) {
 		return r, allowed, evaluated, err
 	}
-	extended, found := iam.objectEntryForPolicy(r, bucket, object)
+	extended, found := servedObjectEntry(r, bucket, object)
+	if !found {
+		extended, found = iam.objectEntryForPolicy(r, bucket, object)
+	}
 	if !found {
 		return r, allowed, evaluated, err
 	}
