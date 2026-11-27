@@ -19,6 +19,11 @@ func versionPointerEntry(versionId string) *filer_pb.Entry {
 	return &filer_pb.Entry{Extended: map[string][]byte{s3_constants.ExtLatestVersionIdKey: []byte(versionId)}}
 }
 
+func committedAt(entry *filer_pb.Entry, at time.Time) *filer_pb.Entry {
+	entry.CommitTsNs = at.UnixNano()
+	return entry
+}
+
 func TestVersionPointerGraceLeft(t *testing.T) {
 	now := time.Now()
 	for _, tc := range []struct {
@@ -31,6 +36,9 @@ func TestVersionPointerGraceLeft(t *testing.T) {
 		{"minted within the grace", versionPointerEntry(invertedVersionId(now.Add(-staleVersionPointerGrace + 2*time.Minute))), time.Minute, 2 * time.Minute},
 		{"minted in the future", versionPointerEntry(invertedVersionId(now.Add(time.Hour))), staleVersionPointerGrace, staleVersionPointerGrace},
 		{"minted before the grace", versionPointerEntry(invertedVersionId(now.Add(-2 * staleVersionPointerGrace))), 0, 0},
+		{"minted before the grace, stored just now", committedAt(versionPointerEntry(invertedVersionId(now.Add(-2*staleVersionPointerGrace))), now), staleVersionPointerGrace - time.Minute, staleVersionPointerGrace},
+		{"minted and stored before the grace", committedAt(versionPointerEntry(invertedVersionId(now.Add(-2*staleVersionPointerGrace))), now.Add(-staleVersionPointerGrace)), 0, 0},
+		{"null version stored just now", committedAt(versionPointerEntry("null"), now), staleVersionPointerGrace - time.Minute, staleVersionPointerGrace},
 		{"null version", versionPointerEntry("null"), 0, 0},
 		{"no pointer", &filer_pb.Entry{}, 0, 0},
 	} {

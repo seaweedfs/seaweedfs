@@ -2430,20 +2430,28 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 	return latestEntry, nil
 }
 
-// staleVersionPointerGrace leaves a pointer to a recently minted version as it
-// is: its file can still be on its way, e.g. when filer.sync applies the
+// staleVersionPointerGrace leaves a recently minted or recently stored pointer
+// as it is: its file can still be on its way, e.g. when filer.sync applies the
 // .versions directory before the version file, and a local removal or repair
 // then would replicate back and delete or roll back the version on the peer.
 const staleVersionPointerGrace = 10 * time.Minute
 
 // versionPointerGraceLeft returns how much of the grace the pointer has left;
-// zero means its version file is overdue.
+// zero means its version file is overdue. The grace runs from the later of the
+// version's mint, stamped by the minting cluster, and the local commit of the
+// .versions entry, so neither a clock ahead of the minting cluster nor a sync
+// backlog ends it before the file could arrive.
 func versionPointerGraceLeft(versionsEntry *filer_pb.Entry) time.Duration {
-	ts := getVersionTimestamp(string(versionsEntry.GetExtended()[s3_constants.ExtLatestVersionIdKey]))
-	if ts <= 0 {
-		return 0
+	var left time.Duration
+	for _, ts := range []int64{
+		getVersionTimestamp(string(versionsEntry.GetExtended()[s3_constants.ExtLatestVersionIdKey])),
+		versionsEntry.GetCommitTsNs(),
+	} {
+		if ts > 0 {
+			left = max(left, staleVersionPointerGrace-time.Since(time.Unix(0, ts)))
+		}
 	}
-	return min(max(staleVersionPointerGrace-time.Since(time.Unix(0, ts)), 0), staleVersionPointerGrace)
+	return min(left, staleVersionPointerGrace)
 }
 
 // conditionalUpdateEntryRouted persists the repair on the object's write
