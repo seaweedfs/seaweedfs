@@ -10,7 +10,7 @@ import (
 
 const (
 	ecBalancerPlugin      = "plugin ec_balance job"
-	ecBalancerLegacy      = "legacy maintenance ec_balance task"
+	ecBalancerLegacy      = "legacy maintenance ec_balance task (turn off with enabled = false under [maintenance] in admin.toml)"
 	ecBalancerAdminScript = "admin_script job running ec.balance -apply"
 
 	pluginECBalanceJobType   = "ec_balance"
@@ -100,4 +100,16 @@ func (s *AdminServer) collectECBalancerState() ecBalancerState {
 // More than one entry means they plan moves from the same topology independently.
 func (s *AdminServer) ActiveECBalancers() []string {
 	return activeECBalancers(s.collectECBalancerState())
+}
+
+func (s *AdminServer) warnOnECBalancerOverlap(previous string) string {
+	active := s.ActiveECBalancers()
+	if len(active) < 2 {
+		return ""
+	}
+	current := strings.Join(active, ", ")
+	if current != previous {
+		glog.Warningf("%d EC balancers are active and plan shard moves independently: %s. Keep only one enabled.", len(active), current)
+	}
+	return current
 }
