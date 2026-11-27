@@ -20,16 +20,16 @@ func TestReassertRebuildsOnFreshOwner(t *testing.T) {
 	// Fresh owner (post-restart / new ring owner) knows nothing.
 	owner := NewManager()
 	for key, locks := range client.Snapshot() {
-		if c := owner.Reassert(key, sid, locks); c != nil {
+		if c := owner.Reassert(key, Session{Sid: sid}, locks, Lease{}); c != nil {
 			t.Fatalf("unexpected conflict reasserting %s: %+v", key, c)
 		}
 	}
 
 	// The owner now reports the same conflicts a foreign session would hit.
-	if _, granted := owner.TryLock("a", Range{Start: 50, End: 60, Type: Write, Sid: 99, Owner: 1}); granted {
+	if _, granted := owner.TryLock("a", Range{Start: 50, End: 60, Type: Write, Sid: 99, Owner: 1}, Lease{}); granted {
 		t.Fatal("owner should block a foreign write after rebuild")
 	}
-	if _, granted := owner.TryLock("b", Range{Start: 0, End: 0, Type: Read, Sid: 99, Owner: 1, IsFlock: true}); granted {
+	if _, granted := owner.TryLock("b", Range{Start: 0, End: 0, Type: Read, Sid: 99, Owner: 1, IsFlock: true}, Lease{}); granted {
 		t.Fatal("owner should block a foreign flock read after rebuild")
 	}
 }
@@ -38,11 +38,11 @@ func TestReassertRebuildsOnFreshOwner(t *testing.T) {
 func TestReassertIdempotent(t *testing.T) {
 	const sid = uint64(1)
 	m := NewManager()
-	m.TryLock("k", Range{Start: 0, End: 99, Type: Write, Sid: sid, Owner: 1})
+	m.TryLock("k", Range{Start: 0, End: 99, Type: Write, Sid: sid, Owner: 1}, Lease{})
 	before := append([]Range(nil), m.byKey["k"].locks...)
 
-	m.Reassert("k", sid, before)
-	m.Reassert("k", sid, before)
+	m.Reassert("k", Session{Sid: sid}, before, Lease{})
+	m.Reassert("k", Session{Sid: sid}, before, Lease{})
 
 	if !reflect.DeepEqual(m.byKey["k"].locks, before) {
 		t.Fatalf("reassert not idempotent:\n got %+v\nwant %+v", m.byKey["k"].locks, before)
@@ -55,9 +55,9 @@ func TestReassertReportsConflict(t *testing.T) {
 	const mine, other = uint64(1), uint64(2)
 	m := NewManager()
 	// Another mount took the lock on this (new) owner during the gap.
-	m.TryLock("k", Range{Start: 0, End: 99, Type: Write, Sid: other, Owner: 1})
+	m.TryLock("k", Range{Start: 0, End: 99, Type: Write, Sid: other, Owner: 1}, Lease{})
 
-	conflicts := m.Reassert("k", mine, []Range{{Start: 0, End: 99, Type: Write, Sid: mine, Owner: 1}})
+	conflicts := m.Reassert("k", Session{Sid: mine}, []Range{{Start: 0, End: 99, Type: Write, Sid: mine, Owner: 1}}, Lease{})
 	if len(conflicts) != 1 {
 		t.Fatalf("expected 1 conflict, got %d: %+v", len(conflicts), conflicts)
 	}
@@ -71,8 +71,8 @@ func TestReassertReportsConflict(t *testing.T) {
 func TestReassertRenewsLease(t *testing.T) {
 	const sid = uint64(1)
 	m := NewManager()
-	m.Renew(sid)
-	m.Reassert("k", sid, []Range{{Start: 0, End: 9, Type: Write, Sid: sid, Owner: 1}})
+	m.Renew("", Session{Sid: sid}, Lease{})
+	m.Reassert("k", Session{Sid: sid}, []Range{{Start: 0, End: 9, Type: Write, Sid: sid, Owner: 1}}, Lease{})
 
 	if reaped := m.ReapExpired(time.Hour); len(reaped) != 0 {
 		t.Fatalf("freshly re-asserted session should not be reaped: %v", reaped)

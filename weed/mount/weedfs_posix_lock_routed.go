@@ -305,7 +305,7 @@ func (wfs *WFS) routedReleasePosixOwner(inode, owner uint64) bool {
 	if !ok {
 		return false
 	}
-	wfs.posixOwn.ReleasePosixOwner(key, wfs.posixSid, owner)
+	wfs.posixOwn.ReleasePosixOwner(key, posixlock.Session{Sid: wfs.posixSid}, owner)
 	ctx, cancel := context.WithTimeout(context.Background(), posixLockReleaseTimeout)
 	defer cancel()
 	if _, err := wfs.callPosixLock(ctx, key, filer_pb.PosixLockOp_RELEASE_POSIX_OWNER, posixlock.Range{Sid: wfs.posixSid, Owner: owner}); err != nil {
@@ -324,7 +324,7 @@ func (wfs *WFS) routedReleaseFlockOwner(inode, owner uint64) {
 	if !ok {
 		return
 	}
-	wfs.posixOwn.ReleaseFlockOwner(key, wfs.posixSid, owner)
+	wfs.posixOwn.ReleaseFlockOwner(key, posixlock.Session{Sid: wfs.posixSid}, owner)
 	ctx, cancel := context.WithTimeout(context.Background(), posixLockReleaseTimeout)
 	defer cancel()
 	if _, err := wfs.callPosixLock(ctx, key, filer_pb.PosixLockOp_RELEASE_FLOCK_OWNER, posixlock.Range{Sid: wfs.posixSid, Owner: owner}); err != nil {

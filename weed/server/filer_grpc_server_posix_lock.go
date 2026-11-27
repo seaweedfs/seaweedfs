@@ -96,15 +96,8 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 		}
 	}
 
-	lk := posixlock.Range{
-		Start:   req.Lock.GetStart(),
-		End:     req.Lock.GetEnd(),
-		Type:    req.Lock.GetType(),
-		Sid:     req.Lock.GetSid(),
-		Owner:   req.Lock.GetOwner(),
-		Pid:     req.Lock.GetPid(),
-		IsFlock: req.Lock.GetIsFlock(),
-	}
+	lk := posixRangeFromPb(req.Lock)
+	session := lk.Session()
 
 	resp := &filer_pb.PosixLockResponse{}
 	switch req.Op {
@@ -123,7 +116,7 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 				break
 			}
 		}
-		if c, granted := fs.posixLocks.TryLock(req.Key, lk); granted {
+		if c, granted := fs.posixLocks.TryLock(req.Key, lk, posixlock.Lease{}); granted {
 			resp.Granted = true
 		} else {
 			resp.HasConflict = true
@@ -145,9 +138,9 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 			resp.Conflict = posixRangeToPb(c)
 		}
 	case filer_pb.PosixLockOp_RELEASE_POSIX_OWNER:
-		fs.posixLocks.ReleasePosixOwner(req.Key, lk.Sid, lk.Owner)
+		fs.posixLocks.ReleasePosixOwner(req.Key, session, lk.Owner)
 	case filer_pb.PosixLockOp_RELEASE_FLOCK_OWNER:
-		fs.posixLocks.ReleaseFlockOwner(req.Key, lk.Sid, lk.Owner)
+		fs.posixLocks.ReleaseFlockOwner(req.Key, session, lk.Owner)
 	case filer_pb.PosixLockOp_KEEP_ALIVE:
 		// A re-assertion carries the mount's held locks on this key so the owner
 		// can rebuild its in-memory state after an ownership change or restart; a
@@ -157,11 +150,11 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 			for _, l := range req.Locks {
 				held = append(held, posixRangeFromPb(l))
 			}
-			if conflicts := fs.posixLocks.Reassert(req.Key, lk.Sid, held); len(conflicts) > 0 {
+			if conflicts := fs.posixLocks.Reassert(req.Key, session, held, posixlock.Lease{}); len(conflicts) > 0 {
 				glog.Warningf("posix reassert %s sid %d: %d lock(s) lost to another session: %+v", req.Key, lk.Sid, len(conflicts), conflicts)
 			}
 		} else {
-			fs.posixLocks.Renew(lk.Sid)
+			fs.posixLocks.Renew(req.Key, session, posixlock.Lease{})
 		}
 	default:
 		return &filer_pb.PosixLockResponse{}, fmt.Errorf("unknown posix lock op %v", req.Op)
