@@ -405,23 +405,25 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 
 	// read existing entry
 	var existingEntry *filer_pb.Entry
-	err = fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err = util.RetryOnError("lookup "+key, func(err error) bool { return !isEntryNotFound(err) }, func() error {
+		return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer_pb.LookupDirectoryEntryRequest{
-			Directory: dir,
-			Name:      name,
-		}
+			request := &filer_pb.LookupDirectoryEntryRequest{
+				Directory: dir,
+				Name:      name,
+			}
 
-		glog.V(4).Infof("lookup entry: %v", request)
-		resp, err := filer_pb.LookupEntry(context.Background(), client, request)
-		if err != nil {
-			glog.V(0).Infof("lookup %s: %v", key, err)
-			return err
-		}
+			glog.V(4).Infof("lookup entry: %v", request)
+			resp, err := filer_pb.LookupEntry(context.Background(), client, request)
+			if err != nil {
+				glog.V(0).Infof("lookup %s: %v", key, err)
+				return err
+			}
 
-		existingEntry = resp.Entry
+			existingEntry = resp.Entry
 
-		return nil
+			return nil
+		})
 	})
 
 	if err != nil {
