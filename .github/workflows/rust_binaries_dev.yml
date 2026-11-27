@@ -231,12 +231,16 @@ jobs:
             exit 1
           fi
 
-          kept=0; deleted=0; gone=0; failed=0
+          build_key=${BUILD_TIME/-/}
+          kept=0; newer=0; deleted=0; gone=0; failed=0
           while IFS=$'\t' read -r id name || [ -n "${name:-}" ]; do
             [ -n "${id:-}" ] || continue
             case "$name" in
               *"-$BUILD_TIME-"*) kept=$((kept+1)); continue ;;
             esac
+            if [[ "$name" =~ -([0-9]{8})-([0-9]{4})- ]] && [ "${BASH_REMATCH[1]}${BASH_REMATCH[2]}" -gt "$build_key" ]; then
+              newer=$((newer+1)); continue
+            fi
             if out=$(gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id" </dev/null 2>&1); then
               deleted=$((deleted+1))
             else
@@ -247,6 +251,6 @@ jobs:
             fi
           done < "$assets_file"
 
-          [ "$((kept+deleted+gone+failed))" -eq "$total" ] || { echo "Processed $((kept+deleted+gone+failed)) of $total assets" >&2; exit 1; }
-          echo "Kept $kept assets from this build; deleted $deleted older assets; $gone already gone; $failed failures"
+          [ "$((kept+newer+deleted+gone+failed))" -eq "$total" ] || { echo "Processed $((kept+newer+deleted+gone+failed)) of $total assets" >&2; exit 1; }
+          echo "Kept $kept assets from this build and $newer from newer builds; deleted $deleted older assets; $gone already gone; $failed failures"
           [ "$failed" -eq 0 ] || { echo "::warning::prune: $failed deletions failed"; exit 1; }
