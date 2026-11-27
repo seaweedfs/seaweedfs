@@ -2038,11 +2038,6 @@ func validateSourceConditionalHeaders(r *http.Request, entry *filer_pb.Entry, na
 	ifMatch := r.Header.Get(names.ifMatch)
 	ifNoneMatch := r.Header.Get(names.ifNoneMatch)
 
-	// ETag lists and weak tags are matched by the same RFC 9110 helper the
-	// read and write paths use: strong comparison for If-Match, weak for
-	// If-None-Match. A naive string comparison here let a revalidating
-	// x-amz-copy-source-if-none-match: W/"<etag>" copy an unchanged source,
-	// and rejected an If-Match list that contained the source's ETag.
 	if ifMatch != "" && !util.ETagListMatches(ifMatch, sourceETag, false) {
 		glog.V(3).Infof("%s failed - expected %s, got %s", names.ifMatch, ifMatch, sourceETag)
 		return s3err.ErrPreconditionFailed
