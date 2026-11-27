@@ -162,3 +162,31 @@ func TestLoadSecurityConfigurationOrErrorRefusesADirectoryItCannotSearch(t *test
 		t.Fatal("a security.toml in a directory the process cannot search was treated as absent")
 	}
 }
+
+func TestLoadSecurityConfigurationOrErrorRefusesACandidateItCannotCheck(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	saved := ConfigurationFileDirectory
+	ConfigurationFileDirectory = DirectoryValueType(dir)
+	t.Cleanup(func() { ConfigurationFileDirectory = saved })
+	// A symlink loop: stat fails with ELOOP, which is not absence.
+	loop := filepath.Join(dir, "security.toml")
+	if err := os.Symlink(loop, loop); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := LoadSecurityConfigurationOrError(); err == nil {
+		t.Fatal("a security.toml that cannot be checked was treated as absent")
+	}
+	// A plain file where a configuration directory is expected is absence.
+	if err := os.Remove(loop); err != nil {
+		t.Fatal(err)
+	}
+	notDir := filepath.Join(dir, "not-a-directory")
+	if err := os.WriteFile(notDir, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ConfigurationFileDirectory = DirectoryValueType(notDir)
+	if err := LoadSecurityConfigurationOrError(); err != nil {
+		t.Fatalf("configuration directory that is a file: %v", err)
+	}
+}

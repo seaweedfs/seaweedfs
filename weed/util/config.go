@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/spf13/viper"
@@ -81,13 +82,16 @@ func LoadSecurityConfigurationOrError() error {
 }
 
 // configurationSearchDenied reports whether a candidate configFileName file
-// could not be checked for lack of permission. Viper's search treats that as
-// absence, which would hide a file the process is not allowed to read.
+// could not be confirmed absent: its check failed for a reason other than the
+// file, or a directory on its path, not existing (lack of permission, a symlink
+// loop). Viper's search treats any such failure as absence, which would hide a
+// file the process cannot read.
 func configurationSearchDenied(configFileName string) bool {
 	for _, dir := range configurationPaths() {
 		dir = os.ExpandEnv(dir)
 		for _, ext := range viper.SupportedExts {
-			if _, err := os.Stat(filepath.Join(dir, configFileName+"."+ext)); errors.Is(err, fs.ErrPermission) {
+			_, err := os.Stat(filepath.Join(dir, configFileName+"."+ext))
+			if err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
 				return true
 			}
 		}
