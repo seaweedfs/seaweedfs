@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 type EventErrorType int
@@ -43,6 +44,10 @@ type MetadataFollowOption struct {
 	// FilerJwtProvider, when non-nil, signs the subscription with the source
 	// cluster's own filer key instead of this process's configuration.
 	FilerJwtProvider security.FilerJwtProvider
+	// FilerTokenSource, when non-nil, supplies the receiving filer's admin
+	// token for this endpoint on each subscription attempt. An empty token
+	// preserves the legacy subscription-credential fallback above the client.
+	FilerTokenSource security.FilerTokenSource
 	// OnIdleHeartbeat, when non-nil, opts in to idle heartbeats: while the
 	// subscriber is caught up the server periodically sends an empty response
 	// carrying the current time, and this is called with that timestamp. It is
@@ -95,7 +100,20 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 		if option.GetResumeTsNs != nil {
 			sinceNs = option.GetResumeTsNs()
 		}
-		stream, err := client.SubscribeMetadata(security.WithMetadataSubscriptionCredentials(ctx, option.FilerJwtProvider), &filer_pb.SubscribeMetadataRequest{
+		subscribeCtx := ctx
+		if option.FilerTokenSource != nil {
+			var authErr error
+			subscribeCtx, authErr = security.WithFilerToken(ctx, option.FilerTokenSource)
+			if authErr != nil {
+				return fmt.Errorf("resolve subscription credentials: %w", authErr)
+			}
+			if md, ok := metadata.FromOutgoingContext(subscribeCtx); !ok || len(md.Get("authorization")) == 0 {
+				subscribeCtx = security.WithMetadataSubscriptionCredentials(subscribeCtx, option.FilerJwtProvider)
+			}
+		} else {
+			subscribeCtx = security.WithMetadataSubscriptionCredentials(subscribeCtx, option.FilerJwtProvider)
+		}
+		stream, err := client.SubscribeMetadata(subscribeCtx, &filer_pb.SubscribeMetadataRequest{
 			ClientName:                   option.ClientName,
 			PathPrefix:                   option.PathPrefix,
 			PathPrefixes:                 option.AdditionalPathPrefixes,

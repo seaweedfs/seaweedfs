@@ -76,6 +76,7 @@ func (c *commandMqTopicCompact) Do(args []string, commandEnv *CommandEnv, writer
 		[]pb.ServerAddress{commandEnv.FilerAddress()},
 		commandEnv.option.GrpcDialOption,
 	)
+	fca.TokenSource = commandEnv.option.FilerTokenSource
 	t := topic.NewTopic(*namespace, *topicName)
 	topicConf, err := fca.ReadTopicConfFromFiler(t)
 	if err != nil {

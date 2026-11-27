@@ -186,7 +186,7 @@ func runCopy(cmd *Command, args []string) bool {
 }
 
 func readFilerConfiguration(grpcDialOption grpc.DialOption, filerGrpcAddress pb.ServerAddress) (masters []string, collection, replication string, dirBuckets string, maxMB uint32, cipher bool, digest string, err error) {
-	err = pb.WithGrpcFilerClient(false, 0, filerGrpcAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithGrpcFilerClientAuth(false, 0, filerGrpcAddress, grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return fmt.Errorf("get filer %s configuration: %v", filerGrpcAddress, err)
@@ -318,7 +318,7 @@ func (worker *FileCopyWorker) checkExistingFileFirst(task FileCopyTask, f *os.Fi
 		return
 	}
 
-	err = pb.WithGrpcFilerClient(false, worker.signature, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithGrpcFilerClientAuth(false, worker.signature, worker.filerAddress, worker.options.grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 
 		request := &filer_pb.LookupDirectoryEntryRequest{
 			Directory: task.destinationUrlPath,
@@ -387,7 +387,7 @@ func (worker *FileCopyWorker) uploadFileAsOne(task FileCopyTask, f *os.File) err
 		chunks = append(chunks, uploadResult.ToPbFileChunk(finalFileId, 0, time.Now().UnixNano()))
 	}
 
-	if err := pb.WithGrpcFilerClient(false, worker.signature, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	if err := pb.WithGrpcFilerClientAuth(false, worker.signature, worker.filerAddress, worker.options.grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.CreateEntryRequest{
 			Directory: task.destinationUrlPath,
 			Entry: &filer_pb.Entry{
@@ -524,7 +524,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 		return fmt.Errorf("create manifest: %w", manifestErr)
 	}
 
-	if err := pb.WithGrpcFilerClient(false, worker.signature, worker.filerAddress, worker.options.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	if err := pb.WithGrpcFilerClientAuth(false, worker.signature, worker.filerAddress, worker.options.grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		request := &filer_pb.CreateEntryRequest{
 			Directory: task.destinationUrlPath,
 			Entry: &filer_pb.Entry{
@@ -614,12 +614,9 @@ func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, off
 var _ = filer_pb.FilerClient(&FileCopyWorker{})
 
 func (worker *FileCopyWorker) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) (err error) {
-
-	filerGrpcAddress := worker.filerAddress.ToGrpcAddress()
-	err = pb.WithGrpcClient(context.Background(), streamingMode, worker.signature, func(grpcConnection *grpc.ClientConn) error {
-		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+	err = pb.WithGrpcFilerClientAuth(streamingMode, worker.signature, worker.filerAddress, worker.options.grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		return fn(client)
-	}, filerGrpcAddress, false, worker.options.grpcDialOption)
+	})
 
 	return
 }

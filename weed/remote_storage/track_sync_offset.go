@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
@@ -28,9 +29,9 @@ func SyncOffsetKey(dir string) []byte {
 // would hold the daemon's start, or its event stream behind the checkpoint.
 const syncOffsetTimeout = 30 * time.Second
 
-func GetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir string) (lastOffsetTsNs int64, readErr error) {
+func GetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir string, tokenSource ...security.FilerTokenSource) (lastOffsetTsNs int64, readErr error) {
 
-	readErr = pb.WithFilerClient(false, 0, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	readErr = pb.WithGrpcFilerClientAuth(false, 0, filer, grpcDialOption, firstTokenSource(tokenSource), func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithTimeout(context.Background(), syncOffsetTimeout)
 		defer cancel()
 		resp, err := client.KvGet(ctx, &filer_pb.KvGetRequest{Key: SyncOffsetKey(dir)})
@@ -54,9 +55,9 @@ func GetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir s
 
 }
 
-func SetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir string, offsetTsNs int64) error {
+func SetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir string, offsetTsNs int64, tokenSource ...security.FilerTokenSource) error {
 
-	return pb.WithFilerClient(false, 0, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClientAuth(false, 0, filer, grpcDialOption, firstTokenSource(tokenSource), func(client filer_pb.SeaweedFilerClient) error {
 
 		valueBuf := make([]byte, 8)
 		util.Uint64toBytes(valueBuf, uint64(offsetTsNs))
@@ -79,4 +80,11 @@ func SetSyncOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, dir s
 
 	})
 
+}
+
+func firstTokenSource(sources []security.FilerTokenSource) security.FilerTokenSource {
+	if len(sources) == 0 {
+		return nil
+	}
+	return sources[0]
 }

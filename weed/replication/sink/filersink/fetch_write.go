@@ -14,18 +14,18 @@ import (
 	"time"
 
 	"github.com/schollz/progressbar/v3"
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-
-	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -779,7 +779,7 @@ var _ = filer_pb.FilerClient(&FilerSink{})
 func (fs *FilerSink) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	return pb.WithGrpcClient(context.Background(), streamingMode, fs.signature, func(grpcConnection *grpc.ClientConn) error {
-		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+		client := filer_pb.NewSeaweedFilerClient(security.WithFilerClientAuth(grpcConnection, fs.filerTokenSource))
 		return fn(client)
 	}, fs.grpcAddress, false, fs.grpcDialOption)
 

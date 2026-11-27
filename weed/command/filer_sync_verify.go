@@ -89,6 +89,8 @@ func runFilerSyncVerify(cmd *Command, args []string) bool {
 			glog.Fatalf("load security config for filer B: %v", err)
 		}
 	}
+	tokenSourceA := security.FilerAdminTokenFromFile(*syncVerifyOptions.aSecurity)
+	tokenSourceB := security.FilerAdminTokenFromFile(*syncVerifyOptions.bSecurity)
 
 	filerA := pb.ServerAddress(*syncVerifyOptions.filerA)
 	filerB := pb.ServerAddress(*syncVerifyOptions.filerB)
@@ -96,7 +98,7 @@ func runFilerSyncVerify(cmd *Command, args []string) bool {
 	if err := runVerifySync(filerA, filerB, *syncVerifyOptions.aPath, *syncVerifyOptions.bPath,
 		*syncVerifyOptions.isActivePassive, *syncVerifyOptions.modifiedTimeAgo,
 		*syncVerifyOptions.jsonOutput,
-		grpcDialOptionA, grpcDialOptionB); err != nil {
+		grpcDialOptionA, grpcDialOptionB, tokenSourceA, tokenSourceB); err != nil {
 		glog.Errorf("verify sync: %v", err)
 		os.Exit(2)
 	}
@@ -184,13 +186,13 @@ type summaryRecord struct {
 type simpleFilerClient struct {
 	grpcAddress    pb.ServerAddress
 	grpcDialOption grpc.DialOption
+	tokenSource    security.FilerTokenSource
 }
 
 func (c *simpleFilerClient) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithGrpcClient(context.Background(), streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
-		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+	return pb.WithGrpcFilerClientAuth(streamingMode, 0, c.grpcAddress, c.grpcDialOption, c.tokenSource, func(client filer_pb.SeaweedFilerClient) error {
 		return fn(client)
-	}, c.grpcAddress.ToGrpcAddress(), false, c.grpcDialOption)
+	})
 }
 
 func (c *simpleFilerClient) AdjustedUrl(location *filer_pb.Location) string {
@@ -204,10 +206,11 @@ func (c *simpleFilerClient) GetDataCenter() string {
 func runVerifySync(filerA, filerB pb.ServerAddress, aPath, bPath string,
 	isActivePassive bool, modifiedTimeAgo time.Duration,
 	jsonOutput bool,
-	grpcDialOptionA, grpcDialOptionB grpc.DialOption) error {
+	grpcDialOptionA, grpcDialOptionB grpc.DialOption,
+	tokenSourceA, tokenSourceB security.FilerTokenSource) error {
 
-	clientA := &simpleFilerClient{grpcAddress: filerA, grpcDialOption: grpcDialOptionA}
-	clientB := &simpleFilerClient{grpcAddress: filerB, grpcDialOption: grpcDialOptionB}
+	clientA := &simpleFilerClient{grpcAddress: filerA, grpcDialOption: grpcDialOptionA, tokenSource: tokenSourceA}
+	clientB := &simpleFilerClient{grpcAddress: filerB, grpcDialOption: grpcDialOptionB, tokenSource: tokenSourceB}
 
 	var cutoffTime time.Time
 	if modifiedTimeAgo > 0 {

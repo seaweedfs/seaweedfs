@@ -26,18 +26,19 @@ type RemoteGatewayOptions struct {
 	include                  *string
 	exclude                  *string
 
-	mappings    *remote_pb.RemoteStorageMapping
-	remoteConfs map[string]*remote_pb.RemoteConf
-	bucketsDir  string
-	clientId    int32
-	clientEpoch int32
-	resumeTsNs  int64
+	mappings         *remote_pb.RemoteStorageMapping
+	remoteConfs      map[string]*remote_pb.RemoteConf
+	bucketsDir       string
+	clientId         int32
+	clientEpoch      int32
+	resumeTsNs       int64
+	filerTokenSource security.FilerTokenSource
 }
 
 var _ = filer_pb.FilerClient(&RemoteGatewayOptions{})
 
 func (option *RemoteGatewayOptions) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithFilerClient(streamingMode, option.clientId, pb.ServerAddress(*option.filerAddress), option.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClientAuth(streamingMode, option.clientId, pb.ServerAddress(*option.filerAddress), option.grpcDialOption, option.filerTokenSource, func(client filer_pb.SeaweedFilerClient) error {
 		return fn(client)
 	})
 }
@@ -88,6 +89,7 @@ func runFilerRemoteGateway(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	remoteGatewayOptions.grpcDialOption = grpcDialOption
+	remoteGatewayOptions.filerTokenSource = security.FilerAdminToken
 
 	filerAddress := pb.ServerAddress(*remoteGatewayOptions.filerAddress)
 
@@ -98,6 +100,7 @@ func runFilerRemoteGateway(cmd *Command, args []string) bool {
 		"/", // does not matter
 		*remoteGatewayOptions.readChunkFromFiler,
 	)
+	filerSource.SetFilerTokenSource(remoteGatewayOptions.filerTokenSource)
 
 	remoteGatewayOptions.bucketsDir = "/buckets"
 	// check buckets again

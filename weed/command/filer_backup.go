@@ -157,7 +157,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 			// snapshot below sets the start point; no checkpoint read needed
 			glog.V(0).Infof("initialSnapshot requested — walking live tree before subscribing")
 		} else {
-			lastOffsetTsNs, err := getOffsetWithFallback(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, BackupKeyPrefix, legacySinkId)
+			lastOffsetTsNs, err := getOffsetWithFallback(grpcDialOption, sourceFiler, security.FilerAdminToken, BackupKeyPrefix, sinkId, BackupKeyPrefix, legacySinkId)
 			if err != nil {
 				return 0, fmt.Errorf("read backup offset: %w", err)
 			} else if lastOffsetTsNs > 0 {
@@ -181,11 +181,17 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		*backupOption.proxyByFiler); err != nil {
 		return resumeTsNs, fmt.Errorf("filersource initialization failed: %v", err)
 	}
+	filerSource.SetFilerTokenSource(security.FilerAdminToken)
+	dataSink.SetSourceFiler(filerSource)
+	if tokenSink, ok := dataSink.(interface {
+		SetFilerTokenSource(security.FilerTokenSource)
+	}); ok {
+		tokenSink.SetFilerTokenSource(security.FilerAdminToken)
+	}
 
 	if err := repl_util.InitializeSSEForReplication(filerSource); err != nil {
 		return resumeTsNs, fmt.Errorf("SSE initialization failed: %v", err)
 	}
-	dataSink.SetSourceFiler(filerSource)
 	if err := replication.CheckSinkDigest(filerSource.GrpcAddress(), filerSource.Digest, dataSink); err != nil {
 		if replication.IsDigestMismatch(err) {
 			glog.Exitf("%v", err)
@@ -220,7 +226,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		// The walk can take hours on large trees; retry the tiny KV write a
 		// handful of times before giving up so a flaky filer KV doesn't force
 		// the whole walk to repeat on the next retry loop iteration.
-		if err := persistSnapshotOffset(grpcDialOption, sourceFiler, sinkId, snapshotTsNs); err != nil {
+		if err := persistSnapshotOffset(grpcDialOption, sourceFiler, sinkId, snapshotTsNs, security.FilerAdminToken); err != nil {
 			glog.Errorf("initialSnapshot: FAILED to persist offset %d for sinkId %d after retries: %v — the next retry will redo the full walk", snapshotTsNs, sinkId, err)
 			return 0, fmt.Errorf("persist initial snapshot offset: %w", err)
 		}
@@ -300,7 +306,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		defer ticker.Stop()
 		persist := func() {
 			if ts := resumeTsNsFor(processor); ts != lastPersistedTsNs.Load() {
-				if err := setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, ts); err == nil {
+				if err := setOffset(grpcDialOption, sourceFiler, security.FilerAdminToken, BackupKeyPrefix, sinkId, ts); err == nil {
 					lastPersistedTsNs.Store(ts)
 				} else {
 					glog.Warningf("persist backup offset: %v", err)
@@ -366,6 +372,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		StartTsNs:              startFrom.UnixNano(),
 		StopTsNs:               0,
 		EventErrorType:         eventErrorType,
+		FilerTokenSource:       security.FilerAdminToken,
 		GetResumeTsNs: func() int64 {
 			return resumeTsNsFor(processor)
 		},
@@ -487,12 +494,16 @@ func eventSupersessionProbe(resp *filer_pb.SubscribeMetadataResponse) (util.Full
 // errors. Losing this write forces a full re-walk on the next retry loop
 // iteration, so a small retry budget here is far cheaper than paying the
 // walk cost again on a large tree.
-func persistSnapshotOffset(grpcDialOption grpc.DialOption, sourceFiler pb.ServerAddress, sinkId int32, tsNs int64) error {
+func persistSnapshotOffset(grpcDialOption grpc.DialOption, sourceFiler pb.ServerAddress, sinkId int32, tsNs int64, tokenSource ...security.FilerTokenSource) error {
 	const attempts = 4
 	backoff := 500 * time.Millisecond
+	var source security.FilerTokenSource
+	if len(tokenSource) > 0 {
+		source = tokenSource[0]
+	}
 	var lastErr error
 	for i := 1; i <= attempts; i++ {
-		if err := setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, tsNs); err == nil {
+		if err := setOffset(grpcDialOption, sourceFiler, source, BackupKeyPrefix, sinkId, tsNs); err == nil {
 			return nil
 		} else {
 			lastErr = err

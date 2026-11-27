@@ -52,6 +52,11 @@ func (s *authRecordingFiler) ListEntries(_ *filer_pb.ListEntriesRequest, stream 
 	return stream.Send(&filer_pb.ListEntriesResponse{Entry: &filer_pb.Entry{Name: "entry"}})
 }
 
+func (s *authRecordingFiler) SubscribeMetadata(_ *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
+	s.record(stream.Context())
+	return nil
+}
+
 func (s *authRecordingFiler) authorizationValues() [][]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -284,5 +289,27 @@ func TestWithGrpcFilerClientAuthStreamingListEntriesCarriesToken(t *testing.T) {
 	auth := server.authorizationValues()
 	if len(auth) != 1 || !validAdminAuthorization(auth[0], key) {
 		t.Fatal("ListEntries did not receive a valid admin token")
+	}
+}
+
+func TestFollowMetadataUsesEndpointTokenSource(t *testing.T) {
+	server, address := startAuthRecordingFiler(t)
+	key := filerAuthTestKey(t)
+	token := security.GenJwtForFilerAdmin(key, 60)
+	sourceCalls := 0
+	err := FollowMetadata(address, grpc.WithTransportCredentials(insecure.NewCredentials()), &MetadataFollowOption{
+		ClientName:       "auth-test",
+		EventErrorType:   DontLogError,
+		FilerTokenSource: func(context.Context) (security.EncodedJwt, error) { sourceCalls++; return token, nil },
+	}, func(*filer_pb.SubscribeMetadataResponse) error { return nil })
+	if err != nil {
+		t.Fatalf("metadata follow: %v", err)
+	}
+	if sourceCalls != 1 {
+		t.Fatalf("token source called %d times, want one subscription attempt", sourceCalls)
+	}
+	auth := server.authorizationValues()
+	if len(auth) != 1 || !validAdminAuthorization(auth[0], key) {
+		t.Fatal("subscription did not receive a valid endpoint admin token")
 	}
 }

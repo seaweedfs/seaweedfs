@@ -28,14 +28,15 @@ type RemoteSyncOptions struct {
 	resumeTsNs         int64
 	// what resumeTsNs was earned under: the directory's remote location, and
 	// the offset stored when it was kept (resumeFor)
-	resumeLoc      *remote_pb.RemoteStorageLocation
-	resumeStoredNs int64
+	resumeLoc        *remote_pb.RemoteStorageLocation
+	resumeStoredNs   int64
+	filerTokenSource security.FilerTokenSource
 }
 
 var _ = filer_pb.FilerClient(&RemoteSyncOptions{})
 
 func (option *RemoteSyncOptions) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithFilerClient(streamingMode, option.clientId, pb.ServerAddress(*option.filerAddress), option.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClientAuth(streamingMode, option.clientId, pb.ServerAddress(*option.filerAddress), option.grpcDialOption, option.filerTokenSource, func(client filer_pb.SeaweedFilerClient) error {
 		return fn(client)
 	})
 }
@@ -98,6 +99,7 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	remoteSyncOptions.grpcDialOption = grpcDialOption
+	remoteSyncOptions.filerTokenSource = security.FilerAdminToken
 
 	dir := *remoteSyncOptions.dir
 	filerAddress := pb.ServerAddress(*remoteSyncOptions.filerAddress)
@@ -109,6 +111,7 @@ func runFilerRemoteSynchronize(cmd *Command, args []string) bool {
 		"/", // does not matter
 		*remoteSyncOptions.readChunkFromFiler,
 	)
+	filerSource.SetFilerTokenSource(remoteSyncOptions.filerTokenSource)
 
 	if *remoteSyncOptions.allMounts {
 		if dir != "" {

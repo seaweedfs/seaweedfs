@@ -84,28 +84,28 @@ func TestBackupOffset_HistoricalFallbackThenIndependence(t *testing.T) {
 	sinkId, legacySinkId := backupCheckpointIds("/", s, false)
 
 	// pre-upgrade state: only the shared historical checkpoint exists
-	if err := setOffset(dial, filerAddr, BackupKeyPrefix, legacySinkId, 111); err != nil {
+	if err := setOffset(dial, filerAddr, nil, BackupKeyPrefix, legacySinkId, 111); err != nil {
 		t.Fatalf("seed historical offset: %v", err)
 	}
-	got, err := getOffsetWithFallback(dial, filerAddr, BackupKeyPrefix, sinkId, BackupKeyPrefix, legacySinkId)
+	got, err := getOffsetWithFallback(dial, filerAddr, nil, BackupKeyPrefix, sinkId, BackupKeyPrefix, legacySinkId)
 	if err != nil || got != 111 {
 		t.Fatalf("fallback read = (%d, %v), want (111, nil)", got, err)
 	}
 
 	// the backup checkpoints under its own key and prefers it from then on
-	if err := setOffset(dial, filerAddr, BackupKeyPrefix, sinkId, 222); err != nil {
+	if err := setOffset(dial, filerAddr, nil, BackupKeyPrefix, sinkId, 222); err != nil {
 		t.Fatalf("write destination-scoped offset: %v", err)
 	}
-	got, err = getOffsetWithFallback(dial, filerAddr, BackupKeyPrefix, sinkId, BackupKeyPrefix, legacySinkId)
+	got, err = getOffsetWithFallback(dial, filerAddr, nil, BackupKeyPrefix, sinkId, BackupKeyPrefix, legacySinkId)
 	if err != nil || got != 222 {
 		t.Fatalf("destination-scoped read = (%d, %v), want (222, nil)", got, err)
 	}
 
 	// another backup advancing the historical key no longer moves this one
-	if err := setOffset(dial, filerAddr, BackupKeyPrefix, legacySinkId, 333); err != nil {
+	if err := setOffset(dial, filerAddr, nil, BackupKeyPrefix, legacySinkId, 333); err != nil {
 		t.Fatalf("advance historical offset: %v", err)
 	}
-	got, err = getOffsetWithFallback(dial, filerAddr, BackupKeyPrefix, sinkId, BackupKeyPrefix, legacySinkId)
+	got, err = getOffsetWithFallback(dial, filerAddr, nil, BackupKeyPrefix, sinkId, BackupKeyPrefix, legacySinkId)
 	if err != nil || got != 222 {
 		t.Fatalf("read after historical advance = (%d, %v), want (222, nil)", got, err)
 	}
@@ -120,17 +120,17 @@ func TestBackupOffset_DistinctDestinationsDoNotShare(t *testing.T) {
 	idA, legacyA := backupCheckpointIds("/", &stubSink{name: "s3", dir: "/", destination: "s3.us-west-004.backblazeb2.com|seaweed-backup-a|/"}, false)
 	idB, legacyB := backupCheckpointIds("/", &stubSink{name: "s3", dir: "/", destination: "s3.us-east-005.backblazeb2.com|seaweed-backup-b|/"}, false)
 
-	if err := setOffset(dial, filerAddr, BackupKeyPrefix, idA, 1000); err != nil {
+	if err := setOffset(dial, filerAddr, nil, BackupKeyPrefix, idA, 1000); err != nil {
 		t.Fatalf("write A: %v", err)
 	}
-	if err := setOffset(dial, filerAddr, BackupKeyPrefix, idB, 2000); err != nil {
+	if err := setOffset(dial, filerAddr, nil, BackupKeyPrefix, idB, 2000); err != nil {
 		t.Fatalf("write B: %v", err)
 	}
 
-	if got, err := getOffsetWithFallback(dial, filerAddr, BackupKeyPrefix, idA, BackupKeyPrefix, legacyA); err != nil || got != 1000 {
+	if got, err := getOffsetWithFallback(dial, filerAddr, nil, BackupKeyPrefix, idA, BackupKeyPrefix, legacyA); err != nil || got != 1000 {
 		t.Fatalf("A reads (%d, %v), want (1000, nil)", got, err)
 	}
-	if got, err := getOffsetWithFallback(dial, filerAddr, BackupKeyPrefix, idB, BackupKeyPrefix, legacyB); err != nil || got != 2000 {
+	if got, err := getOffsetWithFallback(dial, filerAddr, nil, BackupKeyPrefix, idB, BackupKeyPrefix, legacyB); err != nil || got != 2000 {
 		t.Fatalf("B reads (%d, %v), want (2000, nil)", got, err)
 	}
 }
