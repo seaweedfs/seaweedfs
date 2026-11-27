@@ -99,8 +99,10 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 	if err != nil {
 		return nil, err
 	}
-	fs.finishRename(afterCommitCtx, effects, req.Signatures)
-
+	lastEventTsNs := fs.finishRename(afterCommitCtx, effects, req.Signatures)
+	if req.IsMoved {
+		return &filer_pb.AtomicRenameEntryResponse{TsNs: lastEventTsNs}, nil
+	}
 	return &filer_pb.AtomicRenameEntryResponse{}, nil
 }
 
@@ -194,8 +196,7 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 		return err
 	}
 	if held == nil {
-		fs.finishRename(afterCommitCtx, effects, req.Signatures)
-		return nil
+		return sendForwardedRenameEnd(req, stream, fs.finishRename(afterCommitCtx, effects, req.Signatures))
 	}
 	// Committed. The held responses go out while the rename finishes what the
 	// commit leaves (events, chunk deletions, remote copies): a client that
@@ -203,13 +204,27 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 	// not keep the client waiting for its responses. The call returns, and
 	// gives up the rename's path locks, once both are done.
 	finished := make(chan struct{})
+	var lastEventTsNs int64
 	go func() {
 		defer close(finished)
-		fs.finishRename(afterCommitCtx, effects, req.Signatures)
+		lastEventTsNs = fs.finishRename(afterCommitCtx, effects, req.Signatures)
 	}()
 	err = held.release()
 	<-finished
-	return err
+	if err != nil {
+		return err
+	}
+	return sendForwardedRenameEnd(req, stream, lastEventTsNs)
+}
+
+// sendForwardedRenameEnd ends a forwarded rename's responses with one that
+// carries only the log position of the rename's last event, for the
+// forwarding filer to wait on.
+func sendForwardedRenameEnd(req *filer_pb.StreamRenameEntryRequest, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, lastEventTsNs int64) error {
+	if !req.IsMoved {
+		return nil
+	}
+	return stream.Send(&filer_pb.StreamRenameEntryResponse{TsNs: lastEventTsNs})
 }
 
 // renameAttempts bounds how often a rename runs its transaction while the
@@ -273,8 +288,9 @@ func retryableRename(oldEntry *filer.Entry, effects *renameEffects) bool {
 	return true
 }
 
-// finishRename does what a committed rename leaves for after its commit.
-func (fs *FilerServer) finishRename(ctx context.Context, effects *renameEffects, signatures []int32) {
+// finishRename does what a committed rename leaves for after its commit and
+// returns the log position of the last event it emitted.
+func (fs *FilerServer) finishRename(ctx context.Context, effects *renameEffects, signatures []int32) int64 {
 	// Chunks from an overwritten rename target are only deletable after the
 	// rename transaction has committed: anything that fails mid-rename (move,
 	// child moves, oldPath delete, CommitTransaction) would otherwise leave
@@ -284,9 +300,11 @@ func (fs *FilerServer) finishRename(ctx context.Context, effects *renameEffects,
 	}
 	fs.finishRemoteCopies(ctx, effects.pendingRemoteCopies)
 	applyRemoteCopies(effects.metadataEvents, effects.pendingRemoteCopies)
+	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	for _, event := range effects.metadataEvents {
 		event.notify(fs.filer, ctx, signatures)
 	}
+	return eventSink.Last().GetTsNs()
 }
 
 // renameResponseBuffer holds a rename's responses for its client until the

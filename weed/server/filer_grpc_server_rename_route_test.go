@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -136,5 +137,79 @@ func TestForwardedStreamRenameEntryRefusedByNonOwner(t *testing.T) {
 	}
 	if _, err := storeB.FindEntry(context.Background(), p); err != nil {
 		t.Fatalf("a refused forward moved the entry: %v", err)
+	}
+}
+
+// A forwarded rename is answered only once this filer has replayed the
+// owner's events through the rename: the target exists on the owner alone
+// until then, and an unlink of a name this filer owns would find nothing.
+func TestForwardedRenameWaitsForOwnerEvents(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		rename func(c *twoFilers, dir, name string) error
+	}{
+		{"stream", func(c *twoFilers, dir, name string) error {
+			stream := &renameTestStream{}
+			err := c.fsA.StreamRenameEntry(&filer_pb.StreamRenameEntryRequest{
+				OldDirectory: dir, OldName: name, NewDirectory: dir, NewName: name + ".renamed",
+			}, stream)
+			for _, resp := range stream.sent {
+				if resp.EventNotification == nil {
+					t.Errorf("the owner's end-of-rename position reached the client: %v", resp)
+				}
+			}
+			return err
+		}},
+		{"atomic", func(c *twoFilers, dir, name string) error {
+			resp, err := c.fsA.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+				OldDirectory: dir, OldName: name, NewDirectory: dir, NewName: name + ".renamed",
+			})
+			if resp.GetTsNs() != 0 {
+				t.Errorf("the owner's log position reached the client: %d", resp.GetTsNs())
+			}
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTwoFilers(t)
+			storeB := separateStores(c)
+			sharedWriteRing(c)
+			ma := filer.NewMetaAggregator(c.fsA.filer, c.addrA, c.dial)
+			c.fsA.filer.MetaAggregator = ma
+			t.Cleanup(ma.Shutdown)
+			ma.TrackPeerForTesting(c.addrB)
+
+			p := c.keyOwnedBy(t, c.addrB, c.addrB)
+			dir, name := p.DirAndName()
+			create := &filer_pb.CreateEntryRequest{Directory: dir, OExcl: true, Entry: &filer_pb.Entry{
+				Name: name, Attributes: &filer_pb.FuseAttributes{Mtime: 1700000000, FileMode: 0644},
+			}}
+			if resp, err := c.fsA.CreateEntry(context.Background(), create); err != nil || resp.GetError() != "" {
+				t.Fatalf("create via A: resp=%v err=%v", resp, err)
+			}
+			createdTsNs := c.fsB.filer.LocalMetaLogBuffer.LastTsNs.Load()
+			ma.ReportPeerWatermarksForTesting(c.addrB, createdTsNs, 0)
+
+			done := make(chan error, 1)
+			go func() { done <- tc.rename(c, dir, name) }()
+			select {
+			case err := <-done:
+				t.Fatalf("rename answered before A replayed the owner's rename events: %v", err)
+			case <-time.After(300 * time.Millisecond):
+			}
+			if _, err := storeB.FindEntry(context.Background(), p+".renamed"); err != nil {
+				t.Fatalf("the owner has no renamed entry: %v", err)
+			}
+
+			ma.ReportPeerWatermarksForTesting(c.addrB, c.fsB.filer.LocalMetaLogBuffer.LastTsNs.Load(), 0)
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("rename via A: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("rename still waiting after A replayed the owner's events")
+			}
+		})
 	}
 }

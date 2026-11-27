@@ -75,7 +75,6 @@ func (fs *FilerServer) forwardDeleteEntry(ctx context.Context, req *filer_pb.Del
 // forwardAtomicRenameEntry sends the rename to its source's write owner.
 // handled=false means this filer is the owner and applies it.
 func (fs *FilerServer) forwardAtomicRenameEntry(ctx context.Context, req *filer_pb.AtomicRenameEntryRequest, oldPath util.FullPath) (*filer_pb.AtomicRenameEntryResponse, bool, error) {
-	var ownerResp *filer_pb.AtomicRenameEntryResponse
 	handled, err := fs.forwardToWriteOwner(ctx, entryRouteKey(oldPath), func(owner pb.ServerAddress) error {
 		glog.V(2).InfofCtx(ctx, "AtomicRenameEntry %s: forwarding to owner %s", oldPath, owner)
 		req.IsMoved = true
@@ -84,14 +83,14 @@ func (fs *FilerServer) forwardAtomicRenameEntry(ctx context.Context, req *filer_
 			if e != nil {
 				return e
 			}
-			ownerResp = forwarded
+			fs.awaitOwnerEvents(ctx, owner, forwarded.TsNs)
 			return nil
 		})
 	})
 	if err != nil {
 		return nil, handled, err
 	}
-	return ownerResp, handled, nil
+	return &filer_pb.AtomicRenameEntryResponse{}, handled, nil
 }
 
 // forwardStreamRenameEntry sends the rename to its source's write owner and
@@ -107,13 +106,19 @@ func (fs *FilerServer) forwardStreamRenameEntry(req *filer_pb.StreamRenameEntryR
 			if err != nil {
 				return err
 			}
+			var lastEventTsNs int64
 			for {
 				resp, recvErr := forwarded.Recv()
 				if recvErr == io.EOF {
+					fs.awaitOwnerEvents(ctx, owner, lastEventTsNs)
 					return nil
 				}
 				if recvErr != nil {
 					return recvErr
+				}
+				if resp.EventNotification == nil {
+					lastEventTsNs = resp.TsNs
+					continue
 				}
 				if sendErr := stream.Send(resp); sendErr != nil {
 					return sendErr
@@ -121,6 +126,45 @@ func (fs *FilerServer) forwardStreamRenameEntry(req *filer_pb.StreamRenameEntryR
 			}
 		})
 	})
+}
+
+// ownerEventsCatchUpCap bounds how long a forwarded rename waits for this
+// filer to replay the owner's events; past it the rename is answered anyway.
+const ownerEventsCatchUpCap = 5 * time.Second
+
+// ownerEventsPollInterval re-checks the owner's watermark, which can rise
+// without lifting the low watermark that wakes the wait.
+const ownerEventsPollInterval = 10 * time.Millisecond
+
+// awaitOwnerEvents waits until this filer has replayed the owner's metadata
+// log through tsNs. A forwarded rename stores its target on the owner only,
+// and a follow-up request for that target that this filer handles itself,
+// an unlink of a name it owns, would otherwise find nothing.
+func (fs *FilerServer) awaitOwnerEvents(ctx context.Context, owner pb.ServerAddress, tsNs int64) {
+	ma := fs.filer.MetaAggregator
+	if ma == nil || tsNs <= 0 {
+		return
+	}
+	peers := []pb.ServerAddress{owner}
+	deadline := time.NewTimer(ownerEventsCatchUpCap)
+	defer deadline.Stop()
+	poll := time.NewTicker(ownerEventsPollInterval)
+	defer poll.Stop()
+	for {
+		advanced := ma.DeliveryWatermarkAdvancedChan()
+		if ma.PeersCaughtUpTo(peers, tsNs) {
+			return
+		}
+		select {
+		case <-advanced:
+		case <-poll.C:
+		case <-ctx.Done():
+			return
+		case <-deadline.C:
+			glog.WarningfCtx(ctx, "%s not replayed through %d after %v, answering the forwarded rename anyway", owner, tsNs, ownerEventsCatchUpCap)
+			return
+		}
+	}
 }
 
 // forwardToWriteOwner sends the request to key's write owner so a single filer's
