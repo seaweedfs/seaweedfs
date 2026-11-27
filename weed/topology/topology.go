@@ -1323,6 +1323,21 @@ func (t *Topology) ListDCAndRacks() (dcs map[NodeId][]NodeId) {
 	return dcs
 }
 
+func (t *Topology) DefaultPlacementStandsOut(dcName, rackName string) bool {
+	if dcName != DefaultDataCenter && rackName != DefaultRack {
+		return false
+	}
+	dcRacks := make(map[string][]string)
+	for dc, racks := range t.ListDCAndRacks() {
+		names := make([]string, 0, len(racks))
+		for _, r := range racks {
+			names = append(names, string(r))
+		}
+		dcRacks[string(dc)] = names
+	}
+	return DefaultPlacementStandsOut(dcName, rackName, dcRacks)
+}
+
 func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformationMessage, dn *DataNode) (newVolumes, deletedVolumes, changedVolumes []storage.VolumeInfo) {
 	// convert into in memory struct storage.VolumeInfo
 	volumeInfos := make([]storage.VolumeInfo, 0, len(volumes))
