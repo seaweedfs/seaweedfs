@@ -108,4 +108,29 @@ public class SeaweedFileSystemConfigTest {
         SeaweedFileSystem.applyFilerCredentials(conf, credentials);
         assertTrue(credentials.getAuthorizationHeaderValue(false).startsWith("BEARER "));
     }
+
+    @Test
+    public void testFilerCredentialOptionsOverrideOneValueEach() throws Exception {
+        FilerCredentials credentials = new FilerCredentials();
+        credentials.setBasicAuth("toml-user", "toml-pass");
+        credentials.setJwtReadSigningKey("toml-read-key", 0);
+
+        conf.set(SeaweedFileSystem.FS_SEAWEED_FILER_BASIC_AUTH_PASSWORD, "new-pass");
+        conf.setLong(SeaweedFileSystem.FS_SEAWEED_FILER_JWT_SIGNING_READ_EXPIRES, 300);
+        SeaweedFileSystem.applyFilerCredentials(conf, credentials);
+
+        assertEquals("Basic " + java.util.Base64.getEncoder()
+                        .encodeToString("toml-user:new-pass".getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                credentials.getAuthorizationHeaderValue(true));
+        String[] read = credentials.getAuthorizationHeaderValue(false).substring("BEARER ".length()).split("\\.");
+        javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+        mac.init(new javax.crypto.spec.SecretKeySpec(
+                "toml-read-key".getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));
+        assertEquals(java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(mac.doFinal(
+                (read[0] + "." + read[1]).getBytes(java.nio.charset.StandardCharsets.UTF_8))), read[2]);
+        String payload = new String(java.util.Base64.getUrlDecoder().decode(read[1]),
+                java.nio.charset.StandardCharsets.UTF_8);
+        long exp = Long.parseLong(payload.replaceAll("[^0-9]", ""));
+        assertTrue(exp - System.currentTimeMillis() / 1000 >= 299);
+    }
 }

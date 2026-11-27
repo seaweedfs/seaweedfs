@@ -76,26 +76,19 @@ public class SeaweedFileSystem extends FileSystem {
         seaweedFileSystemStore = new SeaweedFileSystemStore(host, port, grpcPort, cn, conf);
     }
 
-    // Options set here override the [filer.basic_auth] and [jwt.filer_signing] values of security.toml.
+    // Each option set here overrides only its own [filer.basic_auth] or [jwt.filer_signing] value of security.toml.
     static void applyFilerCredentials(Configuration conf, FilerCredentials credentials) throws IOException {
-        String user = conf.get(FS_SEAWEED_FILER_BASIC_AUTH_USER, "");
-        String password = secret(conf, FS_SEAWEED_FILER_BASIC_AUTH_PASSWORD);
-        if (!user.isEmpty() || password != null) {
-            credentials.setBasicAuth(user, password);
-        }
-        String key = secret(conf, FS_SEAWEED_FILER_JWT_SIGNING_KEY);
-        if (key != null) {
-            credentials.setJwtSigningKey(key, conf.getLong(FS_SEAWEED_FILER_JWT_SIGNING_EXPIRES, 0));
-        }
-        String readKey = secret(conf, FS_SEAWEED_FILER_JWT_SIGNING_READ_KEY);
-        if (readKey != null) {
-            credentials.setJwtReadSigningKey(readKey, conf.getLong(FS_SEAWEED_FILER_JWT_SIGNING_READ_EXPIRES, 0));
-        }
+        credentials.setBasicAuth(conf.get(FS_SEAWEED_FILER_BASIC_AUTH_USER),
+                secret(conf, FS_SEAWEED_FILER_BASIC_AUTH_PASSWORD));
+        credentials.setJwtSigningKey(secret(conf, FS_SEAWEED_FILER_JWT_SIGNING_KEY),
+                conf.getLong(FS_SEAWEED_FILER_JWT_SIGNING_EXPIRES, 0));
+        credentials.setJwtReadSigningKey(secret(conf, FS_SEAWEED_FILER_JWT_SIGNING_READ_KEY),
+                conf.getLong(FS_SEAWEED_FILER_JWT_SIGNING_READ_EXPIRES, 0));
     }
 
     private static String secret(Configuration conf, String name) throws IOException {
         char[] value = conf.getPassword(name);
-        return value == null || value.length == 0 ? null : new String(value);
+        return value == null ? null : new String(value);
     }
 
     @Override
