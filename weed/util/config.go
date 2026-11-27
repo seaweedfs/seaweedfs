@@ -1,6 +1,7 @@
 package util
 
 import (
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +54,24 @@ func LoadSecurityConfiguration() {
 				securityConfigFile(), err, JwtSigningKeysWiki)
 		}
 	})
+}
+
+// errSecurityConfigUnreadable leaves out the parser error, which can quote
+// configuration values.
+var errSecurityConfigUnreadable = errors.New("security.toml exists but cannot be read or parsed; fix it or remove it, since running without its TLS settings would send credentials in plaintext")
+
+// LoadSecurityConfigurationOrError is LoadConfiguration("security", false) for
+// clients that must not start without the settings a present security.toml
+// holds: a missing file is fine, an unreadable or malformed one is an error.
+func LoadSecurityConfigurationOrError() error {
+	if _, _, err := ReadConfigurationWithError("security", ""); err != nil {
+		var notFound viper.ConfigFileNotFoundError
+		if !errors.As(err, &notFound) {
+			return errSecurityConfigUnreadable
+		}
+	}
+	LoadConfiguration("security", false)
+	return nil
 }
 
 func LoadConfiguration(configFileName string, required bool) (loaded bool) {

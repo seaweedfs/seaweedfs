@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -105,4 +106,27 @@ func TestReadConfigurationReadsTheGivenFile(t *testing.T) {
 	v, used := ReadConfiguration("readconf_test", given)
 	assert.Equal(t, given, used)
 	assert.Equal(t, "given", v.GetString("readconf.key"))
+}
+
+func TestLoadSecurityConfigurationOrErrorRefusesAnUnreadableFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	saved := ConfigurationFileDirectory
+	ConfigurationFileDirectory = DirectoryValueType(dir)
+	t.Cleanup(func() { ConfigurationFileDirectory = saved })
+
+	if err := LoadSecurityConfigurationOrError(); err != nil {
+		t.Fatalf("missing security.toml: %v", err)
+	}
+	const secret = "parser-must-not-echo-this"
+	if err := os.WriteFile(filepath.Join(dir, "security.toml"), []byte("[grpc.client\nkey = \""+secret+"\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	err := LoadSecurityConfigurationOrError()
+	if err == nil {
+		t.Fatal("malformed security.toml was accepted")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatal("the error quotes the configuration")
+	}
 }

@@ -107,7 +107,10 @@ func Run(args []string) int {
 }
 
 func runWithOptions(opts *Options) bool {
-	util.LoadConfiguration("security", false)
+	if err := util.LoadSecurityConfigurationOrError(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return false
+	}
 
 	// Initialize SQL engine with master address for service discovery.
 	sqlEngine := engine.NewSQLEngine(opts.Master)
