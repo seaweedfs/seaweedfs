@@ -2,13 +2,46 @@ package pluginworker
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+func TestAdminScriptShellOptionsAuthenticateFilerCalls(t *testing.T) {
+	// Admin scripts run shell commands against the filer, so under
+	// grpc_require_token they must present the worker's filer admin token.
+	dir := t.TempDir()
+	saved := util.ConfigurationFileDirectory
+	util.ConfigurationFileDirectory = util.DirectoryValueType(dir)
+	t.Cleanup(func() { util.ConfigurationFileDirectory = saved })
+	key := security.SigningKey("admin-script-test-signing-key-0123456789")
+	if err := os.WriteFile(filepath.Join(dir, "security.toml"), []byte("[jwt.filer_signing]\nkey = \""+string(key)+"\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewAdminScriptHandler(nil)
+	options, err := h.buildAdminScriptShellOptions(&plugin_pb.ClusterContext{
+		MasterGrpcAddresses: []string{"master:19333"},
+		FilerAddresses:      []string{"filer:8888.18890"},
+	})
+	if err != nil {
+		t.Fatalf("buildAdminScriptShellOptions returned err = %v", err)
+	}
+	if options.FilerTokenSource == nil {
+		t.Fatal("admin script shell options carry no filer token source")
+	}
+	token, err := options.FilerTokenSource(context.Background())
+	if err != nil || !security.IsFilerAdminToken(key, token) {
+		t.Fatalf("admin script filer token is not a valid admin token for the configured key: err=%v", err)
+	}
+}
 
 func TestAdminScriptFilerAddressKeepsGrpcPortOffConvention(t *testing.T) {
 	// FilerAddresses arrive as pb.ServerAddress (host:httpPort.grpcPort). The
