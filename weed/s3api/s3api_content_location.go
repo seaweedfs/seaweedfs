@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
@@ -20,6 +21,16 @@ func contentLocationPairMap(filerPath string) map[string]string {
 		return nil
 	}
 	return map[string]string{contentLocationPairHeader: escapeFilerPath(filerPath)}
+}
+
+// copiedChunkContentLocation returns the path a copy of chunk records. A chunk
+// encrypted for the volume server records none: its ciphertext is copied as
+// is, and cipher uploads send no pairs.
+func copiedChunkContentLocation(chunk *filer_pb.FileChunk, dstPath string) string {
+	if len(chunk.CipherKey) > 0 {
+		return ""
+	}
+	return dstPath
 }
 
 // objectContentLocation returns the filer path of the object a write belongs

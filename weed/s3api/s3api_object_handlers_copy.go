@@ -1693,7 +1693,7 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 		return nil, fmt.Errorf("download chunk data: %w", err)
 	}
 
-	if err := s3a.uploadChunkData(chunkData, assignResult, chunk.IsCompressed, dstPath); err != nil {
+	if err := s3a.uploadChunkData(chunkData, assignResult, chunk.IsCompressed, copiedChunkContentLocation(chunk, dstPath)); err != nil {
 		return nil, fmt.Errorf("upload chunk data: %w", err)
 	}
 
@@ -1760,7 +1760,7 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 		return nil, fmt.Errorf("download chunk range data: %w", err)
 	}
 
-	if err := s3a.uploadChunkData(chunkData, assignResult, originalChunk.IsCompressed, dstPath); err != nil {
+	if err := s3a.uploadChunkData(chunkData, assignResult, originalChunk.IsCompressed, copiedChunkContentLocation(originalChunk, dstPath)); err != nil {
 		return nil, fmt.Errorf("upload chunk range data: %w", err)
 	}
 
