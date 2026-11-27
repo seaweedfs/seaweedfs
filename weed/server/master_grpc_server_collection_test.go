@@ -7,11 +7,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/raft"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/sequence"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
@@ -117,7 +121,7 @@ func TestDoDeleteNormalCollectionBoundsEachVolumeServerRPC(t *testing.T) {
 	ms := newCollectionTestMaster(topo)
 
 	done := make(chan error, 1)
-	go func() { done <- ms.doDeleteNormalCollection(context.Background(), collection) }()
+	go func() { done <- ms.deleteCollection(context.Background(), collection) }()
 
 	call := awaitCall(t, stub, "bounded RPC")
 	if call.budget <= 0 {
@@ -131,10 +135,10 @@ func TestDoDeleteNormalCollectionBoundsEachVolumeServerRPC(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Errorf("doDeleteNormalCollection returned %v, want nil once the volume server answers", err)
+			t.Errorf("deleteCollection returned %v, want nil once the volume server answers", err)
 		}
 	case <-time.After(15 * time.Second):
-		t.Fatal("doDeleteNormalCollection did not return after the volume server answered")
+		t.Fatal("deleteCollection did not return after the volume server answered")
 	}
 }
 
@@ -210,8 +214,8 @@ func TestDoDeleteNormalCollectionSendsOneRPCPerVolumeServer(t *testing.T) {
 	}
 
 	ms := newCollectionTestMaster(topo)
-	if err := ms.doDeleteNormalCollection(context.Background(), collection); err != nil {
-		t.Fatalf("doDeleteNormalCollection: %v", err)
+	if err := ms.deleteCollection(context.Background(), collection); err != nil {
+		t.Fatalf("deleteCollection: %v", err)
 	}
 
 	awaitCall(t, stub, "one RPC per server")
@@ -243,8 +247,8 @@ func TestDoDeleteNormalCollectionKeepsGoingPastAFailingServer(t *testing.T) {
 	}, healthyNode)
 
 	ms := newCollectionTestMaster(topo)
-	if err := ms.doDeleteNormalCollection(context.Background(), collection); err == nil {
-		t.Fatal("doDeleteNormalCollection reported success while a server refused")
+	if err := ms.deleteCollection(context.Background(), collection); err == nil {
+		t.Fatal("deleteCollection reported success while a server refused")
 	}
 
 	awaitCall(t, failing, "failing server")
@@ -283,5 +287,244 @@ func TestDeleteCollectionRunsTheEcPassWhenTheNormalPassFails(t *testing.T) {
 
 	if _, found := topo.FindCollection(collection); !found {
 		t.Error("the normal collection was dropped from the topology despite failing; nothing would retry it")
+	}
+}
+
+// growingVolumeServer keeps the volumes AllocateVolume creates until
+// DeleteCollection drops them. The holdAt-th allocation, counted from 1, waits
+// for release before it creates its volume, and the holdDeleteAt-th
+// DeleteCollection waits for deleteRelease before it drops any.
+type growingVolumeServer struct {
+	volume_server_pb.UnimplementedVolumeServerServer
+
+	holdAt  int
+	held    chan struct{}
+	release chan struct{}
+
+	holdDeleteAt  int
+	deleteHeld    chan struct{}
+	deleteRelease chan struct{}
+
+	mu          sync.Mutex
+	allocations int
+	deletes     int
+	volumes     map[uint32]string
+}
+
+func (s *growingVolumeServer) AllocateVolume(ctx context.Context, req *volume_server_pb.AllocateVolumeRequest) (*volume_server_pb.AllocateVolumeResponse, error) {
+	s.mu.Lock()
+	s.allocations++
+	hold := s.allocations == s.holdAt
+	s.mu.Unlock()
+	if hold {
+		close(s.held)
+		<-s.release
+	}
+	s.mu.Lock()
+	s.volumes[req.VolumeId] = req.Collection
+	s.mu.Unlock()
+	return &volume_server_pb.AllocateVolumeResponse{}, nil
+}
+
+func (s *growingVolumeServer) DeleteCollection(ctx context.Context, req *volume_server_pb.DeleteCollectionRequest) (*volume_server_pb.DeleteCollectionResponse, error) {
+	s.mu.Lock()
+	s.deletes++
+	hold := s.deletes == s.holdDeleteAt
+	s.mu.Unlock()
+	if hold {
+		close(s.deleteHeld)
+		<-s.deleteRelease
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for vid, collection := range s.volumes {
+		if collection == req.Collection {
+			delete(s.volumes, vid)
+		}
+	}
+	return &volume_server_pb.DeleteCollectionResponse{}, nil
+}
+
+// growthRaftServer answers as leader and applies the volume id bound growth asks for.
+type growthRaftServer struct {
+	raft.Server
+	topo *topology.Topology
+}
+
+func (growthRaftServer) State() string { return raft.Leader }
+
+func (s growthRaftServer) Do(c raft.Command) (interface{}, error) {
+	if command, ok := c.(*topology.MaxVolumeIdCommand); ok {
+		s.topo.UpAdjustMaxVolumeId(command.MaxVolumeId)
+	}
+	return nil, nil
+}
+
+// A bucket's first write starts a grow of several volumes, and the bucket can be
+// deleted before that grow is done. The volumes created after the delete
+// recreated the collection and were never removed.
+func TestDeleteCollectionStopsAGrowInFlight(t *testing.T) {
+	const collection = "bucket-g"
+
+	stub := &growingVolumeServer{
+		holdAt:  2,
+		held:    make(chan struct{}),
+		release: make(chan struct{}),
+		volumes: make(map[uint32]string),
+	}
+	releaseOnce := sync.OnceFunc(func() { close(stub.release) })
+	t.Cleanup(releaseOnce)
+
+	topo := topology.NewTopology("test", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	topo.RaftServer = growthRaftServer{topo: topo}
+	grpcPort := serveGrpc(t, func(s *grpc.Server) {
+		volume_server_pb.RegisterVolumeServerServer(s, stub)
+	})
+	topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", grpcPort-10000, grpcPort, "", "vs1", map[string]uint32{"": 10})
+	ms := newCollectionTestMaster(topo)
+
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	option := &topology.VolumeGrowOption{
+		Collection:       collection,
+		ReplicaPlacement: rp,
+		Ttl:              needle.EMPTY_TTL,
+		Version:          uint32(needle.GetCurrentVersion()),
+	}
+	grown := make(chan struct{})
+	go func() {
+		defer close(grown)
+		topology.NewDefaultVolumeGrowth().GrowByCountAndType(ms.grpcDialOption, 7, option, topo)
+	}()
+
+	select {
+	case <-stub.held:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the grow never reached its second volume")
+	}
+	deleted := make(chan error, 1)
+	go func() { deleted <- ms.deleteCollection(context.Background(), collection) }()
+
+	// The delete waits for the volume being created rather than racing it.
+	time.Sleep(200 * time.Millisecond)
+	stub.mu.Lock()
+	early := stub.deletes
+	stub.mu.Unlock()
+	if early != 0 {
+		t.Error("the delete reached the volume server while the grow was still creating a volume")
+	}
+	releaseOnce()
+
+	select {
+	case <-grown:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the grow did not finish")
+	}
+	select {
+	case err := <-deleted:
+		if err != nil {
+			t.Fatalf("deleteCollection: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the delete did not finish")
+	}
+
+	stub.mu.Lock()
+	left := len(stub.volumes)
+	stub.mu.Unlock()
+	if left != 0 {
+		t.Errorf("%d volumes of the deleted collection are left on the volume server", left)
+	}
+	if _, found := topo.FindCollection(collection); found {
+		t.Error("the grow recreated the deleted collection in the topology")
+	}
+}
+
+// The EC pass deletes by name after the normal pass, on servers that can also
+// hold normal volumes, so the name stays fenced until both passes are done: a
+// write recreating the bucket in between would place a volume the EC pass then
+// deletes. A second delete of the name waits, then finds nothing left to do.
+func TestDeleteCollectionKeepsTheNameFencedThroughTheEcPass(t *testing.T) {
+	const collection = "bucket-h"
+
+	stub := &growingVolumeServer{
+		holdDeleteAt:  2,
+		deleteHeld:    make(chan struct{}),
+		deleteRelease: make(chan struct{}),
+		volumes:       map[uint32]string{1: collection},
+	}
+	releaseOnce := sync.OnceFunc(func() { close(stub.deleteRelease) })
+	t.Cleanup(releaseOnce)
+
+	topo := topology.NewTopology("test", sequence.NewMemorySequencer(), 32*1024, 5, false)
+	topo.RaftServer = growthRaftServer{topo: topo}
+	grpcPort := serveGrpc(t, func(s *grpc.Server) {
+		volume_server_pb.RegisterVolumeServerServer(s, stub)
+	})
+	dn := topo.GetOrCreateDataCenter("dc1").GetOrCreateRack("rack1").
+		GetOrCreateDataNode("127.0.0.1", grpcPort-10000, grpcPort, "", "vs1", map[string]uint32{"": 10})
+	topo.SyncDataNodeRegistration([]*master_pb.VolumeInformationMessage{
+		{Id: 1, Collection: collection, Version: 3},
+	}, dn)
+	topo.SyncDataNodeEcShards([]*master_pb.VolumeEcShardInformationMessage{
+		{Id: 9, Collection: collection, EcIndexBits: 0x1f},
+	}, dn)
+	ms := newCollectionTestMaster(topo)
+
+	rp, _ := super_block.NewReplicaPlacementFromString("000")
+	grow := func() error {
+		_, err := topology.NewDefaultVolumeGrowth().GrowByCountAndType(ms.grpcDialOption, 1, &topology.VolumeGrowOption{
+			Collection:       collection,
+			ReplicaPlacement: rp,
+			Ttl:              needle.EMPTY_TTL,
+			Version:          uint32(needle.GetCurrentVersion()),
+		}, topo)
+		return err
+	}
+
+	first := make(chan error, 1)
+	go func() { first <- ms.deleteCollection(context.Background(), collection) }()
+	select {
+	case <-stub.deleteHeld:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the EC pass never reached the volume server")
+	}
+
+	if err := grow(); err == nil {
+		t.Error("a grow under the name went ahead while the EC pass was deleting it")
+	}
+	second := make(chan error, 1)
+	go func() { second <- ms.deleteCollection(context.Background(), collection) }()
+	waitForLockWaiter(t, "(*Topology).FenceGrowth")
+	releaseOnce()
+
+	for _, done := range []chan error{first, second} {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("deleteCollection: %v", err)
+			}
+		case <-time.After(15 * time.Second):
+			t.Fatal("a delete did not finish")
+		}
+	}
+
+	stub.mu.Lock()
+	allocations, deletes, left := stub.allocations, stub.deletes, len(stub.volumes)
+	stub.mu.Unlock()
+	if allocations != 0 {
+		t.Errorf("%d volumes were created under the name while it was being deleted", allocations)
+	}
+	if deletes != 2 {
+		t.Errorf("the volume server got %d DeleteCollection calls, want 2: the second delete came back after the first removed the collection", deletes)
+	}
+	if left != 0 {
+		t.Errorf("%d volumes of the deleted collection are left on the volume server", left)
+	}
+	if _, found := topo.FindCollection(collection); found {
+		t.Error("the collection is still in the topology after the delete")
+	}
+	if err := grow(); err != nil {
+		t.Errorf("a grow under the name failed once the delete was done: %v", err)
 	}
 }
