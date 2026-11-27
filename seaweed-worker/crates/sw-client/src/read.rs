@@ -486,10 +486,29 @@ async fn expand_chunks(
         };
         let manifest = FileChunkManifest::decode(raw.as_slice())
             .with_context(|| format!("decode manifest {fid}"))?;
-        let sub = Box::pin(expand_chunks(client, volumes, &manifest.chunks, decoder)).await?;
+        let held = cut_to_manifest_span(chunk, manifest.chunks);
+        let sub = Box::pin(expand_chunks(client, volumes, &held, decoder)).await?;
         data.extend(sub);
     }
     Ok(data)
+}
+
+/// The chunks a manifest holds, cut to the manifest's span: a truncate may
+/// have shortened the manifest and left its chunks whole.
+fn cut_to_manifest_span(manifest: &FileChunk, held: Vec<FileChunk>) -> Vec<FileChunk> {
+    let end = manifest.offset + manifest.size as i64;
+    held.into_iter()
+        .filter_map(|mut c| {
+            if c.offset + c.size as i64 <= end {
+                return Some(c);
+            }
+            if c.offset >= end {
+                return None;
+            }
+            c.size = (end - c.offset) as u64;
+            Some(c)
+        })
+        .collect()
 }
 
 /// Resolve data chunks into non-overlapping visible intervals (latest write wins).
@@ -1452,6 +1471,42 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(tail, &plain[19..], "a size past u64::MAX reads to EOF");
+    }
+
+    #[tokio::test]
+    async fn a_shortened_manifest_reads_only_its_span() {
+        let plain: Vec<u8> = (0..16u8).map(|i| i + 1).collect();
+        let inner = FileChunkManifest {
+            chunks: vec![chunk("1,aa", 0, 8, 1), chunk("1,bb", 8, 8, 1)],
+        };
+        let needles = HashMap::from([
+            ("1,mm".to_string(), inner.encode_to_vec()),
+            ("1,aa".to_string(), plain[..8].to_vec()),
+            ("1,bb".to_string(), plain[8..].to_vec()),
+        ]);
+        let volumes = VolumeReader::with_transport(Arc::new(BytesTransport {
+            needles,
+            reads: AtomicUsize::new(0),
+            whole_reads: AtomicUsize::new(0),
+        }));
+        volumes.location_cache.learn(1, vec!["h:1".into()]);
+        let mut manifest = chunk("1,mm", 0, 12, 1);
+        manifest.is_chunk_manifest = true;
+        let entry = Entry {
+            attributes: Some(crate::filer_pb::FuseAttributes {
+                file_size: 20,
+                ..Default::default()
+            }),
+            chunks: vec![manifest],
+            ..Default::default()
+        };
+        let mut client = FilerClient::connect_lazy("127.0.0.1:1").unwrap();
+        let got = read_file(&mut client, &volumes, &entry, 0, 20)
+            .await
+            .unwrap();
+        let mut want = plain[..12].to_vec();
+        want.resize(20, 0);
+        assert_eq!(got, want);
     }
 
     #[tokio::test]
