@@ -116,6 +116,7 @@ func TestDrainVersionsHealQueueRequeuesInFlightForGraceLeft(t *testing.T) {
 type healPointerFiler struct {
 	*anonymousReadFiler
 	updates []*filer_pb.UpdateEntryRequest
+	deletes []*filer_pb.DeleteEntryRequest
 }
 
 func (f *healPointerFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
@@ -140,6 +141,14 @@ func (f *healPointerFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream 
 	return nil
 }
 
+func (f *healPointerFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deletes = append(f.deletes, req)
+	delete(f.entries, path.Join(req.Directory, req.Name))
+	return &filer_pb.DeleteEntryResponse{}, nil
+}
+
 func (f *healPointerFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -154,10 +163,12 @@ func newHealPointerServer(t *testing.T, stored *filer_pb.Entry, presentVersionId
 	stored.Name = "k" + s3_constants.VersionsFolder
 	stored.IsDirectory = true
 	f.entries["/buckets/b/"+stored.Name] = stored
-	fileName := "v_" + presentVersionId
-	f.entries["/buckets/b/"+stored.Name+"/"+fileName] = &filer_pb.Entry{
-		Name:     fileName,
-		Extended: map[string][]byte{s3_constants.ExtVersionIdKey: []byte(presentVersionId)},
+	if presentVersionId != "" {
+		fileName := "v_" + presentVersionId
+		f.entries["/buckets/b/"+stored.Name+"/"+fileName] = &filer_pb.Entry{
+			Name:     fileName,
+			Extended: map[string][]byte{s3_constants.ExtVersionIdKey: []byte(presentVersionId)},
+		}
 	}
 	return newPutTestServer(t, startFakeFiler(t, f)), f
 }
@@ -194,5 +205,32 @@ func TestHealStalePointerDefersWhenLiveEntryWasJustStored(t *testing.T) {
 	}
 	if len(f.updates) != 0 {
 		t.Fatalf("updates = %d, want the repair deferred for the pointer stored again", len(f.updates))
+	}
+}
+
+func TestHealStalePointerKeepsEmptyDirWhenLiveEntryWasJustStored(t *testing.T) {
+	old := time.Now().Add(-2 * staleVersionPointerGrace)
+	pointerId := invertedVersionId(old)
+	stored := committedAt(&filer_pb.Entry{Extended: map[string][]byte{
+		s3_constants.ExtLatestVersionIdKey:       []byte(pointerId),
+		s3_constants.ExtLatestVersionFileNameKey: []byte("v_" + pointerId),
+	}}, old)
+	s3a, f := newHealPointerServer(t, stored, "")
+	snapshot := proto.Clone(stored).(*filer_pb.Entry)
+	stored.CommitTsNs = time.Now().UnixNano()
+
+	if _, err := s3a.healStaleLatestVersionPointer("b", "k", snapshot, "v_"+pointerId); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("healStaleLatestVersionPointer = %v, want not found", err)
+	}
+	if len(f.deletes) != 0 || len(f.updates) != 0 {
+		t.Fatalf("deletes = %d, updates = %d, want the .versions entry left alone", len(f.deletes), len(f.updates))
+	}
+
+	stored.CommitTsNs = old.UnixNano()
+	if _, err := s3a.healStaleLatestVersionPointer("b", "k", snapshot, "v_"+pointerId); !errors.Is(err, filer_pb.ErrNotFound) {
+		t.Fatalf("healStaleLatestVersionPointer = %v, want not found", err)
+	}
+	if len(f.deletes) != 1 {
+		t.Fatalf("deletes = %d, want the expired empty .versions removed", len(f.deletes))
 	}
 }

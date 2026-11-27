@@ -2348,6 +2348,12 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 	}
 
 	if latestEntry == nil {
+		if stalePointerFile != "" {
+			if liveEntry, liveErr := s3a.getObjectScopedEntryRoutedByKey(bucket, normalizedObject, bucketDir, versionsObjectPath); liveErr != nil || versionPointerGraceLeft(liveEntry) > 0 {
+				versioningHealInfof("deferred", "bucket=%s key=%s mode=recent_commit_empty missing_file=%s err=%v", bucket, normalizedObject, stalePointerFile, liveErr)
+				return nil, fmt.Errorf("%w: no remaining version in %s", filer_pb.ErrNotFound, versionsDir)
+			}
+		}
 		// No version remains: remove the residue directory outright so future
 		// reads take the clean ErrNotFound path instead of re-entering this
 		// self-heal (and its rescan + surfaced warning) on every request. The
