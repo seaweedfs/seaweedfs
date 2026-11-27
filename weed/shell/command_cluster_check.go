@@ -51,6 +51,7 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 		return err
 	}
 	fmt.Fprintf(writer, "Topology volumeSizeLimit:%d MB%s\n", volumeSizeLimitMb, diskInfosToString(topologyInfo.DiskInfos))
+	printDefaultPlacementWarnings(writer, topologyInfo)
 
 	if len(topologyInfo.DiskInfos) == 0 {
 		return fmt.Errorf("no disk type defined")
@@ -98,28 +99,14 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 	if err != nil {
 		return err
 	}
-	dcRacks := make(map[string][]string)
 	for _, dc := range t.DataCenterInfos {
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {
 				volumeServers = append(volumeServers, pb.NewServerAddressFromDataNode(dn))
 			}
-			if len(r.DataNodeInfos) > 0 {
-				dcRacks[dc.Id] = append(dcRacks[dc.Id], r.Id)
-			}
 		}
 	}
 	fmt.Fprintf(writer, "the cluster has %d volume servers: %+v\n", len(volumeServers), volumeServers)
-	for _, dc := range t.DataCenterInfos {
-		for _, r := range dc.RackInfos {
-			if !topology.DefaultPlacementStandsOut(dc.Id, r.Id, dcRacks) {
-				continue
-			}
-			for _, dn := range r.DataNodeInfos {
-				fmt.Fprintf(writer, "warning: volume server %s is in data center %s rack %s while other volume servers name theirs; set -dataCenter and -rack on it\n", pb.NewServerAddressFromDataNode(dn), dc.Id, r.Id)
-			}
-		}
-	}
 
 	// collect all masters
 	var masters []pb.ServerAddress
@@ -261,4 +248,25 @@ func printTiming(writer io.Writer, startNs, remoteNs, stopNs int64) {
 	roundTripTimeMs := float32(stopNs-startNs) / 1000000
 	deltaTimeMs := float32(remoteNs-(startNs+stopNs)/2) / 1000000
 	fmt.Fprintf(writer, "ok round trip %.3fms clock delta %.3fms\n", roundTripTimeMs, deltaTimeMs)
+}
+
+func printDefaultPlacementWarnings(writer io.Writer, t *master_pb.TopologyInfo) {
+	dcRacks := make(map[string][]string)
+	for _, dc := range t.DataCenterInfos {
+		for _, r := range dc.RackInfos {
+			if len(r.DataNodeInfos) > 0 {
+				dcRacks[dc.Id] = append(dcRacks[dc.Id], r.Id)
+			}
+		}
+	}
+	for _, dc := range t.DataCenterInfos {
+		for _, r := range dc.RackInfos {
+			if !topology.DefaultPlacementStandsOut(dc.Id, r.Id, dcRacks) {
+				continue
+			}
+			for _, dn := range r.DataNodeInfos {
+				fmt.Fprintf(writer, "warning: volume server %s is in data center %s rack %s while other volume servers name theirs; set -dataCenter and -rack on it\n", pb.NewServerAddressFromDataNode(dn), dc.Id, r.Id)
+			}
+		}
+	}
 }
