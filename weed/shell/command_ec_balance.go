@@ -42,28 +42,18 @@ func (c *commandEcBalance) HasTag(CommandTag) bool {
 }
 
 func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
-	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	collection := balanceCommand.String("collection", string(wildcard.CollectionFilterEach), "comma-separated collection names, wildcards, or regex patterns, \""+CollectionDefault+"\" for the collection with no name, or \""+string(wildcard.CollectionFilterEach)+"\" for each collection")
-	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
-	shardReplicaPlacement := balanceCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty")
-	diskTypeStr := balanceCommand.String("diskType", "", "the disk type for EC shards (hdd, ssd, or empty for default hdd)")
-	volumeIdsStr := balanceCommand.String("volumeIds", "", "optional comma-separated list of ec volume ids to balance; defaults to all")
-	maxParallelization := balanceCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
-	ioBytePerSecond := balanceCommand.Int64("ioBytePerSecond", 0, "limit the speed of each shard copy; 0 falls back to the volume server's maintenance rate")
-	applyBalancing := balanceCommand.Bool("apply", false, "apply the balancing plan")
-	// TODO: remove this alias
-	applyBalancingAlias := balanceCommand.Bool("force", false, "apply the balancing plan (alias for -apply)")
+	balanceCommand, f := newEcBalanceFlagSet(c.Name())
 
 	if err = balanceCommand.Parse(args); err != nil {
 		return err
 	}
 
-	handleDeprecatedForceFlag(writer, balanceCommand, applyBalancingAlias, applyBalancing)
-	infoAboutSimulationMode(writer, *applyBalancing, "-apply")
+	handleDeprecatedForceFlag(writer, balanceCommand, f.force, f.apply)
+	infoAboutSimulationMode(writer, *f.apply, "-apply")
 
 	var volumeIds []needle.VolumeId
-	if *volumeIdsStr != "" {
-		if volumeIds, err = parseVolumeIdsFlag(*volumeIdsStr); err != nil {
+	if *f.volumeIds != "" {
+		if volumeIds, err = parseVolumeIdsFlag(*f.volumeIds); err != nil {
 			return err
 		}
 	}
@@ -72,18 +62,51 @@ func (c *commandEcBalance) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return
 	}
 
-	collections, err := resolveEcCollections(commandEnv, *collection)
+	collections, err := resolveEcCollections(commandEnv, *f.collection)
 	if err != nil {
 		return err
 	}
 	glog.V(1).Infof("balanceEcVolumes collections %+v\n", len(collections))
 
-	rp, err := parseReplicaPlacementArg(commandEnv, *shardReplicaPlacement)
+	rp, err := parseReplicaPlacementArg(commandEnv, *f.shardReplicaPlacement)
 	if err != nil {
 		return err
 	}
 
-	diskType := types.ToDiskType(*diskTypeStr)
+	diskType := types.ToDiskType(*f.diskType)
 
-	return EcBalance(commandEnv, collections, *dc, rp, diskType, *maxParallelization, *ioBytePerSecond, *applyBalancing, nil, volumeIds)
+	return EcBalance(commandEnv, collections, *f.dc, rp, diskType, *f.maxParallelization, *f.ioBytePerSecond, *f.apply, nil, volumeIds)
+}
+
+type ecBalanceFlags struct {
+	collection, dc, shardReplicaPlacement, diskType, volumeIds *string
+	maxParallelization                                         *int
+	ioBytePerSecond                                            *int64
+	apply, force                                               *bool
+}
+
+func newEcBalanceFlagSet(name string) (*flag.FlagSet, *ecBalanceFlags) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	return fs, &ecBalanceFlags{
+		collection:            fs.String("collection", string(wildcard.CollectionFilterEach), "comma-separated collection names, wildcards, or regex patterns, \""+CollectionDefault+"\" for the collection with no name, or \""+string(wildcard.CollectionFilterEach)+"\" for each collection"),
+		dc:                    fs.String("dataCenter", "", "only apply the balancing for this dataCenter"),
+		shardReplicaPlacement: fs.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty"),
+		diskType:              fs.String("diskType", "", "the disk type for EC shards (hdd, ssd, or empty for default hdd)"),
+		volumeIds:             fs.String("volumeIds", "", "optional comma-separated list of ec volume ids to balance; defaults to all"),
+		maxParallelization:    fs.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible"),
+		ioBytePerSecond:       fs.Int64("ioBytePerSecond", 0, "limit the speed of each shard copy; 0 falls back to the volume server's maintenance rate"),
+		apply:                 fs.Bool("apply", false, "apply the balancing plan"),
+		force:                 fs.Bool("force", false, "apply the balancing plan (alias for -apply)"),
+	}
+}
+
+// EcBalanceArgsApply reports whether ec.balance accepts these arguments and applies its plan.
+func EcBalanceArgsApply(args []string) bool {
+	fs, f := newEcBalanceFlagSet("ec.balance")
+	fs.SetOutput(io.Discard)
+	if fs.Parse(args) != nil {
+		return false
+	}
+	handleDeprecatedForceFlag(io.Discard, fs, f.force, f.apply)
+	return *f.apply
 }
