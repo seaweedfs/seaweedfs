@@ -1084,7 +1084,8 @@ func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		return &filer_pb.UpdateEntryResponse{}, err
 	}
 
-	chunks, garbage, err := prepareChunks(ctx, fullpath, entry, req.Entry)
+	prepared := entry
+	chunks, garbage, err := prepareChunks(ctx, fullpath, prepared, req.Entry)
 	if err != nil {
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("UpdateEntry cleanupChunks %s: %w", fullpath, err)
 	}
@@ -1125,8 +1126,9 @@ func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	}
 	if err != nil {
 		// A commit with unknown outcome may already reference these manifests.
+		// Those kept from the stored entry are still its own.
 		if !uncertain || stamp == 0 {
-			fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunks(chunks, req.Entry.GetChunks()))
+			fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunks(chunks, slices.Concat(req.Entry.GetChunks(), prepared.GetChunks())))
 		}
 		fs.filer.ReleaseEntryCommitTsNs(stamp)
 		glog.V(3).InfofCtx(ctx, "UpdateEntry %s: %v", fullpath, err)

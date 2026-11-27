@@ -15,7 +15,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -70,7 +72,7 @@ func (v *reuseManifestVolume) uploadCount() int {
 	return v.uploads
 }
 
-func newReuseManifestServer(t *testing.T) (*FilerServer, *reuseManifestVolume) {
+func newReuseManifestServer(t *testing.T, store filer.FilerStore) (*FilerServer, *reuseManifestVolume) {
 	t.Helper()
 	volume := &reuseManifestVolume{blobs: map[string][]byte{}}
 	volumeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -113,7 +115,7 @@ func newReuseManifestServer(t *testing.T) (*FilerServer, *reuseManifestVolume) {
 	t.Cleanup(volumeServer.Close)
 	volumeHost := strings.TrimPrefix(volumeServer.URL, "http://")
 
-	f := newRenameTestFiler(t, newRenameTestStore())
+	f := newRenameTestFiler(t, store)
 	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
 	masterAddr := startFakeMasterServerForLeaderLookup(t, &reuseManifestMaster{volumeHost: volumeHost})
 	f.MasterClient = wdclient.NewMasterClient(dialOption, "test", cluster.FilerType, pb.ServerAddress("localhost:0"), "", "",
@@ -170,7 +172,7 @@ func TestCommitKeepsTheStoredManifestOfChunksListedFlat(t *testing.T) {
 	const n = filer.SmallChunkManifestBatch + 10
 	for _, how := range []string{"create", "update"} {
 		t.Run(how, func(t *testing.T) {
-			fs, volume := newReuseManifestServer(t)
+			fs, volume := newReuseManifestServer(t, newRenameTestStore())
 			ctx := context.Background()
 			resp, err := fs.CreateEntry(ctx, &filer_pb.CreateEntryRequest{Directory: "/test", Entry: walEntry(n), SkipCheckParentDirectory: true})
 			require.NoError(t, err)
@@ -212,7 +214,7 @@ func TestCommitKeepsTheStoredManifestOfChunksListedFlat(t *testing.T) {
 // into a new one.
 func TestCommitDropsTheStoredManifestOfChunksItNoLongerLists(t *testing.T) {
 	const n = filer.SmallChunkManifestBatch + 10
-	fs, volume := newReuseManifestServer(t)
+	fs, volume := newReuseManifestServer(t, newRenameTestStore())
 	ctx := context.Background()
 	resp, err := fs.CreateEntry(ctx, &filer_pb.CreateEntryRequest{Directory: "/test", Entry: walEntry(n), SkipCheckParentDirectory: true})
 	require.NoError(t, err)
@@ -244,4 +246,49 @@ func TestCommitDropsTheStoredManifestOfChunksItNoLongerLists(t *testing.T) {
 	data, _, err := filer.ResolveChunkManifest(ctx, fs.lookupFileId, stored.GetChunks(), 0, math.MaxInt64, nil)
 	require.NoError(t, err)
 	require.ElementsMatch(t, walChunkIds(rewritten.Chunks), walChunkIds(data))
+}
+
+// An update refused after it prepared its chunks leaves the stored entry as it
+// was, so the manifest it kept from that entry must not be deleted with the
+// manifests it folded itself.
+func TestRefusedUpdateKeepsTheStoredManifestItReused(t *testing.T) {
+	const n = filer.SmallChunkManifestBatch + 10
+	store := newTxnRenameStore()
+	fs, _ := newReuseManifestServer(t, conflictRefusingStore{store})
+	ctx := context.Background()
+	resp, err := fs.CreateEntry(ctx, &filer_pb.CreateEntryRequest{Directory: "/test", Entry: walEntry(n), SkipCheckParentDirectory: true})
+	require.NoError(t, err)
+	require.Empty(t, resp.Error)
+	first, err := fs.filer.FindEntry(ctx, "/test/wal.log")
+	require.NoError(t, err)
+	manifests, _ := filer.SeparateManifestChunks(first.GetChunks())
+	require.Len(t, manifests, 1)
+	fs.filer.FileIdDeletionQueue.Consume(func([]string) {})
+
+	// The update's first write commit is refused for another writer's change
+	// that keeps the manifest, so its retry finds the entry changed.
+	store.mu.Lock()
+	refused := store.commits + 2
+	store.mu.Unlock()
+	store.refuse = func(commit int) error {
+		if commit != refused {
+			return nil
+		}
+		store.mu.Lock()
+		changed := store.entries["/test/wal.log"].ShallowClone()
+		changed.Attr.Mtime = changed.Attr.Mtime.Add(time.Second)
+		store.entries["/test/wal.log"] = changed
+		store.mu.Unlock()
+		return writeConflict(commit)
+	}
+	_, err = fs.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{Directory: "/test", Entry: walEntry(n + 1)})
+	require.Equal(t, codes.FailedPrecondition, status.Code(err), "UpdateEntry: %v", err)
+
+	stored, err := fs.filer.FindEntry(ctx, "/test/wal.log")
+	require.NoError(t, err)
+	kept, _ := filer.SeparateManifestChunks(stored.GetChunks())
+	require.Equal(t, walChunkIds(manifests), walChunkIds(kept))
+	var queued []string
+	fs.filer.FileIdDeletionQueue.Consume(func(fileIds []string) { queued = append(queued, fileIds...) })
+	require.Empty(t, queued, "chunks queued for deletion")
 }
