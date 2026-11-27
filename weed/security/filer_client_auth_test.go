@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -557,5 +558,54 @@ func TestFilerSubscriptionTokensPreferSharedKey(t *testing.T) {
 				t.Fatal("WithFilerSubscriptionToken did not prefer the shared key")
 			}
 		})
+	}
+}
+
+// TestFilerClientKeysRefuseKeysTooShortToSign covers GODEBUG=fips140=only,
+// where signing with a short key panics: a key read after startup is refused
+// the way startup refuses it, so a source never signs with it.
+func TestFilerClientKeysRefuseKeysTooShortToSign(t *testing.T) {
+	readFilerClientKeysEveryCall(t)
+	saved := filerClientKeyCheck
+	filerClientKeyCheck = func(settings, keys []string) error {
+		for i, key := range keys {
+			if key != "" && len(key) < util.Fips140MinHmacKeyBytes {
+				return errors.New(settings[i] + " is too short")
+			}
+		}
+		return nil
+	}
+	t.Cleanup(func() { filerClientKeyCheck = saved })
+	short := SigningKey("0123456789")
+
+	dir := t.TempDir()
+	endpoint := filepath.Join(dir, "endpoint.yaml")
+	writeFilerSecurityConfig(t, endpoint, short, testSigningKey(t))
+	if token, err := FilerAdminTokenFromFile(endpoint)(context.Background()); err == nil || token != "" || !strings.Contains(err.Error(), "jwt.filer_signing.grpc_key") {
+		t.Fatalf("endpoint file with a short grpc_key returned token=%t err=%v", token != "", err)
+	}
+
+	savedDirectory := util.ConfigurationFileDirectory
+	util.ConfigurationFileDirectory = util.DirectoryValueType(dir)
+	t.Cleanup(func() { util.ConfigurationFileDirectory = savedDirectory })
+	path := filepath.Join(dir, "security.toml")
+	key := testSigningKey(t)
+	writeFilerSecurityToml(t, path, key, SigningKey(""))
+	if token, err := FilerAdminToken(context.Background()); err != nil || !IsFilerAdminToken(key, token) {
+		t.Fatalf("global source did not use the configured key: err=%v", err)
+	}
+	writeFilerSecurityToml(t, path, short, SigningKey(""))
+	if token, err := FilerAdminToken(context.Background()); err != nil || !IsFilerAdminToken(key, token) {
+		t.Fatalf("global source did not keep the last usable key over a short one: token=%t err=%v", token != "", err)
+	}
+
+	// With no usable key read yet, a short startup key is refused too.
+	resetGlobalFilerClientKeys()
+	startup := util.GetViper()
+	savedShared := startup.GetString("jwt.filer_signing.key")
+	t.Cleanup(func() { startup.Set("jwt.filer_signing.key", savedShared) })
+	startup.Set("jwt.filer_signing.key", string(short))
+	if token, err := FilerAdminToken(context.Background()); err == nil || token != "" {
+		t.Fatalf("short startup key returned token=%t err=%v", token != "", err)
 	}
 }

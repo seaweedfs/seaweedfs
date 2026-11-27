@@ -61,6 +61,9 @@ func (k *filerClientKeys) get() (grpcKey, sharedKey SigningKey, err error) {
 		return k.grpc, k.shared, nil
 	}
 	v, err := k.load()
+	if err == nil {
+		grpcKey, sharedKey, err = filerClientKeysFrom(v)
+	}
 	if err != nil {
 		k.read = false
 		if k.fallback == nil {
@@ -69,13 +72,26 @@ func (k *filerClientKeys) get() (grpcKey, sharedKey SigningKey, err error) {
 		if k.known {
 			return k.grpc, k.shared, nil
 		}
-		v = k.fallback()
-		return SigningKey(v.GetString("jwt.filer_signing.grpc_key")), SigningKey(v.GetString("jwt.filer_signing.key")), nil
+		return filerClientKeysFrom(k.fallback())
 	}
-	k.grpc = SigningKey(v.GetString("jwt.filer_signing.grpc_key"))
-	k.shared = SigningKey(v.GetString("jwt.filer_signing.key"))
+	k.grpc, k.shared = grpcKey, sharedKey
 	k.readAt, k.read, k.known, k.stamped = time.Now(), true, true, stamp
 	return k.grpc, k.shared, nil
+}
+
+// filerClientKeyCheck refuses keys that cannot sign in this process.
+var filerClientKeyCheck = util.CheckFips140HmacKeys
+
+// filerClientKeysFrom reads the keys a client signs with. A key too short for
+// GODEBUG=fips140=only is an error, as at startup, because signing with it
+// would panic; a reloaded file is checked the same way.
+func filerClientKeysFrom(v interface{ GetString(string) string }) (grpcKey, sharedKey SigningKey, err error) {
+	settings := []string{"jwt.filer_signing.grpc_key", "jwt.filer_signing.key"}
+	keys := []string{v.GetString(settings[0]), v.GetString(settings[1])}
+	if err := filerClientKeyCheck(settings, keys); err != nil {
+		return nil, nil, err
+	}
+	return SigningKey(keys[0]), SigningKey(keys[1]), nil
 }
 
 func (k *filerClientKeys) token(ctx context.Context) (EncodedJwt, error) {

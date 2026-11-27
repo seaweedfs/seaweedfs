@@ -13,6 +13,7 @@ import (
 
 	"github.com/peterh/liner"
 	"github.com/seaweedfs/seaweedfs/weed/query/engine"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/util/sqlutil"
@@ -106,6 +107,8 @@ func Run(args []string) int {
 }
 
 func runWithOptions(opts *Options) bool {
+	util.LoadConfiguration("security", false)
+
 	// Initialize SQL engine with master address for service discovery.
 	sqlEngine := engine.NewSQLEngine(opts.Master)
 

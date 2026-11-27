@@ -18,8 +18,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
 )
 
@@ -46,7 +46,7 @@ func NewBrokerClient(masterHTTPAddress string) *BrokerClient {
 
 	return &BrokerClient{
 		masterAddress:  masterGRPCAddress,
-		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpcDialOption: security.LoadClientTLS(util.GetViper(), "grpc.client"),
 		tokenSource:    security.FilerAdminToken,
 	}
 }
