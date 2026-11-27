@@ -80,3 +80,43 @@ func TestNewGrpcServerServesHealth(t *testing.T) {
 		}
 	}
 }
+
+// GracefulStop waits on open streams, so a health Watch held by a probe must
+// end once StopHealthWatches is called.
+func TestStopHealthWatchesUnblocksGracefulStop(t *testing.T) {
+	server := NewGrpcServer()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go server.Serve(lis)
+	t.Cleanup(server.Stop)
+
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	stream, err := healthpb.NewHealthClient(conn).Watch(context.Background(), &healthpb.HealthCheckRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); err != nil {
+		t.Fatal(err)
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		StopHealthWatches(server)
+		server.GracefulStop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("GracefulStop still waiting on the health Watch")
+	}
+	if _, err := stream.Recv(); err == nil {
+		t.Fatal("Watch stream still open after StopHealthWatches")
+	}
+}

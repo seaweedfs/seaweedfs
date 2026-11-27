@@ -9,10 +9,12 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 )
 
 func gracefulStopGrpc(grpcS *grpc.Server, timeout time.Duration) {
 	glog.V(0).Infof("Gracefully stopping gRPC server")
+	pb.StopHealthWatches(grpcS)
 	stopped := make(chan struct{})
 	go func() {
 		grpcS.GracefulStop()

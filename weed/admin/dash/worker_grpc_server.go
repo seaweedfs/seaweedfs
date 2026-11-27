@@ -182,6 +182,7 @@ func (s *WorkerGrpcServer) Stop() error {
 
 	// Stop gRPC server
 	if s.grpcServer != nil {
+		pb.StopHealthWatches(s.grpcServer)
 		s.grpcServer.GracefulStop()
 	}
 

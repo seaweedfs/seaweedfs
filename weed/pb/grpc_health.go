@@ -2,6 +2,7 @@ package pb
 
 import (
 	"context"
+	"sync"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -20,11 +21,24 @@ import (
 // for the whole server, which is SERVING once it accepts the RPC.
 type serviceHealth struct {
 	healthpb.UnimplementedHealthServer
-	server *grpc.Server
+	server  *grpc.Server
+	stopped chan struct{}
 }
 
+var healthServers sync.Map // *grpc.Server -> *serviceHealth
+
 func registerHealthServer(server *grpc.Server) {
-	healthpb.RegisterHealthServer(server, &serviceHealth{server: server})
+	h := &serviceHealth{server: server, stopped: make(chan struct{})}
+	healthServers.Store(server, h)
+	healthpb.RegisterHealthServer(server, h)
+}
+
+// StopHealthWatches ends the server's open health Watch streams. Call it
+// before GracefulStop, which waits on open streams.
+func StopHealthWatches(server *grpc.Server) {
+	if h, ok := healthServers.LoadAndDelete(server); ok {
+		close(h.(*serviceHealth).stopped)
+	}
 }
 
 func (h *serviceHealth) status(service string) (healthpb.HealthCheckResponse_ServingStatus, bool) {
@@ -57,12 +71,16 @@ func (h *serviceHealth) List(_ context.Context, _ *healthpb.HealthListRequest) (
 
 // Watch sends the current status and holds the stream open, as the protocol
 // asks. Services do not come and go on a running server, so there is nothing
-// further to send; the stream ends when the client or the server goes away.
+// further to send; the stream ends when the client goes away or
+// StopHealthWatches is called.
 func (h *serviceHealth) Watch(req *healthpb.HealthCheckRequest, stream grpc.ServerStreamingServer[healthpb.HealthCheckResponse]) error {
 	st, _ := h.status(req.GetService())
 	if err := stream.Send(&healthpb.HealthCheckResponse{Status: st}); err != nil {
 		return err
 	}
-	<-stream.Context().Done()
+	select {
+	case <-stream.Context().Done():
+	case <-h.stopped:
+	}
 	return nil
 }
