@@ -6,6 +6,11 @@ import org.junit.Before;
 import org.junit.Test;
 import seaweedfs.client.FilerCredentials;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+
 import static org.junit.Assert.*;
 
 /**
@@ -95,18 +100,23 @@ public class SeaweedFileSystemConfigTest {
         conf.set(SeaweedFileSystem.FS_SEAWEED_FILER_BASIC_AUTH_USER, "alice");
         conf.set(SeaweedFileSystem.FS_SEAWEED_FILER_BASIC_AUTH_PASSWORD, "s3cret");
         SeaweedFileSystem.applyFilerCredentials(conf, credentials);
-        String basic = "Basic " + java.util.Base64.getEncoder()
-                .encodeToString("alice:s3cret".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String basic = "Basic " + Base64.getEncoder().encodeToString("alice:s3cret".getBytes(StandardCharsets.UTF_8));
         assertEquals(basic, credentials.getAuthorizationHeaderValue(true));
 
         conf.set(SeaweedFileSystem.FS_SEAWEED_FILER_JWT_SIGNING_KEY, "write-key");
+        conf.setLong(SeaweedFileSystem.FS_SEAWEED_FILER_JWT_SIGNING_EXPIRES, 120);
         SeaweedFileSystem.applyFilerCredentials(conf, credentials);
-        assertTrue(credentials.getAuthorizationHeaderValue(true).startsWith("BEARER "));
+        long now = System.currentTimeMillis() / 1000;
+        assertTrue(signedExp(credentials.getAuthorizationHeaderValue(true), "write-key") - now >= 119);
         assertEquals(basic, credentials.getAuthorizationHeaderValue(false));
 
         conf.set(SeaweedFileSystem.FS_SEAWEED_FILER_JWT_SIGNING_READ_KEY, "read-key");
+        conf.setLong(SeaweedFileSystem.FS_SEAWEED_FILER_JWT_SIGNING_READ_EXPIRES, 240);
         SeaweedFileSystem.applyFilerCredentials(conf, credentials);
-        assertTrue(credentials.getAuthorizationHeaderValue(false).startsWith("BEARER "));
+        long readExp = signedExp(credentials.getAuthorizationHeaderValue(false), "read-key") - now;
+        assertTrue(readExp >= 239 && readExp <= 245);
+        long writeExp = signedExp(credentials.getAuthorizationHeaderValue(true), "write-key") - now;
+        assertTrue(writeExp >= 119 && writeExp <= 125);
     }
 
     @Test
@@ -119,18 +129,21 @@ public class SeaweedFileSystemConfigTest {
         conf.setLong(SeaweedFileSystem.FS_SEAWEED_FILER_JWT_SIGNING_READ_EXPIRES, 300);
         SeaweedFileSystem.applyFilerCredentials(conf, credentials);
 
-        assertEquals("Basic " + java.util.Base64.getEncoder()
-                        .encodeToString("toml-user:new-pass".getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+        assertEquals("Basic " + Base64.getEncoder().encodeToString("toml-user:new-pass".getBytes(StandardCharsets.UTF_8)),
                 credentials.getAuthorizationHeaderValue(true));
-        String[] read = credentials.getAuthorizationHeaderValue(false).substring("BEARER ".length()).split("\\.");
-        javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
-        mac.init(new javax.crypto.spec.SecretKeySpec(
-                "toml-read-key".getBytes(java.nio.charset.StandardCharsets.UTF_8), "HmacSHA256"));
-        assertEquals(java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(mac.doFinal(
-                (read[0] + "." + read[1]).getBytes(java.nio.charset.StandardCharsets.UTF_8))), read[2]);
-        String payload = new String(java.util.Base64.getUrlDecoder().decode(read[1]),
-                java.nio.charset.StandardCharsets.UTF_8);
-        long exp = Long.parseLong(payload.replaceAll("[^0-9]", ""));
+        long exp = signedExp(credentials.getAuthorizationHeaderValue(false), "toml-read-key");
         assertTrue(exp - System.currentTimeMillis() / 1000 >= 299);
+    }
+
+    // Asserts the header is a filer JWT signed with key and returns its exp claim.
+    private static long signedExp(String header, String key) throws Exception {
+        assertTrue(header, header.startsWith("BEARER "));
+        String[] parts = header.substring("BEARER ".length()).split("\\.");
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        assertEquals(Base64.getUrlEncoder().withoutPadding().encodeToString(
+                mac.doFinal((parts[0] + "." + parts[1]).getBytes(StandardCharsets.UTF_8))), parts[2]);
+        String payload = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
+        return Long.parseLong(payload.replaceAll("[^0-9]", ""));
     }
 }
