@@ -304,6 +304,18 @@ fn build_volume_grpc_service(
         .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE)
 }
 
+async fn build_grpc_health_service()
+-> tonic_health::pb::health_server::HealthServer<impl tonic_health::pb::health_server::Health> {
+    let (reporter, service) = tonic_health::server::health_reporter();
+    reporter
+        .set_serving::<VolumeServerServer<VolumeGrpcService>>()
+        .await;
+    reporter
+        .set_serving::<tonic_health::pb::health_server::HealthServer<tonic_health::server::HealthService>>()
+        .await;
+    service
+}
+
 fn apply_idle_timeout<S>(
     stream: S,
     idle_timeout: std::time::Duration,
@@ -726,6 +738,7 @@ async fn run(
                 .register_encoded_file_descriptor_set(seaweed_volume::pb::FILE_DESCRIPTOR_SET)
                 .build_v1alpha()
                 .expect("Failed to build gRPC reflection v1alpha service");
+            let health_service = build_grpc_health_service().await;
             let result = if let Some(tls_acceptor) = grpc_tls_acceptor {
                 let incoming =
                     grpc_tls_incoming(grpc_listener, tls_acceptor, GRPC_TLS_HANDSHAKE_TIMEOUT);
@@ -734,6 +747,7 @@ async fn run(
                     .layer(GrpcRequestIdLayer)
                     .add_service(reflection_v1)
                     .add_service(reflection_v1alpha)
+                    .add_service(health_service)
                     .add_service(build_volume_grpc_service(grpc_service))
                     .serve_with_incoming_shutdown(incoming, async move {
                         let _ = shutdown_rx.recv().await;
@@ -746,6 +760,7 @@ async fn run(
                     .layer(GrpcRequestIdLayer)
                     .add_service(reflection_v1)
                     .add_service(reflection_v1alpha)
+                    .add_service(health_service)
                     .add_service(build_volume_grpc_service(grpc_service))
                     .serve_with_incoming_shutdown(incoming, async move {
                         let _ = shutdown_rx.recv().await;
@@ -1137,6 +1152,47 @@ mod tests {
     /// A connect that never finishes fails at the 5 s bound. It stalls in the
     /// resolver, which the connect bound also covers, because that needs no
     /// routing: a real unanswered SYN depends on the host's network.
+    #[tokio::test]
+    async fn grpc_health_answers_for_the_volume_server() {
+        use tonic_health::pb::{HealthCheckRequest, health_client::HealthClient};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let health_service = super::build_grpc_health_service().await;
+        tokio::spawn(
+            tonic::transport::Server::builder()
+                .add_service(health_service)
+                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
+        );
+        let channel = tonic::transport::Endpoint::from_shared(format!("http://{}", addr))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let mut client = HealthClient::new(channel);
+        for service in ["", "volume_server_pb.VolumeServer", "grpc.health.v1.Health"] {
+            let response = client
+                .check(HealthCheckRequest {
+                    service: service.to_string(),
+                })
+                .await
+                .unwrap_or_else(|e| panic!("Check({:?}): {}", service, e));
+            assert_eq!(
+                response.into_inner().status,
+                tonic_health::pb::health_check_response::ServingStatus::Serving as i32,
+                "Check({:?})",
+                service
+            );
+        }
+        let err = client
+            .check(HealthCheckRequest {
+                service: "master_pb.Seaweed".to_string(),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn outgoing_client_bounds_a_stalled_connect() {
         struct Stalled;
