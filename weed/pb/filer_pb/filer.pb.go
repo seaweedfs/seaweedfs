@@ -3136,7 +3136,10 @@ func (x *AtomicRenameEntryRequest) GetIsMoved() bool {
 }
 
 type AtomicRenameEntryResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Set for a forwarded rename: the owner's metadata log position of
+	// the rename's last event.
+	TsNs          int64 `protobuf:"varint,1,opt,name=ts_ns,json=tsNs,proto3" json:"ts_ns,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3169,6 +3172,13 @@ func (x *AtomicRenameEntryResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use AtomicRenameEntryResponse.ProtoReflect.Descriptor instead.
 func (*AtomicRenameEntryResponse) Descriptor() ([]byte, []int) {
 	return file_filer_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *AtomicRenameEntryResponse) GetTsNs() int64 {
+	if x != nil {
+		return x.TsNs
+	}
+	return 0
 }
 
 type StreamRenameEntryRequest struct {
@@ -7789,8 +7799,9 @@ const file_filer_proto_rawDesc = "" +
 	"signatures\x18\x05 \x03(\x05R\n" +
 	"signatures\x121\n" +
 	"\x15fail_if_target_exists\x18\x06 \x01(\bR\x12failIfTargetExists\x12\x19\n" +
-	"\bis_moved\x18\a \x01(\bR\aisMoved\"\x1b\n" +
-	"\x19AtomicRenameEntryResponse\"\xd5\x01\n" +
+	"\bis_moved\x18\a \x01(\bR\aisMoved\"0\n" +
+	"\x19AtomicRenameEntryResponse\x12\x13\n" +
+	"\x05ts_ns\x18\x01 \x01(\x03R\x04tsNs\"\xd5\x01\n" +
 	"\x18StreamRenameEntryRequest\x12#\n" +
 	"\rold_directory\x18\x01 \x01(\tR\foldDirectory\x12\x19\n" +
 	"\bold_name\x18\x02 \x01(\tR\aoldName\x12#\n" +

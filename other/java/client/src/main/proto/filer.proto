@@ -562,6 +562,9 @@ message AtomicRenameEntryRequest {
 }
 
 message AtomicRenameEntryResponse {
+    // Set for a forwarded rename: the owner's metadata log position of
+    // the rename's last event.
+    int64 ts_ns = 1;
 }
 
 message StreamRenameEntryRequest {
