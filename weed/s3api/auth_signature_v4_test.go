@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -769,21 +770,58 @@ func TestSignatureV4WithForwardedPrefixUnicodeKey(t *testing.T) {
 	}
 }
 
-// Trimall touches only the ASCII space, like the AWS SDKs; a Unicode space
-// inside a signed value (macOS puts U+202F in screenshot names) must survive,
-// or the canonical request no longer matches the client's.
+// The two Trimall variants clients use: the AWS SDK for Go v2 collapses only
+// ASCII spaces (Unicode spaces inside a value stay, the edges are trimmed),
+// botocore collapses every whitespace character.
 func TestSignV4TrimAll(t *testing.T) {
-	tests := map[string]string{
-		"  a   b  ":                "a b",
-		"plain":                    "plain",
-		"tab\tkept":                "tab\tkept",
-		"at 2.20.09\u202fPM.png":   "at 2.20.09\u202fPM.png",
-		"news\u00a0| headline.txt": "news\u00a0| headline.txt",
-		" trailing nbsp\u00a0 ":    "trailing nbsp\u00a0",
+	tests := []struct {
+		in, sdkGoV2, botocore string
+	}{
+		{"  a   b  ", "a b", "a b"},
+		{"plain", "plain", "plain"},
+		{"tab\tkept", "tab\tkept", "tab kept"},
+		{"at 2.20.09\u202fPM.png", "at 2.20.09\u202fPM.png", "at 2.20.09 PM.png"},
+		{"news\u00a0| headline.txt", "news\u00a0| headline.txt", "news | headline.txt"},
+		{" report.txt\u00a0 ", "report.txt", "report.txt"},
 	}
-	for in, want := range tests {
-		if got := signV4TrimAll(in); got != want {
-			t.Errorf("signV4TrimAll(%q) = %q, want %q", in, got, want)
+	for _, tt := range tests {
+		if got := signV4TrimAll(tt.in); got != tt.sdkGoV2 {
+			t.Errorf("signV4TrimAll(%q) = %q, want %q", tt.in, got, tt.sdkGoV2)
 		}
+		if got := signV4TrimAllWhitespace(tt.in); got != tt.botocore {
+			t.Errorf("signV4TrimAllWhitespace(%q) = %q, want %q", tt.in, got, tt.botocore)
+		}
+	}
+}
+
+// A signature made with either client's Trimall verifies, so a Unicode space
+// or tab inside a signed header value works from both SDKs.
+func TestCalculateAndVerifySignatureTrimVariants(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Host", "bucket.domain.com")
+	headers.Set("X-Amz-Meta-Filename", "at 2.20.09\u202fPM\tcopy.png")
+	date := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	const secret, payload = "secret", "UNSIGNED-PAYLOAD"
+	scope := getScope(date, "us-east-1", "s3")
+	signingKey := getSigningKey(secret, date.Format(yyyymmdd), "us-east-1", "s3")
+
+	for name, trim := range map[string]func(string) string{
+		"sdk-go-v2": signV4TrimAll,
+		"botocore":  signV4TrimAllWhitespace,
+	} {
+		t.Run(name, func(t *testing.T) {
+			canonical := canonicalRequestWith(headers, payload, "", "/bucket/key", http.MethodPut, trim)
+			signature := getSignature(signingKey, getStringToSign(canonical, date, scope))
+			authInfo := &v4AuthInfo{HashedPayload: payload, Date: date, Scope: scope, Region: "us-east-1", Service: "s3", Signature: signature}
+			got, errCode := calculateAndVerifySignature(secret, http.MethodPut, "/bucket/key", "", headers, authInfo)
+			if errCode != s3err.ErrNone || got != signature {
+				t.Fatalf("got %q, %v; want %q", got, errCode, signature)
+			}
+		})
+	}
+
+	authInfo := &v4AuthInfo{HashedPayload: payload, Date: date, Scope: scope, Region: "us-east-1", Service: "s3", Signature: strings.Repeat("0", 64)}
+	if _, errCode := calculateAndVerifySignature(secret, http.MethodPut, "/bucket/key", "", headers, authInfo); errCode != s3err.ErrSignatureDoesNotMatch {
+		t.Fatalf("wrong signature: got %v, want ErrSignatureDoesNotMatch", errCode)
 	}
 }
