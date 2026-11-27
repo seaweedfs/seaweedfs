@@ -145,13 +145,19 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		}
 		oldFileSize := filer.FileSize(entry)
 		if size < oldFileSize {
+			// A manifest the cut goes through is cut as the chunks it holds.
+			cut, err := expandManifestsAt(entry.GetChunks(), int64(size), wfs.manifestResolver(ctx))
+			if err != nil {
+				glog.Warningf("%v truncate to %d: %v", path, size, err)
+				return fuse.EIO
+			}
 			if fh != nil {
 				fh.noteTruncate(size)
 			}
 			// fmt.Printf("truncate %v \n", fullPath)
 			var chunks []*filer_pb.FileChunk
 			var truncatedChunks []*filer_pb.FileChunk
-			for _, chunk := range entry.GetChunks() {
+			for _, chunk := range cut {
 				int64Size := int64(chunk.Size)
 				if chunk.Offset+int64Size > int64(size) {
 					// this chunk is truncated
