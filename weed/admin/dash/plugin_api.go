@@ -349,9 +349,9 @@ func (s *AdminServer) GetPluginSchedulerStatusAPI(w http.ResponseWriter, r *http
 	if laneFilter != "" {
 		lane := plugin.SchedulerLane(laneFilter)
 		response := map[string]interface{}{
-			"enabled":      true,
-			"scheduler":    pluginSvc.GetLaneSchedulerStatus(lane),
-			"ec_balancers": s.ActiveECBalancers(),
+			"enabled":              true,
+			"scheduler":            pluginSvc.GetLaneSchedulerStatus(lane),
+			"maintenance_overlaps": s.MaintenanceOverlaps(),
 		}
 		if s.pluginLock != nil {
 			response["lock"] = lockStatus
@@ -361,9 +361,9 @@ func (s *AdminServer) GetPluginSchedulerStatusAPI(w http.ResponseWriter, r *http
 	}
 
 	response := map[string]interface{}{
-		"enabled":      true,
-		"scheduler":    pluginSvc.GetSchedulerStatus(),
-		"ec_balancers": s.ActiveECBalancers(),
+		"enabled":              true,
+		"scheduler":            pluginSvc.GetSchedulerStatus(),
+		"maintenance_overlaps": s.MaintenanceOverlaps(),
 	}
 	if s.pluginLock != nil {
 		response["lock"] = lockStatus

@@ -443,7 +443,7 @@ func (s *AdminServer) publishMaintenanceMetrics(ctx context.Context) {
 	// Seed one sample so the dashboard has something to draw before the first tick.
 	s.recordDashboardSample()
 
-	var ecBalancerOverlap string
+	var maintenanceOverlap string
 	for {
 		select {
 		case <-ctx.Done():
@@ -451,7 +451,7 @@ func (s *AdminServer) publishMaintenanceMetrics(ctx context.Context) {
 		case <-ticker.C:
 			s.collectMaintenanceMetrics()
 			s.recordDashboardSample()
-			ecBalancerOverlap = s.warnOnECBalancerOverlap(ecBalancerOverlap)
+			maintenanceOverlap = s.warnOnMaintenanceOverlap(maintenanceOverlap)
 		}
 	}
 }
