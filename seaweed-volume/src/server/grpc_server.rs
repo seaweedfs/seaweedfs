@@ -52,6 +52,33 @@ fn scrub_mode_label(mode: i32) -> &'static str {
 }
 
 /// Go formats the id in decimal; fs.verify matches the "needle not found " prefix.
+/// Maps a failed EC shard copy to a bounded reason label. Errors from the
+/// source arrive as gRPC text, so it matches messages. Mirrors Go's
+/// ecShardCopyFailureReason.
+fn ec_shard_copy_failure_reason(status: &Status) -> &'static str {
+    use crate::metrics as m;
+    let code = status.code();
+    let msg = status.message().to_lowercase();
+    if msg.contains(".ecx is 0 bytes") {
+        m::EC_SHARD_COPY_EMPTY_INDEX
+    } else if code == tonic::Code::ResourceExhausted || msg.contains("no space left") {
+        m::EC_SHARD_COPY_NO_SPACE
+    } else if code == tonic::Code::DeadlineExceeded
+        || msg.contains("deadline exceeded")
+        || msg.contains("deadline has elapsed")
+        || msg.contains("timeout")
+        || msg.contains("timed out")
+    {
+        m::EC_SHARD_COPY_TIMEOUT
+    } else if code == tonic::Code::NotFound || msg.contains("not found") {
+        m::EC_SHARD_COPY_SOURCE_NOT_FOUND
+    } else if msg.contains("input/output error") {
+        m::EC_SHARD_COPY_IO_ERROR
+    } else {
+        m::EC_SHARD_COPY_OTHER
+    }
+}
+
 fn needle_not_found(needle_id: NeedleId) -> Status {
     Status::not_found(format!("needle not found {}", needle_id.0))
 }
@@ -3931,7 +3958,10 @@ impl VolumeServer for VolumeGrpcService {
             state: self.state.clone(),
         };
         let request_id = crate::server::request_id::current_request_id();
-        tokio::spawn(async move {
+        let collection = req.collection.clone();
+        let source = req.source_data_node.clone();
+        let wire_shard_ids = req.shard_ids.clone();
+        let result = tokio::spawn(async move {
             let _lifecycle = lifecycle;
             let copy = svc.volume_ec_shards_copy_locked(req, vid, shard_ids);
             match request_id {
@@ -3940,7 +3970,23 @@ impl VolumeServer for VolumeGrpcService {
             }
         })
         .await
-        .map_err(|e| Status::internal(format!("VolumeEcShardsCopy volume {}: {}", vid, e)))?
+        .map_err(|e| Status::internal(format!("VolumeEcShardsCopy volume {}: {}", vid, e)))
+        .and_then(|r| r);
+        if let Err(status) = &result {
+            let reason = ec_shard_copy_failure_reason(status);
+            crate::metrics::EC_SHARD_COPY_FAILURES
+                .with_label_values(&[collection.as_str(), reason])
+                .inc();
+            tracing::warn!(
+                "VolumeEcShardsCopy volume {} shards {:?} from {} failed ({}): {}",
+                vid,
+                wire_shard_ids,
+                source,
+                reason,
+                status.message()
+            );
+        }
+        result
     }
 
     /// Allowed in maintenance mode: like `volume_delete` it only removes data, and
@@ -8434,6 +8480,55 @@ mod tests {
     use std::sync::RwLock;
     use tempfile::TempDir;
     use tokio_stream::StreamExt;
+
+    #[test]
+    fn test_ec_shard_copy_failure_reason() {
+        use crate::metrics as m;
+        let cases = [
+            (
+                Status::internal(
+                    "VolumeEcShardsCopy volume 7: failed to copy /d/7.ec01 file: CopyFile not found ec volume id 7",
+                ),
+                m::EC_SHARD_COPY_SOURCE_NOT_FOUND,
+            ),
+            (
+                Status::not_found("volume 7"),
+                m::EC_SHARD_COPY_SOURCE_NOT_FOUND,
+            ),
+            (
+                Status::failed_precondition("VolumeEcShardsCopy volume 7: source .ecx is 0 bytes"),
+                m::EC_SHARD_COPY_EMPTY_INDEX,
+            ),
+            (Status::internal("no space left"), m::EC_SHARD_COPY_NO_SPACE),
+            (
+                Status::internal("write 7.ec01.copying: No space left on device (os error 28)"),
+                m::EC_SHARD_COPY_NO_SPACE,
+            ),
+            (
+                Status::deadline_exceeded("stream"),
+                m::EC_SHARD_COPY_TIMEOUT,
+            ),
+            (
+                Status::internal("copy 7.ec01: deadline has elapsed"),
+                m::EC_SHARD_COPY_TIMEOUT,
+            ),
+            (
+                Status::unknown("context deadline exceeded"),
+                m::EC_SHARD_COPY_TIMEOUT,
+            ),
+            (
+                Status::internal("write 7.ec01.copying: Input/output error (os error 5)"),
+                m::EC_SHARD_COPY_IO_ERROR,
+            ),
+            (
+                Status::failed_precondition("copied shards are encode run 1 but /d mounts run 2"),
+                m::EC_SHARD_COPY_OTHER,
+            ),
+        ];
+        for (status, want) in cases {
+            assert_eq!(ec_shard_copy_failure_reason(&status), want, "{status:?}");
+        }
+    }
 
     fn loc(dir: &str, idx_dir: &str, shard_count: usize, has_ecx: bool) -> LocInfo {
         LocInfo {
