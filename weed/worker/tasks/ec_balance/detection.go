@@ -112,8 +112,7 @@ func Detection(
 	now := time.Now()
 	results := make([]*types.TaskDetectionResult, 0, len(moves))
 	for i, m := range moves {
-		taskID := fmt.Sprintf("ec_balance_%d_%d_%s_%s_%d_%d",
-			m.VolumeID, m.ShardID, m.SourceNode, m.TargetNode, now.UnixNano(), i)
+		taskID := fmt.Sprintf("ec_balance_%d_%d_%d_%d", m.VolumeID, m.ShardID, now.UnixNano(), i)
 		results = append(results, &types.TaskDetectionResult{
 			TaskID:     taskID,
 			TaskType:   types.TaskTypeECBalance,
