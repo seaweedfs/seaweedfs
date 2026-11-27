@@ -764,8 +764,28 @@ func TestDenyWithoutExistingObjectTagSkipsEntryLookup(t *testing.T) {
 		return nil, true
 	}
 	req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/a.txt", nil)
-	_, evaluated, err := iam.evaluateBucketPolicy(bucket, "/a.txt", string(s3_constants.ACTION_READ), "*", req, nil)
+	_, _, evaluated, err := iam.evaluateBucketPolicy(bucket, "/a.txt", string(s3_constants.ACTION_READ), "*", req, nil)
 	require.NoError(t, err)
 	assert.True(t, evaluated)
 	assert.Zero(t, lookups)
+}
+
+// The identity checks that follow evaluate the mirrored bucket policy again,
+// so the request they get carries the tags the Deny was decided on.
+func TestEvaluateBucketPolicyHandsOnObjectTags(t *testing.T) {
+	const bucket = "scan-bucket"
+	engine := NewBucketPolicyEngine()
+	require.NoError(t, engine.engine.SetBucketPolicy(bucket, `{"Version":"2012-10-17","Statement":[{
+		"Effect":"Deny","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::`+bucket+`/*",
+		"Condition":{"StringNotEquals":{"s3:ExistingObjectTag/ScanStatus":"CLEAN"}}}]}`))
+	iam := &IdentityAccessManagement{policyEngine: engine}
+	iam.objectEntryForPolicy = func(*http.Request, string, string) (map[string][]byte, bool) {
+		return map[string][]byte{s3_constants.AmzObjectTaggingPrefix + "ScanStatus": []byte("CLEAN")}, true
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/a.txt", nil)
+	policyReq, _, evaluated, err := iam.evaluateBucketPolicy(bucket, "/a.txt", string(s3_constants.ACTION_READ), "*", req, nil)
+	require.NoError(t, err)
+	assert.False(t, evaluated, "no statement matches an object tagged CLEAN")
+	assert.Equal(t, []string{"CLEAN"}, policy_engine.RequestConditionValues(policyReq)["s3:ExistingObjectTag/ScanStatus"])
 }
