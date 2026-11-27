@@ -1,10 +1,29 @@
 package s3api
 
 import (
+	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"testing"
+
+	"github.com/gorilla/mux"
 )
+
+func TestObjectContentLocation(t *testing.T) {
+	s3a := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets"}}
+	partReq := mux.SetURLVars(httptest.NewRequest("PUT", "/b/dir/key?partNumber=1&uploadId=u", nil),
+		map[string]string{"bucket": "b", "object": "dir/key"})
+
+	if got := s3a.objectContentLocation(partReq, "b", "obj"); got != "/buckets/b/obj" {
+		t.Errorf("explicit object: got %q, want %q", got, "/buckets/b/obj")
+	}
+	if got := s3a.objectContentLocation(partReq, "b", ""); got != "/buckets/b/dir/key" {
+		t.Errorf("UploadPart (object from mux vars): got %q, want %q", got, "/buckets/b/dir/key")
+	}
+	if got := s3a.objectContentLocation(httptest.NewRequest("POST", "/b", nil), "b", ""); got != "" {
+		t.Errorf("no object anywhere: got %q, want empty", got)
+	}
+}
 
 func TestEscapeFilerPath(t *testing.T) {
 	cases := map[string]string{

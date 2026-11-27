@@ -1,8 +1,11 @@
 package s3api
 
 import (
+	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 // contentLocationPairHeader is sent with every chunk upload. The volume server
@@ -17,6 +20,19 @@ func contentLocationPairMap(filerPath string) map[string]string {
 		return nil
 	}
 	return map[string]string{contentLocationPairHeader: escapeFilerPath(filerPath)}
+}
+
+// objectContentLocation returns the filer path of the object a write belongs
+// to. Callers that write to an internal path (UploadPart writes under
+// .uploads/) pass object == "", and the key is taken from the request route.
+func (s3a *S3ApiServer) objectContentLocation(r *http.Request, bucket, object string) string {
+	if object == "" {
+		_, object = s3_constants.GetBucketAndObject(r)
+	}
+	if object == "" {
+		return ""
+	}
+	return s3a.toFilerPath(bucket, object)
 }
 
 // escapeFilerPath percent-encodes each segment of a filer path, so keys with
