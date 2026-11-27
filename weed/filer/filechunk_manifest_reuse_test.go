@@ -160,7 +160,7 @@ func TestReuseStoredManifestsKeepsAManifestANewerChunkOverlaps(t *testing.T) {
 	require.Equal(t, append([]*filer_pb.FileChunk{newer}, sent[SmallChunkManifestBatch+1:]...), rest)
 }
 
-// A truncate before #13042 could shorten a manifest without cutting its
+// An older truncate could shorten a manifest without cutting its
 // chunks; such a manifest does not span what it holds and is not kept.
 func TestReuseStoredManifestsLeavesAShortenedManifest(t *testing.T) {
 	fixture := newReuseFixture(t)
