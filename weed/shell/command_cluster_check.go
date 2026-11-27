@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
 func init() {
@@ -97,14 +98,28 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 	if err != nil {
 		return err
 	}
+	dcRacks := make(map[string][]string)
 	for _, dc := range t.DataCenterInfos {
 		for _, r := range dc.RackInfos {
 			for _, dn := range r.DataNodeInfos {
 				volumeServers = append(volumeServers, pb.NewServerAddressFromDataNode(dn))
 			}
+			if len(r.DataNodeInfos) > 0 {
+				dcRacks[dc.Id] = append(dcRacks[dc.Id], r.Id)
+			}
 		}
 	}
 	fmt.Fprintf(writer, "the cluster has %d volume servers: %+v\n", len(volumeServers), volumeServers)
+	for _, dc := range t.DataCenterInfos {
+		for _, r := range dc.RackInfos {
+			if !topology.DefaultPlacementStandsOut(dc.Id, r.Id, dcRacks) {
+				continue
+			}
+			for _, dn := range r.DataNodeInfos {
+				fmt.Fprintf(writer, "warning: volume server %s is in data center %s rack %s while other volume servers name theirs; set -dataCenter and -rack on it\n", pb.NewServerAddressFromDataNode(dn), dc.Id, r.Id)
+			}
+		}
+	}
 
 	// collect all masters
 	var masters []pb.ServerAddress
