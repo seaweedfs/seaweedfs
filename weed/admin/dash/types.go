@@ -512,6 +512,9 @@ type ClusterVolumeServersData struct {
 	TotalVolumes       int            `json:"total_volumes"`
 	TotalCapacity      int64          `json:"total_capacity"`
 	LastUpdated        time.Time      `json:"last_updated"`
+	// DefaultPlacementServers sit in DefaultDataCenter or DefaultRack while
+	// other servers name theirs.
+	DefaultPlacementServers []VolumeServer `json:"default_placement_servers,omitempty"`
 }
 
 // Type aliases for maintenance package types to support existing code
