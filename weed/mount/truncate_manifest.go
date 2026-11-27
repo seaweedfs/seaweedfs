@@ -3,19 +3,45 @@ package mount
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
 )
 
 // maxTruncateManifestDepth bounds how far manifests in manifests are opened.
 const maxTruncateManifestDepth = 4
 
-// truncateManifestWait bounds the manifest reads of one truncate, which hold
-// the handle's locks.
+// truncateManifestWait bounds all the manifest reads of one truncate, which
+// hold the handle's locks.
 const truncateManifestWait = time.Minute
+
+// truncateManifestResolver reads the chunks of one manifest for a truncate.
+// Tests replace it.
+var truncateManifestResolver = func(ctx context.Context, wfs *WFS, manifest *filer_pb.FileChunk) ([]*filer_pb.FileChunk, error) {
+	return filer.ResolveOneChunkManifest(ctx, wfs.LookupFn(), manifest, wfs.CacheInvalidator())
+}
+
+// cutThroughManifests returns chunks with each manifest a cut at size goes
+// through replaced by the chunks it holds (expandManifestsAt), and whether it
+// replaced one. The manifest reads share one deadline. The chunks are first
+// registered for filer-issued read tokens under path: a truncate by path, with
+// no open handle, has not registered them, and a mount without a signing key
+// reads a manifest only with such a token.
+func (wfs *WFS) cutThroughManifests(ctx context.Context, path util.FullPath, chunks []*filer_pb.FileChunk, size int64) ([]*filer_pb.FileChunk, bool, error) {
+	if !slices.ContainsFunc(chunks, func(chunk *filer_pb.FileChunk) bool { return cutGoesThrough(chunk, size) }) {
+		return chunks, false, nil
+	}
+	wfs.readAuth.Track(path, chunks)
+	ctx, cancel := context.WithTimeout(ctx, truncateManifestWait)
+	defer cancel()
+	return expandManifestsAt(chunks, size, func(manifest *filer_pb.FileChunk) ([]*filer_pb.FileChunk, error) {
+		return truncateManifestResolver(ctx, wfs, manifest)
+	})
+}
 
 // expandManifestsAt returns chunks with every manifest that a cut at size goes
 // through replaced by the chunks it holds, nested ones too. Cutting a manifest
@@ -24,29 +50,29 @@ const truncateManifestWait = time.Minute
 // without writing it (a hole, an extending truncate). The chunks are cut
 // instead. A manifest's chunks are first cut to its own span, since one
 // shortened before this was in place still holds them whole. Manifests that
-// lie wholly before or after the cut are left as they are.
-func expandManifestsAt(chunks []*filer_pb.FileChunk, size int64, resolve func(*filer_pb.FileChunk) ([]*filer_pb.FileChunk, error)) ([]*filer_pb.FileChunk, error) {
-	var expanded []*filer_pb.FileChunk
+// lie wholly before or after the cut are left as they are. expanded reports
+// whether a manifest was replaced.
+func expandManifestsAt(chunks []*filer_pb.FileChunk, size int64, resolve func(*filer_pb.FileChunk) ([]*filer_pb.FileChunk, error)) (cut []*filer_pb.FileChunk, expanded bool, err error) {
 	for i, chunk := range chunks {
 		if !cutGoesThrough(chunk, size) {
-			if expanded != nil {
-				expanded = append(expanded, chunk)
+			if cut != nil {
+				cut = append(cut, chunk)
 			}
 			continue
 		}
-		if expanded == nil {
-			expanded = append(make([]*filer_pb.FileChunk, 0, len(chunks)), chunks[:i]...)
+		if cut == nil {
+			cut = append(make([]*filer_pb.FileChunk, 0, len(chunks)), chunks[:i]...)
 		}
 		held, err := expandManifestAt(chunk, size, resolve, 1)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		expanded = append(expanded, held...)
+		cut = append(cut, held...)
 	}
-	if expanded == nil {
-		return chunks, nil
+	if cut == nil {
+		return chunks, false, nil
 	}
-	return expanded, nil
+	return cut, true, nil
 }
 
 func expandManifestAt(manifest *filer_pb.FileChunk, size int64, resolve func(*filer_pb.FileChunk) ([]*filer_pb.FileChunk, error), depth int) ([]*filer_pb.FileChunk, error) {
@@ -87,13 +113,4 @@ func cutGoesThrough(chunk *filer_pb.FileChunk, size int64) bool {
 
 func chunkSpanEnd(chunk *filer_pb.FileChunk) int64 {
 	return chunk.Offset + int64(chunk.Size)
-}
-
-// manifestResolver reads one manifest chunk's chunks for a truncate.
-func (wfs *WFS) manifestResolver(ctx context.Context) func(*filer_pb.FileChunk) ([]*filer_pb.FileChunk, error) {
-	return func(manifest *filer_pb.FileChunk) ([]*filer_pb.FileChunk, error) {
-		ctx, cancel := context.WithTimeout(ctx, truncateManifestWait)
-		defer cancel()
-		return filer.ResolveOneChunkManifest(ctx, wfs.LookupFn(), manifest, wfs.CacheInvalidator())
-	}
 }

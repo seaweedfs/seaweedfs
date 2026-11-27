@@ -146,13 +146,20 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		oldFileSize := filer.FileSize(entry)
 		if size < oldFileSize {
 			// A manifest the cut goes through is cut as the chunks it holds.
-			cut, err := expandManifestsAt(entry.GetChunks(), int64(size), wfs.manifestResolver(ctx))
+			cut, expanded, err := wfs.cutThroughManifests(ctx, path, entry.GetChunks(), int64(size))
 			if err != nil {
 				glog.Warningf("%v truncate to %d: %v", path, size, err)
 				return fuse.EIO
 			}
 			if fh != nil {
 				fh.noteTruncate(size)
+				if expanded {
+					// Its chunks are not in the handle's base: a merge would take
+					// them for writes of this handle and put back the ones a
+					// peer's truncate dropped. Like a rewrite, they cannot go over
+					// a peer's chunk change.
+					fh.noteRewrite()
+				}
 			}
 			// fmt.Printf("truncate %v \n", fullPath)
 			var chunks []*filer_pb.FileChunk
