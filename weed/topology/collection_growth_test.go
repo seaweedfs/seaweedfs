@@ -105,6 +105,48 @@ func TestEmptiedCollectionStaysPublishedWhileHeld(t *testing.T) {
 	}
 }
 
+// An emptied-layout cleanup that passed its fence check unpublishes the
+// collection while the delete waits to fence it, and growth then publishes a
+// new one under the name. The delete must fence and list that one.
+func TestDeleteFencesTheCollectionPublishedSinceItsLookup(t *testing.T) {
+	topo, option := newGrowthFenceTopology()
+	c := option.collection
+
+	c.growth.lock.Lock()
+	type result struct {
+		c       *Collection
+		unfence func()
+	}
+	fenced := make(chan result, 1)
+	go func() {
+		fc, unfence, _ := topo.FenceGrowth("bucket")
+		fenced <- result{fc, unfence}
+	}()
+	for deadline := time.Now().Add(5 * time.Second); !c.isDeleting(); {
+		if time.Now().After(deadline) {
+			t.Fatal("FenceGrowth did not mark the collection as being deleted")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	topo.DeleteCollection("bucket")
+	replacement := topo.getOrCreateCollection("bucket")
+	c.growth.lock.Unlock()
+
+	var got result
+	select {
+	case got = <-fenced:
+	case <-time.After(5 * time.Second):
+		t.Fatal("FenceGrowth did not return")
+	}
+	if got.c != replacement {
+		t.Fatal("the delete fenced a collection no longer published under its name")
+	}
+	if !replacement.isDeleting() || c.isDeleting() {
+		t.Error("the fence is not on the published collection alone")
+	}
+	got.unfence()
+}
+
 func TestAssignStaysOutOfACollectionBeingDeleted(t *testing.T) {
 	layout := `
 {

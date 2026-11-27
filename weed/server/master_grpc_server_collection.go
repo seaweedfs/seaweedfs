@@ -80,13 +80,12 @@ func (ms *MasterServer) deleteCollection(ctx context.Context, collectionName str
 
 func (ms *MasterServer) doDeleteNormalCollection(ctx context.Context, collectionName string) error {
 
-	collection, ok := ms.Topo.FindCollection(collectionName)
+	// Before listing the servers: a grow still running would otherwise create
+	// volumes on servers missing from the list, or after their delete.
+	collection, unfence, ok := ms.Topo.FenceGrowth(collectionName)
 	if !ok {
 		return nil
 	}
-	// Before listing the servers: a grow still running would otherwise create
-	// volumes on servers missing from the list, or after their delete.
-	unfence := collection.FenceGrowth()
 
 	// One RPC per server, not one per replica: ListVolumeServers reports a node
 	// once for every replica it holds, while DeleteCollection removes the whole

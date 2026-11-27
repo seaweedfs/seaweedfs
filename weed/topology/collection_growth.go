@@ -26,6 +26,22 @@ func (c *Collection) FenceGrowth() (unfence func()) {
 	}
 }
 
+// FenceGrowth fences the collection published under the name. A collection
+// unpublished for being empty before its fence went up is let go, and the one
+// published since, where growth registers its volumes, is fenced instead.
+func (t *Topology) FenceGrowth(collectionName string) (c *Collection, unfence func(), found bool) {
+	for {
+		if c, found = t.FindCollection(collectionName); !found {
+			return nil, nil, false
+		}
+		unfence = c.FenceGrowth()
+		if published, stillFound := t.FindCollection(collectionName); stillFound && published == c {
+			return c, unfence, true
+		}
+		unfence()
+	}
+}
+
 func (c *Collection) isDeleting() bool {
 	return c.growth.deleting.Load() > 0
 }
