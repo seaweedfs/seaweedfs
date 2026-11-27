@@ -1038,10 +1038,10 @@ async fn maybe_adjust_volume_max(
     .await
 }
 
-/// The EC heartbeat and the shard list later deltas are diffed against,
-/// under one guard so no mount lands between them unreported.
 static EC_SHARD_CHECK_RUNNING: AtomicBool = AtomicBool::new(false);
 
+/// The EC heartbeat and the shard list later deltas are diffed against,
+/// under one guard so no mount lands between them unreported.
 async fn ec_tick_pass(
     config: &HeartbeatConfig,
     state: &Arc<VolumeServerState>,
@@ -1054,11 +1054,18 @@ async fn ec_tick_pass(
 > {
     if !EC_SHARD_CHECK_RUNNING.swap(true, Ordering::AcqRel) {
         let state = state.clone();
-        tokio::task::spawn_blocking(move || {
-            let shards = state.store.read().unwrap().ec_shard_disk_checks();
-            Store::check_mounted_ec_shards(&shards);
+        // A plain thread, not spawn_blocking: runtime shutdown waits for
+        // blocking tasks, and a stat on a hung disk may never return.
+        let spawned = std::thread::Builder::new()
+            .name("ec-shard-check".into())
+            .spawn(move || {
+                let shards = state.store.read().unwrap().ec_shard_disk_checks();
+                Store::check_mounted_ec_shards(&shards);
+                EC_SHARD_CHECK_RUNNING.store(false, Ordering::Release);
+            });
+        if spawned.is_err() {
             EC_SHARD_CHECK_RUNNING.store(false, Ordering::Release);
-        });
+        }
     }
     off_runtime(config, state, |config, state| {
         let store = state.store.read().unwrap();
