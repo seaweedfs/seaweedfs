@@ -1,14 +1,19 @@
 package s3api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
+	"path"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"google.golang.org/protobuf/proto"
 )
 
 func invertedVersionId(at time.Time) string {
@@ -105,5 +110,70 @@ func TestDrainVersionsHealQueueRequeuesInFlightForGraceLeft(t *testing.T) {
 	}
 	if wait := time.Until(c.nextRetry); wait <= 0 || wait > time.Minute {
 		t.Errorf("next retry in %v, want within the minute of grace left", wait)
+	}
+}
+
+type healPointerFiler struct {
+	*anonymousReadFiler
+	updates []*filer_pb.UpdateEntryRequest
+}
+
+func (f *healPointerFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
+	f.mu.Lock()
+	var names []string
+	for p := range f.entries {
+		if dir, name := path.Split(p); strings.TrimSuffix(dir, "/") == req.Directory && name > req.StartFromFileName {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	var entries []*filer_pb.Entry
+	for _, name := range names {
+		entries = append(entries, proto.Clone(f.entries[path.Join(req.Directory, name)]).(*filer_pb.Entry))
+	}
+	f.mu.Unlock()
+	for _, entry := range entries {
+		if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: entry}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (f *healPointerFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.updates = append(f.updates, req)
+	f.entries[path.Join(req.Directory, req.Entry.Name)] = proto.Clone(req.Entry).(*filer_pb.Entry)
+	return &filer_pb.UpdateEntryResponse{}, nil
+}
+
+func newHealPointerServer(t *testing.T, stored *filer_pb.Entry, presentVersionId string) (*S3ApiServer, *healPointerFiler) {
+	t.Helper()
+	f := &healPointerFiler{anonymousReadFiler: &anonymousReadFiler{entries: make(map[string]*filer_pb.Entry)}}
+	stored.Name = "k" + s3_constants.VersionsFolder
+	stored.IsDirectory = true
+	f.entries["/buckets/b/"+stored.Name] = stored
+	fileName := "v_" + presentVersionId
+	f.entries["/buckets/b/"+stored.Name+"/"+fileName] = &filer_pb.Entry{
+		Name:     fileName,
+		Extended: map[string][]byte{s3_constants.ExtVersionIdKey: []byte(presentVersionId)},
+	}
+	return newPutTestServer(t, startFakeFiler(t, f)), f
+}
+
+func TestHealPointerlessVersionsEntryIgnoresRecentCommit(t *testing.T) {
+	presentId := invertedVersionId(time.Now().Add(-time.Hour))
+	stored := committedAt(&filer_pb.Entry{Extended: map[string][]byte{}}, time.Now())
+	s3a, f := newHealPointerServer(t, stored, presentId)
+
+	if _, err := s3a.healStaleLatestVersionPointer("b", "k", proto.Clone(stored).(*filer_pb.Entry), ""); err != nil {
+		t.Fatalf("healStaleLatestVersionPointer: %v", err)
+	}
+	if len(f.updates) != 1 {
+		t.Fatalf("updates = %d, want the pointer repaired", len(f.updates))
+	}
+	if got := string(f.updates[0].Entry.Extended[s3_constants.ExtLatestVersionIdKey]); got != presentId {
+		t.Errorf("repaired pointer = %q, want %q", got, presentId)
 	}
 }

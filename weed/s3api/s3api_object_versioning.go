@@ -2339,7 +2339,7 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		return nil, scanErr
 	}
 
-	if versionPointerGraceLeft(versionsEntry) > 0 {
+	if stalePointerFile != "" && versionPointerGraceLeft(versionsEntry) > 0 {
 		versioningHealInfof("deferred", "bucket=%s key=%s mode=recent_pointer missing_file=%s", bucket, normalizedObject, stalePointerFile)
 		if latestEntry == nil {
 			return nil, fmt.Errorf("%w: no remaining version in %s", filer_pb.ErrNotFound, versionsDir)
