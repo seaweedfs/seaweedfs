@@ -9,6 +9,20 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// TestNewPutChunkedUploadOption_ContentLocation pins that putToFiler's upload
+// options carry the object path, including for UploadPart (object == "").
+func TestNewPutChunkedUploadOption_ContentLocation(t *testing.T) {
+	s3a := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets"}}
+	partReq := mux.SetURLVars(httptest.NewRequest("PUT", "/b/dir/key?partNumber=1&uploadId=u", nil),
+		map[string]string{"bucket": "b", "object": "dir/a b"})
+
+	opt := s3a.newPutChunkedUploadOption(partReq, "b", "", "", nil)
+	want := map[string]string{"Seaweed-Content-Location": "/buckets/b/dir/a%20b"}
+	if !reflect.DeepEqual(opt.PairMap, want) {
+		t.Errorf("PairMap = %v, want %v", opt.PairMap, want)
+	}
+}
+
 func TestObjectContentLocation(t *testing.T) {
 	s3a := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets"}}
 	partReq := mux.SetURLVars(httptest.NewRequest("PUT", "/b/dir/key?partNumber=1&uploadId=u", nil),
