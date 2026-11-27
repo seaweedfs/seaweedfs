@@ -145,7 +145,8 @@ func (fs *FilerServer) forwardStreamRenameEntry(req *filer_pb.StreamRenameEntryR
 const ownerEventsCatchUpCap = 5 * time.Second
 
 // ownerEventsPollInterval re-checks the owner's watermark, which can rise
-// without lifting the low watermark that wakes the wait.
+// without lifting the low watermark that wakes the wait, or reappear when
+// the owner's stream reconnects.
 const ownerEventsPollInterval = 10 * time.Millisecond
 
 // awaitOwnerEvents waits until this filer has replayed the owner's metadata
@@ -157,14 +158,13 @@ func (fs *FilerServer) awaitOwnerEvents(ctx context.Context, owner pb.ServerAddr
 	if ma == nil || tsNs <= 0 {
 		return
 	}
-	peers := []pb.ServerAddress{owner}
 	deadline := time.NewTimer(ownerEventsCatchUpCap)
 	defer deadline.Stop()
 	poll := time.NewTicker(ownerEventsPollInterval)
 	defer poll.Stop()
 	for {
 		advanced := ma.DeliveryWatermarkAdvancedChan()
-		if ma.PeersCaughtUpTo(peers, tsNs) {
+		if ma.PeerDeliveredThrough(owner, tsNs) {
 			return
 		}
 		select {

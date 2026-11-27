@@ -460,6 +460,15 @@ func (ma *MetaAggregator) PeersCaughtUpTo(peers []pb.ServerAddress, tsNs int64) 
 	return true
 }
 
+// PeerDeliveredThrough is PeersCaughtUpTo for one peer, except that a peer no
+// longer tracked has delivered nothing: its stream may reconnect and replay.
+func (ma *MetaAggregator) PeerDeliveredThrough(peer pb.ServerAddress, tsNs int64) bool {
+	ma.peerWatermarksLock.Lock()
+	defer ma.peerWatermarksLock.Unlock()
+	ts, found := ma.peerWatermarks[peer]
+	return found && ts >= tsNs
+}
+
 func (ma *MetaAggregator) HasRemotePeers() bool {
 	ma.peerChansLock.Lock()
 	defer ma.peerChansLock.Unlock()

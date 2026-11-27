@@ -214,6 +214,53 @@ func TestForwardedRenameWaitsForOwnerEvents(t *testing.T) {
 	}
 }
 
+// An owner this filer no longer follows, its stream down long enough to be
+// dropped, has replayed nothing here: the rename waits for it to come back.
+func TestForwardedRenameWaitsForUntrackedOwner(t *testing.T) {
+	c := newTwoFilers(t)
+	storeB := separateStores(c)
+	sharedWriteRing(c)
+	ma := filer.NewMetaAggregator(c.fsA.filer, c.addrA, c.dial)
+	c.fsA.filer.MetaAggregator = ma
+	t.Cleanup(ma.Shutdown)
+
+	p := c.keyOwnedBy(t, c.addrB, c.addrB)
+	dir, name := p.DirAndName()
+	create := &filer_pb.CreateEntryRequest{Directory: dir, OExcl: true, Entry: &filer_pb.Entry{
+		Name: name, Attributes: &filer_pb.FuseAttributes{Mtime: 1700000000, FileMode: 0644},
+	}}
+	if resp, err := c.fsA.CreateEntry(context.Background(), create); err != nil || resp.GetError() != "" {
+		t.Fatalf("create via A: resp=%v err=%v", resp, err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.fsA.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+			OldDirectory: dir, OldName: name, NewDirectory: dir, NewName: name + ".renamed",
+		})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("rename answered while A did not follow the owner: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if _, err := storeB.FindEntry(context.Background(), p+".renamed"); err != nil {
+		t.Fatalf("the owner has no renamed entry: %v", err)
+	}
+
+	ma.TrackPeerForTesting(c.addrB)
+	ma.ReportPeerWatermarksForTesting(c.addrB, c.fsB.filer.LocalMetaLogBuffer.LastTsNs.Load(), 0)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("rename via A: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("rename still waiting after A replayed the owner's events")
+	}
+}
+
 // A rename that must not replace its target is refused when this filer has
 // the target, even though the owner has not replayed it.
 func TestForwardedAtomicRenameEntryTargetExistsHere(t *testing.T) {
