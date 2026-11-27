@@ -3,6 +3,7 @@ package s3api
 import (
 	"context"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"sync"
@@ -141,7 +142,7 @@ type servedObjectEntriesKey struct{}
 // rather than on the one current by then.
 func recordServedObjectEntry(r *http.Request, bucket, object string, extended map[string][]byte) {
 	if served, ok := r.Context().Value(servedObjectEntriesKey{}).(*sync.Map); ok {
-		served.Store(bucket+"/"+object, extended)
+		served.Store(bucket+"/"+object, maps.Clone(extended))
 	}
 }
 

@@ -855,3 +855,19 @@ func TestColdBucketDecidesExistingObjectTagDenyOnObjectTags(t *testing.T) {
 		assert.Equal(t, code, got, key)
 	}
 }
+
+// A handler changing the entry it served after the check leaves the recorded
+// tags as they were authorized.
+func TestServedObjectEntryKeepsTheTagsAuthorized(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPut, "/scan-bucket/a.txt?tagging", nil)
+	req = req.WithContext(context.WithValue(req.Context(), servedObjectEntriesKey{}, &sync.Map{}))
+	extended := map[string][]byte{s3_constants.AmzObjectTaggingPrefix + "ScanStatus": []byte("CLEAN")}
+	recordServedObjectEntry(req, "scan-bucket", "/a.txt", extended)
+
+	delete(extended, s3_constants.AmzObjectTaggingPrefix+"ScanStatus")
+	extended[s3_constants.AmzObjectTaggingPrefix+"ScanStatus"] = []byte("INFECTED")
+
+	served, found := servedObjectEntry(req, "scan-bucket", "/a.txt")
+	require.True(t, found)
+	assert.Equal(t, "CLEAN", string(served[s3_constants.AmzObjectTaggingPrefix+"ScanStatus"]))
+}
