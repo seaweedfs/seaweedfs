@@ -2806,6 +2806,16 @@ func (m *AtomicRenameEntryRequest) MarshalToSizedBufferVT(dAtA []byte) (int, err
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
 	}
+	if m.IsMoved {
+		i--
+		if m.IsMoved {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x38
+	}
 	if m.FailIfTargetExists {
 		i--
 		if m.FailIfTargetExists {
@@ -7870,6 +7880,9 @@ func (m *AtomicRenameEntryRequest) SizeVT() (n int) {
 		n += 1 + protohelpers.SizeOfVarint(uint64(l)) + l
 	}
 	if m.FailIfTargetExists {
+		n += 2
+	}
+	if m.IsMoved {
 		n += 2
 	}
 	n += len(m.unknownFields)
@@ -17576,6 +17589,26 @@ func (m *AtomicRenameEntryRequest) UnmarshalVT(dAtA []byte) error {
 				}
 			}
 			m.FailIfTargetExists = bool(v != 0)
+		case 7:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field IsMoved", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.IsMoved = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := protohelpers.Skip(dAtA[iNdEx:])

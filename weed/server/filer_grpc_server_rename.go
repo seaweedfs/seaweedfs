@@ -41,7 +41,18 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 	oldParent := util.FullPath(filepath.ToSlash(req.OldDirectory))
 	newParent := util.FullPath(filepath.ToSlash(req.NewDirectory))
 
+	oldPath := oldParent.Child(req.OldName)
+	if req.IsMoved {
+		if err := fs.checkForwardedWrite(ctx, entryRouteKey(oldPath)); err != nil {
+			return nil, err
+		}
+	}
 	if err := fs.filer.CanRename(ctx, oldParent, newParent, req.OldName); err != nil {
+		if err == filer_pb.ErrNotFound && !req.IsMoved && !scopeKeepOnly(ctx) && fs.ownerKeepsOwnStore(entryRouteKey(oldPath)) {
+			if resp, handled, forwardErr := fs.forwardAtomicRenameEntry(ctx, req, oldPath); handled {
+				return resp, forwardErr
+			}
+		}
 		return nil, err
 	}
 

@@ -3049,8 +3049,11 @@ type AtomicRenameEntryRequest struct {
 	// already exists. Lets a caller that authorized the rename without delete
 	// access on an absent target stay safe if one is created concurrently.
 	FailIfTargetExists bool `protobuf:"varint,6,opt,name=fail_if_target_exists,json=failIfTargetExists,proto3" json:"fail_if_target_exists,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Set on a rename forwarded to the source's write owner, so it is not
+	// forwarded again.
+	IsMoved       bool `protobuf:"varint,7,opt,name=is_moved,json=isMoved,proto3" json:"is_moved,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AtomicRenameEntryRequest) Reset() {
@@ -3121,6 +3124,13 @@ func (x *AtomicRenameEntryRequest) GetSignatures() []int32 {
 func (x *AtomicRenameEntryRequest) GetFailIfTargetExists() bool {
 	if x != nil {
 		return x.FailIfTargetExists
+	}
+	return false
+}
+
+func (x *AtomicRenameEntryRequest) GetIsMoved() bool {
+	if x != nil {
+		return x.IsMoved
 	}
 	return false
 }
@@ -7769,7 +7779,7 @@ const file_filer_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01\"w\n" +
 	"\x13DeleteEntryResponse\x12\x14\n" +
 	"\x05error\x18\x01 \x01(\tR\x05error\x12J\n" +
-	"\x0emetadata_event\x18\x02 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\"\xed\x01\n" +
+	"\x0emetadata_event\x18\x02 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\"\x88\x02\n" +
 	"\x18AtomicRenameEntryRequest\x12#\n" +
 	"\rold_directory\x18\x01 \x01(\tR\foldDirectory\x12\x19\n" +
 	"\bold_name\x18\x02 \x01(\tR\aoldName\x12#\n" +
@@ -7778,7 +7788,8 @@ const file_filer_proto_rawDesc = "" +
 	"\n" +
 	"signatures\x18\x05 \x03(\x05R\n" +
 	"signatures\x121\n" +
-	"\x15fail_if_target_exists\x18\x06 \x01(\bR\x12failIfTargetExists\"\x1b\n" +
+	"\x15fail_if_target_exists\x18\x06 \x01(\bR\x12failIfTargetExists\x12\x19\n" +
+	"\bis_moved\x18\a \x01(\bR\aisMoved\"\x1b\n" +
 	"\x19AtomicRenameEntryResponse\"\xd5\x01\n" +
 	"\x18StreamRenameEntryRequest\x12#\n" +
 	"\rold_directory\x18\x01 \x01(\tR\foldDirectory\x12\x19\n" +

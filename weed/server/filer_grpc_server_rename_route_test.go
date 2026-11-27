@@ -49,6 +49,33 @@ func TestStreamRenameEntryMissReachesOwnerStore(t *testing.T) {
 	}
 }
 
+func TestAtomicRenameEntryMissReachesOwnerStore(t *testing.T) {
+	c := newTwoFilers(t)
+	storeB := separateStores(c)
+	sharedWriteRing(c)
+	p := c.keyOwnedBy(t, c.addrB, c.addrB)
+	dir, name := p.DirAndName()
+	ctx := context.Background()
+
+	create := &filer_pb.CreateEntryRequest{Directory: dir, OExcl: true, Entry: &filer_pb.Entry{
+		Name: name, Attributes: &filer_pb.FuseAttributes{Mtime: 1700000000, FileMode: 0644},
+	}}
+	if resp, err := c.fsA.CreateEntry(ctx, create); err != nil || resp.GetError() != "" {
+		t.Fatalf("create via A: resp=%v err=%v", resp, err)
+	}
+	if _, err := c.fsA.AtomicRenameEntry(ctx, &filer_pb.AtomicRenameEntryRequest{
+		OldDirectory: dir, OldName: name, NewDirectory: dir, NewName: name + ".renamed",
+	}); err != nil {
+		t.Fatalf("rename via A: %v", err)
+	}
+	if _, err := storeB.FindEntry(ctx, p); err != filer_pb.ErrNotFound {
+		t.Fatalf("the owner kept the source after the rename: %v", err)
+	}
+	if _, err := storeB.FindEntry(ctx, p+".renamed"); err != nil {
+		t.Fatalf("the owner has no renamed entry: %v", err)
+	}
+}
+
 // A source missing on the owner too is still reported as not found.
 func TestStreamRenameEntryMissOnOwnerNotFound(t *testing.T) {
 	c := newTwoFilers(t)

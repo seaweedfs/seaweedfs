@@ -72,6 +72,28 @@ func (fs *FilerServer) forwardDeleteEntry(ctx context.Context, req *filer_pb.Del
 	return ownerResp, handled, nil
 }
 
+// forwardAtomicRenameEntry sends the rename to its source's write owner.
+// handled=false means this filer is the owner and applies it.
+func (fs *FilerServer) forwardAtomicRenameEntry(ctx context.Context, req *filer_pb.AtomicRenameEntryRequest, oldPath util.FullPath) (*filer_pb.AtomicRenameEntryResponse, bool, error) {
+	var ownerResp *filer_pb.AtomicRenameEntryResponse
+	handled, err := fs.forwardToWriteOwner(ctx, entryRouteKey(oldPath), func(owner pb.ServerAddress) error {
+		glog.V(2).InfofCtx(ctx, "AtomicRenameEntry %s: forwarding to owner %s", oldPath, owner)
+		req.IsMoved = true
+		return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			forwarded, e := client.AtomicRenameEntry(withCallerAuthContext(ctx), req)
+			if e != nil {
+				return e
+			}
+			ownerResp = forwarded
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, handled, err
+	}
+	return ownerResp, handled, nil
+}
+
 // forwardStreamRenameEntry sends the rename to its source's write owner and
 // relays the owner's responses. handled=false means this filer is the owner
 // and applies it.
