@@ -522,6 +522,7 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 								EcVolumes:      0,
 								EcShards:       0,
 								EcShardDetails: []VolumeServerEcInfo{},
+								LastHeartbeat:  dataNodeLastHeartbeat(node),
 							}
 						}
 						vs := volumeServerMap[node.Id]
