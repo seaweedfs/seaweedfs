@@ -130,8 +130,18 @@ func TestDLM_UnlockWaitsForHandoffAdmission(t *testing.T) {
 	default:
 	}
 	unblock()
-	require.NoError(t, <-transferred)
-	require.Equal(t, target.Host, <-released)
+	select {
+	case err := <-transferred:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("handoff did not finish")
+	}
+	select {
+	case moved := <-released:
+		require.Equal(t, target.Host, moved)
+	case <-time.After(5 * time.Second):
+		t.Fatal("unlock did not finish after the handoff")
+	}
 }
 
 func TestDLM_HandoffCompletionRechecksOwner(t *testing.T) {
