@@ -126,8 +126,10 @@ func newReuseManifestServer(t *testing.T, store filer.FilerStore) (*FilerServer,
 	waitCtx, cancelWait := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelWait()
 	require.NotEmpty(t, f.MasterClient.GetMaster(waitCtx), "fake master did not become available")
-	_, found := f.MasterClient.GetLocations(1)
-	require.True(t, found, "volume 1 has no location")
+	require.Eventually(t, func() bool {
+		_, found := f.MasterClient.GetLocations(1)
+		return found
+	}, 5*time.Second, 10*time.Millisecond, "volume 1 has no location")
 
 	return &FilerServer{
 		filer:          f,
