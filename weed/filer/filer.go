@@ -345,6 +345,7 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 	f.EmptyFolderCleaner = empty_folder_cleanup.NewEmptyFolderCleaner(f, f.Dlm.LockRing, self, f.DirBucketsPath, f.EmptyFolderCleanupDelay)
 
 	f.MetaAggregator = NewMetaAggregator(f, self, f.GrpcDialOption)
+	go f.loopSweepingExpiredEntries(self)
 	// The ring starts empty while peer history sits on disk: mark the pre-startFrom
 	// range evicted so a cursor there reads disk, not the ring's earliest entry.
 	f.MetaAggregator.MetaLogBuffer.MarkEvictedThrough(startFrom.UnixNano())
