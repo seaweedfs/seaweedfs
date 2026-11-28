@@ -89,7 +89,7 @@ const (
 
 func readAbortedCause(ctx context.Context, err error) string {
 	switch {
-	case streamCanceled(ctx, err):
+	case ctx.Err() == context.Canceled:
 		return readAbortedClientCanceled
 	case errors.Is(err, context.DeadlineExceeded), status.Code(err) == codes.DeadlineExceeded:
 		return readAbortedDeadlineExceeded

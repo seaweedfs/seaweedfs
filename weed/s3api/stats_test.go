@@ -217,9 +217,9 @@ func TestBucketReadAbortedCountsByCause(t *testing.T) {
 	count := func(cause string) float64 {
 		return testutil.ToFloat64(stats_collect.S3ReadAbortedCounter.WithLabelValues(bucket, cause))
 	}
-	assert.Equal(t, 2.0, count(readAbortedClientCanceled))
+	assert.Equal(t, 1.0, count(readAbortedClientCanceled))
 	assert.Equal(t, 2.0, count(readAbortedDeadlineExceeded))
-	assert.Equal(t, 1.0, count(readAbortedReadError))
+	assert.Equal(t, 2.0, count(readAbortedReadError), "a cancellation under a live request context is not the client's")
 
 	stats_collect.DeleteBucketMetrics(bucket)
 	assert.Zero(t, stats_collect.S3ReadAbortedCounter.DeletePartialMatch(prometheus.Labels{"bucket": bucket}), "bucket deletion must drop its aborted-read series")
