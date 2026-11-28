@@ -57,17 +57,19 @@ func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64
 	mutation := dlm.acquireMutation(key)
 	defer dlm.mutations.ReleaseLock(key, mutation)
 	primary, _ := dlm.LockRing.GetPrimaryAndBackup(key)
+	if primary != "" && primary != dlm.Host {
+		// The new owner must receive any local lease before the client is
+		// forwarded. Only the new primary can rotate its renewal token.
+		if primary, err = dlm.transferToOwnerLocked(key); err != nil {
+			return
+		}
+	}
 	if primary == "" {
 		err = NoLockServerError
 		return
 	}
 	if primary != dlm.Host {
-		// The new owner must receive any local lease before the client is
-		// forwarded. Only the new primary can rotate its renewal token.
-		err = dlm.transferToOwnerLocked(key)
-		if err == nil {
-			movedTo = primary
-		}
+		movedTo = primary
 		return
 	}
 	var seq, leaseExpires int64
@@ -103,17 +105,19 @@ func (dlm *DistributedLockManager) Unlock(key string, token string) (movedTo pb.
 	mutation := dlm.acquireMutation(key)
 	defer dlm.mutations.ReleaseLock(key, mutation)
 	primary, _ := dlm.LockRing.GetPrimaryAndBackup(key)
+	if primary != "" && primary != dlm.Host {
+		// Install the lease at the new primary before forwarding unlock,
+		// including when unlock wins admission before the topology callback.
+		if primary, err = dlm.transferToOwnerLocked(key); err != nil {
+			return
+		}
+	}
 	if primary == "" {
 		err = NoLockServerError
 		return
 	}
 	if primary != dlm.Host {
-		// Install the lease at the new primary before forwarding unlock,
-		// including when unlock wins admission before the topology callback.
-		err = dlm.transferToOwnerLocked(key)
-		if err == nil {
-			movedTo = primary
-		}
+		movedTo = primary
 		return
 	}
 	released, unlockErr := dlm.lockManager.unlock(key, token)
@@ -216,10 +220,12 @@ func (dlm *DistributedLockManager) sendTransferLocked(key string, transfer func(
 func (dlm *DistributedLockManager) TransferLockToOwner(key string) error {
 	mutation := dlm.acquireMutation(key)
 	defer dlm.mutations.ReleaseLock(key, mutation)
-	return dlm.transferToOwnerLocked(key)
+	_, err := dlm.transferToOwnerLocked(key)
+	return err
 }
 
-func (dlm *DistributedLockManager) transferToOwnerLocked(key string) (err error) {
+// transferToOwnerLocked returns the primary that owns the lease afterwards.
+func (dlm *DistributedLockManager) transferToOwnerLocked(key string) (owner pb.ServerAddress, err error) {
 	defer func() {
 		if err != nil && dlm.RetryTransferFn != nil {
 			dlm.RetryTransferFn(key)
@@ -228,28 +234,28 @@ func (dlm *DistributedLockManager) transferToOwnerLocked(key string) (err error)
 	primary, backup := dlm.LockRing.GetPrimaryAndBackup(key)
 	current, found := dlm.lockManager.GetLock(key)
 	if !found {
-		return nil
+		return primary, nil
 	}
 	if primary == "" {
-		return NoLockServerError
+		return "", NoLockServerError
 	}
 	if primary == dlm.Host {
 		if current.handoff {
 			dlm.lockManager.PromoteLock(key)
 		}
-		return nil
+		return primary, nil
 	}
 	if current.IsBackup && !current.handoff && backup == dlm.Host {
-		return nil
+		return primary, nil
 	}
 	if dlm.TransferFn == nil {
-		return LockHandoffPending
+		return "", LockHandoffPending
 	}
 	transferred, err := dlm.sendTransferLocked(key, func(lock *Lock) error {
 		return dlm.TransferFn(primary, lock)
 	})
 	if err != nil || transferred == nil {
-		return err
+		return primary, err
 	}
 	// Background retries can overlap a newer topology callback. Never evict
 	// a lease now owned here or discard it before its newest owner receives it.
@@ -259,9 +265,9 @@ func (dlm *DistributedLockManager) transferToOwnerLocked(key string) (err error)
 	} else if currentPrimary == primary {
 		dlm.lockManager.finishTransfer(key, transferred.Token, currentBackup == dlm.Host)
 	} else {
-		return LockHandoffPending
+		return "", LockHandoffPending
 	}
-	return nil
+	return currentPrimary, nil
 }
 
 // ReplicateLock sends an existing lease to its current backup after a topology

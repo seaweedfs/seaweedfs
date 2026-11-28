@@ -177,3 +177,32 @@ func TestDLM_HandoffCompletionRechecksOwner(t *testing.T) {
 		})
 	}
 }
+
+func TestDLM_ServesLocallyWhenHandoffEndsHere(t *testing.T) {
+	source := NewDistributedLockManager("source:8888")
+	source.LockRing.SetSnapshot([]pb.ServerAddress{source.Host}, 1)
+	expires := time.Now().Add(time.Minute).UnixNano()
+	_, token, _, _, err := source.LockWithTimeout("key", expires, "", "owner")
+	require.NoError(t, err)
+	version := int64(1)
+	source.TransferFn = func(pb.ServerAddress, *Lock) error {
+		version++
+		source.LockRing.SetSnapshot([]pb.ServerAddress{source.Host}, version)
+		return nil
+	}
+	moveAway := func() {
+		version++
+		source.LockRing.SetSnapshot([]pb.ServerAddress{"target:8888"}, version)
+	}
+	moveAway()
+	_, renewed, _, movedTo, err := source.LockWithTimeout("key", expires, token, "owner")
+	require.NoError(t, err)
+	require.Empty(t, movedTo, "the ring moved back here during the handoff")
+	require.NotEqual(t, token, renewed)
+	moveAway()
+	movedTo, err = source.Unlock("key", renewed)
+	require.NoError(t, err)
+	require.Empty(t, movedTo)
+	_, found := source.GetLock("key")
+	require.False(t, found)
+}
