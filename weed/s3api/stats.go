@@ -17,6 +17,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func track(f http.HandlerFunc, action string) http.HandlerFunc {
@@ -89,7 +91,7 @@ func readAbortedCause(ctx context.Context, err error) string {
 	switch {
 	case streamCanceled(ctx, err):
 		return readAbortedClientCanceled
-	case errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, context.DeadlineExceeded), status.Code(err) == codes.DeadlineExceeded:
 		return readAbortedDeadlineExceeded
 	default:
 		return readAbortedReadError

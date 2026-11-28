@@ -20,6 +20,8 @@ import (
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // TestTrackAuditFallbackForDirectWriteHeader covers the regression behind
@@ -209,13 +211,14 @@ func TestBucketReadAbortedCountsByCause(t *testing.T) {
 	BucketReadAborted(errors.New("write: broken pipe"), newReq(canceled))
 	BucketReadAborted(context.Canceled, newReq(context.Background()))
 	BucketReadAborted(fmt.Errorf("read chunk: %w", context.DeadlineExceeded), newReq(context.Background()))
+	BucketReadAborted(fmt.Errorf("lookup: %w", status.Error(codes.DeadlineExceeded, "deadline")), newReq(context.Background()))
 	BucketReadAborted(io.ErrUnexpectedEOF, newReq(context.Background()))
 
 	count := func(cause string) float64 {
 		return testutil.ToFloat64(stats_collect.S3ReadAbortedCounter.WithLabelValues(bucket, cause))
 	}
 	assert.Equal(t, 2.0, count(readAbortedClientCanceled))
-	assert.Equal(t, 1.0, count(readAbortedDeadlineExceeded))
+	assert.Equal(t, 2.0, count(readAbortedDeadlineExceeded))
 	assert.Equal(t, 1.0, count(readAbortedReadError))
 
 	stats_collect.DeleteBucketMetrics(bucket)
