@@ -451,6 +451,7 @@ templ Plugin(page string, initialJob string, lane string) {
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>Execution Jobs</h5>
                             <div class="d-flex gap-2 align-items-center flex-wrap">
+                                <input type="number" min="1" step="1" class="form-control form-control-sm" id="plugin-monitor-volume-filter" placeholder="Volume ID" title="Show only jobs and activities of this volume" style="width: 130px;"/>
                                 <select class="form-select form-select-sm" id="plugin-monitor-job-state-filter" style="min-width: 180px;">
                                     <option value="">All States</option>
                                     <option value="assigned">Assigned</option>
@@ -612,6 +613,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 activeSubTab: 'configuration',
                 initialNavigationApplied: false,
                 monitorExecutionJobState: '',
+                monitorVolumeID: '',
                 workers: [],
                 jobs: [],
                 activities: [],
@@ -640,6 +642,18 @@ templ Plugin(page string, initialJob string, lane string) {
                 if (!jobType) return url;
                 var sep = url.indexOf('?') === -1 ? '?' : '&';
                 return url + sep + 'job_type=' + encodeURIComponent(jobType);
+            }
+
+            function appendVolumeParam(url) {
+                if (!state.monitorVolumeID) return url;
+                var sep = url.indexOf('?') === -1 ? '?' : '&';
+                return url + sep + 'volume_id=' + encodeURIComponent(state.monitorVolumeID);
+            }
+
+            function readMonitorVolumeFilter() {
+                var input = document.getElementById('plugin-monitor-volume-filter');
+                var value = input ? String(input.value || '').trim() : '';
+                return /^[1-9][0-9]*$/.test(value) ? value : '';
             }
 
             function getCSRFToken() {
@@ -3101,7 +3115,11 @@ templ Plugin(page string, initialJob string, lane string) {
                 // The newest 500 rows cluster-wide may hold none of the selected job type on a busy
                 // cluster, so the job-type sub-tabs fetch their own server-side filtered window.
                 var scopedJobType = monitorJobTypeScope();
-                var sameScope = state.monitorRowsScope === scopedJobType;
+                state.monitorVolumeID = readMonitorVolumeFilter();
+                var scopedVolume = state.monitorVolumeID;
+                var rowsScope = scopedJobType + '|' + scopedVolume;
+                var sameScope = state.monitorRowsScope === rowsScope;
+                var scopedRows = scopedJobType || scopedVolume;
 
                 // A failed request keeps its last rows; the rest still land and the failure is rethrown.
                 var failure = null;
@@ -3114,8 +3132,8 @@ templ Plugin(page string, initialJob string, lane string) {
 
                 var allJobsPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/jobs?limit=500')), state.allJobs);
                 var allActivitiesPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/activities?limit=500')), state.allActivities);
-                var jobsPromise = scopedJobType ? keepOnFailure(pluginRequest('GET', appendJobTypeParam(appendLaneParam('/api/plugin/jobs?limit=500'), scopedJobType)), sameScope ? state.jobs : null) : allJobsPromise;
-                var activitiesPromise = scopedJobType ? keepOnFailure(pluginRequest('GET', appendJobTypeParam(appendLaneParam('/api/plugin/activities?limit=500'), scopedJobType)), sameScope ? state.activities : null) : allActivitiesPromise;
+                var jobsPromise = scopedRows ? keepOnFailure(pluginRequest('GET', appendVolumeParam(appendJobTypeParam(appendLaneParam('/api/plugin/jobs?limit=500'), scopedJobType))), sameScope ? state.jobs : null) : allJobsPromise;
+                var activitiesPromise = scopedRows ? keepOnFailure(pluginRequest('GET', appendVolumeParam(appendJobTypeParam(appendLaneParam('/api/plugin/activities?limit=500'), scopedJobType))), sameScope ? state.activities : null) : allActivitiesPromise;
                 var schedulerPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-states')), state.schedulerStates);
                 var schedulerStatusPromise = pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-status'));
 
@@ -3130,15 +3148,15 @@ templ Plugin(page string, initialJob string, lane string) {
                 } catch (e) {
                     schedulerStatus = null;
                 }
-                if (monitorJobTypeScope() !== scopedJobType) {
+                if (monitorJobTypeScope() !== scopedJobType || readMonitorVolumeFilter() !== scopedVolume) {
                     return;
                 }
 
                 state.allJobs = Array.isArray(allJobs) ? allJobs : [];
                 state.allActivities = Array.isArray(allActivities) ? allActivities : [];
-                state.jobs = Array.isArray(jobs) ? jobs : state.allJobs;
-                state.activities = Array.isArray(activities) ? activities : state.allActivities;
-                state.monitorRowsScope = scopedJobType;
+                state.jobs = Array.isArray(jobs) ? jobs : (scopedVolume ? [] : state.allJobs);
+                state.activities = Array.isArray(activities) ? activities : (scopedVolume ? [] : state.allActivities);
+                state.monitorRowsScope = rowsScope;
                 state.schedulerStates = Array.isArray(schedulerStates) ? schedulerStates : [];
                 state.schedulerStatus = schedulerStatus && schedulerStatus.scheduler ? schedulerStatus.scheduler : null;
                 state.schedulerLock = schedulerStatus && schedulerStatus.lock ? schedulerStatus.lock : null;
@@ -3197,6 +3215,17 @@ templ Plugin(page string, initialJob string, lane string) {
                     monitorStateFilter.addEventListener('change', function() {
                         state.monitorExecutionJobState = String(monitorStateFilter.value || '').trim();
                         renderExecutionJobs();
+                    });
+                }
+
+                var monitorVolumeFilter = document.getElementById('plugin-monitor-volume-filter');
+                if (monitorVolumeFilter) {
+                    monitorVolumeFilter.addEventListener('change', async function() {
+                        try {
+                            await refreshJobsAndActivities();
+                        } catch (refreshErr) {
+                            notify('Monitoring refresh failed: ' + refreshErr.message, 'error');
+                        }
                     });
                 }
 
