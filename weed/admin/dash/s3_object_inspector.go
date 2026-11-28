@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
@@ -138,7 +139,9 @@ func (s *AdminServer) InspectS3Object(ctx context.Context, bucket, key string) (
 			return fmt.Errorf("lookup %s/%s: %w", objectDir, objectName, err)
 		}
 		if resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: objectDir, Name: versionsName}); err == nil {
-			versionsEntry = resp.Entry
+			if resp.Entry.IsDirectory {
+				versionsEntry = resp.Entry
+			}
 		} else if !errors.Is(err, filer_pb.ErrNotFound) {
 			return fmt.Errorf("lookup %s: %w", versionsDir, err)
 		}
@@ -146,7 +149,7 @@ func (s *AdminServer) InspectS3Object(ctx context.Context, bucket, key string) (
 			return nil
 		}
 		return filer_pb.SeaweedList(ctx, client, versionsDir, "", func(entry *filer_pb.Entry, isLast bool) error {
-			if entry.IsDirectory {
+			if s3api.VersionIdFromEntry(entry) == "" {
 				return nil
 			}
 			if len(versionEntries) >= maxInspectedS3ObjectVersions {
@@ -160,7 +163,7 @@ func (s *AdminServer) InspectS3Object(ctx context.Context, bucket, key string) (
 	if err != nil {
 		return nil, err
 	}
-	if baseEntry == nil && versionsEntry == nil {
+	if baseEntry == nil && len(versionEntries) == 0 {
 		return nil, fmt.Errorf("object %s/%s: %w", bucket, key, filer_pb.ErrNotFound)
 	}
 
@@ -214,9 +217,7 @@ func assembleS3ObjectVersions(objectDir, objectName string, baseEntry, versionsE
 	versionsDir := objectDir + "/" + objectName + s3_constants.VersionsFolder
 	for _, entry := range versionEntries {
 		version := inspectS3ObjectVersion(versionsDir+"/"+entry.Name, entry)
-		if version.VersionId == "" {
-			version.VersionId = strings.TrimPrefix(entry.Name, "v_")
-		}
+		version.VersionId = s3api.VersionIdFromEntry(entry)
 		version.IsLatest = !nullIsLatest && version.VersionId == latestVersionId
 		versions = append(versions, version)
 	}
