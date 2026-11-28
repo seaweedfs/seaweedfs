@@ -171,6 +171,9 @@ func (f *Filer) sweepExpiredEntriesIn(ctx context.Context, dir util.FullPath, na
 // deleteExpiredEntry removes the row at p only while it still holds an
 // expired entry, under the lock writers take, so a write that replaced the
 // listed entry keeps its row. A contended path is left to a later listing.
+// Where the store refuses a commit over another writer's change, the re-read
+// and the delete share a transaction, which keeps a replacement written
+// through another filer too.
 func (f *Filer) deleteExpiredEntry(ctx context.Context, p util.FullPath) error {
 	if lt := f.EntryLockTable; lt != nil {
 		lock, acquired := lt.TryAcquireLock("deleteExpiredEntry", p, util.ExclusiveLock)
@@ -179,6 +182,26 @@ func (f *Filer) deleteExpiredEntry(ctx context.Context, p util.FullPath) error {
 		}
 		defer lt.ReleaseLock(p, lock)
 	}
+	if !f.RefusesConflictingCommits(p) || ctx.Value(storeTransactionKey{}) != nil {
+		return f.deleteIfExpired(ctx, p)
+	}
+	txCtx, err := f.BeginTransaction(ctx)
+	if err != nil {
+		return err
+	}
+	if err = f.deleteIfExpired(txCtx, p); err == nil {
+		err = f.CommitTransaction(txCtx)
+	}
+	if err != nil {
+		f.RollbackTransaction(txCtx)
+		if errors.Is(err, ErrTransactionConflict) {
+			return nil
+		}
+	}
+	return err
+}
+
+func (f *Filer) deleteIfExpired(ctx context.Context, p util.FullPath) error {
 	current, err := f.Store.FindEntry(ctx, p)
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {

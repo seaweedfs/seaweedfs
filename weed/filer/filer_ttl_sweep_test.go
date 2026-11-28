@@ -220,6 +220,46 @@ func TestDeleteExpiredEntryKeepsAReplacement(t *testing.T) {
 	}
 }
 
+// Another filer on the same store does not take this filer's lock: a write it
+// makes between the re-read and the delete gets the delete's commit refused.
+func TestDeleteExpiredEntryKeepsAReplacementFromAnotherFiler(t *testing.T) {
+	f, _ := newTestFilerWithStubStore(t)
+	store := newVersionedStore()
+	f.Store = NewFilerStoreWrapper(store)
+	other := NewFilerStoreWrapper(store)
+	ctx := context.Background()
+	p := util.FullPath("/logs/current")
+	old := time.Now().Add(-time.Hour)
+	expired := &Entry{FullPath: p, Attr: Attr{Mode: 0o644, Crtime: old, Mtime: old, TtlSec: 120}}
+
+	if err := other.InsertEntry(ctx, expired); err != nil {
+		t.Fatal(err)
+	}
+	ran := store.once(t, "r"+string(p), func() error {
+		return other.InsertEntry(ctx, &Entry{FullPath: p, Attr: Attr{Mode: 0o644, Crtime: time.Now(), Mtime: time.Now(), TtlSec: 120}})
+	})
+	if err := f.deleteExpiredEntry(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if !*ran {
+		t.Fatal("the expired entry was not re-read in a transaction")
+	}
+	if store.getEntry(string(p)) == nil {
+		t.Fatal("replacement written through another filer removed")
+	}
+
+	store.afterRead = nil
+	if err := other.InsertEntry(ctx, expired); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.deleteExpiredEntry(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if store.getEntry(string(p)) != nil {
+		t.Fatal("expired entry kept")
+	}
+}
+
 func TestSweepExpiredEntriesKeepsADirectoryAWriterHolds(t *testing.T) {
 	f, store := newTestFilerWithStubStore(t)
 	f.DirBucketsPath = "/buckets"
