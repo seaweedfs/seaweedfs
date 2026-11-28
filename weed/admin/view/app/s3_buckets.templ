@@ -245,6 +245,11 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                        title="Browse Files">
                                                         <i class="bi bi-folder2-open"></i>
                                                     </a>
+                                                    <a href={dash.PUrl(ctx, fmt.Sprintf("/object-store/buckets/%s/inspect", bucket.Name))}
+                                                       class="btn btn-outline-dark btn-sm"
+                                                       title="Inspect Object">
+                                                        <i class="bi bi-search"></i>
+                                                    </a>
                                                     <button type="button"
                                                             class="btn btn-outline-primary btn-sm view-details-btn"
                                                             data-bucket-name={bucket.Name}
