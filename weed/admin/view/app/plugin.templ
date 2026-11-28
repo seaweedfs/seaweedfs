@@ -623,6 +623,8 @@ templ Plugin(page string, initialJob string, lane string) {
                 allJobs: [],
                 allActivities: [],
                 monitorRowsScope: null,
+                detectionActivities: [],
+                detectionRowsScope: null,
                 refreshError: '',
                 loadedJobType: '',
                 descriptor: null,
@@ -1890,7 +1892,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 }
 
                 var filteredActivities = [];
-                var activities = Array.isArray(state.activities) ? state.activities : [];
+                var activities = Array.isArray(state.detectionActivities) ? state.detectionActivities : [];
                 for (var i = 0; i < activities.length; i++) {
                     var activity = activities[i] || {};
                     var jobType = String(activity.job_type || '').trim();
@@ -3134,6 +3136,11 @@ templ Plugin(page string, initialJob string, lane string) {
                 var allActivitiesPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/activities?limit=500')), state.allActivities);
                 var jobsPromise = scopedRows ? keepOnFailure(pluginRequest('GET', appendVolumeParam(appendJobTypeParam(appendLaneParam('/api/plugin/jobs?limit=500'), scopedJobType))), sameScope ? state.jobs : null) : allJobsPromise;
                 var activitiesPromise = scopedRows ? keepOnFailure(pluginRequest('GET', appendVolumeParam(appendJobTypeParam(appendLaneParam('/api/plugin/activities?limit=500'), scopedJobType))), sameScope ? state.activities : null) : allActivitiesPromise;
+                // Detection scans belong to no job, so the volume filter would hide every one of them.
+                var detectionActivitiesPromise = activitiesPromise;
+                if (scopedVolume) {
+                    detectionActivitiesPromise = scopedJobType ? keepOnFailure(pluginRequest('GET', appendJobTypeParam(appendLaneParam('/api/plugin/activities?limit=500'), scopedJobType)), state.detectionRowsScope === scopedJobType ? state.detectionActivities : null) : allActivitiesPromise;
+                }
                 var schedulerPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-states')), state.schedulerStates);
                 var schedulerStatusPromise = pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-status'));
 
@@ -3141,6 +3148,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 var allActivities = await allActivitiesPromise;
                 var jobs = await jobsPromise;
                 var activities = await activitiesPromise;
+                var detectionActivities = await detectionActivitiesPromise;
                 var schedulerStates = await schedulerPromise;
                 var schedulerStatus = null;
                 try {
@@ -3157,6 +3165,8 @@ templ Plugin(page string, initialJob string, lane string) {
                 state.jobs = Array.isArray(jobs) ? jobs : (scopedVolume ? [] : state.allJobs);
                 state.activities = Array.isArray(activities) ? activities : (scopedVolume ? [] : state.allActivities);
                 state.monitorRowsScope = rowsScope;
+                state.detectionActivities = Array.isArray(detectionActivities) ? detectionActivities : state.allActivities;
+                state.detectionRowsScope = scopedJobType;
                 state.schedulerStates = Array.isArray(schedulerStates) ? schedulerStates : [];
                 state.schedulerStatus = schedulerStatus && schedulerStatus.scheduler ? schedulerStatus.scheduler : null;
                 state.schedulerLock = schedulerStatus && schedulerStatus.lock ? schedulerStatus.lock : null;
