@@ -1239,22 +1239,35 @@ func (f *Filer) DeleteEmptyParentDirectories(ctx context.Context, dirPath util.F
 		return
 	}
 
-	if isKeyObject, keyErr := f.IsDirectoryKeyObject(ctx, dirPath); keyErr != nil || isKeyObject {
-		return
-	}
-
-	// Directory is empty, try to delete it
-	glog.V(2).InfofCtx(ctx, "DeleteEmptyParentDirectories: deleting empty directory %s", dirPath)
 	parentDir, _ := dirPath.DirAndName()
-	if dirEntry, findErr := f.FindEntry(ctx, dirPath); findErr == nil {
-		if delErr := f.doDeleteEntryMetaAndData(f.emptyFolderDeleteContext(ctx, dirPath), dirEntry, false, false, nil); delErr == nil {
-			// Successfully deleted, continue checking upwards
-			f.DeleteEmptyParentDirectories(ctx, util.FullPath(parentDir), stopAtPath)
-		} else {
-			// Failed to delete, stop cleanup
-			glog.V(3).InfofCtx(ctx, "DeleteEmptyParentDirectories: failed to delete %s: %v", dirPath, delErr)
-		}
+	if f.deleteEmptyDirectory(ctx, dirPath) {
+		f.DeleteEmptyParentDirectories(ctx, util.FullPath(parentDir), stopAtPath)
 	}
+}
+
+// deleteEmptyDirectory removes the directory row under the lock writers take,
+// unless the row holds an S3 object or a writer has the path.
+func (f *Filer) deleteEmptyDirectory(ctx context.Context, dirPath util.FullPath) bool {
+	if lt := f.EntryLockTable; lt != nil {
+		lock, acquired := lt.TryAcquireLock("DeleteEmptyParentDirectories", dirPath, util.ExclusiveLock)
+		if !acquired {
+			return false
+		}
+		defer lt.ReleaseLock(dirPath, lock)
+	}
+	if isKeyObject, keyErr := f.IsDirectoryKeyObject(ctx, dirPath); keyErr != nil || isKeyObject {
+		return false
+	}
+	glog.V(2).InfofCtx(ctx, "DeleteEmptyParentDirectories: deleting empty directory %s", dirPath)
+	dirEntry, findErr := f.FindEntry(ctx, dirPath)
+	if findErr != nil {
+		return false
+	}
+	if delErr := f.doDeleteEntryMetaAndData(f.emptyFolderDeleteContext(ctx, dirPath), dirEntry, false, false, nil); delErr != nil {
+		glog.V(3).InfofCtx(ctx, "DeleteEmptyParentDirectories: failed to delete %s: %v", dirPath, delErr)
+		return false
+	}
+	return true
 }
 
 // IsDirectoryEmpty checks if a directory contains any entries

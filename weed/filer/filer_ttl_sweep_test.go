@@ -206,3 +206,28 @@ func TestDeleteExpiredEntryKeepsAReplacement(t *testing.T) {
 		t.Fatal("expired entry kept")
 	}
 }
+
+func TestSweepExpiredEntriesKeepsADirectoryAWriterHolds(t *testing.T) {
+	f, store := newTestFilerWithStubStore(t)
+	f.DirBucketsPath = "/buckets"
+	f.FilerConf = NewFilerConf()
+	if err := f.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: "/buckets/b/", Ttl: "2m"}); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	for _, dir := range []string{"/buckets", "/buckets/b", "/buckets/b/day1"} {
+		putSweepTestEntry(t, store, dir, true, 0, old)
+	}
+	putSweepTestEntry(t, store, "/buckets/b/day1/f", false, 120, old)
+
+	lock := f.EntryLockTable.AcquireLock("test", "/buckets/b/day1", util.ExclusiveLock)
+	f.sweepExpiredEntries(context.Background(), "", make(map[string]time.Time), time.Now())
+	f.EntryLockTable.ReleaseLock("/buckets/b/day1", lock)
+
+	if store.getEntry("/buckets/b/day1/f") != nil {
+		t.Fatal("expired child not removed")
+	}
+	if store.getEntry("/buckets/b/day1") == nil {
+		t.Fatal("directory removed while a writer held it")
+	}
+}
