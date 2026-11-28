@@ -130,6 +130,14 @@ func TestAssembleS3ObjectVersionsWithoutPointer(t *testing.T) {
 	}
 }
 
+func TestInspectS3ObjectVersionRemoteETag(t *testing.T) {
+	entry := inspectorTestEntry("k", 1, nil)
+	entry.RemoteEntry = &filer_pb.RemoteEntry{StorageName: "s3remote", RemoteETag: "abc", RemoteSize: 10}
+	if v := inspectS3ObjectVersion("/buckets/b/k", entry); v.ETag != "abc" || v.RemoteStorage != "s3remote" {
+		t.Fatalf("remote = %+v", v)
+	}
+}
+
 func TestSummarizeS3ObjectVolumes(t *testing.T) {
 	node := func(id string, disks ...*master_pb.DiskInfo) *master_pb.DataNodeInfo {
 		m := make(map[string]*master_pb.DiskInfo)

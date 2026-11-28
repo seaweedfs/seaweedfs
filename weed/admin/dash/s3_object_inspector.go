@@ -242,7 +242,7 @@ func inspectS3ObjectVersion(path string, entry *filer_pb.Entry) S3ObjectVersionI
 		VersionId:         string(ext[s3_constants.ExtVersionIdKey]),
 		Path:              path,
 		IsDeleteMarker:    string(ext[s3_constants.ExtDeleteMarkerKey]) == "true",
-		ETag:              strings.Trim(string(ext[s3_constants.ExtETagKey]), `"`),
+		ETag:              strings.Trim(s3api.ObjectETag(entry), `"`),
 		ChecksumAlgorithm: string(ext[s3_constants.ExtChecksumAlgorithm]),
 		ChecksumValue:     string(ext[s3_constants.ExtChecksumValue]),
 		ChecksumType:      string(ext[s3_constants.ExtChecksumType]),
@@ -253,9 +253,6 @@ func inspectS3ObjectVersion(path string, entry *filer_pb.Entry) S3ObjectVersionI
 	if attr := entry.Attributes; attr != nil {
 		version.Size = attr.FileSize
 		version.ModifiedAt = time.Unix(attr.Mtime, int64(attr.MtimeNs)).UTC()
-		if version.ETag == "" && len(attr.Md5) > 0 {
-			version.ETag = fmt.Sprintf("%x", attr.Md5)
-		}
 	}
 	if entry.WormEnforcedAtTsNs > 0 {
 		t := time.Unix(0, entry.WormEnforcedAtTsNs).UTC()
