@@ -51,7 +51,6 @@ fn scrub_mode_label(mode: i32) -> &'static str {
     }
 }
 
-/// Go formats the id in decimal; fs.verify matches the "needle not found " prefix.
 /// Maps a failed EC shard copy to a bounded reason label. Errors from the
 /// source arrive as gRPC text, so it matches messages. Mirrors Go's
 /// ecShardCopyFailureReason.
@@ -82,6 +81,7 @@ fn ec_shard_copy_failure_reason(status: &Status) -> &'static str {
     }
 }
 
+/// Go formats the id in decimal; fs.verify matches the "needle not found " prefix.
 fn needle_not_found(needle_id: NeedleId) -> Status {
     Status::not_found(format!("needle not found {}", needle_id.0))
 }
