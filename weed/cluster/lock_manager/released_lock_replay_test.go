@@ -8,9 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 )
 
-// These regression specifications intentionally fail on the audited revision.
-// They call the real Go implementation, not a reimplementation of the model.
-func TestFormalAuditReleasedLockMustNotResurrect(t *testing.T) {
+func TestLockManager_ReleasedLockDoesNotResurrect(t *testing.T) {
 	for _, releaseFirst := range []bool{false, true} {
 		name := "insert_release_delayed_renewal"
 		if releaseFirst {
@@ -33,7 +31,7 @@ func TestFormalAuditReleasedLockMustNotResurrect(t *testing.T) {
 	}
 }
 
-func TestFormalAuditStaleTransferMustNotResurrect(t *testing.T) {
+func TestLockManager_StaleTransferDoesNotResurrect(t *testing.T) {
 	manager := lm.NewLockManager()
 	expires := time.Now().Add(time.Minute).UnixNano()
 	manager.InsertLock("key", expires, "token", "", "owner", 3, 1)
@@ -45,7 +43,7 @@ func TestFormalAuditStaleTransferMustNotResurrect(t *testing.T) {
 	}
 }
 
-func TestFormalAuditOrderedReplicationControl(t *testing.T) {
+func TestLockManager_OrderedReleaseKeepsNewerLease(t *testing.T) {
 	backup := lm.NewLockManager()
 	expires := time.Now().Add(time.Minute).UnixNano()
 	backup.InsertBackupLock("key", expires, "lease/token", "", "owner", 1, 1)
@@ -64,18 +62,18 @@ func TestFormalAuditOrderedReplicationControl(t *testing.T) {
 // Drive the real asynchronous replication callback and actual DLM acquire /
 // release APIs. The callback is a controllable reliable network: each captured
 // message is delivered exactly once, with no loss, duplication or fabrication.
-func TestFormalAuditAsyncReplicationReleaseFailover(t *testing.T) {
+func TestDLM_AsyncReplicationReleaseFailover(t *testing.T) {
 	for _, reordered := range []bool{false, true} {
 		name := "ordered_control"
 		if reordered {
 			name = "reordered"
 		}
 		t.Run(name, func(t *testing.T) {
-			hosts := []pb.ServerAddress{"formal-a:8888", "formal-b:8888"}
+			hosts := []pb.ServerAddress{"filer-a:8888", "filer-b:8888"}
 			a, b := lm.NewDistributedLockManager(hosts[0]), lm.NewDistributedLockManager(hosts[1])
 			a.LockRing.SetSnapshot(append([]pb.ServerAddress(nil), hosts...), 1)
 			b.LockRing.SetSnapshot(append([]pb.ServerAddress(nil), hosts...), 1)
-			key := "formal-replication-key"
+			key := "replication-key"
 			primary, _ := a.LockRing.GetPrimaryAndBackup(key)
 			if primary != a.Host {
 				a, b = b, a
