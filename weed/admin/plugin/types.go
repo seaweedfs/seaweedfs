@@ -44,6 +44,7 @@ type TrackedJob struct {
 	RequestID          string                 `json:"request_id"`
 	WorkerID           string                 `json:"worker_id"`
 	DedupeKey          string                 `json:"dedupe_key,omitempty"`
+	VolumeID           uint32                 `json:"volume_id,omitempty"`
 	Summary            string                 `json:"summary,omitempty"`
 	Detail             string                 `json:"detail,omitempty"`
 	Parameters         map[string]interface{} `json:"parameters,omitempty"`
