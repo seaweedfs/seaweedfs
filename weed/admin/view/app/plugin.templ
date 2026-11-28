@@ -383,6 +383,7 @@ templ Plugin(page string, initialJob string, lane string) {
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <h5 class="mb-0"><i class="bi bi-list me-2"></i>Job Queue</h5>
                             <div class="d-flex gap-2 align-items-center flex-wrap">
+                                <input type="number" min="1" max="4294967295" step="1" autocomplete="off" class="form-control form-control-sm plugin-monitor-volume-filter" placeholder="Volume ID" title="Show only jobs of this volume" style="width: 130px;"/>
                                 <small class="text-muted">States: pending/assigned/running</small>
                             </div>
                         </div>
@@ -451,6 +452,7 @@ templ Plugin(page string, initialJob string, lane string) {
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>Execution Jobs</h5>
                             <div class="d-flex gap-2 align-items-center flex-wrap">
+                                <input type="number" min="1" max="4294967295" step="1" autocomplete="off" class="form-control form-control-sm plugin-monitor-volume-filter" placeholder="Volume ID" title="Show only jobs and activities of this volume" style="width: 130px;"/>
                                 <select class="form-select form-select-sm" id="plugin-monitor-job-state-filter" style="min-width: 180px;">
                                     <option value="">All States</option>
                                     <option value="assigned">Assigned</option>
@@ -612,6 +614,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 activeSubTab: 'configuration',
                 initialNavigationApplied: false,
                 monitorExecutionJobState: '',
+                monitorVolumeID: '',
                 workers: [],
                 jobs: [],
                 activities: [],
@@ -622,6 +625,10 @@ templ Plugin(page string, initialJob string, lane string) {
                 allJobs: [],
                 allActivities: [],
                 monitorRowsScope: null,
+                detectionActivities: [],
+                detectionRowsScope: null,
+                monitorRefreshSeq: 0,
+                monitorCommittedRefreshID: 0,
                 refreshError: '',
                 loadedJobType: '',
                 descriptor: null,
@@ -641,6 +648,24 @@ templ Plugin(page string, initialJob string, lane string) {
                 if (!jobType) return url;
                 var sep = url.indexOf('?') === -1 ? '?' : '&';
                 return url + sep + 'job_type=' + encodeURIComponent(jobType);
+            }
+
+            function appendVolumeParam(url) {
+                if (!state.monitorVolumeID) return url;
+                var sep = url.indexOf('?') === -1 ? '?' : '&';
+                return url + sep + 'volume_id=' + encodeURIComponent(state.monitorVolumeID);
+            }
+
+            function readMonitorVolumeFilter(input) {
+                if (input.validity && input.validity.badInput) {
+                    return null;
+                }
+                var value = String(input.value || '').trim();
+                if (!value) {
+                    return '';
+                }
+                var volumeID = /^[0-9]+$/.test(value) ? Number(value) : 0;
+                return volumeID >= 1 && volumeID <= 4294967295 ? String(volumeID) : null;
             }
 
             function getCSRFToken() {
@@ -1877,7 +1902,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 }
 
                 var filteredActivities = [];
-                var activities = Array.isArray(state.activities) ? state.activities : [];
+                var activities = Array.isArray(state.detectionActivities) ? state.detectionActivities : [];
                 for (var i = 0; i < activities.length; i++) {
                     var activity = activities[i] || {};
                     var jobType = String(activity.job_type || '').trim();
@@ -3102,28 +3127,42 @@ templ Plugin(page string, initialJob string, lane string) {
                 // The newest 500 rows cluster-wide may hold none of the selected job type on a busy
                 // cluster, so the job-type sub-tabs fetch their own server-side filtered window.
                 var scopedJobType = monitorJobTypeScope();
-                var sameScope = state.monitorRowsScope === scopedJobType;
+                var scopedVolume = state.monitorVolumeID;
+                var rowsScope = scopedJobType + '|' + scopedVolume;
+                var scopedRows = scopedJobType || scopedVolume;
+                var refreshID = ++state.monitorRefreshSeq;
 
-                // A failed request keeps its last rows; the rest still land and the failure is rethrown.
+                // A failed request keeps the rows committed when this refresh lands; the rest still
+                // land and the failure is rethrown.
                 var failure = null;
-                function keepOnFailure(promise, previous) {
+                var failed = {};
+                function keepOnFailure(promise) {
                     return promise.catch(function(e) {
                         failure = failure || e;
-                        return previous;
+                        return failed;
                     });
                 }
+                function kept(value, previous) {
+                    return value === failed ? previous : value;
+                }
 
-                var allJobsPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/jobs?limit=500')), state.allJobs);
-                var allActivitiesPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/activities?limit=500')), state.allActivities);
-                var jobsPromise = scopedJobType ? keepOnFailure(pluginRequest('GET', appendJobTypeParam(appendLaneParam('/api/plugin/jobs?limit=500'), scopedJobType)), sameScope ? state.jobs : null) : allJobsPromise;
-                var activitiesPromise = scopedJobType ? keepOnFailure(pluginRequest('GET', appendJobTypeParam(appendLaneParam('/api/plugin/activities?limit=500'), scopedJobType)), sameScope ? state.activities : null) : allActivitiesPromise;
-                var schedulerPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-states')), state.schedulerStates);
+                var allJobsPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/jobs?limit=500')));
+                var allActivitiesPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/activities?limit=500')));
+                var jobsPromise = scopedRows ? keepOnFailure(pluginRequest('GET', appendVolumeParam(appendJobTypeParam(appendLaneParam('/api/plugin/jobs?limit=500'), scopedJobType)))) : allJobsPromise;
+                var activitiesPromise = scopedRows ? keepOnFailure(pluginRequest('GET', appendVolumeParam(appendJobTypeParam(appendLaneParam('/api/plugin/activities?limit=500'), scopedJobType)))) : allActivitiesPromise;
+                // Detection scans belong to no job, so the volume filter would hide every one of them.
+                var detectionActivitiesPromise = activitiesPromise;
+                if (scopedVolume) {
+                    detectionActivitiesPromise = scopedJobType ? keepOnFailure(pluginRequest('GET', appendJobTypeParam(appendLaneParam('/api/plugin/activities?limit=500'), scopedJobType))) : allActivitiesPromise;
+                }
+                var schedulerPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-states')));
                 var schedulerStatusPromise = pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-status'));
 
                 var allJobs = await allJobsPromise;
                 var allActivities = await allActivitiesPromise;
                 var jobs = await jobsPromise;
                 var activities = await activitiesPromise;
+                var detectionActivities = await detectionActivitiesPromise;
                 var schedulerStates = await schedulerPromise;
                 var schedulerStatus = null;
                 try {
@@ -3131,15 +3170,26 @@ templ Plugin(page string, initialJob string, lane string) {
                 } catch (e) {
                     schedulerStatus = null;
                 }
-                if (monitorJobTypeScope() !== scopedJobType) {
+                if (monitorJobTypeScope() !== scopedJobType || state.monitorVolumeID !== scopedVolume || refreshID < state.monitorCommittedRefreshID) {
                     return;
                 }
+                state.monitorCommittedRefreshID = refreshID;
+
+                var sameScope = state.monitorRowsScope === rowsScope;
+                allJobs = kept(allJobs, state.allJobs);
+                allActivities = kept(allActivities, state.allActivities);
+                jobs = kept(jobs, sameScope ? state.jobs : null);
+                activities = kept(activities, sameScope ? state.activities : null);
+                detectionActivities = kept(detectionActivities, state.detectionRowsScope === scopedJobType ? state.detectionActivities : null);
+                schedulerStates = kept(schedulerStates, state.schedulerStates);
 
                 state.allJobs = Array.isArray(allJobs) ? allJobs : [];
                 state.allActivities = Array.isArray(allActivities) ? allActivities : [];
-                state.jobs = Array.isArray(jobs) ? jobs : state.allJobs;
-                state.activities = Array.isArray(activities) ? activities : state.allActivities;
-                state.monitorRowsScope = scopedJobType;
+                state.jobs = Array.isArray(jobs) ? jobs : (scopedVolume ? [] : state.allJobs);
+                state.activities = Array.isArray(activities) ? activities : (scopedVolume ? [] : state.allActivities);
+                state.monitorRowsScope = rowsScope;
+                state.detectionActivities = Array.isArray(detectionActivities) ? detectionActivities : state.allActivities;
+                state.detectionRowsScope = scopedJobType;
                 state.schedulerStates = Array.isArray(schedulerStates) ? schedulerStates : [];
                 state.schedulerStatus = schedulerStatus && schedulerStatus.scheduler ? schedulerStatus.scheduler : null;
                 state.schedulerLock = schedulerStatus && schedulerStatus.lock ? schedulerStatus.lock : null;
@@ -3199,6 +3249,28 @@ templ Plugin(page string, initialJob string, lane string) {
                     monitorStateFilter.addEventListener('change', function() {
                         state.monitorExecutionJobState = String(monitorStateFilter.value || '').trim();
                         renderExecutionJobs();
+                    });
+                }
+
+                var monitorVolumeFilters = document.querySelectorAll('.plugin-monitor-volume-filter');
+                for (var v = 0; v < monitorVolumeFilters.length; v++) {
+                    monitorVolumeFilters[v].addEventListener('change', async function(event) {
+                        var volumeID = readMonitorVolumeFilter(event.target);
+                        if (volumeID !== null) {
+                            state.monitorVolumeID = volumeID;
+                        }
+                        for (var k = 0; k < monitorVolumeFilters.length; k++) {
+                            monitorVolumeFilters[k].value = state.monitorVolumeID;
+                        }
+                        if (volumeID === null) {
+                            notify('Volume ID must be a whole number from 1 to 4294967295', 'warning');
+                            return;
+                        }
+                        try {
+                            await refreshJobsAndActivities();
+                        } catch (refreshErr) {
+                            notify('Monitoring refresh failed: ' + refreshErr.message, 'error');
+                        }
                     });
                 }
 

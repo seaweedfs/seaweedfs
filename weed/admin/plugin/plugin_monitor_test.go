@@ -170,6 +170,51 @@ func TestTrackExecutionQueuedMarksPendingState(t *testing.T) {
 	}
 }
 
+func TestTrackedJobsKeepVolumeID(t *testing.T) {
+	t.Parallel()
+
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	pluginSvc.trackExecutionQueued(&plugin_pb.JobSpec{
+		JobId:   "job-ec-17",
+		JobType: "erasure_coding",
+		Parameters: map[string]*plugin_pb.ConfigValue{
+			"volume_id": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 17}},
+		},
+	})
+	pluginSvc.trackExecutionStart("req-1", "worker-a", &plugin_pb.JobSpec{
+		JobId:   "job-vacuum-23",
+		JobType: "vacuum",
+		Parameters: map[string]*plugin_pb.ConfigValue{
+			"volume_id": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "23"}},
+		},
+	}, 1)
+	pluginSvc.trackExecutionQueued(&plugin_pb.JobSpec{JobId: "job-no-volume", JobType: "iceberg"})
+
+	want := map[string]uint32{"job-ec-17": 17, "job-vacuum-23": 23, "job-no-volume": 0}
+	jobs := pluginSvc.ListTrackedJobs("", "", 0)
+	if len(jobs) != len(want) {
+		t.Fatalf("expected %d tracked jobs, got %d", len(want), len(jobs))
+	}
+	for _, job := range jobs {
+		if job.VolumeID != want[job.JobID] {
+			t.Fatalf("job %s: volume id %d, want %d", job.JobID, job.VolumeID, want[job.JobID])
+		}
+	}
+
+	detail, found, err := pluginSvc.BuildJobDetail("job-ec-17", 10, 0)
+	if err != nil || !found || detail.Job == nil {
+		t.Fatalf("BuildJobDetail: found=%v err=%v", found, err)
+	}
+	if detail.Job.VolumeID != 17 {
+		t.Fatalf("detail volume id %d, want 17", detail.Job.VolumeID)
+	}
+}
+
 func TestHandleJobProgressUpdateCarriesWorkerIDInActivities(t *testing.T) {
 	t.Parallel()
 

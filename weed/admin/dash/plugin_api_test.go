@@ -290,3 +290,75 @@ func TestPluginJobsAndActivitiesAPILimitAfterLaneFilter(t *testing.T) {
 		t.Fatalf("default lane activities: got %d rows, want the limit of 2", len(rows))
 	}
 }
+
+func TestPluginJobsAndActivitiesAPIVolumeIDFilter(t *testing.T) {
+	dataDir := t.TempDir()
+	store, err := plugin.NewConfigStore(dataDir)
+	if err != nil {
+		t.Fatalf("NewConfigStore: %v", err)
+	}
+	now := time.Now()
+	var jobs []plugin.TrackedJob
+	var activities []plugin.JobActivity
+	for i := 0; i < 6; i++ {
+		jobType, jobID, volumeID := "erasure_coding", fmt.Sprintf("ec-%d", i), uint32(7)
+		if i%2 == 1 {
+			jobType, jobID, volumeID = "vacuum", fmt.Sprintf("vacuum-%d", i), uint32(8)
+		}
+		at := now.Add(-time.Duration(i) * time.Minute)
+		jobs = append(jobs, plugin.TrackedJob{JobID: jobID, JobType: jobType, VolumeID: volumeID, State: plugin.StateSucceeded, UpdatedAt: &at})
+		activities = append(activities, plugin.JobActivity{JobID: jobID, JobType: jobType, Message: "done", OccurredAt: &at})
+	}
+	if err := store.SaveTrackedJobs(jobs); err != nil {
+		t.Fatalf("SaveTrackedJobs: %v", err)
+	}
+	if err := store.SaveActivities(activities); err != nil {
+		t.Fatalf("SaveActivities: %v", err)
+	}
+	p, err := plugin.New(plugin.Options{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("plugin.New: %v", err)
+	}
+	defer p.Shutdown()
+	s := &AdminServer{plugin: p}
+
+	get := func(handler http.HandlerFunc, url string, wantStatus int) []map[string]any {
+		recorder := httptest.NewRecorder()
+		handler(recorder, httptest.NewRequest(http.MethodGet, url, nil))
+		if recorder.Code != wantStatus {
+			t.Fatalf("%s: status %d, want %d", url, recorder.Code, wantStatus)
+		}
+		if wantStatus != http.StatusOK {
+			return nil
+		}
+		var rows []map[string]any
+		if err := json.Unmarshal(recorder.Body.Bytes(), &rows); err != nil {
+			t.Fatalf("%s: %v", url, err)
+		}
+		return rows
+	}
+	idsOf := func(rows []map[string]any) []string {
+		ids := make([]string, 0, len(rows))
+		for _, row := range rows {
+			ids = append(ids, fmt.Sprint(row["job_id"]))
+		}
+		return ids
+	}
+
+	if ids := idsOf(get(s.GetPluginJobsAPI, "/api/plugin/jobs?limit=2&volume_id=8", http.StatusOK)); fmt.Sprint(ids) != "[vacuum-1 vacuum-3]" {
+		t.Fatalf("volume 8 jobs: got %v", ids)
+	}
+	if ids := idsOf(get(s.GetPluginJobsAPI, "/api/plugin/jobs?volume_id=7&job_type=vacuum", http.StatusOK)); len(ids) != 0 {
+		t.Fatalf("volume 7 vacuum jobs: got %v, want none", ids)
+	}
+	if ids := idsOf(get(s.GetPluginActivitiesAPI, "/api/plugin/activities?limit=2&volume_id=7", http.StatusOK)); fmt.Sprint(ids) != "[ec-0 ec-2]" {
+		t.Fatalf("volume 7 activities: got %v", ids)
+	}
+	if ids := idsOf(get(s.GetPluginActivitiesAPI, "/api/plugin/activities?volume_id=9", http.StatusOK)); len(ids) != 0 {
+		t.Fatalf("volume 9 activities: got %v, want none", ids)
+	}
+	for _, bad := range []string{"0", "-1", "abc", "4294967296"} {
+		get(s.GetPluginJobsAPI, "/api/plugin/jobs?volume_id="+bad, http.StatusBadRequest)
+		get(s.GetPluginActivitiesAPI, "/api/plugin/activities?volume_id="+bad, http.StatusBadRequest)
+	}
+}
