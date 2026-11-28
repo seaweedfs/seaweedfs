@@ -321,6 +321,11 @@ func summarizeS3ObjectVolumes(volumeIds []uint32, topology *master_pb.TopologyIn
 							if h == nil {
 								continue
 							}
+							if h.Kind == s3ObjectVolumeEc {
+								h.Servers = nil
+								h.EcDataShards = 0
+								h.EcTotalShards = 0
+							}
 							h.Kind = s3ObjectVolumeReplicated
 							h.Collection = v.Collection
 							h.Servers = append(h.Servers, node.Id)

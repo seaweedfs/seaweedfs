@@ -190,3 +190,18 @@ func TestSummarizeS3ObjectVolumes(t *testing.T) {
 		t.Errorf("volume 5 = %+v", v)
 	}
 }
+
+func TestSummarizeS3ObjectVolumesPrefersReplicaOverEcShards(t *testing.T) {
+	topology := &master_pb.TopologyInfo{DataCenterInfos: []*master_pb.DataCenterInfo{{
+		RackInfos: []*master_pb.RackInfo{{
+			DataNodeInfos: []*master_pb.DataNodeInfo{
+				{Id: "a-ec:8080", DiskInfos: map[string]*master_pb.DiskInfo{"": {EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{{Id: 6, EcIndexBits: 0x3fff}}}}},
+				{Id: "b-vol:8080", DiskInfos: map[string]*master_pb.DiskInfo{"": {VolumeInfos: []*master_pb.VolumeInformationMessage{{Id: 6}}}}},
+			},
+		}},
+	}}}
+	got := summarizeS3ObjectVolumes([]uint32{6}, topology)
+	if v := got[0]; v.Kind != s3ObjectVolumeReplicated || !reflect.DeepEqual(v.Servers, []string{"b-vol:8080"}) || v.EcTotalShards != 0 || v.EcShardsPresent != 0 || !v.Healthy {
+		t.Fatalf("volume 6 = %+v", v)
+	}
+}
