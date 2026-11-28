@@ -1614,15 +1614,25 @@ type ListPartsResult struct {
 	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListPartsResult"`
 
 	// copied from s3.ListPartsOutput, the Parts is not converting to <Part></Part>
-	Bucket               *string    `type:"string"`
-	IsTruncated          *bool      `type:"boolean"`
-	Key                  *string    `min:"1" type:"string"`
-	MaxParts             *int64     `type:"integer"`
-	NextPartNumberMarker *int64     `type:"integer"`
-	PartNumberMarker     *int64     `type:"integer"`
-	Part                 []*s3.Part `locationName:"Part" type:"list" flattened:"true"`
-	StorageClass         *string    `type:"string" enum:"StorageClass"`
-	UploadId             *string    `type:"string"`
+	Bucket               *string          `type:"string"`
+	IsTruncated          *bool            `type:"boolean"`
+	Key                  *string          `min:"1" type:"string"`
+	MaxParts             *int64           `type:"integer"`
+	NextPartNumberMarker *int64           `type:"integer"`
+	PartNumberMarker     *int64           `type:"integer"`
+	Part                 []*ListPartsPart `locationName:"Part" type:"list" flattened:"true"`
+	StorageClass         *string          `type:"string" enum:"StorageClass"`
+	UploadId             *string          `type:"string"`
+	ChecksumAlgorithm    string           `xml:"ChecksumAlgorithm,omitempty"`
+	ChecksumType         string           `xml:"ChecksumType,omitempty"`
+}
+
+type ListPartsPart struct {
+	ChecksumResult
+	ETag         *string
+	LastModified *time.Time
+	PartNumber   *int64
+	Size         *int64
 }
 
 func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListPartsResult, code s3err.ErrorCode) {
@@ -1655,6 +1665,12 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 		PartNumberMarker: input.PartNumberMarker, // the part number starts after this, exclusive
 		StorageClass:     aws.String("STANDARD"),
 	}
+	if pentry.Extended != nil {
+		output.ChecksumAlgorithm = checksumAlgorithmNameFromHeaderName(string(pentry.Extended[s3_constants.ExtChecksumAlgorithm]))
+		if output.ChecksumAlgorithm != "" {
+			output.ChecksumType = string(pentry.Extended[s3_constants.ExtChecksumType])
+		}
+	}
 
 	// part files are "%04d_<uuid>.part" (legacy "%04d.part"). '_' sorts after
 	// '.', so an exclusive start at "%04d.part" still returns the marker part
@@ -1683,11 +1699,14 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 	for _, partNumber := range numbers {
 		entry := latest[partNumber]
 		partETag := getEtagFromEntry(entry)
-		part := &s3.Part{
+		part := &ListPartsPart{
 			PartNumber:   aws.Int64(int64(partNumber)),
 			LastModified: aws.Time(time.Unix(entry.Attributes.Mtime, 0).UTC()),
 			Size:         aws.Int64(int64(filer.FileSize(entry))),
 			ETag:         aws.String(partETag),
+		}
+		if entry.Extended != nil {
+			part.SetChecksum(string(entry.Extended[s3_constants.ExtChecksumAlgorithm]), string(entry.Extended[s3_constants.ExtChecksumValue]))
 		}
 		output.Part = append(output.Part, part)
 		glog.V(3).Infof("listObjectParts: Added part %d, size=%d, etag=%s",
