@@ -773,6 +773,14 @@ var (
 			Help:      "Counter of s3 requests.",
 		}, []string{"type", "code", "bucket"})
 
+	S3ReadAbortedCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemS3,
+			Name:      "read_aborted_total",
+			Help:      "Counter of s3 object reads that failed after the response status was sent, by bucket and cause.",
+		}, []string{"bucket", "cause"})
+
 	S3HandlerCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -1209,6 +1217,7 @@ func init() {
 	Gather.MustRegister(MasterVolumeCreationCounter)
 
 	Gather.MustRegister(S3RequestCounter)
+	Gather.MustRegister(S3ReadAbortedCounter)
 	Gather.MustRegister(S3HandlerCounter)
 	Gather.MustRegister(S3RequestHistogram)
 	Gather.MustRegister(S3InFlightRequestsGauge)
@@ -1325,6 +1334,7 @@ func DeleteBucketMetrics(bucket string) {
 
 	labels := prometheus.Labels{"bucket": bucket}
 	c := S3RequestCounter.DeletePartialMatch(labels)
+	c += S3ReadAbortedCounter.DeletePartialMatch(labels)
 	c += S3RequestHistogram.DeletePartialMatch(labels)
 	c += S3TimeToFirstByteHistogram.DeletePartialMatch(labels)
 	c += S3BucketTrafficReceivedBytesCounter.DeletePartialMatch(labels)
