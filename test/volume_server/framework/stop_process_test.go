@@ -29,7 +29,7 @@ func TestStopProcessReportsTheThreadsOfAServerIgnoringSIGINT(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	time.Sleep(100 * time.Millisecond)
+	waitForSleepThread(t, cmd.Process.Pid)
 	rec := &errorRecorder{TB: t}
 	stopProcess(rec, "server", cmd)
 
@@ -50,10 +50,27 @@ func TestProcessThreadsFindsNoDiskWaitInAnIdleProcess(t *testing.T) {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 	}()
-	time.Sleep(100 * time.Millisecond)
+	waitForSleepThread(t, cmd.Process.Pid)
 
 	threads, inDiskWait := processThreads(cmd.Process.Pid)
 	if inDiskWait || !strings.HasPrefix(threads, "1x[sleep S ") {
 		t.Fatalf("threads = %q, inDiskWait = %v", threads, inDiskWait)
+	}
+}
+
+// waitForSleepThread waits until pid has exec'd sleep and is sleeping, so
+// a SIGINT trap set before the exec is in place.
+func waitForSleepThread(t *testing.T, pid int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		threads, _ := processThreads(pid)
+		if strings.HasPrefix(threads, "1x[sleep S ") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pid %d never reached sleep: %q", pid, threads)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
