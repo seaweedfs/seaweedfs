@@ -168,7 +168,7 @@ func (s *AdminServer) InspectS3Object(ctx context.Context, bucket, key string) (
 	}
 
 	inspection.Versioned = versionsEntry != nil
-	inspection.Versions = assembleS3ObjectVersions(objectDir, objectName, baseEntry, versionsEntry, versionEntries)
+	inspection.Versions = assembleS3ObjectVersions(objectDir, objectName, baseEntry, versionsEntry, versionEntries, inspection.Truncated)
 
 	volumeIds := s3ObjectVolumeIds(inspection.Versions)
 	if len(volumeIds) == 0 {
@@ -197,12 +197,18 @@ func splitInspectedS3ObjectKey(bucketDir, key string) (dir, name string) {
 	return bucketDir, key
 }
 
-func assembleS3ObjectVersions(objectDir, objectName string, baseEntry, versionsEntry *filer_pb.Entry, versionEntries []*filer_pb.Entry) []S3ObjectVersionInspection {
+func assembleS3ObjectVersions(objectDir, objectName string, baseEntry, versionsEntry *filer_pb.Entry, versionEntries []*filer_pb.Entry, truncated bool) []S3ObjectVersionInspection {
 	var latestVersionId string
 	nullIsLatest := versionsEntry == nil
 	if versionsEntry != nil {
 		latestVersionId = string(versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey])
 		nullIsLatest = latestVersionId == "" || string(versionsEntry.Extended[s3_constants.ExtNullVersionIsLatestKey]) == "true"
+	}
+	if baseEntry == nil && latestVersionId == "" {
+		nullIsLatest = false
+		if !truncated {
+			latestVersionId = s3api.SelectLatestVersionId(versionEntries)
+		}
 	}
 
 	var versions []S3ObjectVersionInspection

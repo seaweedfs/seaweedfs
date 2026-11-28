@@ -67,7 +67,7 @@ func TestAssembleS3ObjectVersions(t *testing.T) {
 	})
 	base := inspectorTestEntry("k", 50, nil, &filer_pb.FileChunk{FileId: "3,02637037d6", Size: 10})
 
-	versions := assembleS3ObjectVersions("/buckets/b/d", "k", base, versionsEntry, []*filer_pb.Entry{locked, marker})
+	versions := assembleS3ObjectVersions("/buckets/b/d", "k", base, versionsEntry, []*filer_pb.Entry{locked, marker}, false)
 	if len(versions) != 3 {
 		t.Fatalf("got %d versions", len(versions))
 	}
@@ -100,7 +100,7 @@ func TestAssembleS3ObjectVersions(t *testing.T) {
 
 func TestAssembleS3ObjectVersionsNullLatest(t *testing.T) {
 	base := inspectorTestEntry("k", 50, nil)
-	if versions := assembleS3ObjectVersions("/buckets/b", "k", base, nil, nil); len(versions) != 1 || !versions[0].IsLatest || versions[0].VersionId != "null" {
+	if versions := assembleS3ObjectVersions("/buckets/b", "k", base, nil, nil, false); len(versions) != 1 || !versions[0].IsLatest || versions[0].VersionId != "null" {
 		t.Fatalf("unversioned = %+v", versions)
 	}
 	versionsEntry := inspectorTestEntry("k.versions", 0, map[string]string{
@@ -108,9 +108,25 @@ func TestAssembleS3ObjectVersionsNullLatest(t *testing.T) {
 		s3_constants.ExtNullVersionIsLatestKey: "true",
 	})
 	v1 := inspectorTestEntry("v_v1", 100, map[string]string{s3_constants.ExtVersionIdKey: "v1"})
-	versions := assembleS3ObjectVersions("/buckets/b", "k", base, versionsEntry, []*filer_pb.Entry{v1})
+	versions := assembleS3ObjectVersions("/buckets/b", "k", base, versionsEntry, []*filer_pb.Entry{v1}, false)
 	if len(versions) != 2 || versions[0].VersionId != "null" || !versions[0].IsLatest || versions[1].IsLatest {
 		t.Fatalf("suspended = %+v", versions)
+	}
+}
+
+func TestAssembleS3ObjectVersionsWithoutPointer(t *testing.T) {
+	older := inspectorTestEntry("v_6713f0ad56f535bcb4717d38b89d2800", 200, map[string]string{s3_constants.ExtVersionIdKey: "6713f0ad56f535bcb4717d38b89d2800"})
+	newer := inspectorTestEntry("v_6713f0ad569d387d178b2ca8fab47783", 100, map[string]string{s3_constants.ExtVersionIdKey: "6713f0ad569d387d178b2ca8fab47783"})
+	versionsEntry := inspectorTestEntry("k.versions", 0, map[string]string{s3_constants.ExtNullVersionIsLatestKey: "true"})
+
+	versions := assembleS3ObjectVersions("/buckets/b", "k", nil, versionsEntry, []*filer_pb.Entry{older, newer}, false)
+	if len(versions) != 2 || versions[0].VersionId != newer.Name[2:] || !versions[0].IsLatest || versions[1].IsLatest {
+		t.Fatalf("recovered = %+v", versions)
+	}
+	for _, v := range assembleS3ObjectVersions("/buckets/b", "k", nil, versionsEntry, []*filer_pb.Entry{older, newer}, true) {
+		if v.IsLatest {
+			t.Fatalf("truncated scan marked %s latest", v.VersionId)
+		}
 	}
 }
 
