@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"sort"
 	"strings"
 	"sync"
@@ -26,6 +28,7 @@ type ttlFiler struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 	signature int32
 	conf      []byte
+	volumeUrl string
 	mu        sync.Mutex
 	dirs      map[string]map[string]*filer_pb.Entry
 	expired   map[string]bool
@@ -66,7 +69,22 @@ func (f *ttlFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupD
 	if req.Directory != filer.DirectoryEtcSeaweedFS || req.Name != filer.FilerConfName || f.conf == nil {
 		return nil, status.Error(codes.NotFound, filer_pb.ErrNotFound.Error())
 	}
+	if f.volumeUrl != "" {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{
+			Name:       req.Name,
+			Attributes: &filer_pb.FuseAttributes{FileSize: uint64(len(f.conf))},
+			Chunks:     []*filer_pb.FileChunk{{FileId: "3,01637037d6", Size: uint64(len(f.conf))}},
+		}}, nil
+	}
 	return &filer_pb.LookupDirectoryEntryResponse{Entry: &filer_pb.Entry{Name: req.Name, Content: f.conf}}, nil
+}
+
+func (f *ttlFiler) LookupVolume(_ context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
+	resp := &filer_pb.LookupVolumeResponse{LocationsMap: map[string]*filer_pb.Locations{}}
+	for _, vid := range req.VolumeIds {
+		resp.LocationsMap[vid] = &filer_pb.Locations{Locations: []*filer_pb.Location{{Url: f.volumeUrl}}}
+	}
+	return resp, nil
 }
 
 func (f *ttlFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb.SeaweedFiler_ListEntriesServer) error {
@@ -205,6 +223,37 @@ func TestDetectProposesOneJobPerStore(t *testing.T) {
 	}
 	if want := []string{addresses[0], addresses[2]}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("proposed filers = %v, want %v", got, want)
+	}
+}
+
+func TestDetectReadsEachStoresOwnFilerConf(t *testing.T) {
+	plain, clips := newTTLFiler(1), newTTLFiler(2)
+	plain.conf = filerConf(t, &filer_pb.FilerConf_PathConf{LocationPrefix: "/buckets/a/", Replication: "001"})
+	clips.conf = filerConf(t, &filer_pb.FilerConf_PathConf{LocationPrefix: "/clips/", Ttl: "1d"})
+	volume := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write(clips.conf)
+	}))
+	t.Cleanup(volume.Close)
+	clips.volumeUrl = strings.TrimPrefix(volume.URL, "http://")
+	addresses := []string{serveFiler(t, plain), serveFiler(t, clips)}
+
+	sender := &detectRecorder{}
+	err := newTestHandler().Detect(context.Background(), &plugin_pb.RunDetectionRequest{
+		JobType:        jobType,
+		ClusterContext: &plugin_pb.ClusterContext{FilerAddresses: addresses},
+	}, sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.proposals) != 1 {
+		t.Fatalf("proposals = %d, want 1", len(sender.proposals))
+	}
+	p := sender.proposals[0]
+	if got := p.Parameters[filerAddressParam].GetStringValue(); got != addresses[1] {
+		t.Fatalf("proposed filer = %s, want %s", got, addresses[1])
+	}
+	if prefixes := p.Parameters[locationPrefixesParam].GetStringList().GetValues(); fmt.Sprint(prefixes) != "[/clips/]" {
+		t.Fatalf("prefixes = %v", prefixes)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 )
 
@@ -93,18 +94,19 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 		_ = sender.SendActivity(pluginworker.BuildDetectorActivity("skipped", "no filer addresses in cluster context", nil))
 		return sender.SendComplete(&plugin_pb.DetectionComplete{JobType: jobType, Success: true})
 	}
-	fc, err := filer.ReadFilerConfFromFilers(filers, h.grpcDialOption, nil, security.FilerAdminToken)
-	if err != nil {
-		return err
-	}
-	prefixes := ttlLocationPrefixes(fc)
-	if len(prefixes) == 0 {
-		_ = sender.SendActivity(pluginworker.BuildDetectorActivity("skipped", "no TTL path rules in filer.conf", nil))
-		return sender.SendComplete(&plugin_pb.DetectionComplete{JobType: jobType, Success: true})
-	}
-
 	var proposals []*plugin_pb.JobProposal
+	var readErrors []string
 	for _, address := range h.oneFilerPerStore(ctx, filers, sender) {
+		client := &adminFilerClient{address: address, grpcDialOption: h.grpcDialOption}
+		fc, err := filer.ReadFilerConfFromClient(ctx, client, client)
+		if err != nil {
+			readErrors = append(readErrors, fmt.Sprintf("filer %s: %v", address, err))
+			continue
+		}
+		prefixes := ttlLocationPrefixes(fc)
+		if len(prefixes) == 0 {
+			continue
+		}
 		proposals = append(proposals, &plugin_pb.JobProposal{
 			JobType:    jobType,
 			ProposalId: fmt.Sprintf("filer-ttl-%s-%d", address, time.Now().UnixNano()),
@@ -124,9 +126,29 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 	}
 	return sender.SendComplete(&plugin_pb.DetectionComplete{
 		JobType:        jobType,
-		Success:        true,
+		Success:        len(readErrors) == 0,
+		ErrorMessage:   strings.Join(readErrors, "; "),
 		TotalProposals: int32(len(proposals)),
 	})
+}
+
+// adminFilerClient reaches one filer with the admin token, so filer.conf is
+// read from that filer's own store, including a chunk-backed one.
+type adminFilerClient struct {
+	address        pb.ServerAddress
+	grpcDialOption grpc.DialOption
+}
+
+func (c *adminFilerClient) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return pb.WithGrpcFilerClient(streamingMode, 0, c.address, c.grpcDialOption, security.FilerAdminToken, fn)
+}
+
+func (c *adminFilerClient) AdjustedUrl(location *filer_pb.Location) string { return location.Url }
+
+func (c *adminFilerClient) GetDataCenter() string { return "" }
+
+func (c *adminFilerClient) GetLookupFileIdFunction() wdclient.LookupFileIdFunctionType {
+	return filer.LookupFn(c)
 }
 
 // oneFilerPerStore keeps the first reachable filer of each store signature:
