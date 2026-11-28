@@ -89,7 +89,7 @@ func (iamopt *IamOptions) startIamServer() bool {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	var digest string
 	for {
-		err := pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get filer configuration: %v", err)

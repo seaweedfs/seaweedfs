@@ -30,7 +30,7 @@ func (s *AdminServer) WithFilerClient(f func(client filer_pb.SeaweedFilerClient)
 		return fmt.Errorf("no filer available")
 	}
 
-	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddr), s.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddr), s.grpcDialOption, s.filerTokenSource, func(client filer_pb.SeaweedFilerClient) error {
 		return f(client)
 	})
 }

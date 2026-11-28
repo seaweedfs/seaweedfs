@@ -36,7 +36,7 @@ func (s *AdminServer) GetMountClients() (*MountClientsData, error) {
 			defer wg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), mountClientsFilerTimeout)
 			defer cancel()
-			err := pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddr), s.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			err := pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddr), s.grpcDialOption, s.filerTokenSource, func(client filer_pb.SeaweedFilerClient) error {
 				resp, err := client.ListMetadataSubscribers(ctx, &filer_pb.ListMetadataSubscribersRequest{
 					ClientTypes: mountClientTypes,
 				})

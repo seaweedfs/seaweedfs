@@ -115,6 +115,7 @@ type objectWriteLock func(objectPath string) (held func() bool, release func(), 
 
 func newObjectWriteLock(commandEnv *CommandEnv) objectWriteLock {
 	lockClient := cluster.NewLockClient(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress())
+	lockClient.TokenSource = commandEnv.option.FilerTokenSource
 	owner := fmt.Sprintf("s3.clean.uploads-%d", util.RandomInt32())
 	return func(objectPath string) (func() bool, func(), error) {
 		if objectPath == "" {

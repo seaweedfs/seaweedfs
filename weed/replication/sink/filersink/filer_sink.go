@@ -65,6 +65,7 @@ type FilerSink struct {
 	activeTransfers   sync.Map // chunkFileId -> *ChunkTransferStatus
 	uploader          *operation.Uploader
 	jwtForFiler       security.FilerJwtProvider
+	filerTokenSource  security.FilerTokenSource
 	// lastServedFileId is the most recent chunk the source did serve, the probe
 	// sourceStillServesChunks re-checks before writing an entry off.
 	lastServedFileId atomic.Pointer[string]
@@ -146,6 +147,12 @@ func (fs *FilerSink) SetUploader(uploader *operation.Uploader) {
 // Must be called during initialization, before any replication goroutines start.
 func (fs *FilerSink) SetFilerJwtProvider(provider security.FilerJwtProvider) {
 	fs.jwtForFiler = provider
+}
+
+// SetFilerTokenSource sets the per-RPC gRPC credential source for this filer.
+// It is resolved again for every RPC attempt, including reconnects.
+func (fs *FilerSink) SetFilerTokenSource(source security.FilerTokenSource) {
+	fs.filerTokenSource = source
 }
 
 func (fs *FilerSink) getUploader() (*operation.Uploader, error) {

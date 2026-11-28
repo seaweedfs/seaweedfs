@@ -149,7 +149,7 @@ func connectToFiler(option *MountOptions) (filerAddresses []pb.ServerAddress, gr
 	var err error
 	var digest string
 	for i := 0; i < 10; i++ {
-		err = pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err = pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, nil, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get filer grpc address %v configuration: %w", filerAddresses, err)

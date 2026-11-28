@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/shell"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -553,10 +554,11 @@ func (h *AdminScriptHandler) buildAdminScriptShellOptions(clusterContext *plugin
 	filerGroup := ""
 	mastersValue := strings.Join(masters, ",")
 	options := shell.ShellOptions{
-		Masters:        &mastersValue,
-		GrpcDialOption: h.grpcDialOption,
-		FilerGroup:     &filerGroup,
-		Directory:      "/",
+		Masters:          &mastersValue,
+		GrpcDialOption:   h.grpcDialOption,
+		FilerGroup:       &filerGroup,
+		Directory:        "/",
+		FilerTokenSource: security.FilerAdminToken,
 	}
 
 	// FilerAddresses are pb.ServerAddress strings (host:httpPort.grpcPort).

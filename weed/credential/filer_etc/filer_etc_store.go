@@ -7,6 +7,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
@@ -71,7 +72,7 @@ func (store *FilerEtcStore) withFilerClient(fn func(client filer_pb.SeaweedFiler
 	}
 
 	// Use the pb.WithGrpcFilerClient helper similar to existing code
-	return pb.WithGrpcFilerClient(false, 0, filerAddress, dialOption, fn)
+	return pb.WithGrpcFilerClient(false, 0, filerAddress, dialOption, security.FilerAdminToken, fn)
 }
 
 func (store *FilerEtcStore) Shutdown() {

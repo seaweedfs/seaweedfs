@@ -7,20 +7,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
-	"google.golang.org/grpc"
 )
 
 const s3TablesDefaultRegion = ""
 const timeFormat = "2006-01-02T15:04:05Z07:00"
 
 func withFilerClient(commandEnv *CommandEnv, fn func(client filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithGrpcClient(context.Background(), false, 0, func(conn *grpc.ClientConn) error {
-		client := filer_pb.NewSeaweedFilerClient(conn)
-		return fn(client)
-	}, commandEnv.FilerAddress().ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
+	return commandEnv.WithFilerClient(false, fn)
 }
 
 func executeS3Tables(commandEnv *CommandEnv, operation string, req interface{}, resp interface{}, accountID string) error {

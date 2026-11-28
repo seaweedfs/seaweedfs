@@ -23,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"google.golang.org/grpc"
@@ -75,23 +76,23 @@ func followMountedDir(option *RemoteSyncOptions, filerSource *source.FilerSource
 	// remote.unmount completing in between (its mapping write, its purge,
 	// then its offset) would start a follow that saw the directory mounted
 	// past the unmount's table, into its purge.
-	storedOffsetNs, err := remote_storage.GetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir)
+	storedOffsetNs, err := remote_storage.GetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, option.filerTokenSource)
 	if err != nil {
 		return fmt.Errorf("read sync offset of %s: %w", mountedDir, err)
 	}
 
 	// read filer remote storage mount mappings
-	_, mountKey, remoteStorageMountLocation, remoteStorage, detectErr := filer.DetectMountInfo(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir)
+	_, mountKey, remoteStorageMountLocation, remoteStorage, detectErr := filer.DetectMountInfo(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, option.filerTokenSource)
 	if err := option.resumeFor(mountedDir, mountKey, remoteStorageMountLocation, detectErr, storedOffsetNs); err != nil {
 		return err
 	}
 	dirLoc := dirRemoteLocation(mountKey, mountedDir, remoteStorageMountLocation)
 	guard := &offsetGuard{dir: mountedDir, last: storedOffsetNs,
 		read: func() (int64, error) {
-			return remote_storage.GetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir)
+			return remote_storage.GetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, option.filerTokenSource)
 		},
 		write: func(ts int64) error {
-			return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, ts)
+			return remote_storage.SetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountedDir, ts, option.filerTokenSource)
 		},
 	}
 
@@ -105,7 +106,7 @@ func followMountedDir(option *RemoteSyncOptions, filerSource *source.FilerSource
 		return err
 	}
 	lastOffsetTs, err = startAfterMountOffset(lastOffsetTs, mountKey, mountedDir, *option.timeAgo, option.resumeTsNs, func() (int64, error) {
-		return remote_storage.GetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountKey)
+		return remote_storage.GetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), mountKey, option.filerTokenSource)
 	})
 	if err != nil {
 		return err
@@ -164,6 +165,7 @@ func followMountedDir(option *RemoteSyncOptions, filerSource *source.FilerSource
 		StartTsNs:              lastOffsetTs.UnixNano(),
 		StopTsNs:               0,
 		EventErrorType:         pb.RetryForeverOnError,
+		FilerTokenSource:       option.filerTokenSource,
 		GetResumeTsNs: func() int64 {
 			return resumeTsNsFor(processor)
 		},
@@ -233,9 +235,9 @@ func startAfterMountOffset(start time.Time, mountKey, dir string, timeAgo time.D
 // recomputes -timeAgo from now, so a failure before the first checkpoint
 // would otherwise start the retry after the event it failed on. The offset is
 // returned for the retry in this process, which must not depend on the write.
-func saveResumeOffset(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, dir string, processor *MetadataProcessor) int64 {
+func saveResumeOffset(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, dir string, processor *MetadataProcessor, tokenSource ...security.FilerTokenSource) int64 {
 	return saveResumeOffsetWith(func(ts int64) error {
-		return remote_storage.SetSyncOffset(grpcDialOption, filerAddress, dir, ts)
+		return remote_storage.SetSyncOffset(grpcDialOption, filerAddress, dir, ts, tokenSource...)
 	}, dir, processor)
 }
 
@@ -1490,7 +1492,7 @@ func retriedWriteFile(client remote_storage.RemoteStorageClient, filerSource fil
 	return
 }
 
-func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, mountedDir string, timeAgo time.Duration, resumeTsNs int64) (time.Time, error) {
+func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, mountedDir string, timeAgo time.Duration, resumeTsNs int64, tokenSource ...security.FilerTokenSource) (time.Time, error) {
 	if resumeTsNs > 0 {
 		// the previous attempt pinned where it stopped, which can sit behind
 		// both the saved offset and a recomputed -timeAgo window
@@ -1504,7 +1506,9 @@ func collectLastSyncOffset(filerClient filer_pb.FilerClient, grpcDialOption grpc
 			entry, _, _, err := filer_pb.GetEntry(ctx, filerClient, util.FullPath(mountedDir))
 			return entry, err
 		},
-		func() (int64, error) { return remote_storage.GetSyncOffset(grpcDialOption, filerAddress, mountedDir) })
+		func() (int64, error) {
+			return remote_storage.GetSyncOffset(grpcDialOption, filerAddress, mountedDir, tokenSource...)
+		})
 }
 
 // collectLastSyncOffsetFrom is collectLastSyncOffset with the saved offset

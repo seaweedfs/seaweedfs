@@ -90,7 +90,7 @@ type scanFilerClient struct {
 }
 
 func (c *scanFilerClient) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithFilerClient(streamingMode, c.signature, c.address, c.grpcDialOption, fn)
+	return pb.WithGrpcFilerClient(streamingMode, c.signature, c.address, c.grpcDialOption, security.FilerAdminToken, fn)
 }
 
 func (c *scanFilerClient) AdjustedUrl(location *filer_pb.Location) string { return location.Url }
@@ -298,14 +298,15 @@ func runFilerMetaScan(cmd *Command, args []string) bool {
 
 	scan := func(directRead bool) error {
 		option := &pb.MetadataFollowOption{
-			ClientName:     "scan",
-			ClientId:       util.RandomInt32(),
-			ClientEpoch:    0,
-			SelfSignature:  0,
-			PathPrefix:     *scanPathPrefix,
-			StartTsNs:      startTs.UnixNano(),
-			StopTsNs:       stopTsNs,
-			EventErrorType: pb.TrivialOnError,
+			ClientName:       "scan",
+			ClientId:         util.RandomInt32(),
+			ClientEpoch:      0,
+			SelfSignature:    0,
+			FilerTokenSource: security.FilerAdminToken,
+			PathPrefix:       *scanPathPrefix,
+			StartTsNs:        startTs.UnixNano(),
+			StopTsNs:         stopTsNs,
+			EventErrorType:   pb.TrivialOnError,
 		}
 		if directRead {
 			// The server hands out log chunk fids and this reads them straight

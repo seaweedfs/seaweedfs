@@ -15,6 +15,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/viant/ptrie"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
@@ -42,14 +43,20 @@ type FilerConf struct {
 	rules ptrie.Trie[*filer_pb.FilerConf_PathConf]
 }
 
-func ReadFilerConf(filerGrpcAddress pb.ServerAddress, grpcDialOption grpc.DialOption, masterClient *wdclient.MasterClient) (*FilerConf, error) {
-	return ReadFilerConfFromFilers([]pb.ServerAddress{filerGrpcAddress}, grpcDialOption, masterClient)
+func ReadFilerConf(filerGrpcAddress pb.ServerAddress, grpcDialOption grpc.DialOption, masterClient *wdclient.MasterClient, tokenSource ...security.FilerTokenSource) (*FilerConf, error) {
+	return ReadFilerConfFromFilers([]pb.ServerAddress{filerGrpcAddress}, grpcDialOption, masterClient, tokenSource...)
 }
 
-// ReadFilerConfFromFilers reads filer configuration with multi-filer failover support
-func ReadFilerConfFromFilers(filerGrpcAddresses []pb.ServerAddress, grpcDialOption grpc.DialOption, masterClient *wdclient.MasterClient) (*FilerConf, error) {
+// ReadFilerConfFromFilers reads filer configuration with multi-filer failover support.
+// An optional token source authenticates the logical client per RPC; nil keeps
+// the existing anonymous behavior for callers that do not hold a filer key.
+func ReadFilerConfFromFilers(filerGrpcAddresses []pb.ServerAddress, grpcDialOption grpc.DialOption, masterClient *wdclient.MasterClient, tokenSource ...security.FilerTokenSource) (*FilerConf, error) {
 	var data []byte
-	if err := pb.WithOneOfGrpcFilerClients(false, filerGrpcAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	var source security.FilerTokenSource
+	if len(tokenSource) > 0 {
+		source = tokenSource[0]
+	}
+	if err := pb.WithOneOfGrpcFilerClients(false, filerGrpcAddresses, grpcDialOption, source, func(client filer_pb.SeaweedFilerClient) error {
 		if masterClient != nil {
 			var buf bytes.Buffer
 			if err := ReadEntry(masterClient, client, DirectoryEtcSeaweedFS, FilerConfName, &buf); err != nil {

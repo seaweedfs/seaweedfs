@@ -3716,7 +3716,7 @@ func (s3a *S3ApiServer) doCacheRemoteObjectOnFiler(ctx context.Context, filer pb
 		return s3a.doCacheRemoteObject(ctx, dir, name)
 	}
 	var cachedEntry *filer_pb.Entry
-	err := pb.WithFilerClient(false, 0, filer, s3a.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err := pb.WithGrpcFilerClient(false, 0, filer, s3a.option.GrpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		resp, cacheErr := client.CacheRemoteObjectToLocalCluster(ctx, &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 			Directory: dir,
 			Name:      name,

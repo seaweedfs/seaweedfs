@@ -786,7 +786,7 @@ func (fs *FilerServer) leaveLockRing(removalTimeout time.Duration) {
 // unsearchable cannot hand over a lower-priority security.toml. A non-nil
 // current is kept when the file cannot be read.
 func loadBasicAuth(current *security.BasicAuth, file string) (*security.BasicAuth, string) {
-	v, used := util.ReadConfiguration("security", file)
+	v, used, _ := util.ReadConfiguration("security", file)
 	if used == "" {
 		if current != nil {
 			return current, file
@@ -826,7 +826,7 @@ func (fs *FilerServer) Reload() {
 		"",
 		"",
 	)
-	if fresh, used := util.ReadConfiguration("security", ""); used != "" {
+	if fresh, used, _ := util.ReadConfiguration("security", ""); used != "" {
 		fs.loadGrpcScopeConfig(fresh)
 	}
 	if key, _ := fs.grpcScopeVerificationKeys(); len(previousScopeKey) > 0 && len(key) == 0 {

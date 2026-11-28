@@ -110,7 +110,7 @@ func newMountSupervisor(option *RemoteSyncOptions, filerSource *source.FilerSour
 		return followMountedDir(o, filerSource, dir, watch)
 	}
 	m.readOffset = func(dir string) (int64, error) {
-		return remote_storage.GetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), dir)
+		return remote_storage.GetSyncOffset(option.grpcDialOption, pb.ServerAddress(*option.filerAddress), dir, option.filerTokenSource)
 	}
 	return m
 }

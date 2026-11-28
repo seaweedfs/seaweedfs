@@ -21,6 +21,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"google.golang.org/grpc"
@@ -752,26 +753,26 @@ func WithBrokerGrpcClient(streamingMode bool, brokerGrpcAddress string, grpcDial
 
 func WithFilerClient(streamingMode bool, signature int32, filer ServerAddress, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) error {
 
-	return WithGrpcFilerClient(streamingMode, signature, filer, grpcDialOption, fn)
+	return WithGrpcFilerClient(streamingMode, signature, filer, grpcDialOption, nil, fn)
 
 }
 
-func WithGrpcFilerClient(streamingMode bool, signature int32, filerAddress ServerAddress, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) error {
+// WithGrpcFilerClient selects credentials for this logical client, not for
+// the shared pooled connection: source is called at each RPC invocation or
+// stream open inside fn. A nil source sends no token.
+func WithGrpcFilerClient(streamingMode bool, signature int32, filerAddress ServerAddress, grpcDialOption grpc.DialOption, source security.FilerTokenSource, fn func(client filer_pb.SeaweedFilerClient) error) error {
 
 	return WithGrpcClient(context.Background(), streamingMode, signature, func(grpcConnection *grpc.ClientConn) error {
-		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+		client := filer_pb.NewSeaweedFilerClient(security.WithFilerClientAuth(grpcConnection, source))
 		return fn(client)
 	}, filerAddress.ToGrpcAddress(), false, grpcDialOption)
 
 }
 
-func WithOneOfGrpcFilerClients(streamingMode bool, filerAddresses []ServerAddress, grpcDialOption grpc.DialOption, fn func(client filer_pb.SeaweedFilerClient) error) (err error) {
+func WithOneOfGrpcFilerClients(streamingMode bool, filerAddresses []ServerAddress, grpcDialOption grpc.DialOption, source security.FilerTokenSource, fn func(client filer_pb.SeaweedFilerClient) error) (err error) {
 
 	for _, filerAddress := range filerAddresses {
-		err = WithGrpcClient(context.Background(), streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
-			client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-			return fn(client)
-		}, filerAddress.ToGrpcAddress(), false, grpcDialOption)
+		err = WithGrpcFilerClient(streamingMode, 0, filerAddress, grpcDialOption, source, fn)
 		if err == nil {
 			return nil
 		}

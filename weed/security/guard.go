@@ -200,7 +200,7 @@ func (g *Guard) UpdateSigningKeys(signingKey string, expiresAfterSec int, readSi
 // verifying, and a swapped pair comes from one read. A file that cannot be
 // read keeps the keys in effect. It reports whether the new keys are in effect.
 func (g *Guard) ReloadSigningKeys(section string) bool {
-	fresh, used := util.ReadConfiguration("security", "")
+	fresh, used, _ := util.ReadConfiguration("security", "")
 	if used == "" {
 		glog.Warningf("reload %s: security.toml cannot be read, keeping the keys in effect", section)
 		return false

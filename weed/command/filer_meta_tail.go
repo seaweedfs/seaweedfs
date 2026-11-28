@@ -118,6 +118,7 @@ func runFilerMetaTail(cmd *Command, args []string) bool {
 		StartTsNs:              time.Now().Add(-*tailStart).UnixNano(),
 		StopTsNs:               untilTsNs,
 		EventErrorType:         pb.TrivialOnError,
+		FilerTokenSource:       security.FilerAdminToken,
 	}
 
 	tailErr := pb.FollowMetadata(pb.ServerAddress(*tailFiler), grpcDialOption, metadataFollowOption, func(resp *filer_pb.SubscribeMetadataResponse) error {

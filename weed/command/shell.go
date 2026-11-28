@@ -44,6 +44,7 @@ func runShell(command *Command, args []string) bool {
 
 	util.LoadSecurityConfiguration()
 	shellOptions.GrpcDialOption = security.LoadClientTLS(util.GetViper(), "grpc.client")
+	shellOptions.FilerTokenSource = security.FilerAdminToken
 	shellOptions.Directory = "/"
 
 	util.LoadConfiguration("shell", false)

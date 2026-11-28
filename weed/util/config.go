@@ -1,8 +1,13 @@
 package util
 
 import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/spf13/viper"
@@ -57,6 +62,45 @@ func LoadSecurityConfiguration() {
 	})
 }
 
+// errSecurityConfigUnreadable leaves out the parser error, which can quote
+// configuration values.
+var errSecurityConfigUnreadable = errors.New("security.toml exists but cannot be read or parsed; fix it or remove it, since running without its TLS settings would send credentials in plaintext")
+
+// LoadSecurityConfigurationOrError is LoadConfiguration("security", false) for
+// clients that must not start without the settings a present security.toml
+// holds: a missing file is fine, an unreadable or malformed one is an error.
+// The file is read once, and its parser error is not logged because it can
+// quote configuration values.
+func LoadSecurityConfigurationOrError() error {
+	vp.Lock()
+	defer vp.Unlock()
+	setConfigurationPaths(viper.GetViper(), "security")
+	err := viper.MergeInConfig()
+	var notFound viper.ConfigFileNotFoundError
+	if err == nil || (errors.As(err, &notFound) && !configurationSearchDenied("security")) {
+		return nil
+	}
+	return errSecurityConfigUnreadable
+}
+
+// configurationSearchDenied reports whether a candidate configFileName file
+// could not be confirmed absent: its check failed for a reason other than the
+// file, or a directory on its path, not existing (lack of permission, a symlink
+// loop). Viper's search treats any such failure as absence, which would hide a
+// file the process cannot read.
+func configurationSearchDenied(configFileName string) bool {
+	for _, dir := range configurationPaths() {
+		dir = os.ExpandEnv(dir)
+		for _, ext := range viper.SupportedExts {
+			_, err := os.Stat(filepath.Join(dir, configFileName+"."+ext))
+			if err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 	// MergeInConfig mutates the shared viper that ViperProxy serializes;
 	// take the same lock so a merge cannot race a reader or SetDefault.
@@ -92,8 +136,9 @@ func LoadConfiguration(configFileName string, required bool) (loaded bool) {
 // environment overrides. Unlike LoadConfiguration it does not merge, so a key
 // the file no longer sets reads as unset. A non-empty configFile is read in
 // place of searching the configuration directories. used is the file read, or
-// empty when none could be; the environment still applies then.
-func ReadConfiguration(configFileName, configFile string) (v *ViperProxy, used string) {
+// empty when none could be; the environment still applies then. The read
+// error is returned rather than logged: parser errors can quote values.
+func ReadConfiguration(configFileName, configFile string) (v *ViperProxy, used string, readErr error) {
 	fresh := viper.New()
 	setEnvOverrides(fresh)
 	if configFile != "" {
@@ -102,19 +147,22 @@ func ReadConfiguration(configFileName, configFile string) (v *ViperProxy, used s
 		setConfigurationPaths(fresh, configFileName)
 	}
 	if err := fresh.ReadInConfig(); err != nil {
-		glog.V(1).Infof("Reading %s: %v", configFileName, err)
-		return NewViperProxy(fresh), ""
+		return NewViperProxy(fresh), "", err
 	}
-	return NewViperProxy(fresh), fresh.ConfigFileUsed()
+	return NewViperProxy(fresh), fresh.ConfigFileUsed(), nil
+}
+
+// configurationPaths are the directories searched for configuration files,
+// in order.
+func configurationPaths() []string {
+	return []string{ResolvePath(ConfigurationFileDirectory.String()), ".", "$HOME/.seaweedfs", "/usr/local/etc/seaweedfs/", "/etc/seaweedfs/"}
 }
 
 func setConfigurationPaths(v *viper.Viper, configFileName string) {
 	v.SetConfigName(configFileName)
-	v.AddConfigPath(ResolvePath(ConfigurationFileDirectory.String()))
-	v.AddConfigPath(".")
-	v.AddConfigPath("$HOME/.seaweedfs")
-	v.AddConfigPath("/usr/local/etc/seaweedfs/")
-	v.AddConfigPath("/etc/seaweedfs/")
+	for _, dir := range configurationPaths() {
+		v.AddConfigPath(dir)
+	}
 }
 
 func setEnvOverrides(v *viper.Viper) {

@@ -52,7 +52,7 @@ func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 		return err
 	}
 
-	mappings, listErr := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress())
+	mappings, listErr := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), commandEnv.option.FilerTokenSource)
 	if listErr != nil {
 		return listErr
 	}
@@ -79,7 +79,7 @@ func (c *commandRemoteUnmount) Do(args []string, commandEnv *CommandEnv, writer 
 	}
 
 	// reset remote sync offset in case the folder is mounted again
-	if err = remote_storage.SetSyncOffset(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), *dir, time.Now().UnixNano()); err != nil {
+	if err = remote_storage.SetSyncOffset(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), *dir, time.Now().UnixNano(), commandEnv.option.FilerTokenSource); err != nil {
 		return fmt.Errorf("reset remote.sync offset for %s: %v", *dir, err)
 	}
 

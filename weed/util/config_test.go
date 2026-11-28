@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -66,23 +67,23 @@ func TestReadConfigurationDropsKeysTheFileNoLongerSets(t *testing.T) {
 		}
 	}
 
-	v, used := ReadConfiguration("readconf_test", "")
+	v, used, _ := ReadConfiguration("readconf_test", "")
 	assert.Empty(t, used, "missing file")
 	assert.Equal(t, "from-env", v.GetString("readconf.env"))
 
 	write("[readconf]\nkey = \"v1\"\n")
-	v, used = ReadConfiguration("readconf_test", "")
+	v, used, _ = ReadConfiguration("readconf_test", "")
 	assert.Equal(t, filepath.Join(dir, "readconf_test.toml"), used)
 	assert.Equal(t, "v1", v.GetString("readconf.key"))
 
 	write("[readconf]\n")
-	v, used = ReadConfiguration("readconf_test", "")
+	v, used, _ = ReadConfiguration("readconf_test", "")
 	assert.NotEmpty(t, used)
 	assert.Empty(t, v.GetString("readconf.key"))
 	assert.Equal(t, "from-env", v.GetString("readconf.env"))
 
 	write("[readconf\n")
-	v, used = ReadConfiguration("readconf_test", "")
+	v, used, _ = ReadConfiguration("readconf_test", "")
 	assert.Empty(t, used, "unparsable file")
 	assert.Equal(t, "from-env", v.GetString("readconf.env"))
 }
@@ -96,13 +97,96 @@ func TestReadConfigurationReadsTheGivenFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, used := ReadConfiguration("readconf_test", given)
+	_, used, _ := ReadConfiguration("readconf_test", given)
 	assert.Empty(t, used, "missing given file must not fall back to a search")
 
 	if err := os.WriteFile(given, []byte("[readconf]\nkey = \"given\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	v, used := ReadConfiguration("readconf_test", given)
+	v, used, _ := ReadConfiguration("readconf_test", given)
 	assert.Equal(t, given, used)
 	assert.Equal(t, "given", v.GetString("readconf.key"))
+}
+
+func TestLoadSecurityConfigurationOrErrorRefusesAnUnreadableFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	saved := ConfigurationFileDirectory
+	ConfigurationFileDirectory = DirectoryValueType(dir)
+	t.Cleanup(func() { ConfigurationFileDirectory = saved })
+
+	if err := LoadSecurityConfigurationOrError(); err != nil {
+		t.Fatalf("missing security.toml: %v", err)
+	}
+	const secret = "parser-must-not-echo-this"
+	if err := os.WriteFile(filepath.Join(dir, "security.toml"), []byte("[grpc.client\nkey = \""+secret+"\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	err := LoadSecurityConfigurationOrError()
+	if err == nil {
+		t.Fatal("malformed security.toml was accepted")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatal("the error quotes the configuration")
+	}
+
+	// A readable file is merged by the same, single read.
+	if err := os.WriteFile(filepath.Join(dir, "security.toml"), []byte("[load_security_test]\nmarker = \"merged\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := LoadSecurityConfigurationOrError(); err != nil {
+		t.Fatalf("readable security.toml: %v", err)
+	}
+	if got := GetViper().GetString("load_security_test.marker"); got != "merged" {
+		t.Fatalf("settings of the checked file were not merged: %q", got)
+	}
+}
+
+func TestLoadSecurityConfigurationOrErrorRefusesADirectoryItCannotSearch(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can search any directory")
+	}
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	saved := ConfigurationFileDirectory
+	ConfigurationFileDirectory = DirectoryValueType(dir)
+	t.Cleanup(func() { ConfigurationFileDirectory = saved })
+	if err := os.WriteFile(filepath.Join(dir, "security.toml"), []byte("[grpc]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0700) })
+	if err := LoadSecurityConfigurationOrError(); err == nil {
+		t.Fatal("a security.toml in a directory the process cannot search was treated as absent")
+	}
+}
+
+func TestLoadSecurityConfigurationOrErrorRefusesACandidateItCannotCheck(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	saved := ConfigurationFileDirectory
+	ConfigurationFileDirectory = DirectoryValueType(dir)
+	t.Cleanup(func() { ConfigurationFileDirectory = saved })
+	// A symlink loop: stat fails with ELOOP, which is not absence.
+	loop := filepath.Join(dir, "security.toml")
+	if err := os.Symlink(loop, loop); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := LoadSecurityConfigurationOrError(); err == nil {
+		t.Fatal("a security.toml that cannot be checked was treated as absent")
+	}
+	// A plain file where a configuration directory is expected is absence.
+	if err := os.Remove(loop); err != nil {
+		t.Fatal(err)
+	}
+	notDir := filepath.Join(dir, "not-a-directory")
+	if err := os.WriteFile(notDir, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ConfigurationFileDirectory = DirectoryValueType(notDir)
+	if err := LoadSecurityConfigurationOrError(); err != nil {
+		t.Fatalf("configuration directory that is a file: %v", err)
+	}
 }

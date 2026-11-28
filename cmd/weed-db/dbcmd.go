@@ -169,7 +169,10 @@ func Run(args []string) int {
 }
 
 func runWithOptions(opts *Options) bool {
-	util.LoadConfiguration("security", false)
+	if err := util.LoadSecurityConfigurationOrError(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		return false
+	}
 
 	// Validate options.
 	if opts.MasterAddr == "" {
