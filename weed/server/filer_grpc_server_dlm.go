@@ -189,7 +189,7 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 	}
 
 	for _, lock := range locks {
-		primary, backup := fs.filer.Dlm.LockRing.GetPrimaryAndBackup(lock.Key)
+		primary, _ := fs.filer.Dlm.LockRing.GetPrimaryAndBackup(lock.Key)
 
 		if primary == fs.option.Host {
 			if lock.IsBackup {
@@ -199,27 +199,10 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 			}
 			// Replicate to (possibly new) backup
 			fs.filer.Dlm.ReplicateLock(lock)
-		} else if backup != fs.option.Host || !lock.IsBackup {
+		} else {
 			// AllLocks only identifies candidate keys. Take a fresh snapshot
 			// and exclude local mutations until handoff and demotion complete.
-			err := fs.filer.Dlm.TransferLock(lock.Key, backup == fs.option.Host, func(current *lock_manager.Lock) error {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				return pb.WithFilerClient(false, 0, primary, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-					_, err := client.TransferLocks(ctx, &filer_pb.TransferLocksRequest{
-						Locks: []*filer_pb.Lock{{
-							Name:           current.Key,
-							RenewToken:     current.Token,
-							PrevRenewToken: current.PrevToken,
-							ExpiredAtNs:    current.ExpiredAtNs,
-							Owner:          current.Owner,
-							Generation:     current.Generation,
-							Seq:            current.Seq,
-						}},
-					})
-					return err
-				})
-			})
+			err := fs.filer.Dlm.TransferLockToOwner(lock.Key)
 			if err != nil {
 				glog.Errorf("DLM: failed to transfer lock %s to %s: %v", lock.Key, primary, err)
 			}
@@ -230,6 +213,20 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 // SetupDlmReplication sets up the replication callback for the DLM.
 // Called during filer server initialization.
 func (fs *FilerServer) SetupDlmReplication() {
+	fs.dlmHandoffCtx, fs.dlmHandoffCancel = context.WithCancel(context.Background())
+	fs.filer.Dlm.RetryTransferFn = fs.retryDlmHandoff
+	fs.filer.Dlm.TransferFn = func(server pb.ServerAddress, lock *lock_manager.Lock) error {
+		ctx, cancel := context.WithTimeout(fs.dlmHandoffCtx, 5*time.Second)
+		defer cancel()
+		err := pb.WithFilerClient(false, 0, server, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			_, err := client.TransferLocks(ctx, &filer_pb.TransferLocksRequest{Locks: []*filer_pb.Lock{{
+				Name: lock.Key, RenewToken: lock.Token, PrevRenewToken: lock.PrevToken,
+				ExpiredAtNs: lock.ExpiredAtNs, Owner: lock.Owner, Generation: lock.Generation, Seq: lock.Seq,
+			}}})
+			return err
+		})
+		return err
+	}
 	fs.filer.Dlm.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64, isUnlock bool) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -250,4 +247,51 @@ func (fs *FilerServer) SetupDlmReplication() {
 			glog.Warningf("DLM: failed to replicate lock %s to %s: %v", key, server, err)
 		}
 	}
+}
+
+// retryDlmHandoff deduplicates retries per key. A request arriving while a
+// worker is completing marks it dirty, so a new failure cannot lose its retry.
+func (fs *FilerServer) retryDlmHandoff(key string) {
+	fs.dlmHandoffMu.Lock()
+	defer fs.dlmHandoffMu.Unlock()
+	if fs.dlmHandoffCtx.Err() != nil {
+		return
+	}
+	if fs.dlmHandoffRetries == nil {
+		fs.dlmHandoffRetries = make(map[string]bool)
+	}
+	_, running := fs.dlmHandoffRetries[key]
+	fs.dlmHandoffRetries[key] = true
+	if running {
+		return
+	}
+	go func() {
+		delay := 200 * time.Millisecond
+		for {
+			select {
+			case <-fs.dlmHandoffCtx.Done():
+				fs.dlmHandoffMu.Lock()
+				delete(fs.dlmHandoffRetries, key)
+				fs.dlmHandoffMu.Unlock()
+				return
+			case <-time.After(delay):
+			}
+			fs.dlmHandoffMu.Lock()
+			fs.dlmHandoffRetries[key] = false
+			fs.dlmHandoffMu.Unlock()
+			err := fs.filer.Dlm.TransferLockToOwner(key)
+			fs.dlmHandoffMu.Lock()
+			again := err != nil || fs.dlmHandoffRetries[key]
+			if !again {
+				delete(fs.dlmHandoffRetries, key)
+			}
+			fs.dlmHandoffMu.Unlock()
+			if !again {
+				return
+			}
+			if err != nil {
+				delay = min(2*delay, 5*time.Second)
+			}
+		}
+	}()
 }

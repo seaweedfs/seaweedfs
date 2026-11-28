@@ -256,8 +256,40 @@ func TestLockManager_LegacyReleaseMetadata(t *testing.T) {
 	_, found := manager.GetLock("key")
 	require.False(t, found)
 	require.True(t, manager.InsertLock("key", expires, "new-lease/secret", "", "owner", 1, 1))
+	// An old primary could have released the previous generation-1 lease,
+	// or a handed-off slash-format lease. Its identityless message cannot
+	// distinguish those cases. Keep the valid lease until its expiry rather
+	// than permitting a stale release to delete a different acquisition.
 	require.False(t, manager.RemoveBackupLockIfSeq("key", 1, 2, "", 0))
 	lock, found := manager.GetLock("key")
 	require.True(t, found)
 	require.Equal(t, "new-lease/secret", lock.Token)
+}
+
+func TestDLM_TransferReplicatesEffectiveExpiry(t *testing.T) {
+	for _, incomingTTL := range []time.Duration{30 * time.Second, time.Minute, 90 * time.Second} {
+		t.Run(incomingTTL.String(), func(t *testing.T) {
+			a, b := NewDistributedLockManager("expiry-a:8888"), NewDistributedLockManager("expiry-b:8888")
+			hosts := []pb.ServerAddress{a.Host, b.Host}
+			a.LockRing.SetSnapshot(hosts, 1)
+			b.LockRing.SetSnapshot(hosts, 1)
+			if primary, _ := a.LockRing.GetPrimaryAndBackup("key"); primary != a.Host {
+				a, b = b, a
+			}
+			now := time.Now()
+			storedExpiry := now.Add(time.Minute).UnixNano()
+			incomingExpiry := now.Add(incomingTTL).UnixNano()
+			require.True(t, a.lockManager.InsertLock("key", storedExpiry, "lease/old", "", "owner", 1, 1))
+			receive := captureLeaseMutations(t, a)
+			a.InsertLock("key", incomingExpiry, "lease/new", "lease/old", "owner", 1, 2)
+			mutation := receive()
+			require.Equal(t, max(storedExpiry, incomingExpiry), mutation.expires)
+			mutation.deliver(b)
+			primary, found := a.GetLock("key")
+			require.True(t, found)
+			backup, found := b.GetLock("key")
+			require.True(t, found)
+			require.Equal(t, primary.ExpiredAtNs, backup.ExpiredAtNs)
+		})
+	}
 }

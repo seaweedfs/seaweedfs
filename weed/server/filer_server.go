@@ -125,6 +125,11 @@ type FilerServer struct {
 	lockRingUnhealthySince atomic.Int64
 	lockRingResets         atomic.Int64
 
+	dlmHandoffMu      sync.Mutex
+	dlmHandoffRetries map[string]bool
+	dlmHandoffCtx     context.Context
+	dlmHandoffCancel  context.CancelFunc
+
 	inFlightDataLimitCond *sync.Cond
 
 	filer_pb.UnimplementedSeaweedFilerServer
@@ -513,6 +518,9 @@ func (fs *FilerServer) checkWithMaster() {
 // Shutdown gracefully shuts down the filer server by waiting for in-flight uploads to complete.
 // This prevents data corruption when the process receives SIGTERM during active uploads.
 func (fs *FilerServer) Shutdown() {
+	if fs.dlmHandoffCancel != nil {
+		fs.dlmHandoffCancel()
+	}
 	glog.V(0).Infof("Shutting down filer")
 	if fs.posixLockSweeperStop != nil {
 		close(fs.posixLockSweeperStop)
