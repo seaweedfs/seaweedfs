@@ -288,6 +288,25 @@ func TestDataNodeToDataNodeInfo_IncludeEmptyDiskFromUsage(t *testing.T) {
 	}
 }
 
+func TestDataNodeToDataNodeInfoLastHeartbeat(t *testing.T) {
+	dn := NewDataNode("node-1")
+	if got := dn.ToDataNodeInfo(VolumeFilter{}).LastHeartbeatNs; got != 0 {
+		t.Fatalf("LastHeartbeatNs before any heartbeat = %d, want 0", got)
+	}
+	if !dn.LastHeartbeat().IsZero() {
+		t.Fatalf("LastHeartbeat before any heartbeat = %v, want zero", dn.LastHeartbeat())
+	}
+
+	beat := time.Unix(1700000000, 123456789)
+	dn.SetLastHeartbeat(beat)
+	if got := dn.ToDataNodeInfo(VolumeFilter{}).LastHeartbeatNs; got != beat.UnixNano() {
+		t.Fatalf("LastHeartbeatNs = %d, want %d", got, beat.UnixNano())
+	}
+	if !dn.LastHeartbeat().Equal(beat) {
+		t.Fatalf("LastHeartbeat = %v, want %v", dn.LastHeartbeat(), beat)
+	}
+}
+
 func assert(t *testing.T, message string, actual, expected int) {
 	if actual != expected {
 		t.Fatalf("unexpected %s: %d, expected: %d", message, actual, expected)

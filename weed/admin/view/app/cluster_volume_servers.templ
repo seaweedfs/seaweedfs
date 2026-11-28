@@ -207,7 +207,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                                         data-remote-size={fmt.Sprintf("%d", host.RemoteSize)}
                                                         data-ec-volumes={fmt.Sprintf("%d", host.EcVolumes)}
                                                         data-ec-shards={fmt.Sprintf("%d", host.EcShards)}
-                                                        data-last-heartbeat={host.LastHeartbeat.Format("2006-01-02 15:04:05")}>
+                                                        data-last-heartbeat={formatLastHeartbeat(host.LastHeartbeat)}>
                                                     <i class="bi bi-eye"></i>
                                                 </button>
                                             } else {
@@ -227,7 +227,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                                         data-remote-size={fmt.Sprintf("%d", host.RemoteSize)}
                                                         data-ec-volumes={fmt.Sprintf("%d", host.EcVolumes)}
                                                         data-ec-shards={fmt.Sprintf("%d", host.EcShards)}
-                                                        data-last-heartbeat={host.LastHeartbeat.Format("2006-01-02 15:04:05")}>
+                                                        data-last-heartbeat={formatLastHeartbeat(host.LastHeartbeat)}>
                                                     <i class="bi bi-eye"></i>
                                                 </button>
                                             }
