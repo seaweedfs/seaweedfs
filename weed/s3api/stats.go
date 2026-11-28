@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -76,6 +77,30 @@ func BucketTrafficSent(bytesTransferred int64, r *http.Request) {
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	stats_collect.RecordBucketActiveTime(bucket)
 	stats_collect.S3BucketTrafficSentBytesCounter.WithLabelValues(bucket).Add(float64(bytesTransferred))
+}
+
+const (
+	readAbortedClientCanceled   = "client_canceled"
+	readAbortedDeadlineExceeded = "deadline_exceeded"
+	readAbortedReadError        = "read_error"
+)
+
+func readAbortedCause(ctx context.Context, err error) string {
+	switch {
+	case streamCanceled(ctx, err):
+		return readAbortedClientCanceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return readAbortedDeadlineExceeded
+	default:
+		return readAbortedReadError
+	}
+}
+
+// BucketReadAborted counts a read whose status line was already sent, so the
+// request counter records it as a success.
+func BucketReadAborted(err error, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	stats_collect.S3ReadAbortedCounter.WithLabelValues(bucket, readAbortedCause(r.Context(), err)).Inc()
 }
 
 // putStages times one object write's stages for S3PutStageHistogram.

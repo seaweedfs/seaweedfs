@@ -1497,6 +1497,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return newStreamErrorWithResponse(err)
 		}
+		BucketReadAborted(err, r)
 		switch {
 		case streamCanceled(r.Context(), err):
 			// Client disconnected mid-stream (e.g. Nginx upstream timeout, browser cancel) - expected
@@ -1591,6 +1592,7 @@ func (s3a *S3ApiServer) serveObjectFromRemoteMount(w http.ResponseWriter, r *htt
 		BucketTrafficSent(cw.written, r)
 	}
 	if copyErr != nil {
+		BucketReadAborted(copyErr, r)
 		glog.V(2).Infof("streamFromVolumeServers: origin stream %s/%s ended after %d bytes: %v", bucket, object, cw.written, copyErr)
 		return true, copyErr
 	}
@@ -1782,6 +1784,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 				// nothing written yet -- the caller writes the S3 error response
 				return err
 			}
+			BucketReadAborted(err, r)
 			return newStreamErrorWithResponse(err)
 		}
 		body.Commit()
@@ -1936,6 +1939,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 			// nothing written yet -- the caller writes the S3 error response
 			return copyErr
 		}
+		BucketReadAborted(copyErr, r)
 		return newStreamErrorWithResponse(copyErr)
 	}
 	body.Commit()

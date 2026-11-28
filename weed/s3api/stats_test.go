@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -192,4 +195,29 @@ func TestPutStagesRecordNothingBeforeUpload(t *testing.T) {
 	track(handler, "PUT")(httptest.NewRecorder(), httptest.NewRequest(http.MethodPut, "/bucket/object", bytes.NewReader([]byte("1234"))))
 	after, _ := putStageSamples(t, "PutObject", "body_read")
 	assert.Equal(t, before, after)
+}
+
+func TestBucketReadAbortedCountsByCause(t *testing.T) {
+	const bucket = "read-aborted-bkt"
+	newReq := func(ctx context.Context) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "/"+bucket+"/obj", nil).WithContext(ctx)
+		return mux.SetURLVars(r, map[string]string{"bucket": bucket, "object": "obj"})
+	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	BucketReadAborted(errors.New("write: broken pipe"), newReq(canceled))
+	BucketReadAborted(context.Canceled, newReq(context.Background()))
+	BucketReadAborted(fmt.Errorf("read chunk: %w", context.DeadlineExceeded), newReq(context.Background()))
+	BucketReadAborted(io.ErrUnexpectedEOF, newReq(context.Background()))
+
+	count := func(cause string) float64 {
+		return testutil.ToFloat64(stats_collect.S3ReadAbortedCounter.WithLabelValues(bucket, cause))
+	}
+	assert.Equal(t, 2.0, count(readAbortedClientCanceled))
+	assert.Equal(t, 1.0, count(readAbortedDeadlineExceeded))
+	assert.Equal(t, 1.0, count(readAbortedReadError))
+
+	stats_collect.DeleteBucketMetrics(bucket)
+	assert.Zero(t, stats_collect.S3ReadAbortedCounter.DeletePartialMatch(prometheus.Labels{"bucket": bucket}), "bucket deletion must drop its aborted-read series")
 }
