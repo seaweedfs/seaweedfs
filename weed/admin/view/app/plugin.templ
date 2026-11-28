@@ -383,6 +383,7 @@ templ Plugin(page string, initialJob string, lane string) {
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <h5 class="mb-0"><i class="bi bi-list me-2"></i>Job Queue</h5>
                             <div class="d-flex gap-2 align-items-center flex-wrap">
+                                <input type="number" min="1" max="4294967295" step="1" autocomplete="off" class="form-control form-control-sm plugin-monitor-volume-filter" placeholder="Volume ID" title="Show only jobs of this volume" style="width: 130px;"/>
                                 <small class="text-muted">States: pending/assigned/running</small>
                             </div>
                         </div>
@@ -451,7 +452,7 @@ templ Plugin(page string, initialJob string, lane string) {
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <h5 class="mb-0"><i class="bi bi-list-check me-2"></i>Execution Jobs</h5>
                             <div class="d-flex gap-2 align-items-center flex-wrap">
-                                <input type="number" min="1" max="4294967295" step="1" autocomplete="off" class="form-control form-control-sm" id="plugin-monitor-volume-filter" placeholder="Volume ID" title="Show only jobs and activities of this volume" style="width: 130px;"/>
+                                <input type="number" min="1" max="4294967295" step="1" autocomplete="off" class="form-control form-control-sm plugin-monitor-volume-filter" placeholder="Volume ID" title="Show only jobs and activities of this volume" style="width: 130px;"/>
                                 <select class="form-select form-select-sm" id="plugin-monitor-job-state-filter" style="min-width: 180px;">
                                     <option value="">All States</option>
                                     <option value="assigned">Assigned</option>
@@ -3248,17 +3249,20 @@ templ Plugin(page string, initialJob string, lane string) {
                     });
                 }
 
-                var monitorVolumeFilter = document.getElementById('plugin-monitor-volume-filter');
-                if (monitorVolumeFilter) {
-                    monitorVolumeFilter.addEventListener('change', async function() {
-                        var volumeID = readMonitorVolumeFilter(monitorVolumeFilter);
+                var monitorVolumeFilters = document.querySelectorAll('.plugin-monitor-volume-filter');
+                for (var v = 0; v < monitorVolumeFilters.length; v++) {
+                    monitorVolumeFilters[v].addEventListener('change', async function(event) {
+                        var volumeID = readMonitorVolumeFilter(event.target);
+                        if (volumeID !== null) {
+                            state.monitorVolumeID = volumeID;
+                        }
+                        for (var k = 0; k < monitorVolumeFilters.length; k++) {
+                            monitorVolumeFilters[k].value = state.monitorVolumeID;
+                        }
                         if (volumeID === null) {
-                            monitorVolumeFilter.value = state.monitorVolumeID;
                             notify('Volume ID must be a whole number from 1 to 4294967295', 'warning');
                             return;
                         }
-                        state.monitorVolumeID = volumeID;
-                        monitorVolumeFilter.value = volumeID;
                         try {
                             await refreshJobsAndActivities();
                         } catch (refreshErr) {
