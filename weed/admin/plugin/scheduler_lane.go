@@ -91,6 +91,7 @@ var jobTypeLaneMap = map[string]SchedulerLane{
 
 	// S3 lifecycle management
 	"s3_lifecycle": LaneLifecycle,
+	"filer_ttl":    LaneLifecycle,
 
 	// Lance table maintenance. Without these the job types fall back to the
 	// default lane, which serialises everything under the cluster admin lock

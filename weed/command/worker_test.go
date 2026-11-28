@@ -19,6 +19,7 @@ func TestWorkerDefaultJobTypes(t *testing.T) {
 		"admin_script",
 		"ec_balance",
 		"erasure_coding",
+		"filer_ttl",
 		"iceberg_maintenance",
 		"s3_lifecycle",
 		"vacuum",
