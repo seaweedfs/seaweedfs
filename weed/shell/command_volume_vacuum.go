@@ -49,12 +49,27 @@ func (c *commandVacuum) HasTag(CommandTag) bool {
 	return false
 }
 
+func newVolumeVacuumFlagSet(name string) (fs *flag.FlagSet, garbageThreshold *float64, collection, volumeIds *string) {
+	fs = flag.NewFlagSet(name, flag.ContinueOnError)
+	garbageThreshold = fs.Float64("garbageThreshold", 0.3, "vacuum when garbage is more than this limit")
+	collection = fs.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty or \"*\" matches all, \""+CollectionDefault+"\" the collection with no name")
+	volumeIds = fs.String("volumeId", "", "comma-separated list of volume IDs")
+	return
+}
+
+func (c *commandVacuum) argsApply(args []string) bool {
+	fs, _, collection, _ := newVolumeVacuumFlagSet(c.Name())
+	fs.SetOutput(io.Discard)
+	if fs.Parse(args) != nil {
+		return false
+	}
+	_, err := wildcard.CompileCollectionMatcher(*collection)
+	return err == nil
+}
+
 func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	volumeVacuumCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	garbageThreshold := volumeVacuumCommand.Float64("garbageThreshold", 0.3, "vacuum when garbage is more than this limit")
-	collection := volumeVacuumCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty or \"*\" matches all, \""+CollectionDefault+"\" the collection with no name")
-	volumeIds := volumeVacuumCommand.String("volumeId", "", "comma-separated list of volume IDs")
+	volumeVacuumCommand, garbageThreshold, collection, volumeIds := newVolumeVacuumFlagSet(c.Name())
 	if err = volumeVacuumCommand.Parse(args); err != nil {
 		return err
 	}

@@ -98,20 +98,10 @@ func (c *commandEcEncode) HasTag(CommandTag) bool {
 
 func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
-	encodeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	volumeId := encodeCommand.Int("volumeId", 0, "the volume id")
-	volumeIdsStr := encodeCommand.String("volumeIds", "", "comma-separated volume ids")
-	collection := encodeCommand.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty matches the collection with no name")
-	fullPercentage := encodeCommand.Float64("fullPercent", 95, "the volume reaches the percentage of max volume size")
-	quietPeriod := encodeCommand.Duration("quietFor", time.Hour, "select volumes without no writes for this period")
-	maxParallelization := encodeCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
-	batchSize := encodeCommand.Int("batchSize", DefaultEcBatchSize, "encode/re-balance/verify/delete up to this many volumes at a time (0 = all in one batch)")
-	forceChanges := encodeCommand.Bool("force", false, "force the encoding even if the cluster has less than recommended 4 nodes")
-	shardReplicaPlacement := encodeCommand.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty")
-	sourceDiskTypeStr := encodeCommand.String("sourceDiskType", "", "filter source volumes by disk type (hdd, ssd, or empty for all)")
-	diskTypeStr := encodeCommand.String("diskType", "", "target disk type for EC shards (hdd, ssd, or empty for default hdd)")
-	applyBalancing := encodeCommand.Bool("rebalance", true, "re-balance EC shards after creation (default: true)")
-	verbose := encodeCommand.Bool("verbose", false, "show detailed reasons why volumes are not selected for encoding")
+	encodeCommand, f := newEcEncodeFlagSet(c.Name())
+	volumeId, volumeIdsStr, collection, fullPercentage, quietPeriod := f.volumeId, f.volumeIdsStr, f.collection, f.fullPercentage, f.quietPeriod
+	maxParallelization, batchSize, forceChanges, shardReplicaPlacement := f.maxParallelization, f.batchSize, f.forceChanges, f.shardReplicaPlacement
+	sourceDiskTypeStr, diskTypeStr, applyBalancing, verbose := f.sourceDiskTypeStr, f.diskTypeStr, f.applyBalancing, f.verbose
 
 	if err = encodeCommand.Parse(args); err != nil {
 		return err
@@ -197,6 +187,48 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 
 	return nil
 }
+
+type ecEncodeFlags struct {
+	volumeId              *int
+	volumeIdsStr          *string
+	collection            *string
+	fullPercentage        *float64
+	quietPeriod           *time.Duration
+	maxParallelization    *int
+	batchSize             *int
+	forceChanges          *bool
+	shardReplicaPlacement *string
+	sourceDiskTypeStr     *string
+	diskTypeStr           *string
+	applyBalancing        *bool
+	verbose               *bool
+}
+
+func newEcEncodeFlagSet(name string) (*flag.FlagSet, *ecEncodeFlags) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	return fs, &ecEncodeFlags{
+		volumeId:              fs.Int("volumeId", 0, "the volume id"),
+		volumeIdsStr:          fs.String("volumeIds", "", "comma-separated volume ids"),
+		collection:            fs.String("collection", "", "comma-separated collection names, wildcards, or regex patterns; empty matches the collection with no name"),
+		fullPercentage:        fs.Float64("fullPercent", 95, "the volume reaches the percentage of max volume size"),
+		quietPeriod:           fs.Duration("quietFor", time.Hour, "select volumes without no writes for this period"),
+		maxParallelization:    fs.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible"),
+		batchSize:             fs.Int("batchSize", DefaultEcBatchSize, "encode/re-balance/verify/delete up to this many volumes at a time (0 = all in one batch)"),
+		forceChanges:          fs.Bool("force", false, "force the encoding even if the cluster has less than recommended 4 nodes"),
+		shardReplicaPlacement: fs.String("shardReplicaPlacement", "", "replica placement for EC shards, or master default if empty"),
+		sourceDiskTypeStr:     fs.String("sourceDiskType", "", "filter source volumes by disk type (hdd, ssd, or empty for all)"),
+		diskTypeStr:           fs.String("diskType", "", "target disk type for EC shards (hdd, ssd, or empty for default hdd)"),
+		applyBalancing:        fs.Bool("rebalance", true, "re-balance EC shards after creation (default: true)"),
+		verbose:               fs.Bool("verbose", false, "show detailed reasons why volumes are not selected for encoding"),
+	}
+}
+
+func (c *commandEcEncode) argsApply(args []string) bool {
+	fs, _ := newEcEncodeFlagSet(c.Name())
+	fs.SetOutput(io.Discard)
+	return fs.Parse(args) == nil
+}
+
 func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, collectionPattern string, sourceDiskType *types.DiskType, fullPercentage float64, quietPeriod time.Duration, verbose bool) (vids []needle.VolumeId, matchedCollections []string, err error) {
 	// compile regex pattern for collection matching
 	collectionMatcher, err := compileCollectionPattern(collectionPattern)

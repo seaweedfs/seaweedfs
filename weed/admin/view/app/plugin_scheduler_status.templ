@@ -7,6 +7,24 @@ templ PluginSchedulerStatus() {
         const root = document.getElementById('plugin-scheduler-blockers');
         if (!root) return;
         root.replaceChildren();
+        (data.maintenance_overlaps || []).forEach(function(overlap) {
+            const runners = overlap.runners || [];
+            const box = document.createElement('div');
+            box.className = 'alert alert-warning';
+            const heading = document.createElement('strong');
+            heading.textContent = overlap.work + ' has ' + runners.length + ' independent runners';
+            box.appendChild(heading);
+            runners.forEach(function(name) {
+                const line = document.createElement('div');
+                line.textContent = name;
+                box.appendChild(line);
+            });
+            const hint = document.createElement('div');
+            hint.className = 'small mt-1';
+            hint.textContent = 'Each one plans from the same topology without knowing about the others, so their changes can collide. Keep only one enabled.';
+            box.appendChild(hint);
+            root.appendChild(box);
+        });
         const lock = data.lock || {};
         const waiters = lock.waiters || [];
         if (waiters.length) {

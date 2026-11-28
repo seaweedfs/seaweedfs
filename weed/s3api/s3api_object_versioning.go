@@ -2218,6 +2218,13 @@ func VersionIdFromEntry(entry *filer_pb.Entry) string {
 	return versionIdFromEntry(entry)
 }
 
+// SelectLatestVersionId exposes selectLatestVersion's ordering to callers
+// outside this package that rescan .versions without writing a pointer.
+func SelectLatestVersionId(entries []*filer_pb.Entry) string {
+	_, versionId, _, _ := selectLatestVersion(entries)
+	return versionId
+}
+
 // versionIdFromEntry returns a .versions child entry's version id, preferring
 // the Seaweed-X-Amz-Version-Id attribute and falling back to the v_<versionId>
 // file name so entries written outside the normal PUT path still self-heal.

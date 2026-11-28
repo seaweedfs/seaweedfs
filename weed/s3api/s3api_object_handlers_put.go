@@ -2884,6 +2884,11 @@ func (s3a *S3ApiServer) getObjectETag(entry *filer_pb.Entry) string {
 	return objectETag(entry)
 }
 
+// ObjectETag exposes objectETag to callers outside this package.
+func ObjectETag(entry *filer_pb.Entry) string {
+	return objectETag(entry)
+}
+
 func objectETag(entry *filer_pb.Entry) string {
 	// Try to get ETag from Extended attributes first
 	if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
