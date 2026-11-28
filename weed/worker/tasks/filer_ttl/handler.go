@@ -200,23 +200,20 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	})
 
 	stats := &walkStats{}
-	var failed []string
+	var resumed string
 	err := pb.WithGrpcFilerClient(true, 0, pb.ServerAddress(address), h.grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
-		for _, prefix := range prefixes {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if err := walkLocationPrefix(ctx, client, prefix, stats); err != nil {
-				failed = append(failed, fmt.Sprintf("%s: %v", prefix, err))
-			}
+		var walkErr error
+		resumed, walkErr = walkLocationPrefixes(ctx, client, prefixes, stats)
+		if walkErr != nil {
+			return fmt.Errorf("walk %w", walkErr)
 		}
 		return nil
 	})
-	if err == nil && len(failed) > 0 {
-		err = fmt.Errorf("walk %s", strings.Join(failed, "; "))
-	}
 
 	summary := fmt.Sprintf("filer %s: walked %d TTL path(s), %d directories, %d live entries", address, len(prefixes), stats.directories, stats.entries)
+	if resumed != "" {
+		summary += fmt.Sprintf(", resumed from %s", resumed)
+	}
 	completed := &plugin_pb.JobCompleted{
 		JobId:   request.Job.JobId,
 		JobType: jobType,

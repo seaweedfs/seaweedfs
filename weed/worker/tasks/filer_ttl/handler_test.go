@@ -2,14 +2,17 @@ package filer_ttl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -32,10 +35,48 @@ type ttlFiler struct {
 	mu        sync.Mutex
 	dirs      map[string]map[string]*filer_pb.Entry
 	expired   map[string]bool
+	files     map[string]*filer_pb.Entry
+	lists     map[string]int
+	failList  func(*filer_pb.ListEntriesRequest) bool
 }
 
 func newTTLFiler(signature int32) *ttlFiler {
-	return &ttlFiler{signature: signature, dirs: map[string]map[string]*filer_pb.Entry{}, expired: map[string]bool{}}
+	return &ttlFiler{signature: signature, dirs: map[string]map[string]*filer_pb.Entry{}, expired: map[string]bool{}, files: map[string]*filer_pb.Entry{}, lists: map[string]int{}}
+}
+
+func (f *ttlFiler) checkpoint() *walkCheckpoint {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	entry := f.files[checkpointDir+"/"+checkpointName(f.signature)]
+	if entry == nil {
+		return nil
+	}
+	var cp walkCheckpoint
+	if err := json.Unmarshal(entry.Content, &cp); err != nil {
+		return nil
+	}
+	return &cp
+}
+
+func (f *ttlFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.files[req.Directory+"/"+req.Entry.Name] = proto.Clone(req.Entry).(*filer_pb.Entry)
+	return &filer_pb.CreateEntryResponse{}, nil
+}
+
+func (f *ttlFiler) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.files[req.Directory+"/"+req.Entry.Name] = proto.Clone(req.Entry).(*filer_pb.Entry)
+	return &filer_pb.UpdateEntryResponse{}, nil
+}
+
+func (f *ttlFiler) DeleteEntry(_ context.Context, req *filer_pb.DeleteEntryRequest) (*filer_pb.DeleteEntryResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.files, req.Directory+"/"+req.Name)
+	return &filer_pb.DeleteEntryResponse{}, nil
 }
 
 func (f *ttlFiler) add(fullPath string, isDirectory, expired bool) {
@@ -66,6 +107,12 @@ func (f *ttlFiler) GetFilerConfiguration(context.Context, *filer_pb.GetFilerConf
 }
 
 func (f *ttlFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	f.mu.Lock()
+	file := f.files[req.Directory+"/"+req.Name]
+	f.mu.Unlock()
+	if file != nil {
+		return &filer_pb.LookupDirectoryEntryResponse{Entry: proto.Clone(file).(*filer_pb.Entry)}, nil
+	}
 	if req.Directory != filer.DirectoryEtcSeaweedFS || req.Name != filer.FilerConfName || f.conf == nil {
 		return nil, status.Error(codes.NotFound, filer_pb.ErrNotFound.Error())
 	}
@@ -93,6 +140,14 @@ func (f *ttlFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb
 		dir = "/"
 	}
 	f.mu.Lock()
+	if f.failList != nil && f.failList(req) {
+		f.failList = nil
+		f.mu.Unlock()
+		return status.Error(codes.Unavailable, "listing interrupted")
+	}
+	if req.StartFromFileName == "" {
+		f.lists[dir]++
+	}
 	var names []string
 	for name := range f.dirs[dir] {
 		if strings.HasPrefix(name, req.Prefix) && name > req.StartFromFileName {
@@ -322,5 +377,108 @@ func TestExecuteRemovesExpiredRowsNobodyVisits(t *testing.T) {
 	}
 	if got := f.rows(); got != 8+1+walkPageSize+100 {
 		t.Fatalf("rows left = %d, want %d", got, 8+1+walkPageSize+100)
+	}
+}
+
+func executeOn(t *testing.T, address string, prefixes ...string) *plugin_pb.JobCompleted {
+	t.Helper()
+	sender := &executeRecorder{}
+	if err := newTestHandler().Execute(context.Background(), &plugin_pb.ExecuteJobRequest{Job: &plugin_pb.JobSpec{
+		JobType: jobType,
+		Parameters: map[string]*plugin_pb.ConfigValue{
+			filerAddressParam:     {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: address}},
+			locationPrefixesParam: {Kind: &plugin_pb.ConfigValue_StringList{StringList: &plugin_pb.StringList{Values: prefixes}}},
+		},
+	}}, sender); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.completed) != 1 {
+		t.Fatalf("completed = %v", sender.completed)
+	}
+	return sender.completed[0]
+}
+
+func resumeTree() *ttlFiler {
+	f := newTTLFiler(1)
+	for _, dir := range []string{"/a/d1", "/a/d2", "/a/d3", "/b"} {
+		f.add(dir, true, false)
+		f.add(dir+"/zz-old.bin", false, true)
+	}
+	for i := 0; i < 2*walkPageSize+5; i++ {
+		f.add(fmt.Sprintf("/a/d2/f-%05d", i), false, false)
+	}
+	return f
+}
+
+func TestExecuteResumesWhereAFailedWalkStopped(t *testing.T) {
+	saved := checkpointInterval
+	checkpointInterval = 0
+	t.Cleanup(func() { checkpointInterval = saved })
+
+	f := resumeTree()
+	f.failList = func(req *filer_pb.ListEntriesRequest) bool {
+		return req.Directory == "/a/d2" && req.StartFromFileName != ""
+	}
+	address := serveFiler(t, f)
+
+	if first := executeOn(t, address, "/b/", "/a/"); first.Success {
+		t.Fatal("the interrupted walk reported success")
+	}
+	cp := f.checkpoint()
+	if cp == nil || cp.Prefix != "/a/" || cp.Cursor != fmt.Sprintf("/a/d2/f-%05d", walkPageSize-1) {
+		t.Fatalf("checkpoint = %+v", cp)
+	}
+	if _, found := f.dirs["/b"]["zz-old.bin"]; found {
+		t.Fatal("a prefix after the failure was not walked")
+	}
+
+	second := executeOn(t, address, "/a/", "/b/")
+	if !second.Success || !strings.Contains(second.Result.Summary, "resumed from /a/d2/") {
+		t.Fatalf("second run = %+v", second)
+	}
+	if f.lists["/a/d1"] != 1 || f.lists["/a/d2"] != 1 || f.lists["/a/d3"] != 1 || f.lists["/b"] != 2 {
+		t.Fatalf("listings from the start: %v", f.lists)
+	}
+	for _, dir := range []string{"/a/d1", "/a/d2", "/a/d3"} {
+		if _, found := f.dirs[dir]["zz-old.bin"]; found {
+			t.Fatalf("%s/zz-old.bin is still stored", dir)
+		}
+	}
+	if f.checkpoint() != nil {
+		t.Fatal("a finished pass left its checkpoint")
+	}
+}
+
+func TestExecuteStartsOverWhenTheTTLPathsChanged(t *testing.T) {
+	f := resumeTree()
+	content, _ := json.Marshal(walkCheckpoint{Prefixes: []string{"/a/"}, Prefix: "/a/", Cursor: "/a/d2", StartedNs: time.Now().UnixNano()})
+	f.files[checkpointDir+"/"+checkpointName(f.signature)] = &filer_pb.Entry{Name: checkpointName(f.signature), Content: content}
+	address := serveFiler(t, f)
+
+	if done := executeOn(t, address, "/a/", "/b/"); !done.Success || strings.Contains(done.Result.Summary, "resumed") {
+		t.Fatalf("run = %+v", done)
+	}
+	if f.lists["/a/d1"] != 1 {
+		t.Fatalf("listings from the start: %v", f.lists)
+	}
+	if f.checkpoint() != nil {
+		t.Fatal("a finished pass left the stale checkpoint")
+	}
+}
+
+func TestCursorPathBelowTheWalkRoot(t *testing.T) {
+	for _, tc := range []struct {
+		root, cursor string
+		want         []string
+	}{
+		{"/", "/ttl-http-a/old.bin", []string{"ttl-http-a", "old.bin"}},
+		{"/buckets/cam/", "/buckets/cam/2026-11-01", []string{"2026-11-01"}},
+		{"/buckets/cam/", "/buckets/cam/", nil},
+		{"/buckets/cam/", "/buckets/camera/x", nil},
+		{"/buckets/cam/", "", nil},
+	} {
+		if got := cursorPath(util.FullPath(tc.root), tc.cursor); !slices.Equal(got, tc.want) {
+			t.Errorf("cursorPath(%q, %q) = %q, want %q", tc.root, tc.cursor, got, tc.want)
+		}
 	}
 }
