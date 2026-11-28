@@ -1239,6 +1239,10 @@ func (f *Filer) DeleteEmptyParentDirectories(ctx context.Context, dirPath util.F
 		return
 	}
 
+	if isKeyObject, keyErr := f.IsDirectoryKeyObject(ctx, dirPath); keyErr != nil || isKeyObject {
+		return
+	}
+
 	// Directory is empty, try to delete it
 	glog.V(2).InfofCtx(ctx, "DeleteEmptyParentDirectories: deleting empty directory %s", dirPath)
 	parentDir, _ := dirPath.DirAndName()

@@ -9,6 +9,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -145,5 +146,32 @@ func TestSweepsExpiredEntriesOnlyOnceForASharedStore(t *testing.T) {
 	f.MetaAggregator.peerSharesStore[peer] = false
 	if !f.sweepsExpiredEntries(ownedByPeer, self) {
 		t.Errorf("%s: not swept here although its owner has a store of its own", ownedByPeer)
+	}
+}
+
+func TestSweepExpiredEntriesKeepsADirectoryKeyObject(t *testing.T) {
+	f, store := newTestFilerWithStubStore(t)
+	f.DirBucketsPath = "/buckets"
+	f.FilerConf = NewFilerConf()
+	if err := f.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: "/buckets/b/", Ttl: "2m"}); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	putSweepTestEntry(t, store, "/buckets", true, 0, old)
+	putSweepTestEntry(t, store, "/buckets/b", true, 0, old)
+	reports := &Entry{FullPath: "/buckets/b/reports", Attr: Attr{Mode: os.ModeDir | 0o755, Crtime: old, Mtime: old, Mime: "text/plain"},
+		Extended: map[string][]byte{s3_constants.SeaweedFSPrefixObject: []byte("true")}}
+	if err := store.InsertEntry(context.Background(), reports); err != nil {
+		t.Fatal(err)
+	}
+	putSweepTestEntry(t, store, "/buckets/b/reports/day1", false, 120, old)
+
+	f.sweepExpiredEntries(context.Background(), "", make(map[string]time.Time), time.Now())
+
+	if store.getEntry("/buckets/b/reports/day1") != nil {
+		t.Fatal("expired child not removed")
+	}
+	if store.getEntry("/buckets/b/reports") == nil {
+		t.Fatal("directory holding an object removed with its last child")
 	}
 }
