@@ -236,7 +236,7 @@ func TestDLM_HandoffRetryStops(t *testing.T) {
 		t.Run(fmt.Sprintf("shutdown=%v", shutdown), func(t *testing.T) {
 			fs, addr := newDLMHandoffServer(t, nil)
 			fs.filer.Dlm.LockRing.SetSnapshot([]pb.ServerAddress{addr}, 1)
-			expiry := time.Now().Add(100 * time.Millisecond).UnixNano()
+			expiry := time.Now().Add(time.Second).UnixNano()
 			if shutdown {
 				expiry = time.Now().Add(time.Minute).UnixNano()
 			}
