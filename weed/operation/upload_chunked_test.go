@@ -299,6 +299,82 @@ func TestUploadChunkToHoldersRollsBackOnPartialFailure(t *testing.T) {
 	}
 }
 
+// TestUploadReaderInChunks_PassesPairMap checks that every chunk of a
+// multi-chunk upload carries ChunkedUploadOption.PairMap, not only the first.
+func TestUploadReaderInChunks_PassesPairMap(t *testing.T) {
+	const chunkSize = 8 * 1024
+	testData := bytes.Repeat([]byte("x"), 3*chunkSize)
+
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+		return nil, &AssignResult{Fid: "3,01637037d6", Url: "volume:8080", Count: 1}, nil
+	}
+
+	var mu sync.Mutex
+	var seen []string
+	uploadFunc := func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		mu.Lock()
+		seen = append(seen, option.PairMap["Seaweed-Content-Location"])
+		mu.Unlock()
+		return &UploadResult{Size: uint32(len(data))}, nil
+	}
+
+	_, err := UploadReaderInChunks(context.Background(), bytes.NewReader(testData), &ChunkedUploadOption{
+		ChunkSize:      chunkSize,
+		SmallFileLimit: 256,
+		AssignFunc:     assignFunc,
+		UploadFunc:     uploadFunc,
+		PairMap:        map[string]string{"Seaweed-Content-Location": "/buckets/b/k"},
+	})
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if len(seen) != 3 {
+		t.Fatalf("expected 3 chunk uploads, got %d", len(seen))
+	}
+	for i, v := range seen {
+		if v != "/buckets/b/k" {
+			t.Errorf("chunk %d: Seaweed-Content-Location = %q, want %q", i, v, "/buckets/b/k")
+		}
+	}
+}
+
+// TestUploadChunkToHolders_PassesPairMap checks that the replica fan-out path
+// sends ChunkedUploadOption.PairMap to every holder.
+func TestUploadChunkToHolders_PassesPairMap(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Header.Get("Seaweed-Content-Location"))
+		mu.Unlock()
+		fmt.Fprintf(w, `{"name":"f","size":11}`)
+	})
+	a := httptest.NewServer(handler)
+	defer a.Close()
+	b := httptest.NewServer(handler)
+	defer b.Close()
+
+	hosts := []string{strings.TrimPrefix(a.URL, "http://"), strings.TrimPrefix(b.URL, "http://")}
+	prepared, err := prepareUploadData([]byte("hello world"), &UploadOption{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = uploadChunkToHolders(context.Background(), hosts, "3,01637037d6", prepared, "", "", false, &ChunkedUploadOption{
+		PairMap: map[string]string{"Seaweed-Content-Location": "/buckets/b/k"},
+	})
+	if err != nil {
+		t.Fatalf("fan-out upload: %v", err)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("expected 2 holder uploads, got %d", len(seen))
+	}
+	for i, v := range seen {
+		if v != "/buckets/b/k" {
+			t.Errorf("holder %d: Seaweed-Content-Location = %q, want %q", i, v, "/buckets/b/k")
+		}
+	}
+}
+
 // mockFailingReader simulates a reader that fails after reading some data
 type mockFailingReader struct {
 	data      []byte

@@ -595,6 +595,28 @@ func multipartPartUpload(r *http.Request) (uploadFilerClient, bool) {
 	return upload, marked
 }
 
+// newPutChunkedUploadOption builds the chunked-upload options putToFiler uses.
+// Every chunk records the object path as the needle's Content-Location pair.
+func (s3a *S3ApiServer) newPutChunkedUploadOption(r *http.Request, bucket, object, collection string,
+	assignFunc func(ctx context.Context, count int, expectedDataSize uint64) (*operation.VolumeAssignRequest, *operation.AssignResult, error)) *operation.ChunkedUploadOption {
+	const smallFileLimit = 256 * 1024 // 256KB - store inline in filer
+	return &operation.ChunkedUploadOption{
+		ChunkSize:       s3a.uploadChunkSize(),
+		SmallFileLimit:  smallFileLimit,
+		Collection:      collection,
+		DataCenter:      s3a.option.DataCenter,
+		SaveSmallInline: false, // S3 API always creates chunks, never stores inline
+		MimeType:        r.Header.Get("Content-Type"),
+		Cipher:          s3a.cipher, // encrypt data on volume servers
+		PairMap:         contentLocationPairMap(s3a.objectContentLocation(r, bucket, object)),
+		AssignFunc:      assignFunc,
+		LookupJwtFunc:   s3a.lookupVolumeJwt,
+		// A body that crawls below the minimum rate is cut and answered as
+		// SlowDown, so the gateway does not hold chunk buffers on it.
+		BodyDeadline: true,
+	}
+}
+
 // putToFiler writes one chunk of object bytes (a full PutObject body, a
 // single MPU part, a copy-part destination). lifecycleTTLSec is non-zero
 // only for top-level PutObject paths where the lifecycle XML's
@@ -723,9 +745,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	// filePath is already provided directly - no URL parsing needed
 	// Step 1 & 2: Use auto-chunking to handle large files without OOM
-	chunkSize := s3a.uploadChunkSize()
-	const smallFileLimit = 256 * 1024 // 256KB - store inline in filer
-
+	// Chunk size and inline limit are set in newPutChunkedUploadOption.
 	collection := ""
 	if s3a.option.FilerGroup != "" {
 		collection = s3a.getCollectionName(bucket)
@@ -777,20 +797,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// metadata commit later run on context.Background(), so an aborted upload
 	// still has its already-written chunks deleted and a commit in flight is
 	// never cut short.
-	chunkResult, err := stages.upload(r.Context(), dataReader, &operation.ChunkedUploadOption{
-		ChunkSize:       chunkSize,
-		SmallFileLimit:  smallFileLimit,
-		Collection:      collection,
-		DataCenter:      s3a.option.DataCenter,
-		SaveSmallInline: false, // S3 API always creates chunks, never stores inline
-		MimeType:        r.Header.Get("Content-Type"),
-		Cipher:          s3a.cipher, // encrypt data on volume servers
-		AssignFunc:      assignFunc,
-		LookupJwtFunc:   s3a.lookupVolumeJwt,
-		// A body that crawls below the minimum rate is cut and answered as
-		// SlowDown, so the gateway does not hold chunk buffers on it.
-		BodyDeadline: true,
-	})
+	chunkResult, err := stages.upload(r.Context(), dataReader, s3a.newPutChunkedUploadOption(r, bucket, object, collection, assignFunc))
 	if err != nil {
 		if errors.Is(r.Context().Err(), context.Canceled) {
 			glog.V(1).Infof("putToFiler: chunked upload stopped, client gone: %v", err)

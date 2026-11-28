@@ -83,6 +83,14 @@ const (
 	// FailureServerError is the failure reason label for generic server-side errors.
 	FailureServerError = "server_error"
 
+	// EC shard copy failure reasons.
+	EcShardCopySourceNotFound = "source_not_found"
+	EcShardCopyEmptyIndex     = "empty_index"
+	EcShardCopyNoSpace        = "no_space"
+	EcShardCopyTimeout        = "timeout"
+	EcShardCopyIoError        = "io_error"
+	EcShardCopyOther          = "other"
+
 	// remote-mount cache read labels
 	RemoteCacheSourceFiler = "filer"
 	RemoteCacheSourceS3    = "s3"

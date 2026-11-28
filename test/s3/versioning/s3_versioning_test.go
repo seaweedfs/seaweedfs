@@ -180,7 +180,7 @@ func forceDeleteCollection(t *testing.T, bucketName string) {
 		return
 	}
 	endpoint := strings.TrimRight(defaultConfig.MasterEndpoint, "/") + "/col/delete?collection=" + url.QueryEscape(bucketName)
-	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	req, err := http.NewRequest(http.MethodDelete, endpoint, nil)
 	if err != nil {
 		t.Logf("Note: building collection delete request for %s failed: %v", bucketName, err)
 		return

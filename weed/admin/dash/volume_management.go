@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
 // GetClusterVolumes retrieves cluster volumes data with pagination, sorting, and filtering
@@ -644,10 +645,29 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 	}
 
 	return &ClusterVolumeServersData{
-		VolumeServers:      volumeServers,
-		TotalVolumeServers: len(volumeServers),
-		TotalVolumes:       totalVolumes,
-		TotalCapacity:      totalCapacity,
-		LastUpdated:        time.Now(),
+		VolumeServers:           volumeServers,
+		TotalVolumeServers:      len(volumeServers),
+		TotalVolumes:            totalVolumes,
+		TotalCapacity:           totalCapacity,
+		LastUpdated:             time.Now(),
+		DefaultPlacementServers: defaultPlacementServers(volumeServers),
 	}, nil
+}
+
+func defaultPlacementServers(servers []VolumeServer) []VolumeServer {
+	dcRacks := make(map[string][]string)
+	seen := make(map[[2]string]bool)
+	for _, vs := range servers {
+		if key := [2]string{vs.DataCenter, vs.Rack}; !seen[key] {
+			seen[key] = true
+			dcRacks[vs.DataCenter] = append(dcRacks[vs.DataCenter], vs.Rack)
+		}
+	}
+	var stray []VolumeServer
+	for _, vs := range servers {
+		if topology.DefaultPlacementStandsOut(vs.DataCenter, vs.Rack, dcRacks) {
+			stray = append(stray, vs)
+		}
+	}
+	return stray
 }

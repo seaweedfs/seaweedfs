@@ -44,9 +44,12 @@ type ChunkedUploadOption struct {
 	Jwt             security.EncodedJwt
 	MimeType        string
 	Cipher          bool // encrypt data on volume servers
-	AssignFunc      func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error)
-	UploadFunc      func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) // Optional: for testing
-	LookupJwtFunc   func(ctx context.Context, fileId string) security.EncodedJwt                        // Optional: renews the volume JWT for a cleanup delete
+	// PairMap is sent with every chunk as request headers ("Seaweed-" prefixed
+	// keys); the volume server stores them in the needle's Pairs.
+	PairMap       map[string]string
+	AssignFunc    func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error)
+	UploadFunc    func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) // Optional: for testing
+	LookupJwtFunc func(ctx context.Context, fileId string) security.EncodedJwt                        // Optional: renews the volume JWT for a cleanup delete
 
 	// Digest names the target filer's digest, so the content and chunk
 	// digests match what that filer holds; empty uses this process's mode.
@@ -375,7 +378,7 @@ func uploadChunk(ctx context.Context, assignResult *AssignResult, data []byte, p
 // chunkUploadOption holds the settings that shape a chunk's bytes, shared by
 // its preparation and every upload of it.
 func chunkUploadOption(opt *ChunkedUploadOption) *UploadOption {
-	return &UploadOption{Cipher: opt.Cipher, MimeType: opt.MimeType, Digest: opt.Digest, BodyDeadline: opt.BodyDeadline}
+	return &UploadOption{Cipher: opt.Cipher, MimeType: opt.MimeType, PairMap: opt.PairMap, Digest: opt.Digest, BodyDeadline: opt.BodyDeadline}
 }
 
 // chunkHolders returns the assigned volume plus its replica holders.

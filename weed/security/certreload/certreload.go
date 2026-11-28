@@ -1,6 +1,8 @@
-// Package certreload wraps grpc's pemfile.Provider so both TLS servers
-// (weed/security) and TLS clients (weed/util/http/client) can share one
-// reloading cert implementation without an import cycle between them.
+// Package certreload provides a reloadable PEM certificate provider for
+// both TLS servers (weed/security) and TLS clients
+// (weed/util/http/client). It re-reads cert/key/CA files on a timer and
+// can be forced to reload immediately (e.g. on SIGHUP) without restarting
+// the process.
 //
 // Lives in its own subpackage because weed/security already imports
 // weed/util/http/client (for LoadHTTPClientFromFile).
@@ -14,7 +16,6 @@ import (
 	"time"
 
 	"google.golang.org/grpc/credentials/tls/certprovider"
-	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 )
 
 // RefreshIntervalEnv names an environment variable that overrides the
@@ -24,10 +25,9 @@ import (
 // with short-lived certs (e.g. Vault-issued).
 const RefreshIntervalEnv = "WEED_TLS_CERT_REFRESH_INTERVAL"
 
-// DefaultRefreshInterval is the cadence at which the pemfile provider
-// stats cert/key files on disk. It re-parses only when mtime/contents
-// change, so the hot path (KeyMaterial() on each TLS handshake) stays
-// cheap.
+// DefaultRefreshInterval is the cadence at which the provider re-reads
+// cert/key files from disk. The hot path (KeyMaterial() on each TLS
+// handshake) returns the cached material, so it stays cheap.
 //
 // 5 hours matches the prior constant used for gRPC mTLS. Resolved once
 // at process start from RefreshIntervalEnv if set.
@@ -44,9 +44,9 @@ func resolveRefreshInterval(fallback time.Duration) time.Duration {
 
 // NewServerGetCertificate returns a callback suitable for
 // tls.Config.GetCertificate. It reloads certFile and keyFile from disk
-// on each refresh tick so rotated certs (e.g. from k8s cert-manager)
-// are picked up without a restart. Caller should Close() the returned
-// provider at shutdown.
+// on each refresh tick, and immediately on SIGHUP, so rotated certs
+// (e.g. from k8s cert-manager) are picked up without a restart. Caller
+// should Close() the returned provider at shutdown.
 func NewServerGetCertificate(certFile, keyFile string) (func(*tls.ClientHelloInfo) (*tls.Certificate, error), certprovider.Provider, error) {
 	return newServerGetCertificate(certFile, keyFile, DefaultRefreshInterval)
 }
@@ -57,9 +57,8 @@ func newServerGetCertificate(certFile, keyFile string, refresh time.Duration) (f
 		return nil, nil, err
 	}
 	get := func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-		// KeyMaterial blocks until the pemfile provider has read the files
-		// for the first time. Use the handshake context so a stuck read
-		// bounds the handshake instead of hanging it forever.
+		// KeyMaterial reads the files on first use; later calls return the
+		// cached material until the next refresh.
 		ctx := context.Background()
 		if hello != nil {
 			ctx = hello.Context()
@@ -72,7 +71,8 @@ func newServerGetCertificate(certFile, keyFile string, refresh time.Duration) (f
 // NewClientGetCertificate returns a callback suitable for
 // tls.Config.GetClientCertificate. Fires per TLS handshake, so long-lived
 // HTTPS clients (FUSE mount, backup, filer→volume, etc.) pick up rotated
-// client mTLS certs as pooled connections recycle.
+// client mTLS certs as pooled connections recycle, and immediately after
+// a SIGHUP.
 func NewClientGetCertificate(certFile, keyFile string) (func(*tls.CertificateRequestInfo) (*tls.Certificate, error), certprovider.Provider, error) {
 	return newClientGetCertificate(certFile, keyFile, DefaultRefreshInterval)
 }
@@ -96,13 +96,13 @@ func newProvider(certFile, keyFile string, refresh time.Duration) (certprovider.
 	if certFile == "" || keyFile == "" {
 		return nil, fmt.Errorf("both certFile and keyFile are required")
 	}
-	provider, err := pemfile.NewProvider(pemfile.Options{
+	provider, err := NewProvider(Options{
 		CertFile:        certFile,
 		KeyFile:         keyFile,
 		RefreshDuration: refresh,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("pemfile.NewProvider: %w", err)
+		return nil, fmt.Errorf("certreload.NewProvider: %w", err)
 	}
 	return provider, nil
 }
