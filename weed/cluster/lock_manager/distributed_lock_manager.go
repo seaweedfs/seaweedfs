@@ -6,6 +6,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const RenewInterval = time.Second * 3
@@ -21,6 +22,7 @@ type ReplicateFunc func(server pb.ServerAddress, key string, expiredAtNs int64, 
 
 type DistributedLockManager struct {
 	lockManager *LockManager
+	mutations   *util.LockTable[string]
 	LockRing    *LockRing
 	Host        pb.ServerAddress
 	ReplicateFn ReplicateFunc // set by filer server after creation
@@ -29,12 +31,15 @@ type DistributedLockManager struct {
 func NewDistributedLockManager(host pb.ServerAddress) *DistributedLockManager {
 	return &DistributedLockManager{
 		lockManager: NewLockManager(),
+		mutations:   util.NewLockTable[string](),
 		LockRing:    NewLockRing(time.Second * 5),
 		Host:        host,
 	}
 }
 
 func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64, token string, owner string) (lockOwner string, renewToken string, generation int64, movedTo pb.ServerAddress, err error) {
+	mutation := dlm.mutations.AcquireLock("lock mutation", key, util.ExclusiveLock)
+	defer dlm.mutations.ReleaseLock(key, mutation)
 	primary, _ := dlm.LockRing.GetPrimaryAndBackup(key)
 	if primary == "" {
 		err = NoLockServerError
@@ -88,6 +93,8 @@ func (dlm *DistributedLockManager) FindLockOwner(key string) (owner string, move
 }
 
 func (dlm *DistributedLockManager) Unlock(key string, token string) (movedTo pb.ServerAddress, err error) {
+	mutation := dlm.mutations.AcquireLock("lock mutation", key, util.ExclusiveLock)
+	defer dlm.mutations.ReleaseLock(key, mutation)
 	primary, _ := dlm.LockRing.GetPrimaryAndBackup(key)
 	if primary == "" {
 		err = NoLockServerError
@@ -171,10 +178,24 @@ func (dlm *DistributedLockManager) GetLock(key string) (*Lock, bool) {
 	return dlm.lockManager.GetLock(key)
 }
 
-// PrepareLockTransfer records that a handoff may send this lease elsewhere.
-// Do not send a snapshot if its lease has already been released locally.
-func (dlm *DistributedLockManager) PrepareLockTransfer(lock *Lock) bool {
-	return dlm.lockManager.markReplicated(lock.Key, lock.Token)
+// TransferLock serializes handoff with local acquire, renewal and release for
+// this key. A release either wins before the fresh snapshot, or waits for the
+// handoff and is forwarded to the new primary after demotion/removal. Incoming
+// replication does not acquire this gate: the receiver may replicate back while
+// the outgoing transfer RPC is waiting for its response.
+func (dlm *DistributedLockManager) TransferLock(key string, keepBackup bool, transfer func(*Lock) error) error {
+	mutation := dlm.mutations.AcquireLock("lock handoff", key, util.ExclusiveLock)
+	defer dlm.mutations.ReleaseLock(key, mutation)
+	current, found := dlm.lockManager.GetLock(key)
+	if !found || !dlm.lockManager.markReplicated(key, current.Token) {
+		return nil
+	}
+	current.Key = key
+	if err := transfer(current); err != nil {
+		return err
+	}
+	dlm.lockManager.finishTransfer(key, current.Token, keepBackup)
+	return nil
 }
 
 // ReplicateLock sends an existing lease to its current backup after a topology

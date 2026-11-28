@@ -350,6 +350,20 @@ func (lm *LockManager) markReplicated(path, token string) bool {
 	return true
 }
 
+// finishTransfer changes only the lease that was handed off. A different lease
+// installed by incoming replication while the RPC was in flight must survive.
+func (lm *LockManager) finishTransfer(path, token string, keepBackup bool) {
+	lm.accessLock.Lock()
+	defer lm.accessLock.Unlock()
+	if lock, found := lm.locks[path]; found && leaseID(lock.Token) == leaseID(token) {
+		if keepBackup {
+			lock.IsBackup = true
+		} else {
+			delete(lm.locks, path)
+		}
+	}
+}
+
 // RemoveLock removes a lock by key
 func (lm *LockManager) RemoveLock(path string) {
 	lm.accessLock.Lock()

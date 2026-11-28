@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -198,67 +199,29 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 			}
 			// Replicate to (possibly new) backup
 			fs.filer.Dlm.ReplicateLock(lock)
-		} else if backup == fs.option.Host {
-			if !lock.IsBackup {
-				// We were primary, now we're backup → transfer to new primary first, then demote
-				if !fs.filer.Dlm.PrepareLockTransfer(lock) {
-					continue
-				}
-				glog.V(0).Infof("DLM: transferring primary lock %s to new primary=%s", lock.Key, primary)
+		} else if backup != fs.option.Host || !lock.IsBackup {
+			// AllLocks only identifies candidate keys. Take a fresh snapshot
+			// and exclude local mutations until handoff and demotion complete.
+			err := fs.filer.Dlm.TransferLock(lock.Key, backup == fs.option.Host, func(current *lock_manager.Lock) error {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				err := pb.WithFilerClient(false, 0, primary, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+				defer cancel()
+				return pb.WithFilerClient(false, 0, primary, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 					_, err := client.TransferLocks(ctx, &filer_pb.TransferLocksRequest{
-						Locks: []*filer_pb.Lock{
-							{
-								Name:           lock.Key,
-								RenewToken:     lock.Token,
-								PrevRenewToken: lock.PrevToken,
-								ExpiredAtNs:    lock.ExpiredAtNs,
-								Owner:          lock.Owner,
-								Generation:     lock.Generation,
-								Seq:            lock.Seq,
-							},
-						},
+						Locks: []*filer_pb.Lock{{
+							Name:           current.Key,
+							RenewToken:     current.Token,
+							PrevRenewToken: current.PrevToken,
+							ExpiredAtNs:    current.ExpiredAtNs,
+							Owner:          current.Owner,
+							Generation:     current.Generation,
+							Seq:            current.Seq,
+						}},
 					})
 					return err
 				})
-				cancel()
-				if err != nil {
-					glog.Errorf("DLM: failed to transfer lock %s to new primary %s: %v, keeping as primary", lock.Key, primary, err)
-				} else {
-					// Only demote after successful handoff
-					fs.filer.Dlm.DemoteLock(lock.Key)
-					glog.V(0).Infof("DLM: demoted lock %s to backup after successful transfer", lock.Key)
-				}
-			}
-			// else: already backup, keep as is
-		} else {
-			// We're neither primary nor backup → transfer to primary and remove locally
-			if !fs.filer.Dlm.PrepareLockTransfer(lock) {
-				continue
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			err := pb.WithFilerClient(false, 0, primary, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-				_, err := client.TransferLocks(ctx, &filer_pb.TransferLocksRequest{
-					Locks: []*filer_pb.Lock{
-						{
-							Name:           lock.Key,
-							RenewToken:     lock.Token,
-							PrevRenewToken: lock.PrevToken,
-							ExpiredAtNs:    lock.ExpiredAtNs,
-							Owner:          lock.Owner,
-							Generation:     lock.Generation,
-							Seq:            lock.Seq,
-						},
-					},
-				})
-				return err
 			})
-			cancel()
 			if err != nil {
 				glog.Errorf("DLM: failed to transfer lock %s to %s: %v", lock.Key, primary, err)
-			} else {
-				fs.filer.Dlm.RemoveBackupLock(lock.Key)
 			}
 		}
 	}

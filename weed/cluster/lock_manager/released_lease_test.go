@@ -234,11 +234,17 @@ func TestDLM_HandoffTracksPreviouslyLocalLease(t *testing.T) {
 	require.NoError(t, err)
 	locks := dlm.AllLocks()
 	require.Len(t, locks, 1)
-	require.True(t, dlm.PrepareLockTransfer(locks[0]))
+	require.NoError(t, dlm.TransferLock("key", true, func(current *Lock) error {
+		require.Equal(t, token, current.Token)
+		return nil
+	}))
 	_, err = dlm.Unlock("key", token)
 	require.NoError(t, err)
 	require.NotEmpty(t, dlm.lockManager.removed)
-	require.False(t, dlm.PrepareLockTransfer(locks[0]))
+	require.NoError(t, dlm.TransferLock("key", true, func(*Lock) error {
+		t.Fatal("released lease was handed off")
+		return nil
+	}))
 	require.False(t, dlm.lockManager.InsertLock("key", expires, token, "", "owner", locks[0].Generation, locks[0].Seq))
 }
 
