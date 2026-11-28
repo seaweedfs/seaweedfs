@@ -98,7 +98,7 @@ func TestPosixLockKeepAlive(t *testing.T) {
 		t.Fatalf("keep_alive should succeed: err=%v", err)
 	}
 	// A renewed session that goes stale is reaped; a never-renewed one is not.
-	fs.posixLocks.TryLock("s3.fuse.lock:/x", posixlock.Range{Start: 0, End: 9, Type: posixlock.Write, Sid: 7, Owner: 1})
+	fs.posixLocks.TryLock("s3.fuse.lock:/x", posixlock.Range{Start: 0, End: 9, Type: posixlock.Write, Sid: 7, Owner: 1}, posixlock.Lease{})
 	if reaped := fs.posixLocks.ReapExpired(0); len(reaped) != 1 || reaped[0] != 7 {
 		t.Fatalf("renewed session 7 should be reapable at ttl=0, got %v", reaped)
 	}
@@ -141,11 +141,11 @@ func TestPosixLockForwardsToOwner(t *testing.T) {
 	}
 
 	// The lock landed on the owner: a conflicting acquire there is rejected.
-	if _, granted := owner.posixLocks.TryLock(key, posixlock.Range{Start: 50, End: 149, Type: posixlock.Write, Sid: 2, Owner: 1}); granted {
+	if _, granted := owner.posixLocks.TryLock(key, posixlock.Range{Start: 50, End: 149, Type: posixlock.Write, Sid: 2, Owner: 1}, posixlock.Lease{}); granted {
 		t.Fatal("owner should hold the forwarded lock")
 	}
 	// The sender did not apply locally.
-	if _, granted := self.posixLocks.TryLock(key, posixlock.Range{Start: 0, End: 99, Type: posixlock.Write, Sid: 9, Owner: 9}); !granted {
+	if _, granted := self.posixLocks.TryLock(key, posixlock.Range{Start: 0, End: 99, Type: posixlock.Write, Sid: 9, Owner: 9}, posixlock.Lease{}); !granted {
 		t.Fatal("sender must forward, not apply locally")
 	}
 }
@@ -164,7 +164,7 @@ func TestPosixLockWarmupDefersGrants(t *testing.T) {
 	}
 
 	// A lock the owner already knows about is still reported as a conflict.
-	fs.posixLocks.TryLock("s3.fuse.lock:/x", posixlock.Range{Start: 0, End: 99, Type: posixlock.Write, Sid: 9, Owner: 1, Pid: 5})
+	fs.posixLocks.TryLock("s3.fuse.lock:/x", posixlock.Range{Start: 0, End: 99, Type: posixlock.Write, Sid: 9, Owner: 1, Pid: 5}, posixlock.Lease{})
 	if r := posixOp(t, fs, filer_pb.PosixLockOp_TRY_LOCK, pbLock(50, 60, posixlock.Write, 1, 1, 7, false)); r.Granted || !r.HasConflict {
 		t.Fatalf("known conflict should be reported during warm-up: %+v", r)
 	}

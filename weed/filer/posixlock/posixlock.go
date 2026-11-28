@@ -24,22 +24,31 @@ const (
 	Unlock uint32 = 3
 )
 
-// Range is one held advisory byte-range lock. Owner identity is the (Sid, Owner)
-// pair: Sid is the mount session, Owner the FUSE lock owner within it, so owners
-// from different mounts never alias. End is inclusive; math.MaxUint64 means EOF.
-// IsFlock separates the flock and fcntl namespaces, which never conflict.
+// Range is one held advisory byte-range lock. Owner identity is the
+// (Principal, Sid, Owner) triple: Sid is the mount session, Owner the FUSE lock
+// owner within it, so owners from different mounts never alias. Principal is the
+// verified authority the server holds the lock under, empty for unscoped
+// callers; it is server-side state and never leaves the filer. End is
+// inclusive; math.MaxUint64 means EOF. IsFlock separates the flock and fcntl
+// namespaces, which never conflict.
 type Range struct {
-	Start   uint64
-	End     uint64
-	Type    uint32
-	Sid     uint64
-	Owner   uint64
-	Pid     uint32
-	IsFlock bool
+	Start     uint64
+	End       uint64
+	Type      uint32
+	Sid       uint64
+	Owner     uint64
+	Pid       uint32
+	IsFlock   bool
+	Principal string
+}
+
+// Session returns the session that holds r.
+func (r Range) Session() Session {
+	return Session{Principal: r.Principal, Sid: r.Sid}
 }
 
 func (r Range) sameOwner(o Range) bool {
-	return r.Sid == o.Sid && r.Owner == o.Owner
+	return r.Principal == o.Principal && r.Sid == o.Sid && r.Owner == o.Owner
 }
 
 // Set is the authoritative set of advisory locks held on one inode. The zero
@@ -172,41 +181,41 @@ func (s *Set) Release(lk Range) {
 	}, lk.Start, lk.End)
 }
 
-// ReleaseOwner removes every lock held by (sid, owner) in both namespaces.
-func (s *Set) ReleaseOwner(sid, owner uint64) {
+// ReleaseOwner removes every lock held by (ss, owner) in both namespaces.
+func (s *Set) ReleaseOwner(ss Session, owner uint64) {
 	s.remove(func(h Range) bool {
-		return h.Sid == sid && h.Owner == owner
+		return h.Session() == ss && h.Owner == owner
 	}, 0, math.MaxUint64)
 }
 
-// ReleaseFlockOwner removes only the flock locks of (sid, owner) — the close-time
+// ReleaseFlockOwner removes only the flock locks of (ss, owner) — the close-time
 // path for a released file description (FUSE_RELEASE_FLOCK_UNLOCK).
-func (s *Set) ReleaseFlockOwner(sid, owner uint64) {
+func (s *Set) ReleaseFlockOwner(ss Session, owner uint64) {
 	s.remove(func(h Range) bool {
-		return h.IsFlock && h.Sid == sid && h.Owner == owner
+		return h.IsFlock && h.Session() == ss && h.Owner == owner
 	}, 0, math.MaxUint64)
 }
 
-// ReleasePosixOwner removes only the fcntl locks of (sid, owner) — the close-time
+// ReleasePosixOwner removes only the fcntl locks of (ss, owner) — the close-time
 // path for a flushing POSIX lock owner.
-func (s *Set) ReleasePosixOwner(sid, owner uint64) {
+func (s *Set) ReleasePosixOwner(ss Session, owner uint64) {
 	s.remove(func(h Range) bool {
-		return !h.IsFlock && h.Sid == sid && h.Owner == owner
+		return !h.IsFlock && h.Session() == ss && h.Owner == owner
 	}, 0, math.MaxUint64)
 }
 
 // ReleaseSession removes every lock held by a session, reaping a mount that has
 // died or disconnected (its lease expired).
-func (s *Set) ReleaseSession(sid uint64) {
-	s.remove(func(h Range) bool { return h.Sid == sid }, 0, math.MaxUint64)
+func (s *Set) ReleaseSession(ss Session) {
+	s.remove(func(h Range) bool { return h.Session() == ss }, 0, math.MaxUint64)
 }
 
-// HasPosix reports whether (sid, owner) holds any fcntl lock, mirroring the
+// HasPosix reports whether (ss, owner) holds any fcntl lock, mirroring the
 // mount's flush-time check that avoids treating a lock-free flush as
 // lock-sensitive.
-func (s *Set) HasPosix(sid, owner uint64) bool {
+func (s *Set) HasPosix(ss Session, owner uint64) bool {
 	for _, h := range s.locks {
-		if !h.IsFlock && h.Sid == sid && h.Owner == owner {
+		if !h.IsFlock && h.Session() == ss && h.Owner == owner {
 			return true
 		}
 	}

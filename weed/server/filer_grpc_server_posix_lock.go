@@ -96,15 +96,15 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 		}
 	}
 
-	lk := posixlock.Range{
-		Start:   req.Lock.GetStart(),
-		End:     req.Lock.GetEnd(),
-		Type:    req.Lock.GetType(),
-		Sid:     req.Lock.GetSid(),
-		Owner:   req.Lock.GetOwner(),
-		Pid:     req.Lock.GetPid(),
-		IsFlock: req.Lock.GetIsFlock(),
+	principal, lease := posixLockAuthority(ctx)
+	if principal != "" {
+		if err := checkScopedPosixLockRanges(req); err != nil {
+			return &filer_pb.PosixLockResponse{}, err
+		}
 	}
+	lk := posixRangeFromPb(req.Lock)
+	lk.Principal = principal
+	session := lk.Session()
 
 	resp := &filer_pb.PosixLockResponse{}
 	switch req.Op {
@@ -123,7 +123,7 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 				break
 			}
 		}
-		if c, granted := fs.posixLocks.TryLock(req.Key, lk); granted {
+		if c, granted := fs.posixLocks.TryLock(req.Key, lk, lease); granted {
 			resp.Granted = true
 		} else {
 			resp.HasConflict = true
@@ -145,28 +145,66 @@ func (fs *FilerServer) PosixLock(ctx context.Context, req *filer_pb.PosixLockReq
 			resp.Conflict = posixRangeToPb(c)
 		}
 	case filer_pb.PosixLockOp_RELEASE_POSIX_OWNER:
-		fs.posixLocks.ReleasePosixOwner(req.Key, lk.Sid, lk.Owner)
+		fs.posixLocks.ReleasePosixOwner(req.Key, session, lk.Owner)
 	case filer_pb.PosixLockOp_RELEASE_FLOCK_OWNER:
-		fs.posixLocks.ReleaseFlockOwner(req.Key, lk.Sid, lk.Owner)
+		fs.posixLocks.ReleaseFlockOwner(req.Key, session, lk.Owner)
 	case filer_pb.PosixLockOp_KEEP_ALIVE:
 		// A re-assertion carries the mount's held locks on this key so the owner
 		// can rebuild its in-memory state after an ownership change or restart; a
-		// bare keepalive just renews the lease.
+		// bare keepalive just renews the lease. A lock another session now holds
+		// is reported back as a conflict, so the mount learns it lost it.
 		if len(req.Locks) > 0 {
 			held := make([]posixlock.Range, 0, len(req.Locks))
 			for _, l := range req.Locks {
 				held = append(held, posixRangeFromPb(l))
 			}
-			if conflicts := fs.posixLocks.Reassert(req.Key, lk.Sid, held); len(conflicts) > 0 {
-				glog.Warningf("posix reassert %s sid %d: %d lock(s) lost to another session: %+v", req.Key, lk.Sid, len(conflicts), conflicts)
+			if conflicts := fs.posixLocks.Reassert(req.Key, session, held, lease); len(conflicts) > 0 {
+				glog.Warningf("posix reassert %s sid %d: %d lock(s) lost to another session", req.Key, lk.Sid, len(conflicts))
+				resp.HasConflict = true
+				resp.Conflict = posixRangeToPb(conflicts[0])
 			}
 		} else {
-			fs.posixLocks.Renew(lk.Sid)
+			fs.posixLocks.Renew(req.Key, session, lease)
 		}
 	default:
 		return &filer_pb.PosixLockResponse{}, fmt.Errorf("unknown posix lock op %v", req.Op)
 	}
 	return resp, nil
+}
+
+// posixLockAuthority derives who a PosixLock request acts for. A request the
+// scope interceptor admitted for a scoped token acts for that token's verified
+// id (jti): it controls only the locks it took, whatever sid or owner it names,
+// and each of its leases ends no later than the token's expiry plus the
+// verifier's clock leeway. Any other request, tokenless or carrying an unscoped
+// token, acts in the unscoped namespace, which never matches a scoped lock.
+func posixLockAuthority(ctx context.Context) (principal string, lease posixlock.Lease) {
+	authority, _ := ctx.Value(scopeWriteAuthorityKey{}).(*scopeWriteAuthority)
+	if authority == nil || authority.sc == nil {
+		return "", posixlock.Lease{}
+	}
+	sc := authority.sc
+	return sc.id, posixlock.Lease{TTL: posixLockSessionTTL, NotAfter: sc.exp.Add(sc.leeway)}
+}
+
+// checkScopedPosixLockRanges refuses a scoped request whose lock, or any
+// re-asserted lock, is not a well-formed read or write range, before any state
+// changes.
+func checkScopedPosixLockRanges(req *filer_pb.PosixLockRequest) error {
+	valid := func(l *filer_pb.PosixLockRange) bool {
+		return (l.GetType() == posixlock.Read || l.GetType() == posixlock.Write) && l.GetStart() <= l.GetEnd()
+	}
+	if req.Op == filer_pb.PosixLockOp_TRY_LOCK && !valid(req.Lock) {
+		return status.Error(codes.InvalidArgument, "malformed lock range")
+	}
+	if req.Op == filer_pb.PosixLockOp_KEEP_ALIVE {
+		for _, l := range req.Locks {
+			if !valid(l) {
+				return status.Error(codes.InvalidArgument, "malformed re-asserted lock range")
+			}
+		}
+	}
+	return nil
 }
 
 // posixWarmingUp reports whether this filer is still within posixLockWarmup of

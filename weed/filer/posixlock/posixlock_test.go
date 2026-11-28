@@ -124,7 +124,7 @@ func TestReleaseOwner(t *testing.T) {
 	mustAcquire(t, s, Range{Start: 50, End: 99, Type: Write, Owner: 1, Pid: 10})
 	mustAcquire(t, s, Range{Start: 200, End: 299, Type: Read, Owner: 2, Pid: 20})
 
-	s.ReleaseOwner(0, 1)
+	s.ReleaseOwner(Session{}, 1)
 
 	if _, found := s.Conflict(Range{Start: 0, End: 99, Type: Write, Owner: 3, Pid: 30}); found {
 		t.Fatal("owner 1's locks should be gone")
@@ -144,7 +144,7 @@ func TestFlockAndFcntlDoNotConflict(t *testing.T) {
 func TestReleasePosixOwnerKeepsFlock(t *testing.T) {
 	s := &Set{}
 	mustAcquire(t, s, Range{Start: 0, End: math.MaxUint64, Type: Write, Owner: 1, Pid: 10, IsFlock: true})
-	s.ReleasePosixOwner(0, 1)
+	s.ReleasePosixOwner(Session{}, 1)
 	if _, found := s.Conflict(Range{Start: 0, End: math.MaxUint64, Type: Write, Owner: 2, Pid: 20, IsFlock: true}); !found {
 		t.Fatal("flock lock should remain after ReleasePosixOwner")
 	}
@@ -155,7 +155,7 @@ func TestReleaseFlockOwnerKeepsPosix(t *testing.T) {
 	mustAcquire(t, s, Range{Start: 0, End: 99, Type: Write, Owner: 1, Pid: 10})
 	mustAcquire(t, s, Range{Start: 0, End: math.MaxUint64, Type: Write, Owner: 2, Pid: 10, IsFlock: true})
 
-	s.ReleaseFlockOwner(0, 2)
+	s.ReleaseFlockOwner(Session{}, 2)
 
 	if _, found := s.Conflict(Range{Start: 0, End: 99, Type: Write, Owner: 3, Pid: 30}); !found {
 		t.Fatal("fcntl lock should remain after ReleaseFlockOwner")
@@ -167,15 +167,15 @@ func TestReleaseFlockOwnerKeepsPosix(t *testing.T) {
 
 func TestHasPosixIgnoresMissingOwnerAndFlock(t *testing.T) {
 	s := &Set{}
-	if s.HasPosix(0, 1) {
+	if s.HasPosix(Session{}, 1) {
 		t.Fatal("empty set should report no posix owner")
 	}
 	mustAcquire(t, s, Range{Start: 0, End: math.MaxUint64, Type: Write, Owner: 1, Pid: 10, IsFlock: true})
-	if s.HasPosix(0, 1) {
+	if s.HasPosix(Session{}, 1) {
 		t.Fatal("a flock owner is not a posix owner")
 	}
 	mustAcquire(t, s, Range{Start: 0, End: 99, Type: Write, Owner: 2, Pid: 20})
-	if !s.HasPosix(0, 2) {
+	if !s.HasPosix(Session{}, 2) {
 		t.Fatal("posix owner should be reported")
 	}
 }
@@ -266,7 +266,7 @@ func TestReleaseSessionReapsOnlyThatSession(t *testing.T) {
 	mustAcquire(t, s, Range{Start: 0, End: math.MaxUint64, Type: Write, Sid: 1, Owner: 2, Pid: 11, IsFlock: true})
 	mustAcquire(t, s, Range{Start: 50, End: 99, Type: Write, Sid: 2, Owner: 1, Pid: 20})
 
-	s.ReleaseSession(1)
+	s.ReleaseSession(Session{Sid: 1})
 
 	for _, h := range s.locks {
 		if h.Sid == 1 {
