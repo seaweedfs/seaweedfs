@@ -2,11 +2,13 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -60,6 +62,10 @@ func (fs *FilerServer) DistributedLock(ctx context.Context, req *filer_pb.LockRe
 
 	if err != nil {
 		resp.Error = fmt.Sprintf("%v", err)
+		if errors.Is(err, lock_manager.LockHandoffPending) {
+			// Not a verdict: the holder keeps its token to renew at the new primary.
+			resp.RenewToken = req.RenewToken
+		}
 		if !strings.Contains(resp.Error, "lock already owned") {
 			glog.V(0).Infof("FILER LOCK: Error - name=%s error=%s", req.Name, resp.Error)
 		}
@@ -166,7 +172,7 @@ func (fs *FilerServer) TransferLocks(ctx context.Context, req *filer_pb.Transfer
 // Uses seq for causal ordering — rejects stale mutations.
 func (fs *FilerServer) ReplicateLock(ctx context.Context, req *filer_pb.ReplicateLockRequest) (*filer_pb.ReplicateLockResponse, error) {
 	if req.IsUnlock {
-		fs.filer.Dlm.RemoveBackupLockIfSeq(req.Name, req.Generation, req.Seq)
+		fs.filer.Dlm.RemoveBackupLockIfSeq(req.Name, req.Generation, req.Seq, req.RenewToken, req.ExpiredAtNs)
 		glog.V(4).Infof("FILER REPLICATE: removed backup lock %s generation=%d seq=%d", req.Name, req.Generation, req.Seq)
 	} else {
 		fs.filer.Dlm.InsertBackupLock(req.Name, req.ExpiredAtNs, req.RenewToken, req.PrevRenewToken, req.Owner, req.Generation, req.Seq)
@@ -190,7 +196,7 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 	}
 
 	for _, lock := range locks {
-		primary, backup := fs.filer.Dlm.LockRing.GetPrimaryAndBackup(lock.Key)
+		primary, _ := fs.filer.Dlm.LockRing.GetPrimaryAndBackup(lock.Key)
 
 		if primary == fs.option.Host {
 			if lock.IsBackup {
@@ -199,64 +205,13 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 				glog.V(0).Infof("DLM: promoted backup lock %s to primary", lock.Key)
 			}
 			// Replicate to (possibly new) backup
-			if backup != "" && fs.filer.Dlm.ReplicateFn != nil {
-				go fs.filer.Dlm.ReplicateFn(backup, lock.Key, lock.ExpiredAtNs, lock.Token, lock.PrevToken, lock.Owner, lock.Generation, lock.Seq, false)
-			}
-		} else if backup == fs.option.Host {
-			if !lock.IsBackup {
-				// We were primary, now we're backup → transfer to new primary first, then demote
-				glog.V(0).Infof("DLM: transferring primary lock %s to new primary=%s", lock.Key, primary)
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				err := pb.WithFilerClient(false, 0, primary, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-					_, err := client.TransferLocks(fs.peerContext(ctx), &filer_pb.TransferLocksRequest{
-						Locks: []*filer_pb.Lock{
-							{
-								Name:           lock.Key,
-								RenewToken:     lock.Token,
-								PrevRenewToken: lock.PrevToken,
-								ExpiredAtNs:    lock.ExpiredAtNs,
-								Owner:          lock.Owner,
-								Generation:     lock.Generation,
-								Seq:            lock.Seq,
-							},
-						},
-					})
-					return err
-				})
-				cancel()
-				if err != nil {
-					glog.Errorf("DLM: failed to transfer lock %s to new primary %s: %v, keeping as primary", lock.Key, primary, err)
-				} else {
-					// Only demote after successful handoff
-					fs.filer.Dlm.DemoteLock(lock.Key)
-					glog.V(0).Infof("DLM: demoted lock %s to backup after successful transfer", lock.Key)
-				}
-			}
-			// else: already backup, keep as is
+			fs.filer.Dlm.ReplicateLock(lock)
 		} else {
-			// We're neither primary nor backup → transfer to primary and remove locally
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			err := pb.WithFilerClient(false, 0, primary, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-				_, err := client.TransferLocks(fs.peerContext(ctx), &filer_pb.TransferLocksRequest{
-					Locks: []*filer_pb.Lock{
-						{
-							Name:           lock.Key,
-							RenewToken:     lock.Token,
-							PrevRenewToken: lock.PrevToken,
-							ExpiredAtNs:    lock.ExpiredAtNs,
-							Owner:          lock.Owner,
-							Generation:     lock.Generation,
-							Seq:            lock.Seq,
-						},
-					},
-				})
-				return err
-			})
-			cancel()
+			// AllLocks only identifies candidate keys. Take a fresh snapshot
+			// and exclude local mutations until handoff and demotion complete.
+			err := fs.filer.Dlm.TransferLockToOwner(lock.Key)
 			if err != nil {
 				glog.Errorf("DLM: failed to transfer lock %s to %s: %v", lock.Key, primary, err)
-			} else {
-				fs.filer.Dlm.RemoveBackupLock(lock.Key)
 			}
 		}
 	}
@@ -265,6 +220,20 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 // SetupDlmReplication sets up the replication callback for the DLM.
 // Called during filer server initialization.
 func (fs *FilerServer) SetupDlmReplication() {
+	fs.dlmHandoffCtx, fs.dlmHandoffCancel = context.WithCancel(context.Background())
+	fs.filer.Dlm.RetryTransferFn = fs.retryDlmHandoff
+	fs.filer.Dlm.TransferFn = func(server pb.ServerAddress, lock *lock_manager.Lock) error {
+		ctx, cancel := context.WithTimeout(fs.dlmHandoffCtx, 5*time.Second)
+		defer cancel()
+		err := pb.WithFilerClient(false, 0, server, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			_, err := client.TransferLocks(fs.peerContext(ctx), &filer_pb.TransferLocksRequest{Locks: []*filer_pb.Lock{{
+				Name: lock.Key, RenewToken: lock.Token, PrevRenewToken: lock.PrevToken,
+				ExpiredAtNs: lock.ExpiredAtNs, Owner: lock.Owner, Generation: lock.Generation, Seq: lock.Seq,
+			}}})
+			return err
+		})
+		return err
+	}
 	fs.filer.Dlm.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64, isUnlock bool) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
@@ -285,4 +254,51 @@ func (fs *FilerServer) SetupDlmReplication() {
 			glog.Warningf("DLM: failed to replicate lock %s to %s: %v", key, server, err)
 		}
 	}
+}
+
+// retryDlmHandoff deduplicates retries per key. A request arriving while a
+// worker is completing marks it dirty, so a new failure cannot lose its retry.
+func (fs *FilerServer) retryDlmHandoff(key string) {
+	fs.dlmHandoffMu.Lock()
+	defer fs.dlmHandoffMu.Unlock()
+	if fs.dlmHandoffCtx.Err() != nil {
+		return
+	}
+	if fs.dlmHandoffRetries == nil {
+		fs.dlmHandoffRetries = make(map[string]bool)
+	}
+	_, running := fs.dlmHandoffRetries[key]
+	fs.dlmHandoffRetries[key] = true
+	if running {
+		return
+	}
+	go func() {
+		delay := 200 * time.Millisecond
+		for {
+			select {
+			case <-fs.dlmHandoffCtx.Done():
+				fs.dlmHandoffMu.Lock()
+				delete(fs.dlmHandoffRetries, key)
+				fs.dlmHandoffMu.Unlock()
+				return
+			case <-time.After(delay):
+			}
+			fs.dlmHandoffMu.Lock()
+			fs.dlmHandoffRetries[key] = false
+			fs.dlmHandoffMu.Unlock()
+			err := fs.filer.Dlm.TransferLockToOwner(key)
+			fs.dlmHandoffMu.Lock()
+			again := err != nil || fs.dlmHandoffRetries[key]
+			if !again {
+				delete(fs.dlmHandoffRetries, key)
+			}
+			fs.dlmHandoffMu.Unlock()
+			if !again {
+				return
+			}
+			if err != nil {
+				delay = min(2*delay, 5*time.Second)
+			}
+		}
+	}()
 }

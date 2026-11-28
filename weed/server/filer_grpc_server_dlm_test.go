@@ -53,3 +53,34 @@ func TestForwardedLockAcquired(t *testing.T) {
 		})
 	}
 }
+
+func TestReplicateLockReleaseBeforeAcquire(t *testing.T) {
+	fs := &FilerServer{filer: &filer.Filer{
+		Dlm: lock_manager.NewDistributedLockManager("backup:8888"),
+	}}
+	expires := time.Now().Add(time.Minute).UnixNano()
+	release := &filer_pb.ReplicateLockRequest{
+		Name: "key", RenewToken: "released/renewed", ExpiredAtNs: expires,
+		Generation: 20, Seq: 3, IsUnlock: true,
+	}
+	_, err := fs.ReplicateLock(context.Background(), release)
+	require.NoError(t, err)
+	_, err = fs.ReplicateLock(context.Background(), &filer_pb.ReplicateLockRequest{
+		Name: "key", RenewToken: "released/original", ExpiredAtNs: expires,
+		Generation: 20, Seq: 1,
+	})
+	require.NoError(t, err)
+	_, found := fs.filer.Dlm.GetLock("key")
+	require.False(t, found, "the RPC handler must preserve release identity and expiry")
+
+	_, err = fs.ReplicateLock(context.Background(), &filer_pb.ReplicateLockRequest{
+		Name: "key", RenewToken: "new-lease/secret", ExpiredAtNs: expires,
+		Generation: 1, Seq: 1,
+	})
+	require.NoError(t, err)
+	_, err = fs.ReplicateLock(context.Background(), release)
+	require.NoError(t, err)
+	lock, found := fs.filer.Dlm.GetLock("key")
+	require.True(t, found)
+	require.Equal(t, "new-lease/secret", lock.Token)
+}

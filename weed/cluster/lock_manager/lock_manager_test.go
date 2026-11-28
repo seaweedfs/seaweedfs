@@ -75,7 +75,7 @@ func TestLockManager_RemoveBackupLockRejectsOlderGeneration(t *testing.T) {
 
 	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-new", "", "owner1", 8, 1)
 
-	removed := lm.RemoveBackupLockIfSeq("key1", 7, 9)
+	removed := lm.RemoveBackupLockIfSeq("key1", 7, 9, "token-old", time.Now().Add(30*time.Second).UnixNano())
 	assert.False(t, removed)
 
 	lock, found := lm.GetLock("key1")

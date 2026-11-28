@@ -33,6 +33,7 @@ func newTestCluster(hosts ...pb.ServerAddress) *testCluster {
 	// Wire up replication: each node's ReplicateFn calls the backup's DLM directly
 	for _, dlm := range c.nodes {
 		d := dlm // capture
+		d.TransferFn = c.transferLease
 		d.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64, isUnlock bool) {
 			c.mu.Lock()
 			target, ok := c.nodes[server]
@@ -41,7 +42,7 @@ func newTestCluster(hosts ...pb.ServerAddress) *testCluster {
 				return // server is down
 			}
 			if isUnlock {
-				target.RemoveBackupLockIfSeq(key, generation, seq)
+				target.RemoveBackupLockIfSeq(key, generation, seq, token, expiredAtNs)
 			} else {
 				target.InsertBackupLock(key, expiredAtNs, token, prevToken, owner, generation, seq)
 			}
@@ -49,6 +50,17 @@ func newTestCluster(hosts ...pb.ServerAddress) *testCluster {
 	}
 
 	return c
+}
+
+func (c *testCluster) transferLease(server pb.ServerAddress, lock *Lock) error {
+	c.mu.Lock()
+	target := c.nodes[server]
+	c.mu.Unlock()
+	if target == nil {
+		return fmt.Errorf("handoff target %s is down", server)
+	}
+	target.InsertLock(lock.Key, lock.ExpiredAtNs, lock.Token, lock.PrevToken, lock.Owner, lock.Generation, lock.Seq)
+	return nil
 }
 
 func (c *testCluster) removeNode(host pb.ServerAddress) {
@@ -70,6 +82,7 @@ func (c *testCluster) addNode(host pb.ServerAddress) {
 	c.mu.Unlock()
 
 	// Wire up replication
+	dlm.TransferFn = c.transferLease
 	dlm.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64, isUnlock bool) {
 		c.mu.Lock()
 		target, ok := c.nodes[server]
@@ -78,7 +91,7 @@ func (c *testCluster) addNode(host pb.ServerAddress) {
 			return
 		}
 		if isUnlock {
-			target.RemoveBackupLockIfSeq(key, generation, seq)
+			target.RemoveBackupLockIfSeq(key, generation, seq, token, expiredAtNs)
 		} else {
 			target.InsertBackupLock(key, expiredAtNs, token, prevToken, owner, generation, seq)
 		}
@@ -630,7 +643,7 @@ func TestDLM_NodeDropAndJoin_OwnershipDisruption(t *testing.T) {
 func TestDLM_RenewalDuringTransferWindow(t *testing.T) {
 	// When a new node joins and steals a key range from a surviving node,
 	// there's a window between ring update and lock transfer. During this
-	// window, a client renewal should still succeed on the old primary
+	// window, a client renewal through the old primary should hand off and redirect
 	// (because it still holds the lock locally).
 	hosts := []pb.ServerAddress{"filer1:8888", "filer2:8888", "filer3:8888"}
 	cluster := newTestCluster(hosts...)
@@ -664,11 +677,13 @@ func TestDLM_RenewalDuringTransferWindow(t *testing.T) {
 	newPrimary := cluster.get(primaryHost).LockRing.GetPrimary(key)
 	require.NotEqual(t, primaryHost, newPrimary, "key should have moved to a different primary")
 
-	// Renewal on the OLD primary should still succeed because it holds the lock locally
+	// Renewal through the old primary hands the lease off, then follows the redirect.
 	newToken, _, err := cluster.renewLock(key, "owner1", renewToken, 30*time.Second, primaryHost)
 	require.NoError(t, err, "renewal on old primary should succeed during transfer window")
-	assert.NotEmpty(t, newToken, "should get a new token from old primary")
-	t.Logf("Key %s: primary changed from %s to %s, but renewal on old primary succeeded", key, primaryHost, newPrimary)
+	assert.NotEmpty(t, newToken, "should get a new token from the new primary")
+	installed, found := cluster.get(newPrimary).GetLock(key)
+	require.True(t, found)
+	require.Equal(t, newToken, installed.Token, "the new primary must issue the renewal")
 }
 
 func TestDLM_ReplayedRenewalExtendsBackupExpiry(t *testing.T) {
@@ -767,13 +782,13 @@ func TestDLM_StaleReplicationRejected(t *testing.T) {
 	assert.Equal(t, int64(4), lock.Seq)
 
 	// Stale unlock (seq=2) should not delete the lock
-	removed := lm.RemoveBackupLockIfSeq("key1", 1, 2)
+	removed := lm.RemoveBackupLockIfSeq("key1", 1, 2, "token-newer", time.Now().Add(30*time.Second).UnixNano())
 	assert.False(t, removed, "stale unlock should be rejected")
 	_, found = lm.GetLock("key1")
 	assert.True(t, found, "lock should still exist after stale unlock")
 
 	// Valid unlock (seq=5) should delete
-	removed = lm.RemoveBackupLockIfSeq("key1", 1, 5)
+	removed = lm.RemoveBackupLockIfSeq("key1", 1, 5, "token-newer", time.Now().Add(30*time.Second).UnixNano())
 	assert.True(t, removed, "valid unlock should be accepted")
 	_, found = lm.GetLock("key1")
 	assert.False(t, found, "lock should be removed after valid unlock")

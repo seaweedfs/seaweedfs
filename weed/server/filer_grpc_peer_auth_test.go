@@ -151,6 +151,8 @@ func TestPeerAdminTokenLockTransferAndLookup(t *testing.T) {
 	c, key := newPeerFilers(t)
 	setRing(c.fsA, 0, []pb.ServerAddress{c.addrA})
 	c.fsA.filer.Dlm.InsertLock("moved-lock", time.Now().Add(time.Minute).UnixNano(), "test-lease", "", "test-owner", 4, 2)
+	c.fsA.SetupDlmReplication()
+	t.Cleanup(c.fsA.dlmHandoffCancel)
 	setRing(c.fsA, 0, []pb.ServerAddress{c.addrB})
 	setRing(c.fsB, 0, []pb.ServerAddress{c.addrB})
 	c.fsA.OnDlmChangeSnapshot([]pb.ServerAddress{c.addrB})

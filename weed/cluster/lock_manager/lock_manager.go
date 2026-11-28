@@ -2,6 +2,7 @@ package lock_manager
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,13 +16,33 @@ var LockErrorNonEmptyTokenOnExpiredLock = fmt.Errorf("lock: non-empty token on a
 var LockErrorTokenMismatch = fmt.Errorf("lock: token mismatch")
 var UnlockErrorTokenMismatch = fmt.Errorf("unlock: token mismatch")
 var LockNotFound = fmt.Errorf("lock not found")
+var LockHandoffPending = fmt.Errorf("lock handoff pending")
 
 // LockManager local lock manager, used by distributed lock manager
 type LockManager struct {
-	locks          map[string]*Lock
+	locks map[string]*Lock
+	// Released lease identities are retained only until their maximum expiry.
+	removed        map[releasedLease]int64
 	accessLock     sync.RWMutex
 	nextGeneration atomic.Int64
 }
+type releasedLease struct{ path, id string }
+
+// Tokens are opaque to clients. Keep a stable acquisition ID while rotating the
+// secret on renewal; local generation counters can overlap across primaries.
+func leaseID(token string) string {
+	id, _, _ := strings.Cut(token, "/")
+	return id
+}
+
+func newLockToken(previous string) string {
+	id := leaseID(previous)
+	if id == "" {
+		id = uuid.New().String()
+	}
+	return id + "/" + uuid.New().String()
+}
+
 type Lock struct {
 	Token       string
 	PrevToken   string // token superseded by the latest renewal; a holder whose renewal response was lost still presents it
@@ -31,6 +52,8 @@ type Lock struct {
 	IsBackup    bool  // true if this node holds the lock as a backup
 	Generation  int64 // monotonic fencing token, increments on fresh acquisition
 	Seq         int64 // per-lock sequence number, increments on every mutation (acquire/renew/unlock)
+	replicated  bool  // a copy may exist elsewhere, requiring a release record
+	handoff     bool  // renewal authority has moved, but delivery may need retry
 }
 
 func NewLockManager() *LockManager {
@@ -72,13 +95,42 @@ func (lm *LockManager) advanceGenerationFloor(generation int64) {
 	}
 }
 
+// rememberRemoval runs under accessLock. Delayed messages for this lease are
+// rejected until its maximum expiry, after which inserts reject them as expired.
+func (lm *LockManager) rememberRemoval(path, token string, expiredAtNs int64) {
+	if token == "" || expiredAtNs <= time.Now().UnixNano() {
+		return
+	}
+	if lm.removed == nil {
+		lm.removed = make(map[releasedLease]int64)
+	}
+	key := releasedLease{path, leaseID(token)}
+	lm.removed[key] = max(lm.removed[key], expiredAtNs)
+}
+
+func (lm *LockManager) wasRemoved(path, token string) bool {
+	return lm.removed[releasedLease{path, leaseID(token)}] > time.Now().UnixNano()
+}
+
 func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner string) (lockOwner, renewToken string, generation int64, seq int64, err error) {
+	lockOwner, renewToken, generation, seq, _, err = lm.lockWithExpiry(path, expiredAtNs, token, owner)
+	return
+}
+
+// lockWithExpiry also returns the effective expiry for replication. Renewals
+// cannot shorten it, so a release carries a validity bound for every older RPC.
+func (lm *LockManager) lockWithExpiry(path string, expiredAtNs int64, token string, owner string) (lockOwner, renewToken string, generation int64, seq int64, leaseExpires int64, err error) {
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
+	leaseExpires = expiredAtNs
 
 	glog.V(4).Infof("lock %s %v %v %v", path, time.Unix(0, expiredAtNs), token, owner)
 
 	if oldValue, found := lm.locks[path]; found {
+		if oldValue.handoff && oldValue.ExpiredAtNs > time.Now().UnixNano() {
+			err = LockHandoffPending
+			return
+		}
 		if oldValue.ExpiredAtNs > 0 && oldValue.ExpiredAtNs < time.Now().UnixNano() {
 			// lock is expired, set to a new lock
 			if token != "" {
@@ -87,7 +139,7 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner 
 				return
 			} else {
 				// new lock
-				renewToken = uuid.New().String()
+				renewToken = newLockToken("")
 				generation = lm.NextGeneration()
 				seq = 1
 				glog.V(4).Infof("key %s new token %v owner %v generation %d", path, renewToken, owner, generation)
@@ -96,14 +148,15 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner 
 			}
 		}
 		// not expired
+		leaseExpires = max(expiredAtNs, oldValue.ExpiredAtNs)
 		lockOwner = oldValue.Owner
 		if oldValue.Token == token {
 			// token matches, renew the lock
-			renewToken = uuid.New().String()
+			renewToken = newLockToken(oldValue.Token)
 			generation = oldValue.Generation // keep same generation on renewal
 			seq = oldValue.Seq + 1
 			glog.V(4).Infof("key %s old token %v owner %v => %v owner %v", path, oldValue.Token, oldValue.Owner, renewToken, owner)
-			lm.locks[path] = &Lock{Token: renewToken, PrevToken: oldValue.Token, ExpiredAtNs: expiredAtNs, Owner: owner, Generation: generation, Seq: seq}
+			lm.locks[path] = &Lock{Token: renewToken, PrevToken: oldValue.Token, ExpiredAtNs: leaseExpires, Owner: owner, Generation: generation, Seq: seq, replicated: oldValue.replicated}
 			return
 		}
 		if token != "" && token == oldValue.PrevToken && owner == oldValue.Owner {
@@ -113,7 +166,7 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner 
 			renewToken = oldValue.Token
 			generation = oldValue.Generation
 			seq = oldValue.Seq + 1
-			oldValue.ExpiredAtNs = expiredAtNs
+			oldValue.ExpiredAtNs = leaseExpires
 			oldValue.Seq = seq
 			return
 		}
@@ -130,7 +183,7 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner 
 		glog.V(4).Infof("key %s no lock owner %v", path, owner)
 		if token == "" {
 			// new lock
-			renewToken = uuid.New().String()
+			renewToken = newLockToken("")
 			generation = lm.NextGeneration()
 			seq = 1
 			glog.V(4).Infof("key %s new token %v owner %v generation %d", path, renewToken, owner, generation)
@@ -145,54 +198,67 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner 
 }
 
 func (lm *LockManager) Unlock(path string, token string) (isUnlocked bool, generation int64, seq int64, err error) {
+	released, err := lm.unlock(path, token)
+	if released != nil {
+		return true, released.Generation, released.Seq, err
+	}
+	return false, 0, 0, err
+}
+
+// unlock returns the released lease and its maximum expiry atomically, including
+// when the caller uses a superseded token after losing a renewal response.
+func (lm *LockManager) unlock(path, token string) (*Lock, error) {
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
 
-	if oldValue, found := lm.locks[path]; found {
-		now := time.Now()
-		if oldValue.ExpiredAtNs > 0 && oldValue.ExpiredAtNs < now.UnixNano() {
-			// lock is expired, delete it
-			isUnlocked = true
-			generation = oldValue.Generation
-			seq = oldValue.Seq + 1
-			glog.V(4).Infof("key %s expired at %v", path, time.Unix(0, oldValue.ExpiredAtNs))
-			delete(lm.locks, path)
-			return
-		}
-		if oldValue.Token == token || (token != "" && token == oldValue.PrevToken) {
-			isUnlocked = true
-			generation = oldValue.Generation
-			seq = oldValue.Seq + 1
-			glog.V(4).Infof("key %s unlocked with %v", path, token)
-			delete(lm.locks, path)
-			return
-		} else {
-			isUnlocked = false
-			err = UnlockErrorTokenMismatch
-			return
-		}
+	old, found := lm.locks[path]
+	if !found {
+		return nil, LockNotFound
 	}
-	err = LockNotFound
-	return
+	if old.handoff {
+		return nil, LockHandoffPending
+	}
+	expired := old.ExpiredAtNs > 0 && old.ExpiredAtNs < time.Now().UnixNano()
+	if !expired && old.Token != token && (token == "" || token != old.PrevToken) {
+		return nil, UnlockErrorTokenMismatch
+	}
+	if expired {
+		glog.V(4).Infof("key %s expired at %v", path, time.Unix(0, old.ExpiredAtNs))
+	} else {
+		glog.V(4).Infof("key %s unlocked with %v", path, token)
+	}
+	released := *old
+	released.Seq++
+	if released.replicated {
+		lm.rememberRemoval(path, released.Token, released.ExpiredAtNs)
+	}
+	delete(lm.locks, path)
+	return &released, nil
 }
 
 func (lm *LockManager) CleanUp() {
-
 	for {
-		time.Sleep(1 * time.Minute)
-		now := time.Now().UnixNano()
+		time.Sleep(time.Minute)
+		lm.cleanUp(time.Now().UnixNano())
+	}
+}
 
-		lm.accessLock.Lock()
-		for key, value := range lm.locks {
-			if value == nil {
-				continue
-			}
-			if now > value.ExpiredAtNs {
-				glog.V(4).Infof("key %s expired at %v", key, time.Unix(0, value.ExpiredAtNs))
-				delete(lm.locks, key)
-			}
+func (lm *LockManager) cleanUp(now int64) {
+	lm.accessLock.Lock()
+	defer lm.accessLock.Unlock()
+	for key, lock := range lm.locks {
+		if lock != nil && now >= lock.ExpiredAtNs {
+			glog.V(4).Infof("key %s expired at %v", key, time.Unix(0, lock.ExpiredAtNs))
+			delete(lm.locks, key)
 		}
-		lm.accessLock.Unlock()
+	}
+	for key, expires := range lm.removed {
+		if now >= expires {
+			delete(lm.removed, key)
+		}
+	}
+	if len(lm.removed) == 0 {
+		lm.removed = nil
 	}
 }
 
@@ -222,18 +288,31 @@ func (lm *LockManager) SelectLocks(selectFn func(key string) bool) (locks []*Loc
 
 // InsertLock inserts a lock from a transfer if it is newer than the current state.
 func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64) bool {
+	_, accepted := lm.insertLock(path, expiredAtNs, token, prevToken, owner, generation, seq)
+	return accepted
+}
+
+// insertLock returns the effective expiry atomically with installation.
+func (lm *LockManager) insertLock(path string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64) (int64, bool) {
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
 
-	if existing, found := lm.locks[path]; found {
+	if expiredAtNs <= time.Now().UnixNano() || lm.wasRemoved(path, token) {
+		return 0, false
+	}
+
+	if existing, found := lm.locks[path]; found && existing.ExpiredAtNs > time.Now().UnixNano() {
 		if compareMutationVersion(generation, seq, existing.Generation, existing.Seq) <= 0 {
 			glog.V(4).Infof("lock %s: rejecting stale transfer gen=%d seq=%d (current gen=%d seq=%d)", path, generation, seq, existing.Generation, existing.Seq)
-			return false
+			return 0, false
+		}
+		if leaseID(existing.Token) == leaseID(token) {
+			expiredAtNs = max(expiredAtNs, existing.ExpiredAtNs)
 		}
 	}
-	lm.locks[path] = &Lock{Token: token, PrevToken: prevToken, ExpiredAtNs: expiredAtNs, Owner: owner, Generation: generation, Seq: seq}
+	lm.locks[path] = &Lock{Token: token, PrevToken: prevToken, ExpiredAtNs: expiredAtNs, Owner: owner, Generation: generation, Seq: seq, replicated: true}
 	lm.advanceGenerationFloor(generation)
-	return true
+	return expiredAtNs, true
 }
 
 // InsertBackupLock inserts or updates a lock as a backup copy.
@@ -244,10 +323,17 @@ func (lm *LockManager) InsertBackupLock(path string, expiredAtNs int64, token st
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
 
-	if existing, found := lm.locks[path]; found {
+	if expiredAtNs <= time.Now().UnixNano() || lm.wasRemoved(path, token) {
+		return
+	}
+
+	if existing, found := lm.locks[path]; found && existing.ExpiredAtNs > time.Now().UnixNano() {
 		if compareMutationVersion(generation, seq, existing.Generation, existing.Seq) <= 0 {
 			glog.V(4).Infof("backup lock %s: rejecting stale gen=%d seq=%d (current gen=%d seq=%d)", path, generation, seq, existing.Generation, existing.Seq)
 			return
+		}
+		if leaseID(existing.Token) == leaseID(token) {
+			expiredAtNs = max(expiredAtNs, existing.ExpiredAtNs)
 		}
 		lm.locks[path] = &Lock{
 			Token:       token,
@@ -257,36 +343,95 @@ func (lm *LockManager) InsertBackupLock(path string, expiredAtNs int64, token st
 			IsBackup:    existing.IsBackup,
 			Generation:  generation,
 			Seq:         seq,
+			replicated:  true,
+			handoff:     existing.handoff && leaseID(existing.Token) == leaseID(token),
 		}
 		lm.advanceGenerationFloor(generation)
 		return
 	}
-	lm.locks[path] = &Lock{Token: token, PrevToken: prevToken, ExpiredAtNs: expiredAtNs, Owner: owner, IsBackup: true, Generation: generation, Seq: seq}
+	lm.locks[path] = &Lock{Token: token, PrevToken: prevToken, ExpiredAtNs: expiredAtNs, Owner: owner, IsBackup: true, Generation: generation, Seq: seq, replicated: true}
 	lm.advanceGenerationFloor(generation)
+}
+
+// markReplicated must precede sending a copy. If release won the race, skip
+// the send; otherwise unlock will retain this lease's identity until expiry.
+func (lm *LockManager) markReplicated(path, token string) bool {
+	lm.accessLock.Lock()
+	defer lm.accessLock.Unlock()
+	lock, found := lm.locks[path]
+	if !found || leaseID(lock.Token) != leaseID(token) {
+		return false
+	}
+	lock.replicated = true
+	return true
+}
+
+// beginTransfer freezes local renewal authority before sending an RPC. Even a
+// failed RPC may have installed the lease on its receiver.
+func (lm *LockManager) beginTransfer(path string) (*Lock, bool) {
+	lm.accessLock.Lock()
+	defer lm.accessLock.Unlock()
+	lock, found := lm.locks[path]
+	if !found || lock.ExpiredAtNs <= time.Now().UnixNano() {
+		return nil, false
+	}
+	lock.replicated, lock.handoff, lock.IsBackup = true, true, true
+	cp := *lock
+	cp.Key = path
+	return &cp, true
+}
+
+// finishTransfer changes only the lease that was handed off. A different lease
+// installed by incoming replication while the RPC was in flight must survive.
+func (lm *LockManager) finishTransfer(path, token string, keepBackup bool) {
+	lm.accessLock.Lock()
+	defer lm.accessLock.Unlock()
+	if lock, found := lm.locks[path]; found && leaseID(lock.Token) == leaseID(token) {
+		if keepBackup {
+			lock.IsBackup = true
+			lock.handoff = false
+		} else {
+			delete(lm.locks, path)
+		}
+	}
 }
 
 // RemoveLock removes a lock by key
 func (lm *LockManager) RemoveLock(path string) {
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
+	// Ownership eviction is not a release: the same live mutation may return
+	// in a later transfer. Only completed releases create tombstones.
 	delete(lm.locks, path)
 }
 
-// RemoveBackupLockIfSeq removes the local copy only if the incoming mutation is
-// not older than the current (generation, seq). This prevents a late unlock from
-// deleting a newer reacquired lock whose seq has reset.
-func (lm *LockManager) RemoveBackupLockIfSeq(path string, generation int64, seq int64) bool {
+// RemoveBackupLockIfSeq records a release even if its acquire has not arrived.
+// A release can only delete its own lease, never a different primary's lease
+// whose local generation may be smaller or equal.
+func (lm *LockManager) RemoveBackupLockIfSeq(path string, generation, seq int64, token string, expiredAtNs int64) bool {
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
-
+	lm.advanceGenerationFloor(generation)
 	if existing, found := lm.locks[path]; found {
-		if compareMutationVersion(generation, seq, existing.Generation, existing.Seq) >= 0 {
-			delete(lm.locks, path)
-			return true
+		// Older primaries omitted release metadata. Preserve ordered releases
+		// for their legacy tokens without letting them delete a new lease.
+		// For slash-format tokens, equal generations can belong to different
+		// primaries. Without a lease ID it is safer to retain the lease until
+		// expiry than to delete an unrelated acquisition during an upgrade.
+		if token == "" && !strings.Contains(existing.Token, "/") {
+			token = existing.Token
 		}
-		glog.V(4).Infof("backup lock %s: rejecting stale unlock gen=%d seq=%d (current gen=%d seq=%d)", path, generation, seq, existing.Generation, existing.Seq)
-		return false
+		if existing.Generation != generation || leaseID(existing.Token) != leaseID(token) {
+			lm.rememberRemoval(path, token, expiredAtNs)
+			return false
+		}
+		if seq < existing.Seq {
+			return false
+		}
+		expiredAtNs = max(expiredAtNs, existing.ExpiredAtNs)
+		delete(lm.locks, path)
 	}
+	lm.rememberRemoval(path, token, expiredAtNs)
 	return true
 }
 
@@ -347,6 +492,7 @@ func (lm *LockManager) PromoteLock(key string) bool {
 
 	if lock, found := lm.locks[key]; found && lock.IsBackup {
 		lock.IsBackup = false
+		lock.handoff = false
 		return true
 	}
 	return false
@@ -359,6 +505,7 @@ func (lm *LockManager) DemoteLock(key string) bool {
 
 	if lock, found := lm.locks[key]; found && !lock.IsBackup {
 		lock.IsBackup = true
+		lock.replicated = true
 		return true
 	}
 	return false
