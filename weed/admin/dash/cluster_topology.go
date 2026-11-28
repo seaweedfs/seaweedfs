@@ -215,6 +215,11 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							publicUrl = nodeAddr
 						}
 
+						var lastHeartbeat time.Time
+						if node.LastHeartbeatNs > 0 {
+							lastHeartbeat = time.Unix(0, node.LastHeartbeatNs)
+						}
+
 						vs := VolumeServer{
 							ID:            node.Id,
 							Address:       node.Id,
@@ -225,7 +230,7 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							MaxVolumes:    int(totalMaxVolumes),
 							DiskUsage:     diskUsage,
 							DiskCapacity:  diskCapacity,
-							LastHeartbeat: time.Now(),
+							LastHeartbeat: lastHeartbeat,
 							RemoteSize:    remoteSize,
 						}
 

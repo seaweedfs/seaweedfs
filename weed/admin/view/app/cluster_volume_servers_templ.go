@@ -585,9 +585,9 @@ func ClusterVolumeServers(data dash.ClusterVolumeServersData) templ.Component {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var38 string
-					templ_7745c5c3_Var38, templ_7745c5c3_Err = templruntime.NewAttributeExpression(host.LastHeartbeat.Format("2006-01-02 15:04:05")).Resolve(ctx)
+					templ_7745c5c3_Var38, templ_7745c5c3_Err = templruntime.NewAttributeExpression(formatLastHeartbeat(host.LastHeartbeat)).Resolve(ctx)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volume_servers.templ`, Line: 210, Col: 125}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volume_servers.templ`, Line: 210, Col: 116}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var38)
 					if templ_7745c5c3_Err != nil {
@@ -759,9 +759,9 @@ func ClusterVolumeServers(data dash.ClusterVolumeServersData) templ.Component {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var51 string
-					templ_7745c5c3_Var51, templ_7745c5c3_Err = templruntime.NewAttributeExpression(host.LastHeartbeat.Format("2006-01-02 15:04:05")).Resolve(ctx)
+					templ_7745c5c3_Var51, templ_7745c5c3_Err = templruntime.NewAttributeExpression(formatLastHeartbeat(host.LastHeartbeat)).Resolve(ctx)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volume_servers.templ`, Line: 230, Col: 125}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/cluster_volume_servers.templ`, Line: 230, Col: 116}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var51)
 					if templ_7745c5c3_Err != nil {
