@@ -3122,29 +3122,33 @@ templ Plugin(page string, initialJob string, lane string) {
                 state.monitorVolumeID = readMonitorVolumeFilter();
                 var scopedVolume = state.monitorVolumeID;
                 var rowsScope = scopedJobType + '|' + scopedVolume;
-                var sameScope = state.monitorRowsScope === rowsScope;
                 var scopedRows = scopedJobType || scopedVolume;
                 var refreshID = ++state.monitorRefreshSeq;
 
-                // A failed request keeps its last rows; the rest still land and the failure is rethrown.
+                // A failed request keeps the rows committed when this refresh lands; the rest still
+                // land and the failure is rethrown.
                 var failure = null;
-                function keepOnFailure(promise, previous) {
+                var failed = {};
+                function keepOnFailure(promise) {
                     return promise.catch(function(e) {
                         failure = failure || e;
-                        return previous;
+                        return failed;
                     });
                 }
+                function kept(value, previous) {
+                    return value === failed ? previous : value;
+                }
 
-                var allJobsPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/jobs?limit=500')), state.allJobs);
-                var allActivitiesPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/activities?limit=500')), state.allActivities);
-                var jobsPromise = scopedRows ? keepOnFailure(pluginRequest('GET', appendVolumeParam(appendJobTypeParam(appendLaneParam('/api/plugin/jobs?limit=500'), scopedJobType))), sameScope ? state.jobs : null) : allJobsPromise;
-                var activitiesPromise = scopedRows ? keepOnFailure(pluginRequest('GET', appendVolumeParam(appendJobTypeParam(appendLaneParam('/api/plugin/activities?limit=500'), scopedJobType))), sameScope ? state.activities : null) : allActivitiesPromise;
+                var allJobsPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/jobs?limit=500')));
+                var allActivitiesPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/activities?limit=500')));
+                var jobsPromise = scopedRows ? keepOnFailure(pluginRequest('GET', appendVolumeParam(appendJobTypeParam(appendLaneParam('/api/plugin/jobs?limit=500'), scopedJobType)))) : allJobsPromise;
+                var activitiesPromise = scopedRows ? keepOnFailure(pluginRequest('GET', appendVolumeParam(appendJobTypeParam(appendLaneParam('/api/plugin/activities?limit=500'), scopedJobType)))) : allActivitiesPromise;
                 // Detection scans belong to no job, so the volume filter would hide every one of them.
                 var detectionActivitiesPromise = activitiesPromise;
                 if (scopedVolume) {
-                    detectionActivitiesPromise = scopedJobType ? keepOnFailure(pluginRequest('GET', appendJobTypeParam(appendLaneParam('/api/plugin/activities?limit=500'), scopedJobType)), state.detectionRowsScope === scopedJobType ? state.detectionActivities : null) : allActivitiesPromise;
+                    detectionActivitiesPromise = scopedJobType ? keepOnFailure(pluginRequest('GET', appendJobTypeParam(appendLaneParam('/api/plugin/activities?limit=500'), scopedJobType))) : allActivitiesPromise;
                 }
-                var schedulerPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-states')), state.schedulerStates);
+                var schedulerPromise = keepOnFailure(pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-states')));
                 var schedulerStatusPromise = pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-status'));
 
                 var allJobs = await allJobsPromise;
@@ -3163,6 +3167,14 @@ templ Plugin(page string, initialJob string, lane string) {
                     return;
                 }
                 state.monitorCommittedRefreshID = refreshID;
+
+                var sameScope = state.monitorRowsScope === rowsScope;
+                allJobs = kept(allJobs, state.allJobs);
+                allActivities = kept(allActivities, state.allActivities);
+                jobs = kept(jobs, sameScope ? state.jobs : null);
+                activities = kept(activities, sameScope ? state.activities : null);
+                detectionActivities = kept(detectionActivities, state.detectionRowsScope === scopedJobType ? state.detectionActivities : null);
+                schedulerStates = kept(schedulerStates, state.schedulerStates);
 
                 state.allJobs = Array.isArray(allJobs) ? allJobs : [];
                 state.allActivities = Array.isArray(allActivities) ? allActivities : [];
