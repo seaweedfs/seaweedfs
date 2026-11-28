@@ -70,6 +70,47 @@ func filterActivitiesByLane(activities []plugin.JobActivity, laneFilter string) 
 	return filtered
 }
 
+func parseVolumeIDFilter(raw string) (uint32, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil || value == 0 {
+		return 0, fmt.Errorf("invalid volume_id %q", raw)
+	}
+	return uint32(value), nil
+}
+
+func filterTrackedJobsByVolume(jobs []plugin.TrackedJob, volumeID uint32) []plugin.TrackedJob {
+	if volumeID == 0 {
+		return jobs
+	}
+
+	filtered := make([]plugin.TrackedJob, 0, len(jobs))
+	for _, job := range jobs {
+		if job.VolumeID == volumeID {
+			filtered = append(filtered, job)
+		}
+	}
+	return filtered
+}
+
+func filterActivitiesByJobs(activities []plugin.JobActivity, jobs []plugin.TrackedJob) []plugin.JobActivity {
+	jobIDs := make(map[string]struct{}, len(jobs))
+	for _, job := range jobs {
+		jobIDs[job.JobID] = struct{}{}
+	}
+
+	filtered := make([]plugin.JobActivity, 0, len(activities))
+	for _, activity := range activities {
+		if _, ok := jobIDs[activity.JobID]; ok {
+			filtered = append(filtered, activity)
+		}
+	}
+	return filtered
+}
+
 // GetPluginStatusAPI returns plugin status.
 func (s *AdminServer) GetPluginStatusAPI(w http.ResponseWriter, r *http.Request) {
 	plugin := s.GetPlugin()
@@ -153,10 +194,15 @@ func (s *AdminServer) GetPluginJobsAPI(w http.ResponseWriter, r *http.Request) {
 	jobType := strings.TrimSpace(query.Get("job_type"))
 	state := strings.TrimSpace(query.Get("state"))
 	laneFilter := strings.TrimSpace(query.Get("lane"))
+	volumeID, err := parseVolumeIDFilter(query.Get("volume_id"))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	limit := parsePositiveInt(query.Get("limit"), 200)
-	// Apply the lane before the limit, or a busy lane's newest rows crowd out a quiet lane.
+	// Apply the filters before the limit, or a busy lane's newest rows crowd out a quiet lane.
 	listLimit := limit
-	if laneFilter != "" {
+	if laneFilter != "" || volumeID != 0 {
 		listLimit = 0
 	}
 	jobs := s.ListPluginJobs(jobType, state, listLimit)
@@ -165,6 +211,7 @@ func (s *AdminServer) GetPluginJobsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jobs = filterTrackedJobsByLane(jobs, laneFilter)
+	jobs = filterTrackedJobsByVolume(jobs, volumeID)
 	if len(jobs) > limit {
 		jobs = jobs[:limit]
 	}
@@ -261,9 +308,14 @@ func (s *AdminServer) GetPluginActivitiesAPI(w http.ResponseWriter, r *http.Requ
 	query := r.URL.Query()
 	jobType := strings.TrimSpace(query.Get("job_type"))
 	laneFilter := strings.TrimSpace(query.Get("lane"))
+	volumeID, err := parseVolumeIDFilter(query.Get("volume_id"))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	limit := parsePositiveInt(query.Get("limit"), 500)
 	listLimit := limit
-	if laneFilter != "" {
+	if laneFilter != "" || volumeID != 0 {
 		listLimit = 0
 	}
 	activities := s.ListPluginActivities(jobType, listLimit)
@@ -272,6 +324,9 @@ func (s *AdminServer) GetPluginActivitiesAPI(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	activities = filterActivitiesByLane(activities, laneFilter)
+	if volumeID != 0 {
+		activities = filterActivitiesByJobs(activities, filterTrackedJobsByVolume(s.ListPluginJobs(jobType, "", 0), volumeID))
+	}
 	if len(activities) > limit {
 		activities = activities[:limit]
 	}
