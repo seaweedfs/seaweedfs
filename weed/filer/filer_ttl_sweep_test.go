@@ -284,3 +284,50 @@ func TestSweepExpiredEntriesKeepsADirectoryAWriterHolds(t *testing.T) {
 		t.Fatal("directory removed while a writer held it")
 	}
 }
+
+// childArrivingStore creates child the first time dir is read after gone is
+// removed, as a writer would between an emptiness check and the delete.
+type childArrivingStore struct {
+	*stubFilerStore
+	dir, gone, child util.FullPath
+	arrived          bool
+}
+
+func (s *childArrivingStore) FindEntry(ctx context.Context, p util.FullPath) (*Entry, error) {
+	if p == s.dir && !s.arrived && s.getEntry(string(s.gone)) == nil {
+		s.arrived = true
+		now := time.Now()
+		if err := s.InsertEntry(ctx, &Entry{FullPath: s.child, Attr: Attr{Mode: 0o644, Crtime: now, Mtime: now}}); err != nil {
+			return nil, err
+		}
+	}
+	return s.stubFilerStore.FindEntry(ctx, p)
+}
+
+func TestSweepExpiredEntriesKeepsADirectoryAChildArrivesIn(t *testing.T) {
+	f, stub := newTestFilerWithStubStore(t)
+	store := &childArrivingStore{stubFilerStore: stub, dir: "/buckets/b/day1", gone: "/buckets/b/day1/f", child: "/buckets/b/day1/g"}
+	f.Store = NewFilerStoreWrapper(store)
+	f.DirBucketsPath = "/buckets"
+	f.FilerConf = NewFilerConf()
+	if err := f.FilerConf.SetLocationConf(&filer_pb.FilerConf_PathConf{LocationPrefix: "/buckets/b/", Ttl: "2m"}); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	for _, dir := range []string{"/buckets", "/buckets/b", "/buckets/b/day1"} {
+		putSweepTestEntry(t, stub, dir, true, 0, old)
+	}
+	putSweepTestEntry(t, stub, "/buckets/b/day1/f", false, 120, old)
+
+	f.sweepExpiredEntries(context.Background(), "", make(map[string]time.Time), time.Now())
+
+	if !store.arrived {
+		t.Fatal("the directory was not read after its last child expired")
+	}
+	if stub.getEntry("/buckets/b/day1/f") != nil {
+		t.Fatal("expired child not removed")
+	}
+	if stub.getEntry("/buckets/b/day1") == nil {
+		t.Fatal("directory removed after a child was created in it")
+	}
+}

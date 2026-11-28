@@ -1226,19 +1226,6 @@ func (f *Filer) DeleteEmptyParentDirectories(ctx context.Context, dirPath util.F
 		return
 	}
 
-	// Check if directory is empty
-	isEmpty, err := f.IsDirectoryEmpty(ctx, dirPath)
-	if err != nil {
-		glog.V(3).InfofCtx(ctx, "DeleteEmptyParentDirectories: error checking %s: %v", dirPath, err)
-		return
-	}
-
-	if !isEmpty {
-		// Directory is not empty, stop checking upward
-		glog.V(3).InfofCtx(ctx, "DeleteEmptyParentDirectories: directory %s is not empty, stopping cleanup", dirPath)
-		return
-	}
-
 	parentDir, _ := dirPath.DirAndName()
 	if f.deleteEmptyDirectory(ctx, dirPath) {
 		f.DeleteEmptyParentDirectories(ctx, util.FullPath(parentDir), stopAtPath)
@@ -1246,7 +1233,8 @@ func (f *Filer) DeleteEmptyParentDirectories(ctx context.Context, dirPath util.F
 }
 
 // deleteEmptyDirectory removes the directory row under the lock writers take,
-// unless the row holds an S3 object or a writer has the path.
+// unless the row holds an S3 object or a child, or a writer has the path.
+// Emptiness is checked last, so a child created meanwhile keeps the row.
 func (f *Filer) deleteEmptyDirectory(ctx context.Context, dirPath util.FullPath) bool {
 	if lt := f.EntryLockTable; lt != nil {
 		lock, acquired := lt.TryAcquireLock("DeleteEmptyParentDirectories", dirPath, util.ExclusiveLock)
@@ -1258,11 +1246,20 @@ func (f *Filer) deleteEmptyDirectory(ctx context.Context, dirPath util.FullPath)
 	if isKeyObject, keyErr := f.IsDirectoryKeyObject(ctx, dirPath); keyErr != nil || isKeyObject {
 		return false
 	}
-	glog.V(2).InfofCtx(ctx, "DeleteEmptyParentDirectories: deleting empty directory %s", dirPath)
 	dirEntry, findErr := f.FindEntry(ctx, dirPath)
 	if findErr != nil {
 		return false
 	}
+	isEmpty, err := f.IsDirectoryEmpty(ctx, dirPath)
+	if err != nil {
+		glog.V(3).InfofCtx(ctx, "DeleteEmptyParentDirectories: error checking %s: %v", dirPath, err)
+		return false
+	}
+	if !isEmpty {
+		glog.V(3).InfofCtx(ctx, "DeleteEmptyParentDirectories: directory %s is not empty, stopping cleanup", dirPath)
+		return false
+	}
+	glog.V(2).InfofCtx(ctx, "DeleteEmptyParentDirectories: deleting empty directory %s", dirPath)
 	if delErr := f.doDeleteEntryMetaAndData(f.emptyFolderDeleteContext(ctx, dirPath), dirEntry, false, false, nil); delErr != nil {
 		glog.V(3).InfofCtx(ctx, "DeleteEmptyParentDirectories: failed to delete %s: %v", dirPath, delErr)
 		return false
