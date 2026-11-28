@@ -202,7 +202,7 @@ func TestCommitKeepsTheStoredManifestOfChunksListedFlat(t *testing.T) {
 			fs.filer.FileIdDeletionQueue.Consume(func(fileIds []string) { queued = append(queued, fileIds...) })
 			require.Empty(t, queued, "chunks queued for deletion")
 
-			data, _, err := filer.ResolveChunkManifest(ctx, fs.lookupFileId, stored.GetChunks(), 0, math.MaxInt64, nil)
+			data, _, err := filer.ResolveChunkManifest(ctx, fs.lookupFileId, stored.GetChunks(), 0, math.MaxInt64, nil, false)
 			require.NoError(t, err)
 			require.ElementsMatch(t, walChunkIds(walChunks(n+1)), walChunkIds(data))
 		})
@@ -243,7 +243,7 @@ func TestCommitDropsTheStoredManifestOfChunksItNoLongerLists(t *testing.T) {
 	}
 	require.ElementsMatch(t, walChunkIds([]*filer_pb.FileChunk{manifests[0], walChunks(n)[5]}), queued)
 
-	data, _, err := filer.ResolveChunkManifest(ctx, fs.lookupFileId, stored.GetChunks(), 0, math.MaxInt64, nil)
+	data, _, err := filer.ResolveChunkManifest(ctx, fs.lookupFileId, stored.GetChunks(), 0, math.MaxInt64, nil, false)
 	require.NoError(t, err)
 	require.ElementsMatch(t, walChunkIds(rewritten.Chunks), walChunkIds(data))
 }
