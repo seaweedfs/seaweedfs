@@ -30,6 +30,53 @@ pub fn shard_id_try_from(v: u32) -> Result<ShardId, String> {
     }
 }
 
+pub const EC_SHARD_GHOST: &str = "ghost";
+pub const EC_SHARD_STALE_SIZE: &str = "stale_size";
+
+/// What tells two files apart: (device, inode) on unix, (volume serial,
+/// file index) on Windows.
+#[cfg(unix)]
+fn file_id(f: &File) -> io::Result<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let m = f.metadata()?;
+    Ok((m.dev(), m.ino()))
+}
+
+#[cfg(windows)]
+fn file_id(f: &File) -> io::Result<(u64, u64)> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+    // SAFETY: the handle stays open for the call and `info` is a valid out-param.
+    unsafe {
+        let mut info: BY_HANDLE_FILE_INFORMATION = std::mem::zeroed();
+        if GetFileInformationByHandle(f.as_raw_handle() as _, &mut info) == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok((
+            info.dwVolumeSerialNumber as u64,
+            (info.nFileIndexHigh as u64) << 32 | info.nFileIndexLow as u64,
+        ))
+    }
+}
+
+/// The file id and length of `path`, read without read access to the file.
+#[cfg(unix)]
+fn path_file_id(path: &str) -> io::Result<((u64, u64), u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::metadata(path)?;
+    Ok(((m.dev(), m.ino()), m.len()))
+}
+
+#[cfg(windows)]
+fn path_file_id(path: &str) -> io::Result<((u64, u64), u64)> {
+    use std::os::windows::fs::OpenOptionsExt;
+    // No access rights, as std::fs::metadata opens it.
+    let f = OpenOptions::new().access_mode(0).open(path)?;
+    Ok((file_id(&f)?, f.metadata()?.len()))
+}
+
 /// A single erasure-coded shard file.
 pub struct EcVolumeShard {
     pub volume_id: VolumeId,
@@ -39,6 +86,7 @@ pub struct EcVolumeShard {
     pub disk_type: DiskType,
     ecd_file: Option<File>,
     ecd_file_size: i64,
+    ecd_file_id: Option<(u64, u64)>,
 }
 
 impl EcVolumeShard {
@@ -52,6 +100,7 @@ impl EcVolumeShard {
             disk_type: DiskType::default(),
             ecd_file: None,
             ecd_file_size: 0,
+            ecd_file_id: None,
         }
     }
 
@@ -67,6 +116,7 @@ impl EcVolumeShard {
         let path = self.file_name();
         let file = open_volume_file(OpenOptions::new().read(true), &path)?;
         self.ecd_file_size = file.metadata()?.len() as i64;
+        self.ecd_file_id = file_id(&file).ok();
         self.ecd_file = Some(file);
         Ok(())
     }
@@ -84,6 +134,7 @@ impl EcVolumeShard {
         )?;
         self.ecd_file = Some(file);
         self.ecd_file_size = 0;
+        self.ecd_file_id = None;
         Ok(())
     }
 
@@ -110,6 +161,17 @@ impl EcVolumeShard {
 
     pub fn file_size(&self) -> i64 {
         self.ecd_file_size
+    }
+
+    pub fn disk_check(&self) -> EcShardDiskCheck {
+        EcShardDiskCheck {
+            volume_id: self.volume_id,
+            shard_id: self.shard_id,
+            dir: self.dir.clone(),
+            path: self.file_name(),
+            mounted_size: self.ecd_file_size,
+            mounted_id: self.ecd_file_id,
+        }
     }
 
     /// A duplicate of the mounted shard handle, for a reader that has to
@@ -144,12 +206,41 @@ impl EcVolumeShard {
             let _ = file.sync_all();
         }
         self.ecd_file = None;
+        self.ecd_file_id = None;
     }
 
     /// Delete the shard file from disk.
     pub fn destroy(&mut self) {
         self.close();
         let _ = fs::remove_file(self.file_name());
+    }
+}
+
+/// What the disk check needs from a mounted shard, copied out under the
+/// store guard so the file system calls run after it is released.
+pub struct EcShardDiskCheck {
+    pub volume_id: VolumeId,
+    pub shard_id: ShardId,
+    pub dir: String,
+    pub mounted_size: i64,
+    path: String,
+    mounted_id: Option<(u64, u64)>,
+}
+
+impl EcShardDiskCheck {
+    /// How the shard file on disk disagrees with the mount: `EC_SHARD_GHOST`
+    /// when the path is gone or names another file than the open one,
+    /// `EC_SHARD_STALE_SIZE` when its size changed since the mount.
+    pub fn disk_mismatch(&self) -> Option<&'static str> {
+        let (id, len) = match path_file_id(&self.path) {
+            Ok(v) => v,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Some(EC_SHARD_GHOST),
+            Err(_) => return None,
+        };
+        if self.mounted_id.is_some_and(|mounted| mounted != id) {
+            return Some(EC_SHARD_GHOST);
+        }
+        (len as i64 != self.mounted_size).then_some(EC_SHARD_STALE_SIZE)
     }
 }
 

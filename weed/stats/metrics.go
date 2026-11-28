@@ -548,6 +548,14 @@ var (
 			Help:      "Number of read only volumes.",
 		}, []string{"collection", "type"})
 
+	VolumeServerEcShardDiskMismatchGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemVolumeServer,
+			Name:      "ec_shard_disk_mismatch",
+			Help:      "Mounted EC shards whose file on disk is gone or replaced (ghost) or changed size (stale_size).",
+		}, []string{"reason"})
+
 	VolumeServerMaxVolumeCounter = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -1188,6 +1196,7 @@ func init() {
 	Gather.MustRegister(VolumeServerVolumeGauge)
 	Gather.MustRegister(VolumeServerMaxVolumeCounter)
 	Gather.MustRegister(VolumeServerReadOnlyVolumeGauge)
+	Gather.MustRegister(VolumeServerEcShardDiskMismatchGauge)
 	Gather.MustRegister(VolumeServerDiskSizeGauge)
 	Gather.MustRegister(VolumeServerResourceGauge)
 	Gather.MustRegister(VolumeServerDiskErrorGauge)
