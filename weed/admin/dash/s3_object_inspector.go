@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -253,9 +254,9 @@ func inspectS3ObjectVersion(path string, entry *filer_pb.Entry) S3ObjectVersionI
 		ObjectLockMode:    string(ext[s3_constants.ExtObjectLockModeKey]),
 		LegalHold:         string(ext[s3_constants.ExtLegalHoldKey]),
 		InlineBytes:       len(entry.Content),
+		Size:              filer.FileSize(entry),
 	}
 	if attr := entry.Attributes; attr != nil {
-		version.Size = attr.FileSize
 		version.ModifiedAt = time.Unix(attr.Mtime, int64(attr.MtimeNs)).UTC()
 	}
 	if entry.WormEnforcedAtTsNs > 0 {

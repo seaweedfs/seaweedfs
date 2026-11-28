@@ -138,6 +138,14 @@ func TestInspectS3ObjectVersionRemoteETag(t *testing.T) {
 	}
 }
 
+func TestInspectS3ObjectVersionSizeFromChunks(t *testing.T) {
+	entry := inspectorTestEntry("k", 1, nil, &filer_pb.FileChunk{FileId: "3,02637037d6", Offset: 0, Size: 64})
+	entry.Attributes.FileSize = 0
+	if v := inspectS3ObjectVersion("/buckets/b/k", entry); v.Size != 64 {
+		t.Fatalf("size = %d", v.Size)
+	}
+}
+
 func TestSummarizeS3ObjectVolumes(t *testing.T) {
 	node := func(id string, disks ...*master_pb.DiskInfo) *master_pb.DataNodeInfo {
 		m := make(map[string]*master_pb.DiskInfo)
