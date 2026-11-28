@@ -3541,6 +3541,27 @@ mod tests {
         assert_eq!(check(&store), counts(1, 0));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn test_check_mounted_ec_shards_finds_an_unreadable_replacement() {
+        use crate::storage::erasure_coding::ec_shard::EC_SHARD_GHOST;
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = make_test_store(&[dir]);
+        std::fs::write(format!("{}/col_42.ecx", dir), [0u8; 16]).unwrap();
+        let shard_path = format!("{}/col_42.ec00", dir);
+        std::fs::write(&shard_path, b"shard bytes").unwrap();
+        store.mount_ec_shards(VolumeId(42), "col", &[0]).unwrap();
+
+        let replacement = format!("{}.new", shard_path);
+        std::fs::write(&replacement, b"shard bytes").unwrap();
+        std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o000)).unwrap();
+        std::fs::rename(&replacement, &shard_path).unwrap();
+        let counts = Store::check_mounted_ec_shards(&store.ec_shard_disk_checks());
+        assert_eq!(counts[EC_SHARD_GHOST], 1);
+    }
+
     #[test]
     fn test_check_mounted_ec_shards_runs_while_a_writer_holds_the_store() {
         use crate::storage::erasure_coding::ec_shard::EC_SHARD_GHOST;

@@ -61,6 +61,22 @@ fn file_id(f: &File) -> io::Result<(u64, u64)> {
     }
 }
 
+/// The file id and length of `path`, read without read access to the file.
+#[cfg(unix)]
+fn path_file_id(path: &str) -> io::Result<((u64, u64), u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::metadata(path)?;
+    Ok(((m.dev(), m.ino()), m.len()))
+}
+
+#[cfg(windows)]
+fn path_file_id(path: &str) -> io::Result<((u64, u64), u64)> {
+    use std::os::windows::fs::OpenOptionsExt;
+    // No access rights, as std::fs::metadata opens it.
+    let f = OpenOptions::new().access_mode(0).open(path)?;
+    Ok((file_id(&f)?, f.metadata()?.len()))
+}
+
 /// A single erasure-coded shard file.
 pub struct EcVolumeShard {
     pub volume_id: VolumeId,
@@ -216,20 +232,15 @@ impl EcShardDiskCheck {
     /// when the path is gone or names another file than the open one,
     /// `EC_SHARD_STALE_SIZE` when its size changed since the mount.
     pub fn disk_mismatch(&self) -> Option<&'static str> {
-        let on_disk = match File::open(&self.path) {
-            Ok(f) => f,
+        let (id, len) = match path_file_id(&self.path) {
+            Ok(v) => v,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Some(EC_SHARD_GHOST),
             Err(_) => return None,
         };
-        if let (Some(mounted), Ok(id)) = (self.mounted_id, file_id(&on_disk))
-            && id != mounted
-        {
+        if self.mounted_id.is_some_and(|mounted| mounted != id) {
             return Some(EC_SHARD_GHOST);
         }
-        match on_disk.metadata() {
-            Ok(m) if m.len() as i64 != self.mounted_size => Some(EC_SHARD_STALE_SIZE),
-            _ => None,
-        }
+        (len as i64 != self.mounted_size).then_some(EC_SHARD_STALE_SIZE)
     }
 }
 
