@@ -231,6 +231,35 @@ func TestDLM_HandoffRetriesWithoutMembershipChange(t *testing.T) {
 	}
 }
 
+func TestDLM_PendingHandoffKeepsRenewToken(t *testing.T) {
+	source, a := newDLMHandoffServer(t, nil)
+	var failing atomic.Bool
+	failing.Store(true)
+	target, b := newDLMHandoffServer(t, func(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if _, transfer := req.(*filer_pb.TransferLocksRequest); transfer && failing.Load() {
+			return nil, status.Error(codes.Unavailable, "injected handoff failure")
+		}
+		return handler(ctx, req)
+	})
+	source.filer.Dlm.LockRing.SetSnapshot([]pb.ServerAddress{a}, 1)
+	target.filer.Dlm.LockRing.SetSnapshot([]pb.ServerAddress{b}, 2)
+	ctx := context.Background()
+	lease, err := source.DistributedLock(ctx, &filer_pb.LockRequest{Name: "key", Owner: "alice", SecondsToLock: 60})
+	require.NoError(t, err)
+	require.Empty(t, lease.Error)
+	source.filer.Dlm.LockRing.SetSnapshot([]pb.ServerAddress{b}, 2)
+	pending, err := source.DistributedLock(ctx, &filer_pb.LockRequest{Name: "key", Owner: "alice", RenewToken: lease.RenewToken, SecondsToLock: 60})
+	require.NoError(t, err)
+	require.Contains(t, pending.Error, lock_manager.LockHandoffPending.Error())
+	require.Equal(t, lease.RenewToken, pending.RenewToken, "a failed handoff is not a rejection")
+	failing.Store(false)
+	renewed, err := source.DistributedLock(ctx, &filer_pb.LockRequest{Name: "key", Owner: "alice", RenewToken: pending.RenewToken, SecondsToLock: 60})
+	require.NoError(t, err)
+	require.Empty(t, renewed.Error)
+	require.Equal(t, string(b), renewed.LockHostMovedTo)
+	require.NotEqual(t, lease.RenewToken, renewed.RenewToken)
+}
+
 func TestDLM_HandoffRetryStops(t *testing.T) {
 	for _, shutdown := range []bool{false, true} {
 		t.Run(fmt.Sprintf("shutdown=%v", shutdown), func(t *testing.T) {

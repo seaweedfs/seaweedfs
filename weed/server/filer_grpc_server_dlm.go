@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -61,6 +62,10 @@ func (fs *FilerServer) DistributedLock(ctx context.Context, req *filer_pb.LockRe
 
 	if err != nil {
 		resp.Error = fmt.Sprintf("%v", err)
+		if errors.Is(err, lock_manager.LockHandoffPending) {
+			// Not a verdict: the holder keeps its token to renew at the new primary.
+			resp.RenewToken = req.RenewToken
+		}
 		if !strings.Contains(resp.Error, "lock already owned") {
 			glog.V(0).Infof("FILER LOCK: Error - name=%s error=%s", req.Name, resp.Error)
 		}

@@ -254,8 +254,11 @@ func (dlm *DistributedLockManager) transferToOwnerLocked(key string) (owner pb.S
 	transferred, err := dlm.sendTransferLocked(key, func(lock *Lock) error {
 		return dlm.TransferFn(primary, lock)
 	})
-	if err != nil || transferred == nil {
-		return primary, err
+	if err != nil {
+		return primary, fmt.Errorf("%w: %w", LockHandoffPending, err)
+	}
+	if transferred == nil {
+		return primary, nil
 	}
 	// Background retries can overlap a newer topology callback. Never evict
 	// a lease now owned here or discard it before its newest owner receives it.
