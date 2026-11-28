@@ -132,7 +132,7 @@ func TestResolveChunkManifestParallelReadsAreBounded(t *testing.T) {
 	}
 	fixture := newManifestReadFixture(t, manifests, delays)
 
-	data, meta, err := ResolveChunkManifest(context.Background(), fixture.lookup, inputs, 0, 1000, nil)
+	data, meta, err := ResolveChunkManifest(context.Background(), fixture.lookup, inputs, 0, 1000, nil, false)
 	require.NoError(t, err)
 	require.Len(t, data, len(inputs))
 	require.Len(t, meta, len(inputs))
@@ -152,7 +152,7 @@ func TestResolveChunkManifestPreservesInputOrderWhenReadsCompleteOutOfOrder(t *t
 	data, meta, err := ResolveChunkManifest(context.Background(), fixture.lookup, []*filer_pb.FileChunk{
 		resolveTestManifest("slow", 0),
 		resolveTestManifest("fast", 100),
-	}, 0, 200, nil)
+	}, 0, 200, nil, false)
 	require.NoError(t, err)
 	require.Equal(t, []string{"slow-data", "fast-data"}, fileIDs(data))
 	require.Equal(t, []string{"slow", "fast"}, fileIDs(meta))
@@ -172,7 +172,7 @@ func TestResolveChunkManifestNestedManifestsKeepDepthFirstOrder(t *testing.T) {
 	data, meta, err := ResolveChunkManifest(context.Background(), fixture.lookup, []*filer_pb.FileChunk{
 		resolveTestManifest("parent", 0),
 		resolveTestManifest("sibling", 20),
-	}, 0, 100, nil)
+	}, 0, 100, nil, false)
 	require.NoError(t, err)
 	require.Equal(t, []string{"parent-data", "nested-data", "sibling-data"}, fileIDs(data))
 	require.Equal(t, []string{"parent", "nested", "sibling"}, fileIDs(meta))
@@ -189,7 +189,7 @@ func TestResolveChunkManifestFiltersBeforeReadingAndRecursively(t *testing.T) {
 	data, meta, err := ResolveChunkManifest(context.Background(), fixture.lookup, []*filer_pb.FileChunk{
 		resolveTestManifest("outside", 0),
 		resolveTestManifest("inside", 90),
-	}, 100, 200, nil)
+	}, 100, 200, nil, false)
 	require.NoError(t, err)
 	require.Equal(t, []string{"selected"}, fileIDs(data))
 	require.Equal(t, []string{"inside"}, fileIDs(meta))
@@ -208,7 +208,7 @@ func TestResolveChunkManifestPropagatesReadAndFormatErrorsInInputOrder(t *testin
 		resolveTestData("plain", 0),
 		resolveTestManifest("valid", 10),
 		resolveTestManifest("broken", 20),
-	}, 0, 100, nil)
+	}, 0, 100, nil, false)
 	require.Error(t, err)
 	require.Nil(t, meta)
 	require.Equal(t, []string{"plain", "valid-data"}, fileIDs(data))
@@ -216,7 +216,7 @@ func TestResolveChunkManifestPropagatesReadAndFormatErrorsInInputOrder(t *testin
 
 	lookupErr := errors.New("lookup failed")
 	lookup := func(context.Context, string) ([]string, error) { return nil, lookupErr }
-	_, _, err = ResolveChunkManifest(context.Background(), lookup, []*filer_pb.FileChunk{resolveTestManifest("lookup-error", 0)}, 0, 100, nil)
+	_, _, err = ResolveChunkManifest(context.Background(), lookup, []*filer_pb.FileChunk{resolveTestManifest("lookup-error", 0)}, 0, 100, nil, false)
 	require.ErrorIs(t, err, lookupErr)
 }
 
@@ -234,7 +234,7 @@ func TestResolveChunkManifestCancellationStopsAllReads(t *testing.T) {
 		_, _, err := ResolveChunkManifest(ctx, fixture.lookup, []*filer_pb.FileChunk{
 			resolveTestManifest("one", 0),
 			resolveTestManifest("two", 10),
-		}, 0, 100, nil)
+		}, 0, 100, nil, false)
 		result <- err
 	}()
 
@@ -323,7 +323,7 @@ func TestResolveChunkManifestFastFailureCancelsSlowSibling(t *testing.T) {
 			}
 			result := make(chan error, 1)
 			go func() {
-				_, _, err := ResolveChunkManifest(ctx, fixture.lookup, chunks, 0, 200, nil)
+				_, _, err := ResolveChunkManifest(ctx, fixture.lookup, chunks, 0, 200, nil, false)
 				result <- err
 			}()
 
@@ -364,7 +364,7 @@ func TestResolveChunkManifestFastFailureCancelsEncryptedSibling(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		_, _, err := ResolveChunkManifest(ctx, fixture.lookup, chunks, 0, 200, nil)
+		_, _, err := ResolveChunkManifest(ctx, fixture.lookup, chunks, 0, 200, nil, false)
 		result <- err
 	}()
 
@@ -419,7 +419,7 @@ func TestResolveChunkManifestKeepsRealErrorAfterInternalCancellation(t *testing.
 		_, _, err := ResolveChunkManifest(context.Background(), lookup, []*filer_pb.FileChunk{
 			resolveTestManifest("early", 0),
 			resolveTestManifest("late", 100),
-		}, 0, 200, nil)
+		}, 0, 200, nil, false)
 		result <- err
 	}()
 	waitForManifestFailureSignal(t, earlyStarted)
@@ -449,7 +449,7 @@ func TestResolveChunkManifestReturnsLaterFailureWithoutRecursingEarlierChildren(
 	data, meta, err := ResolveChunkManifest(context.Background(), fixture.lookup, []*filer_pb.FileChunk{
 		resolveTestManifest("a", 0),
 		resolveTestManifest("b", 100),
-	}, 0, 200, nil)
+	}, 0, 200, nil, false)
 	elapsed := time.Since(start)
 
 	require.Error(t, err)
@@ -476,7 +476,7 @@ func TestResolveChunkManifestExcludesOutOfRangeChildrenOnLaterFailure(t *testing
 	data, _, err := ResolveChunkManifest(context.Background(), fixture.lookup, []*filer_pb.FileChunk{
 		resolveTestManifest("a", 0),
 		resolveTestManifest("b", 100),
-	}, 0, 200, nil)
+	}, 0, 200, nil, false)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "fail to unmarshal manifest b")
 	require.Equal(t, []string{"a-in-range"}, fileIDs(data), "out-of-range child chunks must be excluded from partial results")
@@ -514,7 +514,7 @@ func TestResolveChunkManifestQueuesJobsBeyondWorkerCount(t *testing.T) {
 			resolveTestManifest("stall-2", 200),
 			resolveTestManifest("stall-3", 300),
 			resolveTestManifest("fail", 400),
-		}, 0, 500, nil)
+		}, 0, 500, nil, false)
 		result <- err
 	}()
 
@@ -591,7 +591,7 @@ func BenchmarkResolveChunkManifestSerialVsParallel(b *testing.B) {
 	})
 	b.Run("parallel", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
-			_, _, err := ResolveChunkManifest(context.Background(), fixture.lookup, inputs, 0, 1000, nil)
+			_, _, err := ResolveChunkManifest(context.Background(), fixture.lookup, inputs, 0, 1000, nil, false)
 			if err != nil {
 				b.Fatal(err)
 			}

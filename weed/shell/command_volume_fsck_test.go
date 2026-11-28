@@ -21,8 +21,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestVolumeFsckCanPurgeDirectory(t *testing.T) {
@@ -86,6 +88,18 @@ type stubFilerServer struct {
 	entries            map[string]*filer_pb.Entry
 	writtenAfterLookup map[string]bool
 	deleted            []string
+	// volumeUrls locates volumes for LookupVolume; other volumes are not found.
+	volumeUrls map[string]string
+}
+
+func (s *stubFilerServer) LookupVolume(ctx context.Context, req *filer_pb.LookupVolumeRequest) (*filer_pb.LookupVolumeResponse, error) {
+	resp := &filer_pb.LookupVolumeResponse{LocationsMap: make(map[string]*filer_pb.Locations)}
+	for _, vid := range req.VolumeIds {
+		if url, found := s.volumeUrls[vid]; found {
+			resp.LocationsMap[vid] = &filer_pb.Locations{Locations: []*filer_pb.Location{{Url: url, PublicUrl: url}}}
+		}
+	}
+	return resp, nil
 }
 
 func (s *stubFilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -167,10 +181,37 @@ func startStubFiler(t *testing.T, stub *stubFilerServer) *CommandEnv {
 	filer_pb.RegisterSeaweedFilerServer(srv, stub)
 	go srv.Serve(lis)
 	t.Cleanup(srv.Stop)
-	return &CommandEnv{option: &ShellOptions{
-		FilerAddress:   pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", lis.Addr().(*net.TCPAddr).Port)),
-		GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
-	}}
+	return &CommandEnv{
+		option: &ShellOptions{
+			FilerAddress:   pb.ServerAddress(fmt.Sprintf("127.0.0.1:1.%d", lis.Addr().(*net.TCPAddr).Port)),
+			GrpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+		},
+		MasterClient: wdclient.NewMasterClient(grpc.WithTransportCredentials(insecure.NewCredentials()), "", "shell", "", "", "", pb.ServerDiscovery{}),
+	}
+}
+
+// startStubManifestVolume serves each manifest's chunks as its blob and returns
+// the server's address, for a stubFilerServer's volumeUrls.
+func startStubManifestVolume(t *testing.T, manifests map[*filer_pb.FileChunk][]*filer_pb.FileChunk) string {
+	t.Helper()
+	blobs := make(map[string][]byte, len(manifests))
+	for manifest, held := range manifests {
+		blob, err := proto.Marshal(&filer_pb.FileChunkManifest{Chunks: held})
+		if err != nil {
+			t.Fatalf("marshal manifest: %v", err)
+		}
+		blobs["/"+manifest.GetFileIdString()] = blob
+	}
+	volume := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		blob, found := blobs[r.URL.Path]
+		if !found {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(blob)
+	}))
+	t.Cleanup(volume.Close)
+	return strings.TrimPrefix(volume.URL, "http://")
 }
 
 func TestVolumeFsckPurgeEmptyDirectories(t *testing.T) {

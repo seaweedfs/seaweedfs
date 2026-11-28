@@ -273,7 +273,8 @@ func lookupFileEntry(commandEnv *CommandEnv, dir, name string) (*filer_pb.Entry,
 }
 
 // resolveEntryDataChunks returns the flattened data chunks of an entry. If the
-// entry contains manifest chunks, their contents are resolved. hadManifest
+// entry contains manifest chunks, their contents are resolved, cut to each
+// manifest's span since the rewritten entry no longer carries it. hadManifest
 // signals whether any manifest chunks were resolved, so the caller knows to
 // re-manifestize after redistribution.
 func resolveEntryDataChunks(commandEnv *CommandEnv, entry *filer_pb.Entry) (dataChunks []*filer_pb.FileChunk, hadManifest bool, err error) {
@@ -281,7 +282,7 @@ func resolveEntryDataChunks(commandEnv *CommandEnv, entry *filer_pb.Entry) (data
 	if !filer.HasChunkManifest(chunks) {
 		return chunks, false, nil
 	}
-	dataChunks, _, err = filer.ResolveChunkManifest(context.Background(), filer.LookupFn(commandEnv), chunks, 0, math.MaxInt64, nil)
+	dataChunks, _, err = filer.ResolveChunkManifest(context.Background(), filer.LookupFn(commandEnv), chunks, 0, math.MaxInt64, nil, true)
 	if err != nil {
 		return nil, true, fmt.Errorf("resolve chunk manifest: %v", err)
 	}

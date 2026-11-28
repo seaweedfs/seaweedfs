@@ -16,6 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"go.uber.org/atomic"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -400,4 +401,26 @@ func TestFsVerifyManifestResolutionFailure(t *testing.T) {
 			t.Error("missing manifest needle must be classified as prunable")
 		}
 	})
+}
+
+// A chunk past a shortened manifest's span is never read, so its missing
+// needle neither fails the entry nor makes it prunable.
+func TestFsVerifyIgnoresChunksPastAManifestSpan(t *testing.T) {
+	chunk := func(key uint64, offset int64) *filer_pb.FileChunk {
+		return &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: key, Cookie: 1}, Offset: offset, Size: 100}
+	}
+	shortened := &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 1, Cookie: 1}, Size: 100, IsChunkManifest: true}
+	filerServer := &stubFilerServer{volumeUrls: map[string]string{"7": startStubManifestVolume(t, map[*filer_pb.FileChunk][]*filer_pb.FileChunk{
+		shortened: {chunk(2, 0), chunk(3, 100)},
+	})}}
+	commandEnv, loc, cleanup := newFsVerifyTestCommandEnv(t, filerServer, &fsVerifyTestVolumeServer{missingNeedles: map[uint64]bool{3: true}})
+	defer cleanup()
+	commandEnv.MasterClient = wdclient.NewMasterClient(grpc.WithTransportCredentials(insecure.NewCredentials()), "", "shell", "", "", "", pb.ServerDiscovery{})
+	c := newFsVerifyTestCommand(t, commandEnv, &bytes.Buffer{}, loc)
+
+	verified, hasMissing := c.resolveAndVerify("/buckets/b/file",
+		[]*filer_pb.FileChunk{shortened}, atomic.NewUint64(0), &sync.WaitGroup{})
+	if !verified || hasMissing {
+		t.Fatalf("verified=%v hasMissing=%v, want the needle past the span ignored", verified, hasMissing)
+	}
 }

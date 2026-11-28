@@ -236,3 +236,53 @@ func TestPartRange(t *testing.T) {
 		}
 	}
 }
+
+// A flattened copy source or full-object SSE read must not turn the chunks past
+// a shortened manifest's span back into object data.
+func TestFlattenManifestChunksCutsAShortenedManifest(t *testing.T) {
+	held := []*filer_pb.FileChunk{
+		{Fid: &filer_pb.FileId{VolumeId: 8, FileKey: 1, Cookie: 1}, Offset: 0, Size: 100},
+		{Fid: &filer_pb.FileId{VolumeId: 8, FileKey: 2, Cookie: 1}, Offset: 100, Size: 100},
+		{Fid: &filer_pb.FileId{VolumeId: 8, FileKey: 3, Cookie: 1}, Offset: 200, Size: 100},
+	}
+	filer_pb.BeforeEntrySerialization(held)
+	manifestData, err := proto.Marshal(&filer_pb.FileChunkManifest{Chunks: held})
+	require.NoError(t, err)
+	manifest := &filer_pb.FileChunk{
+		Fid:             &filer_pb.FileId{VolumeId: 17, FileKey: 1, Cookie: 1},
+		Offset:          0,
+		Size:            150,
+		IsChunkManifest: true,
+	}
+
+	volumeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.TrimPrefix(r.URL.Path, "/") != manifest.GetFileIdString() {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(manifestData)
+	}))
+	t.Cleanup(volumeServer.Close)
+	filerAddress := startFakeFiler(t, &manifestVolumeFiler{volumeServer: strings.TrimPrefix(volumeServer.URL, "http://")})
+	filerClient := wdclient.NewFilerClient(
+		[]pb.ServerAddress{filerAddress},
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		"",
+	)
+	t.Cleanup(filerClient.Close)
+	s3a := &S3ApiServer{option: &S3ApiServerOption{}, filerClient: filerClient}
+
+	entry := &filer_pb.Entry{
+		Attributes: &filer_pb.FuseAttributes{FileSize: 150},
+		Chunks:     []*filer_pb.FileChunk{manifest},
+	}
+	removed, err := s3a.flattenManifestChunks(context.Background(), entry)
+	require.NoError(t, err)
+	require.Len(t, removed, 1)
+
+	extents := make(map[string][2]int64)
+	for _, c := range entry.GetChunks() {
+		extents[c.GetFileIdString()] = [2]int64{c.Offset, c.Offset + int64(c.Size)}
+	}
+	require.Equal(t, map[string][2]int64{"8,0100000001": {0, 100}, "8,0200000001": {100, 150}}, extents)
+}

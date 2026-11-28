@@ -1335,7 +1335,7 @@ func (s3a *S3ApiServer) createAfterAmbiguousRoute(filePath, bucket, object strin
 				}
 				continue
 			}
-			resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
+			resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient, false)
 			if resolveErr != nil || !sameFileChunks(resolved, uploaded) {
 				glog.Warningf("putToFiler: ambiguous routed PUT for %s was superseded by another write; not committing stale entry", filePath)
 				return s3err.ErrServiceUnavailable
@@ -1481,7 +1481,7 @@ func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object, routeObjec
 				return s3err.ErrNone
 			}
 		} else {
-			resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
+			resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient, false)
 			if resolveErr != nil || !sameFileChunks(resolved, uploaded) {
 				return s3err.ErrNone
 			}

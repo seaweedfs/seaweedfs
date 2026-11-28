@@ -42,10 +42,24 @@ public class FileChunkManifest {
                 // avoid deprecated chunk.getFileId()
                 resolvedChunks.add(t.toBuilder().setFileId(FilerClient.toFileId(t.getFid())).build());
             }
-            dataChunks.addAll(resolveChunkManifest(filerClient, resolvedChunks));
+            dataChunks.addAll(resolveChunkManifest(filerClient, cutToManifestSpan(chunk, resolvedChunks)));
         }
 
         return dataChunks;
+    }
+
+    // A truncate may have shortened a manifest and left the chunks it holds whole.
+    static List<FilerProto.FileChunk> cutToManifestSpan(FilerProto.FileChunk manifest, List<FilerProto.FileChunk> held) {
+        long end = manifest.getOffset() + manifest.getSize();
+        List<FilerProto.FileChunk> cut = new ArrayList<>(held.size());
+        for (FilerProto.FileChunk chunk : held) {
+            if (chunk.getOffset() + chunk.getSize() <= end) {
+                cut.add(chunk);
+            } else if (chunk.getOffset() < end) {
+                cut.add(chunk.toBuilder().setSize(end - chunk.getOffset()).build());
+            }
+        }
+        return cut;
     }
 
     private static byte[] fetchChunk(final FilerClient filerClient, FilerProto.FileChunk chunk) throws IOException {
