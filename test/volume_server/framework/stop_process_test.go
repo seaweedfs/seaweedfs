@@ -29,6 +29,10 @@ func TestStopProcessReportsTheThreadsOfAServerIgnoringSIGINT(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start: %v", err)
 	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
 	waitForSleepThread(t, cmd.Process.Pid)
 	rec := &errorRecorder{TB: t}
 	stopProcess(rec, "server", cmd)
