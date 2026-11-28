@@ -175,3 +175,34 @@ func TestSweepExpiredEntriesKeepsADirectoryKeyObject(t *testing.T) {
 		t.Fatal("directory holding an object removed with its last child")
 	}
 }
+
+func TestDeleteExpiredEntryKeepsAReplacement(t *testing.T) {
+	f, store := newTestFilerWithStubStore(t)
+	ctx := context.Background()
+	p := util.FullPath("/logs/current")
+
+	putSweepTestEntry(t, store, string(p), false, 120, time.Now())
+	if err := f.deleteExpiredEntry(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if store.getEntry(string(p)) == nil {
+		t.Fatal("live replacement removed")
+	}
+
+	putSweepTestEntry(t, store, string(p), false, 120, time.Now().Add(-time.Hour))
+	lock := f.EntryLockTable.AcquireLock("test", p, util.ExclusiveLock)
+	if err := f.deleteExpiredEntry(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	f.EntryLockTable.ReleaseLock(p, lock)
+	if store.getEntry(string(p)) == nil {
+		t.Fatal("removed while a writer held the path")
+	}
+
+	if err := f.deleteExpiredEntry(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if store.getEntry(string(p)) != nil {
+		t.Fatal("expired entry kept")
+	}
+}

@@ -2,12 +2,14 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -161,4 +163,28 @@ func (f *Filer) sweepExpiredEntriesIn(ctx context.Context, dir util.FullPath, na
 		f.DeleteEmptyParentDirectories(ctx, dir, util.FullPath(f.DirBucketsPath))
 	}
 	return expired, nil
+}
+
+// deleteExpiredEntry removes the row at p only while it still holds an
+// expired entry, under the lock writers take, so a write that replaced the
+// listed entry keeps its row. A contended path is left to a later listing.
+func (f *Filer) deleteExpiredEntry(ctx context.Context, p util.FullPath) error {
+	if lt := f.EntryLockTable; lt != nil {
+		lock, acquired := lt.TryAcquireLock("deleteExpiredEntry", p, util.ExclusiveLock)
+		if !acquired {
+			return nil
+		}
+		defer lt.ReleaseLock(p, lock)
+	}
+	current, err := f.Store.FindEntry(ctx, p)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if current.IsDirectory() || current.TtlSec <= 0 || !current.Crtime.Add(time.Duration(current.TtlSec)*time.Second).Before(time.Now()) {
+		return nil
+	}
+	return f.Store.DeleteOneEntry(ctx, current)
 }

@@ -1166,7 +1166,7 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 			}
 		}
 		for _, entry := range expiredEntries {
-			if delErr := f.Store.DeleteOneEntry(ctx, entry); delErr != nil {
+			if delErr := f.deleteExpiredEntry(ctx, entry.FullPath); delErr != nil {
 				glog.ErrorfCtx(ctx, "doListDirectoryEntries DeleteOneEntry %s failed: %v", entry.FullPath, delErr)
 			}
 		}
