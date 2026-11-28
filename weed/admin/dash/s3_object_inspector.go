@@ -116,19 +116,23 @@ func validateInspectedS3Object(bucket, key string) error {
 }
 
 func (s *AdminServer) InspectS3Object(ctx context.Context, bucket, key string) (*S3ObjectInspection, error) {
-	filerConfig, err := s.getFilerConfig()
-	if err != nil {
-		return nil, err
-	}
-	objectDir, objectName := splitInspectedS3ObjectKey(filerConfig.BucketsPath+"/"+bucket, key)
-	versionsName := objectName + s3_constants.VersionsFolder
-	versionsDir := objectDir + "/" + versionsName
-
 	inspection := &S3ObjectInspection{Bucket: bucket, Key: key}
+	var objectDir, objectName string
 	var baseEntry, versionsEntry *filer_pb.Entry
 	var versionEntries []*filer_pb.Entry
-	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		if _, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: filerConfig.BucketsPath, Name: bucket}); err != nil {
+	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		config, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return fmt.Errorf("get filer configuration: %w", err)
+		}
+		bucketsPath := s3_constants.DefaultBucketsPath
+		if config.DirBuckets != "" {
+			bucketsPath = config.DirBuckets
+		}
+		objectDir, objectName = splitInspectedS3ObjectKey(bucketsPath+"/"+bucket, key)
+		versionsName := objectName + s3_constants.VersionsFolder
+		versionsDir := objectDir + "/" + versionsName
+		if _, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: bucketsPath, Name: bucket}); err != nil {
 			return fmt.Errorf("bucket %s: %w", bucket, err)
 		}
 		if resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: objectDir, Name: objectName}); err == nil {
