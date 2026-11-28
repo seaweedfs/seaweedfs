@@ -643,6 +643,7 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(statusCode)
 	if len(content) > 0 {
 		if _, err := w.Write(content); err != nil {
+			BucketReadAborted(err, r)
 			glog.Errorf("serveDirectoryContent: failed to write response: %v", err)
 		}
 	}
@@ -1274,6 +1275,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				BucketTrafficSent(int64(written), r)
 			}
 			if err != nil {
+				BucketReadAborted(err, r)
 				return newStreamErrorWithResponse(err)
 			}
 			return nil
@@ -1286,6 +1288,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			BucketTrafficSent(int64(written), r)
 		}
 		if err != nil {
+			BucketReadAborted(err, r)
 			return newStreamErrorWithResponse(err)
 		}
 		return nil
@@ -1497,6 +1500,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return newStreamErrorWithResponse(err)
 		}
+		BucketReadAborted(err, r)
 		switch {
 		case streamCanceled(r.Context(), err):
 			// Client disconnected mid-stream (e.g. Nginx upstream timeout, browser cancel) - expected
@@ -1591,6 +1595,7 @@ func (s3a *S3ApiServer) serveObjectFromRemoteMount(w http.ResponseWriter, r *htt
 		BucketTrafficSent(cw.written, r)
 	}
 	if copyErr != nil {
+		BucketReadAborted(copyErr, r)
 		glog.V(2).Infof("streamFromVolumeServers: origin stream %s/%s ended after %d bytes: %v", bucket, object, cw.written, copyErr)
 		return true, copyErr
 	}
@@ -1782,6 +1787,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 				// nothing written yet -- the caller writes the S3 error response
 				return err
 			}
+			BucketReadAborted(err, r)
 			return newStreamErrorWithResponse(err)
 		}
 		body.Commit()
@@ -1936,6 +1942,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 			// nothing written yet -- the caller writes the S3 error response
 			return copyErr
 		}
+		BucketReadAborted(copyErr, r)
 		return newStreamErrorWithResponse(copyErr)
 	}
 	body.Commit()
@@ -1948,7 +1955,7 @@ func (s3a *S3ApiServer) streamFromVolumeServersWithSSE(w http.ResponseWriter, r 
 // Returns the number of bytes written and any error
 func (s3a *S3ApiServer) streamDecryptedRangeFromChunks(ctx context.Context, w io.Writer, entry *filer_pb.Entry, offset int64, size int64, sseType string, decryptionKey interface{}) (int64, error) {
 	lookupFileIdFn := s3a.createLookupFileIdFunction()
-	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, entry.GetChunks(), offset, offset+size, s3a.filerClient)
+	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, entry.GetChunks(), offset, offset+size, s3a.filerClient, true)
 	if err != nil {
 		return 0, err
 	}
@@ -2415,7 +2422,7 @@ func (s3a *S3ApiServer) getEncryptedStreamFromVolumes(ctx context.Context, entry
 	lookupFileIdFn := s3a.createLookupFileIdFunction()
 
 	// Resolve chunks
-	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, chunks, offset, offset+size, s3a.filerClient)
+	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, chunks, offset, offset+size, s3a.filerClient, true)
 	if err != nil {
 		return nil, err
 	}
@@ -3709,7 +3716,7 @@ func (s3a *S3ApiServer) doCacheRemoteObjectOnFiler(ctx context.Context, filer pb
 		return s3a.doCacheRemoteObject(ctx, dir, name)
 	}
 	var cachedEntry *filer_pb.Entry
-	err := pb.WithFilerClient(false, 0, filer, s3a.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err := pb.WithGrpcFilerClient(false, 0, filer, s3a.option.GrpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		resp, cacheErr := client.CacheRemoteObjectToLocalCluster(ctx, &filer_pb.CacheRemoteObjectToLocalClusterRequest{
 			Directory: dir,
 			Name:      name,

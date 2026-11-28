@@ -1,0 +1,222 @@
+package app
+
+import (
+	"fmt"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+)
+
+templ S3ObjectInspector(data dash.S3ObjectInspectorData) {
+	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+		<div>
+			<h1 class="h2 mb-0">
+				<i class="bi bi-search me-2"></i>Inspect Object
+			</h1>
+			<nav aria-label="breadcrumb">
+				<ol class="breadcrumb mb-0 mt-1">
+					<li class="breadcrumb-item"><a href={ dash.PUrl(ctx, "/object-store/buckets") }>Buckets</a></li>
+					<li class="breadcrumb-item active" aria-current="page">{ data.Bucket }</li>
+				</ol>
+			</nav>
+		</div>
+	</div>
+	<form class="row g-2 mb-4" method="get" action={ dash.PUrl(ctx, fmt.Sprintf("/object-store/buckets/%s/inspect", data.Bucket)) }>
+		<div class="col-md-8">
+			<input type="text" class="form-control" name="key" placeholder="object key, e.g. backups/2026/db.tar" value={ data.Key } required/>
+		</div>
+		<div class="col-md-2">
+			<button type="submit" class="btn btn-primary w-100"><i class="bi bi-search me-1"></i>Inspect</button>
+		</div>
+		if data.Key != "" {
+			<div class="col-md-2">
+				<a class="btn btn-outline-secondary w-100" href={ dash.PUrl(ctx, fmt.Sprintf("/api/s3/buckets/%s/objects/inspect?key=%s", data.Bucket, url.QueryEscape(data.Key))) }><i class="bi bi-filetype-json me-1"></i>JSON</a>
+			</div>
+		}
+	</form>
+	if data.Error != "" {
+		<div class="alert alert-danger"><i class="bi bi-exclamation-triangle me-2"></i>{ data.Error }</div>
+	}
+	if data.Inspection != nil {
+		@s3ObjectVolumesCard(data.Inspection)
+		<div class="card shadow mb-4">
+			<div class="card-header py-3">
+				<h6 class="m-0 font-weight-bold text-primary">
+					<i class="bi bi-clock-history me-2"></i>Versions ({ fmt.Sprintf("%d", len(data.Inspection.Versions)) })
+					if !data.Inspection.Versioned {
+						<span class="badge bg-secondary ms-2">unversioned</span>
+					}
+					if data.Inspection.Truncated {
+						<span class="badge bg-warning text-dark ms-2">truncated</span>
+					}
+				</h6>
+			</div>
+			<div class="card-body">
+				<div class="table-responsive">
+					<table class="table table-sm table-hover align-middle">
+						<thead>
+							<tr>
+								<th>Version</th>
+								<th>Size</th>
+								<th>Modified</th>
+								<th>ETag / Checksum</th>
+								<th>Object Lock</th>
+								<th>Chunks</th>
+							</tr>
+						</thead>
+						<tbody>
+							for _, v := range data.Inspection.Versions {
+								<tr>
+									<td>
+										<code class="small">{ v.VersionId }</code>
+										if v.IsLatest {
+											<span class="badge bg-success ms-1">latest</span>
+										}
+										if v.IsDeleteMarker {
+											<span class="badge bg-dark ms-1">delete marker</span>
+										}
+										<div class="small text-muted text-break">{ v.Path }</div>
+									</td>
+									<td>{ formatBytes(int64(v.Size)) }</td>
+									<td class="small">{ formatS3ObjectTime(v.ModifiedAt) }</td>
+									<td class="small">
+										if v.ETag != "" {
+											<div><code>{ v.ETag }</code></div>
+										}
+										if v.ChecksumValue != "" {
+											<div>{ strings.TrimPrefix(strings.ToUpper(v.ChecksumAlgorithm), "X-AMZ-CHECKSUM-") }: <code>{ v.ChecksumValue }</code></div>
+										}
+									</td>
+									<td class="small">
+										if v.ObjectLockMode != "" {
+											<div><span class="badge bg-info text-dark">{ v.ObjectLockMode }</span></div>
+										}
+										if v.RetainUntil != nil {
+											<div>until { formatS3ObjectTime(*v.RetainUntil) }</div>
+										}
+										if v.LegalHold != "" {
+											<div>legal hold { v.LegalHold }</div>
+										}
+										if v.WormEnforcedAt != nil {
+											<div>WORM since { formatS3ObjectTime(*v.WormEnforcedAt) }</div>
+										}
+									</td>
+									<td class="small">
+										if v.InlineBytes > 0 {
+											<div>inline ({ formatBytes(int64(v.InlineBytes)) })</div>
+										}
+										if v.RemoteStorage != "" {
+											<div>remote: { v.RemoteStorage }</div>
+										}
+										for _, c := range v.Chunks {
+											<div>
+												<code>{ c.FileId }</code>
+												if c.IsManifest {
+													<span class="badge bg-secondary ms-1">manifest</span>
+												}
+												<span class="text-muted">{ formatBytes(int64(c.Size)) }</span>
+											</div>
+										}
+									</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		</div>
+	}
+}
+
+templ s3ObjectVolumesCard(inspection *dash.S3ObjectInspection) {
+	<div class="card shadow mb-4">
+		<div class="card-header py-3">
+			<h6 class="m-0 font-weight-bold text-primary"><i class="bi bi-hdd-stack me-2"></i>Volumes</h6>
+		</div>
+		<div class="card-body">
+			if len(inspection.Volumes) == 0 {
+				<p class="text-muted mb-0">No chunks stored on volumes.</p>
+			} else {
+				<div class="table-responsive">
+					<table class="table table-sm align-middle">
+						<thead>
+							<tr>
+								<th>Volume</th>
+								<th>Kind</th>
+								<th>Copies / Shards</th>
+								<th>Servers</th>
+								<th>Status</th>
+							</tr>
+						</thead>
+						<tbody>
+							for _, vol := range inspection.Volumes {
+								<tr>
+									<td>
+										if link := s3ObjectVolumeLink(vol); link != "" {
+											<a href={ dash.PUrl(ctx, link) }>{ fmt.Sprintf("%d", vol.VolumeId) }</a>
+										} else {
+											{ fmt.Sprintf("%d", vol.VolumeId) }
+										}
+									</td>
+									<td>{ vol.Kind }</td>
+									<td>
+										switch vol.Kind {
+											case "replicated":
+												{ fmt.Sprintf("%d / %d copies", vol.CopiesPresent, vol.CopiesExpected) }
+												if vol.ReadOnly {
+													<span class="badge bg-secondary ms-1">read-only</span>
+												}
+											case "ec":
+												{ fmt.Sprintf("%d / %d shards", vol.EcShardsPresent, vol.EcTotalShards) }
+												if len(vol.EcMissingShards) > 0 {
+													<div class="small text-muted">missing { fmt.Sprint(vol.EcMissingShards) }</div>
+												}
+										}
+									</td>
+									<td class="small">{ strings.Join(vol.Servers, ", ") }</td>
+									<td>
+										if vol.Healthy {
+											<span class="badge bg-success">ok</span>
+										} else {
+											<span class="badge bg-danger">{ s3ObjectVolumeProblem(vol) }</span>
+										}
+									</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+			}
+		</div>
+	</div>
+}
+
+func formatS3ObjectTime(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return t.UTC().Format("2006-01-02 15:04:05 UTC")
+}
+
+func s3ObjectVolumeLink(vol dash.S3ObjectVolumeHealth) string {
+	switch {
+	case vol.Kind == "ec":
+		return fmt.Sprintf("/storage/ec-volumes/%d", vol.VolumeId)
+	case vol.Kind == "replicated" && len(vol.Servers) > 0:
+		return fmt.Sprintf("/storage/volumes/%d/%s", vol.VolumeId, vol.Servers[0])
+	}
+	return ""
+}
+
+func s3ObjectVolumeProblem(vol dash.S3ObjectVolumeHealth) string {
+	switch vol.Kind {
+	case "replicated":
+		return "under-replicated"
+	case "ec":
+		return "not decodable"
+	default:
+		return "not found"
+	}
+}

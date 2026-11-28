@@ -20,6 +20,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient/exclusive_locks"
@@ -29,13 +30,14 @@ type ShellOptions struct {
 	Masters        *string
 	GrpcDialOption grpc.DialOption
 	// shell transient context
-	FilerHost      string
-	FilerPort      int64
-	FilerGroup     *string
-	FilerAddress   pb.ServerAddress
-	Directory      string
-	Debug          bool
-	ConnectTimeout time.Duration
+	FilerHost        string
+	FilerPort        int64
+	FilerGroup       *string
+	FilerAddress     pb.ServerAddress
+	Directory        string
+	Debug            bool
+	ConnectTimeout   time.Duration
+	FilerTokenSource security.FilerTokenSource
 }
 
 type CommandEnv struct {
@@ -154,9 +156,14 @@ func (ce *CommandEnv) GrpcDialOption() grpc.DialOption {
 }
 
 func (ce *CommandEnv) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return ce.WithFilerClientAt(ce.FilerAddress(), streamingMode, fn)
+}
 
-	return pb.WithGrpcFilerClient(streamingMode, 0, ce.FilerAddress(), ce.option.GrpcDialOption, fn)
-
+// WithFilerClientAt invokes a filer RPC against a specific discovered address.
+// The token source is attached to the logical client, so pooled connections
+// remain shared while each RPC resolves current credentials independently.
+func (ce *CommandEnv) WithFilerClientAt(address pb.ServerAddress, streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return pb.WithGrpcFilerClient(streamingMode, 0, address, ce.option.GrpcDialOption, ce.option.FilerTokenSource, fn)
 }
 
 // FilerAddress returns the discovered or configured filer, running discovery

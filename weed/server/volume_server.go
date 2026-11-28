@@ -46,6 +46,7 @@ type VolumeServer struct {
 	// by a leader; before first registration the retry loop reconnects
 	// promptly instead of pacing a full pulse.
 	confirmedLeaderOnce atomic.Bool
+	ecShardCheckRunning atomic.Bool
 	pulsePeriod         time.Duration
 	dataCenter          string
 	rack                string

@@ -8,7 +8,9 @@
 //! rustls provider, which only works if every binary installs the same one.
 //! The security.toml search path joined them for the same reason: an operator
 //! mounts the file once and every binary has to look where `weed` looks.
+//! The FIPS mode joined them because it decides that provider.
 
 pub mod address;
+pub mod fips;
 pub mod security_config;
 pub mod tls;

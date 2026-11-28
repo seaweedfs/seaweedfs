@@ -2218,6 +2218,13 @@ func VersionIdFromEntry(entry *filer_pb.Entry) string {
 	return versionIdFromEntry(entry)
 }
 
+// SelectLatestVersionId exposes selectLatestVersion's ordering to callers
+// outside this package that rescan .versions without writing a pointer.
+func SelectLatestVersionId(entries []*filer_pb.Entry) string {
+	_, versionId, _, _ := selectLatestVersion(entries)
+	return versionId
+}
+
 // versionIdFromEntry returns a .versions child entry's version id, preferring
 // the Seaweed-X-Amz-Version-Id attribute and falling back to the v_<versionId>
 // file name so entries written outside the normal PUT path still self-heal.
@@ -2339,7 +2346,21 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		return nil, scanErr
 	}
 
+	if stalePointerFile != "" && versionPointerGraceLeft(versionsEntry) > 0 {
+		versioningHealInfof("deferred", "bucket=%s key=%s mode=recent_pointer missing_file=%s", bucket, normalizedObject, stalePointerFile)
+		if latestEntry == nil {
+			return nil, fmt.Errorf("%w: no remaining version in %s", filer_pb.ErrNotFound, versionsDir)
+		}
+		return attachResolvedVersionId(latestEntry, latestVersionId), nil
+	}
+
 	if latestEntry == nil {
+		if stalePointerFile != "" {
+			if liveEntry, liveErr := s3a.getObjectScopedEntryRoutedByKey(bucket, normalizedObject, bucketDir, versionsObjectPath); liveErr != nil || versionPointerGraceLeft(liveEntry) > 0 {
+				versioningHealInfof("deferred", "bucket=%s key=%s mode=recent_commit_empty missing_file=%s err=%v", bucket, normalizedObject, stalePointerFile, liveErr)
+				return nil, fmt.Errorf("%w: no remaining version in %s", filer_pb.ErrNotFound, versionsDir)
+			}
+		}
 		// No version remains: remove the residue directory outright so future
 		// reads take the clean ErrNotFound path instead of re-entering this
 		// self-heal (and its rescan + surfaced warning) on every request. The
@@ -2391,6 +2412,10 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		versioningHealInfof("abandoned", "bucket=%s key=%s mode=pointer_moved observed_id=%s live_id=%s", bucket, normalizedObject, observedId, liveId)
 		return latestEntry, nil
 	}
+	if stalePointerFile != "" && versionPointerGraceLeft(liveEntry) > 0 {
+		versioningHealInfof("deferred", "bucket=%s key=%s mode=recent_commit missing_file=%s", bucket, normalizedObject, stalePointerFile)
+		return latestEntry, nil
+	}
 
 	// Clone the live image before any mutation so the precondition compares
 	// against exactly what the filer stores (nil and empty Extended maps are
@@ -2420,6 +2445,30 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		versioningHealWarningf("heal_persist_failed", "bucket=%s key=%s err=%v (returning rescanned entry)", bucket, normalizedObject, updateErr)
 	}
 	return latestEntry, nil
+}
+
+// staleVersionPointerGrace leaves a recently minted or recently stored pointer
+// as it is: its file can still be on its way, e.g. when filer.sync applies the
+// .versions directory before the version file, and a local removal or repair
+// then would replicate back and delete or roll back the version on the peer.
+const staleVersionPointerGrace = 10 * time.Minute
+
+// versionPointerGraceLeft returns how much of the grace the pointer has left;
+// zero means its version file is overdue. The grace runs from the later of the
+// version's mint, stamped by the minting cluster, and the local commit of the
+// .versions entry, so neither a clock ahead of the minting cluster nor a sync
+// backlog ends it before the file could arrive.
+func versionPointerGraceLeft(versionsEntry *filer_pb.Entry) time.Duration {
+	var left time.Duration
+	for _, ts := range []int64{
+		getVersionTimestamp(string(versionsEntry.GetExtended()[s3_constants.ExtLatestVersionIdKey])),
+		versionsEntry.GetCommitTsNs(),
+	} {
+		if ts > 0 {
+			left = max(left, staleVersionPointerGrace-time.Since(time.Unix(0, ts)))
+		}
+	}
+	return min(left, staleVersionPointerGrace)
 }
 
 // conditionalUpdateEntryRouted persists the repair on the object's write

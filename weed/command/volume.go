@@ -591,6 +591,7 @@ func shutdown(publicHttpDown httpdown.Server, clusterHttpServer httpdown.Server,
 	}
 
 	glog.V(0).Infof("graceful stop gRPC ...")
+	pb.StopHealthWatches(grpcS)
 	grpcS.GracefulStop()
 
 	volumeServer.Shutdown()

@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -44,7 +45,7 @@ var (
 func FilerAdminKeys() (signingKey, previousKey SigningKey) {
 	filerAdminKeysMu.Lock()
 	defer filerAdminKeysMu.Unlock()
-	if fresh, used := util.ReadConfiguration("security", ""); used != "" {
+	if fresh, used, _ := util.ReadConfiguration("security", ""); used != "" {
 		lastFilerAdminKeys = &[2]SigningKey{SigningKey(freshKey(fresh, "jwt.filer_signing.key")), SigningKey(fresh.GetString("jwt.filer_signing.previous_key"))}
 		return lastFilerAdminKeys[0], lastFilerAdminKeys[1]
 	}
@@ -102,6 +103,21 @@ func IsFilerAdminToken(signingKey SigningKey, token EncodedJwt, previousKeys ...
 	}
 	claims, ok := parsed.Claims.(*SeaweedFilerAdminClaims)
 	return ok && claims.SessionId == "" && len(claims.AllowedPrefixes) == 0 && len(claims.AllowedMethods) == 0 && len(claims.ReadPrefixes) == 0
+}
+
+// IsFilerAdminTokenWithLeeway is IsFilerAdminToken under the filer's gRPC
+// clock policy: expiry and not-before are checked with leeway, as for scoped
+// tokens. Callers outside that policy keep IsFilerAdminToken's strict check.
+func IsFilerAdminTokenWithLeeway(signingKey, previousKey SigningKey, token EncodedJwt, leeway time.Duration) bool {
+	if len(signingKey) == 0 || token == "" {
+		return false
+	}
+	claims := &SeaweedFilerAdminClaims{}
+	parsed, err := DecodeJwtWith(signingKey, previousKey, token, claims, leeway)
+	if err != nil || parsed == nil || !parsed.Valid {
+		return false
+	}
+	return claims.SessionId == "" && len(claims.AllowedPrefixes) == 0 && len(claims.AllowedMethods) == 0 && len(claims.ReadPrefixes) == 0
 }
 
 // GrpcAdminPeerCredentials returns outgoing metadata carrying a Bearer token

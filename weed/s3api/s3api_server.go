@@ -250,6 +250,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		// server's filer group.
 		if len(option.Filers) > 0 {
 			objectWriteLockClient = cluster.NewLockClient(option.GrpcDialOption, option.Filers[0])
+			objectWriteLockClient.TokenSource = security.FilerAdminToken
 			masterClient.SetOnLockRingUpdateFn(func(update *master_pb.LockRingUpdate) {
 				servers := make([]pb.ServerAddress, 0, len(update.Servers))
 				for _, s := range update.Servers {
@@ -267,6 +268,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			DiscoveryInterval: 5 * time.Minute,
 			HomeFiler:         option.HomeFiler,
 			GrpcTimeout:       option.VolumeLookupTimeout,
+			FilerTokenSource:  security.FilerAdminToken,
 		})
 		masterClient.SetOnPeerUpdateFn(filerClient.OnPeerUpdate)
 		masterClient.SetOnVolumeLocationChangeFn(filerClient.OnVolumeLocationChange)
@@ -281,8 +283,9 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			len(option.Filers), option.FilerGroup, option.Masters)
 	} else {
 		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter, &wdclient.FilerClientOption{
-			HomeFiler:   option.HomeFiler,
-			GrpcTimeout: option.VolumeLookupTimeout,
+			HomeFiler:        option.HomeFiler,
+			GrpcTimeout:      option.VolumeLookupTimeout,
+			FilerTokenSource: security.FilerAdminToken,
 		})
 		glog.V(1).Infof("S3 API initialized FilerClient with %d filer(s) (no discovery)", len(option.Filers))
 	}
@@ -389,6 +392,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		// ring updates); create a plain one when no masters are configured.
 		if objectWriteLockClient == nil {
 			objectWriteLockClient = cluster.NewLockClient(option.GrpcDialOption, option.Filers[0])
+			objectWriteLockClient.TokenSource = security.FilerAdminToken
 		}
 		s3ApiServer.objectWriteLockClient = objectWriteLockClient
 		s3ApiServer.newObjectWriteLock = func(bucket, object string) (objectWriteLock, error) {

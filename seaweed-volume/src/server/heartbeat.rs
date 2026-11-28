@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::sync::broadcast;
@@ -17,6 +17,7 @@ use super::volume_server::{VolumeServerState, to_http_address};
 use crate::pb::master_pb;
 use crate::pb::volume_server_pb;
 use crate::remote_storage::s3_tier::{S3TierBackend, S3TierConfig};
+use crate::storage::erasure_coding::ec_shard::EcShardDiskCheck;
 use crate::storage::store::Store;
 use crate::storage::types::{NeedleId, VolumeId};
 use crate::storage::volume_report::VolumeReportKey;
@@ -1038,6 +1039,31 @@ async fn maybe_adjust_volume_max(
     .await
 }
 
+static EC_SHARD_CHECK_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Runs `check` over the mounted EC shards on its own thread, unless the
+/// last one is still running; whether it started.
+fn start_ec_shard_check(state: &Arc<VolumeServerState>, check: fn(&[EcShardDiskCheck])) -> bool {
+    if EC_SHARD_CHECK_RUNNING.swap(true, Ordering::AcqRel) {
+        return false;
+    }
+    let state = state.clone();
+    // A plain thread, not spawn_blocking: runtime shutdown waits for
+    // blocking tasks, and a stat on a hung disk may never return.
+    let spawned = std::thread::Builder::new()
+        .name("ec-shard-check".into())
+        .spawn(move || {
+            let shards = state.store.read().unwrap().ec_shard_disk_checks();
+            check(&shards);
+            EC_SHARD_CHECK_RUNNING.store(false, Ordering::Release);
+        });
+    if spawned.is_err() {
+        EC_SHARD_CHECK_RUNNING.store(false, Ordering::Release);
+        return false;
+    }
+    true
+}
+
 /// The EC heartbeat and the shard list later deltas are diffed against,
 /// under one guard so no mount lands between them unreported.
 async fn ec_tick_pass(
@@ -1050,6 +1076,9 @@ async fn ec_tick_pass(
     ),
     tokio::task::JoinError,
 > {
+    start_ec_shard_check(state, |shards| {
+        Store::check_mounted_ec_shards(shards);
+    });
     off_runtime(config, state, |config, state| {
         let store = state.store.read().unwrap();
         (
@@ -2692,6 +2721,73 @@ mod tests {
         );
         assert_eq!(heartbeat.ec_shards.len(), 1);
         assert_eq!(shards.len(), 1);
+    }
+
+    static STALLED_CHECK_STARTED: AtomicBool = AtomicBool::new(false);
+    static STALLED_CHECK_RELEASED: AtomicBool = AtomicBool::new(false);
+
+    fn stalled_ec_shard_check(_: &[EcShardDiskCheck]) {
+        STALLED_CHECK_STARTED.store(true, Ordering::SeqCst);
+        while !STALLED_CHECK_RELEASED.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    // A disk check stuck on a hung disk holds no store guard: a writer gets
+    // the store, the tick still reports, and no second check starts.
+    #[tokio::test]
+    async fn test_ec_tick_pass_runs_past_a_stalled_disk_check() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+        let mut store = reporting_store(dir, 0);
+        std::fs::write(format!("{}/ec_tick_stalled_check_43.ec00", dir), b"shard").unwrap();
+        std::fs::write(format!("{}/ec_tick_stalled_check_43.ecx", dir), [0u8; 16]).unwrap();
+        store.locations[0]
+            .mount_ec_shards(VolumeId(43), "ec_tick_stalled_check", &[0], "")
+            .unwrap();
+        let state = test_state_with_store(store);
+
+        while !start_ec_shard_check(&state, stalled_ec_shard_check) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        while !STALLED_CHECK_STARTED.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        let (wrote_tx, wrote_rx) = std::sync::mpsc::channel();
+        {
+            let state = state.clone();
+            std::thread::spawn(move || {
+                drop(state.store.write().unwrap());
+                let _ = wrote_tx.send(());
+            });
+        }
+        wrote_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the stalled disk check kept the store guard");
+        let (heartbeat, shards) = tokio::time::timeout(
+            Duration::from_secs(10),
+            ec_tick_pass(&test_config(), &state),
+        )
+        .await
+        .expect("the EC tick waited for the stalled disk check")
+        .unwrap();
+        let still_one_check = EC_SHARD_CHECK_RUNNING.load(Ordering::SeqCst);
+        STALLED_CHECK_RELEASED.store(true, Ordering::SeqCst);
+
+        assert_eq!(heartbeat.ec_shards.len(), 1);
+        assert_eq!(shards.len(), 1);
+        assert!(
+            still_one_check,
+            "a second disk check ran beside the stalled one"
+        );
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while EC_SHARD_CHECK_RUNNING.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the released check did not finish");
     }
 
     #[tokio::test]

@@ -168,6 +168,21 @@ impl Security {
         }
     }
 
+    /// A dotted key such as `fips.mode` as the file alone sets it, without
+    /// the environment: a string as written, any other value as its TOML
+    /// text, so a caller can refuse it; empty counts as unset.
+    pub fn file_setting(&self, key: &str) -> Option<String> {
+        let mut parts = key.split('.');
+        let mut value = entry(&self.table, parts.next()?)?;
+        for part in parts {
+            value = entry(value.as_table()?, part)?;
+        }
+        match value {
+            toml::Value::String(s) => Some(s.clone()).filter(|s| !s.is_empty()),
+            other => Some(other.to_string()),
+        }
+    }
+
     /// A dotted key such as `grpc.ca`, from `WEED_GRPC_CA` when set, else
     /// the file; empty counts as unset.
     pub fn get(&self, key: &str) -> Option<String> {
@@ -348,6 +363,18 @@ mod tests {
         }
         let [ca, cert, key, client]: [String; 4] = paths.try_into().unwrap();
         (dir, ca, cert, key, client)
+    }
+
+    #[test]
+    fn fips_mode_is_read_from_the_file_alone_and_kept_when_not_a_string() {
+        let env = [("WEED_FIPS_MODE", "on")];
+        let s = security("[FIPS]\nMode = \"strict\"\n", &env);
+        assert_eq!(s.file_setting("fips.mode").as_deref(), Some("strict"));
+        let s = security("[fips]\nmode = [\"strict\"]\n", &[]);
+        assert_eq!(s.file_setting("fips.mode").as_deref(), Some("[\"strict\"]"));
+        let s = security("[fips]\nmode = \"\"\n", &[]);
+        assert_eq!(s.file_setting("fips.mode"), None);
+        assert_eq!(security("", &[]).file_setting("fips.mode"), None);
     }
 
     #[test]

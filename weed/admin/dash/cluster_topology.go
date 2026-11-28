@@ -225,7 +225,7 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							MaxVolumes:    int(totalMaxVolumes),
 							DiskUsage:     diskUsage,
 							DiskCapacity:  diskCapacity,
-							LastHeartbeat: time.Now(),
+							LastHeartbeat: dataNodeLastHeartbeat(node),
 							RemoteSize:    remoteSize,
 						}
 
@@ -267,4 +267,11 @@ func (s *AdminServer) InvalidateCache() {
 	s.cachedFilers = nil
 	s.lastCollectionStatsUpdate = time.Now().Add(-s.collectionStatsCacheThreshold)
 	s.collectionStatsCache = nil
+}
+
+func dataNodeLastHeartbeat(node *master_pb.DataNodeInfo) time.Time {
+	if node.LastHeartbeatNs <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, node.LastHeartbeatNs)
 }

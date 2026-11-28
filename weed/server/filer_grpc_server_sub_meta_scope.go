@@ -36,11 +36,16 @@ func (fs *FilerServer) metadataSubscriptionScope(ctx context.Context, method str
 		adminKey, previousAdminKey = fs.filerGuard.VerificationKeys(true)
 	}
 	subscribeKey := security.SigningKey(util.GetViper().GetString("jwt.filer_signing.subscribe.key"))
-	subscription, err := security.CheckGrpcMetadataSubscription(ctx, subscribeKey, adminKey, previousAdminKey, method)
-	if settings := fs.grpcScopeSettings.Load(); err != nil && settings != nil && len(settings.key) > 0 {
+	settings := fs.grpcScopeSettings.Load()
+	var leeway time.Duration
+	if settings != nil {
+		leeway = settings.leeway
+	}
+	subscription, err := security.CheckGrpcMetadataSubscription(ctx, subscribeKey, adminKey, previousAdminKey, method, leeway)
+	if err != nil && settings != nil && len(settings.key) > 0 {
 		// An unscoped grpc_key token already has full filer gRPC access, and
 		// peers without the shared key sign their subscriptions with it.
-		if grpcSubscription, grpcErr := security.CheckGrpcMetadataSubscription(ctx, subscribeKey, settings.key, settings.previousKey, method); grpcErr == nil {
+		if grpcSubscription, grpcErr := security.CheckGrpcMetadataSubscription(ctx, subscribeKey, settings.key, settings.previousKey, method, leeway); grpcErr == nil {
 			return grpcSubscription, nil
 		}
 	}

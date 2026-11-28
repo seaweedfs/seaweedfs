@@ -25,6 +25,18 @@
 #                                         previous gRPC scope and assignment-proof key during rotation
 # A set env var wins over the file, so the file can stay empty (or absent).
 
+# The FIPS 140-3 mode of every process that reads this file: "off", "on" or
+# "strict" (WEED_FIPS_MODE). Unset leaves each process as it is. Go processes
+# take the mode from GODEBUG and refuse to start when it differs: "off" needs
+# fips140=off, "on" needs fips140=on, "strict" needs fips140=only. The Rust
+# volume server, workers and vector engine take it from here: under "on" and
+# "strict" their TLS offers and accepts only the FIPS 140-3 versions, cipher
+# suites, key exchange groups and signature schemes Go allows in that mode.
+# This restricts behaviour only; the Rust binaries do not yet use a validated
+# cryptographic module.
+[fips]
+mode = ""
+
 # comma separated origins allowed to make requests to the filer and s3 gateway.
 # enter in this format: https://domain.com, or http://localhost:port
 [cors.allowed_origins]
@@ -202,6 +214,16 @@ allowed_wildcard_domain = "" # .mycompany.com
 # allowlist and refuse to start when per-target keys are their only allowlist.
 allowed_server_commonNames = ""      # comma-separated server identities
 allowed_server_wildcard_domain = ""  # .mycompany.com
+# Client certificate common names that every mTLS gRPC server accepts for the
+# standard grpc.health.v1.Health service only. Give a monitoring probe a
+# CA-signed client certificate with one of these names, e.g. blackbox_exporter's
+# grpc prober, or grpc_health_probe with -tls-client-cert run as a Kubernetes
+# exec probe (the built-in Kubernetes grpc probe cannot present a client
+# certificate). The probe can check that the port serves and that the server
+# certificate is valid, but any other RPC is refused with PermissionDenied. The
+# names need no place in allowed_commonNames, and a name listed here stays
+# confined even if it is.
+health_check_commonNames = ""   # comma-separated, e.g. "blackbox-exporter"
 
 # Volume server gRPC options (server-side)
 # Enables mTLS for incoming gRPC connections to volume server

@@ -43,6 +43,8 @@ public abstract class FilerSecurityContext extends SslContext {
     // volume/proxy HTTP requests. Precomputed so per-chunk requests don't re-encode.
     private static volatile String basicAuthHeaderValue;
 
+    private static final FilerCredentials filerCredentials = new FilerCredentials();
+
 
     static {
         String securityFileName = "security.toml";
@@ -64,6 +66,11 @@ public abstract class FilerSecurityContext extends SslContext {
 
             basicAuthHeaderValue = computeBasicAuthHeaderValue(
                     toml.getString("basic_auth.username"), toml.getString("basic_auth.password"));
+            filerCredentials.setBasicAuth(toml.getString("filer.basic_auth.user"), toml.getString("filer.basic_auth.password"));
+            filerCredentials.setJwtSigningKey(toml.getString("jwt.filer_signing.key"),
+                    toml.getLong("jwt.filer_signing.expires_after_seconds", 0L));
+            filerCredentials.setJwtReadSigningKey(toml.getString("jwt.filer_signing.read.key"),
+                    toml.getLong("jwt.filer_signing.read.expires_after_seconds", 0L));
 
             grpcTrustCertCollectionFilePath = toml.getString("grpc.ca");
             logger.debug("loading gRPC ca from {}", grpcTrustCertCollectionFilePath);
@@ -86,7 +93,7 @@ public abstract class FilerSecurityContext extends SslContext {
                 }
             }
 
-            if (toml.getBoolean("https.client.enabled")) {
+            if (toml.getBoolean("https.client.enabled", false)) {
                 httpTrustCertCollectionFilePath = toml.getString("https.client.ca");
                 logger.debug("loading HTTP ca from {}", httpTrustCertCollectionFilePath);
                 httpClientCertChainFilePath = toml.getString("https.client.cert");
@@ -146,11 +153,20 @@ public abstract class FilerSecurityContext extends SslContext {
         return basicAuthHeaderValue;
     }
 
+    // The filer credentials read from security.toml; each FilerClient copies them.
+    static FilerCredentials getFilerCredentials() {
+        return filerCredentials;
+    }
+
     private static String computeBasicAuthHeaderValue(String username, String password) {
         if (Strings.isNullOrEmpty(username)) {
             return null;
         }
-        String credentials = username + ":" + (password == null ? "" : password);
+        return encodeBasicAuth(username, password == null ? "" : password);
+    }
+
+    static String encodeBasicAuth(String username, String password) {
+        String credentials = username + ":" + password;
         return "Basic " + Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
     }
 

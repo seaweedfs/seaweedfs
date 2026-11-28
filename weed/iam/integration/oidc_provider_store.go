@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -603,7 +604,7 @@ func (f *FilerOIDCProviderStore) deleteProviderEntryIfUnchanged(ctx context.Cont
 }
 
 func (f *FilerOIDCProviderStore) withFilerClient(ctx context.Context, filerAddress string, fn func(filer_pb.SeaweedFilerClient) error) error {
-	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddress), f.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClient(false, 0, pb.ServerAddress(filerAddress), f.grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		if err := f.names.ensure(ctx, filerAddress, client); err != nil {
 			return err
 		}

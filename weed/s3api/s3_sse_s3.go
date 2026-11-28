@@ -24,6 +24,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"golang.org/x/crypto/hkdf"
@@ -803,7 +804,7 @@ func (k *KeyManagerFilerClient) WithFilerClient(streamingMode bool, fn func(file
 	if filerAddress == "" {
 		return fmt.Errorf("no filer available")
 	}
-	return pb.WithGrpcFilerClient(streamingMode, 0, filerAddress, k.grpcDialOption, fn)
+	return pb.WithGrpcFilerClient(streamingMode, 0, filerAddress, k.grpcDialOption, security.FilerAdminToken, fn)
 }
 
 // InitializeGlobalSSES3KeyManager initializes the global key manager with

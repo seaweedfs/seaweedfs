@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 
@@ -93,6 +94,7 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 	// Create FilerClientAccessor that adapts broker's single filer to the new multi-filer interface
 	fca := &filer_client.FilerClientAccessor{
 		GetGrpcDialOption: mqBroker.GetGrpcDialOption,
+		TokenSource:       security.FilerAdminToken,
 		GetFilers: func() []pb.ServerAddress {
 			filer := mqBroker.GetFiler()
 			if filer != "" {
@@ -143,6 +145,7 @@ func NewMessageBroker(option *MessageQueueBrokerOption, grpcDialOption grpc.Dial
 
 		newBrokerBalancerCh := make(chan string, 1)
 		lockClient := cluster.NewLockClient(grpcDialOption, mqBroker.currentFiler)
+		lockClient.TokenSource = security.FilerAdminToken
 		mqBroker.lockAsBalancer = lockClient.StartLongLivedLock(pub_balancer.LockBrokerBalancer, string(self), func(newLockOwner string) {
 			glog.V(0).Infof("broker %s found balanacer %s", self, newLockOwner)
 			newBrokerBalancerCh <- newLockOwner
@@ -189,8 +192,7 @@ func (b *MessageQueueBroker) GetFiler() pb.ServerAddress {
 }
 
 func (b *MessageQueueBroker) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
-
-	return pb.WithFilerClient(streamingMode, 0, b.GetFiler(), b.grpcDialOption, fn)
+	return pb.WithGrpcFilerClient(streamingMode, 0, b.GetFiler(), b.grpcDialOption, security.FilerAdminToken, fn)
 
 }
 

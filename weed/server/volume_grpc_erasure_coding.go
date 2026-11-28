@@ -395,7 +395,7 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 }
 
 // VolumeEcShardsCopy copy the .ecx and some ec data slices
-func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_server_pb.VolumeEcShardsCopyRequest) (*volume_server_pb.VolumeEcShardsCopyResponse, error) {
+func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_server_pb.VolumeEcShardsCopyRequest) (_ *volume_server_pb.VolumeEcShardsCopyResponse, err error) {
 	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
 		return nil, err
 	}
@@ -409,6 +409,13 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 	}
 
 	glog.V(0).Infof("VolumeEcShardsCopy: %v", req)
+	defer func() {
+		if err != nil {
+			reason := ecShardCopyFailureReason(err)
+			stats.VolumeServerEcShardCopyFailures.WithLabelValues(req.Collection, reason).Inc()
+			glog.Warningf("VolumeEcShardsCopy volume %d shards %v from %s failed (%s): %v", req.VolumeId, req.ShardIds, req.SourceDataNode, reason, err)
+		}
+	}()
 
 	// Overlapping copies of one vid would share the staged index, and a failed
 	// one's cleanup would remove shards another already committed.
@@ -493,7 +500,7 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 	// A failed copy removes what it added, or every retry against the same
 	// unusable source strands another unmounted shard on this disk.
 	var created ecCopyCreatedFiles
-	err := operation.WithVolumeServerClientOptions(true, pb.ServerAddress(req.SourceDataNode), func(client volume_server_pb.VolumeServerClient) error {
+	err = operation.WithVolumeServerClientOptions(true, pb.ServerAddress(req.SourceDataNode), func(client volume_server_pb.VolumeServerClient) error {
 
 		// The index is staged first, so a source whose .ecx is unusable fails
 		// the copy before any shard lands here. It is committed after every
@@ -611,6 +618,26 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 	}
 
 	return &volume_server_pb.VolumeEcShardsCopyResponse{}, nil
+}
+
+// ecShardCopyFailureReason maps a failed EC shard copy to a bounded reason
+// label. Errors from the source arrive as gRPC text, so it matches messages.
+func ecShardCopyFailureReason(err error) string {
+	code := status.Code(err)
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, ".ecx is 0 bytes"):
+		return stats.EcShardCopyEmptyIndex
+	case code == codes.ResourceExhausted || strings.Contains(msg, "no space left"):
+		return stats.EcShardCopyNoSpace
+	case code == codes.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) || strings.Contains(msg, "deadline exceeded") || strings.Contains(msg, "deadlineexceeded") || strings.Contains(msg, "deadline expired") || strings.Contains(msg, "deadline has elapsed") || strings.Contains(msg, "timeout") || strings.Contains(msg, "timed out"):
+		return stats.EcShardCopyTimeout
+	case code == codes.NotFound || strings.Contains(msg, "not found") || strings.Contains(msg, "notfound"):
+		return stats.EcShardCopySourceNotFound
+	case strings.Contains(msg, "input/output error"):
+		return stats.EcShardCopyIoError
+	}
+	return stats.EcShardCopyOther
 }
 
 // requireMountedEncodeRun refuses a copied .vif of another encode run than the

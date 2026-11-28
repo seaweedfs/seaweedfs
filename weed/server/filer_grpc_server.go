@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -243,13 +244,7 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		}
 	}
 
-	chunks, garbage, err2 := fs.cleanupChunks(ctx, util.Join(req.Directory, req.Entry.Name), nil, req.Entry)
-	if err2 != nil {
-		return &filer_pb.CreateEntryResponse{}, fmt.Errorf("CreateEntry cleanupChunks %s %s: %v", req.Directory, req.Entry.Name, err2)
-	}
-
 	newEntry := filer.FromPbEntry(req.Directory, req.Entry)
-	newEntry.Chunks = chunks
 	so, err := fs.applyStorageDefaultsToEntry(ctx, newEntry)
 	if err != nil {
 		if errors.Is(err, ErrReadOnly) {
@@ -314,6 +309,21 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	if err := checkScopeRetainedData(ctx, string(fullpath), existing, req.Entry, req.GetChunkAuth(), false); err != nil {
 		return &filer_pb.CreateEntryResponse{}, err
 	}
+
+	// The chunks are prepared under the path lock, which keeps the entry this
+	// create replaces from changing first: the new list may keep that entry's
+	// manifests, and filer.CreateEntry deletes the chunks the list drops.
+	replaced := existing
+	if replaced == nil && len(req.Entry.GetChunks()) >= filer.SmallChunkManifestBatch {
+		if current, findErr := fs.filer.FindEntryWithoutRemoteFetch(ctx, fullpath); findErr == nil {
+			replaced = current
+		}
+	}
+	chunks, garbage, err2 := fs.cleanupChunks(ctx, string(fullpath), nil, replaced, req.Entry)
+	if err2 != nil {
+		return &filer_pb.CreateEntryResponse{}, fmt.Errorf("CreateEntry cleanupChunks %s %s: %v", req.Directory, req.Entry.Name, err2)
+	}
+	newEntry.Chunks = chunks
 
 	if req.Fsync {
 		ctx = filer.WithSyncWrite(ctx)
@@ -990,7 +1000,9 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		}
 	}
 
-	return fs.updateEntry(ctx, req, fullpath, fs.cleanupChunks)
+	return fs.updateEntry(ctx, req, fullpath, func(ctx context.Context, fullpath string, existing *filer.Entry, entry *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error) {
+		return fs.cleanupChunks(ctx, fullpath, existing, existing, entry)
+	})
 }
 
 func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest, fullpath string,
@@ -1072,7 +1084,8 @@ func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		return &filer_pb.UpdateEntryResponse{}, err
 	}
 
-	chunks, garbage, err := prepareChunks(ctx, fullpath, entry, req.Entry)
+	prepared := entry
+	chunks, garbage, err := prepareChunks(ctx, fullpath, prepared, req.Entry)
 	if err != nil {
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("UpdateEntry cleanupChunks %s: %w", fullpath, err)
 	}
@@ -1113,8 +1126,9 @@ func (fs *FilerServer) updateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	}
 	if err != nil {
 		// A commit with unknown outcome may already reference these manifests.
+		// Those kept from the stored entry are still its own.
 		if !uncertain || stamp == 0 {
-			fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunks(chunks, req.Entry.GetChunks()))
+			fs.filer.DeleteChunksNotRecursive(filer.DoMinusChunks(chunks, slices.Concat(req.Entry.GetChunks(), prepared.GetChunks())))
 		}
 		fs.filer.ReleaseEntryCommitTsNs(stamp)
 		glog.V(3).InfofCtx(ctx, "UpdateEntry %s: %v", fullpath, err)
@@ -1227,15 +1241,13 @@ func validateUpdateEntryPreconditions(entry *filer.Entry, expectedExtended map[s
 	return nil
 }
 
-func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, existingEntry *filer.Entry, newEntry *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error) {
-
-	// remove old chunks if not included in the new ones
-	if existingEntry != nil {
-		garbage, err = filer.MinusChunks(ctx, fs.lookupFileId, existingEntry.GetChunks(), newEntry.GetChunks(), fs.filer.MasterClient)
-		if err != nil {
-			return newEntry.GetChunks(), nil, fmt.Errorf("MinusChunks: %w", err)
-		}
-	}
+// cleanupChunks compacts newEntry's chunks and folds them into
+// manifests. garbage holds the chunks it drops and those of existingEntry the
+// new list no longer holds. replaced is the entry the commit replaces, read
+// under the path lock: the new list keeps its manifests whose chunks it lists
+// flat (filer.ReuseStoredManifests). A create passes it with no existingEntry,
+// since filer.CreateEntry deletes the replaced entry's chunks itself.
+func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, existingEntry, replaced *filer.Entry, newEntry *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error) {
 
 	// files with manifest chunks are usually large and append only, skip calculating covered chunks
 	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(newEntry.GetChunks())
@@ -1243,6 +1255,20 @@ func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, exist
 	chunks, coveredChunks, err := filer.CompactFileChunks(ctx, fs.lookupFileId, nonManifestChunks)
 	if err != nil {
 		return newEntry.GetChunks(), nil, fmt.Errorf("CompactFileChunks: %w", err)
+	}
+
+	var reused []*filer_pb.FileChunk
+	if mayReuseManifests(ctx, replaced, newEntry) {
+		reused, chunks = filer.ReuseStoredManifests(ctx, fs.lookupFileId, replaced.GetChunks(), manifestChunks, chunks)
+		manifestChunks = append(manifestChunks, reused...)
+	}
+
+	// remove old chunks if not included in the new ones
+	if existingEntry != nil {
+		garbage, err = filer.MinusChunks(ctx, fs.lookupFileId, existingEntry.GetChunks(), slices.Concat(reused, newEntry.GetChunks()), fs.filer.MasterClient)
+		if err != nil {
+			return newEntry.GetChunks(), nil, fmt.Errorf("MinusChunks: %w", err)
+		}
 	}
 	garbage = append(garbage, coveredChunks...)
 
@@ -1268,6 +1294,15 @@ func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, exist
 	chunks = append(manifestChunks, chunks...)
 
 	return
+}
+
+// mayReuseManifests reports whether a commit may keep replaced's manifests. A
+// keep-only scope does not fold, and a hard link's chunks belong to all of its
+// names.
+func mayReuseManifests(ctx context.Context, replaced *filer.Entry, newEntry *filer_pb.Entry) bool {
+	return replaced != nil && !scopeKeepOnly(ctx) &&
+		len(replaced.HardLinkId) == 0 && len(newEntry.GetHardLinkId()) == 0 &&
+		filer.HasChunkManifest(replaced.GetChunks())
 }
 
 func (fs *FilerServer) AppendToEntry(ctx context.Context, req *filer_pb.AppendToEntryRequest) (*filer_pb.AppendToEntryResponse, error) {

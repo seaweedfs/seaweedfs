@@ -96,7 +96,7 @@ func (fs *SftpServer) GetDataCenter() string                          { return f
 func (fs *SftpServer) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	addr := fs.filerAddr.ToGrpcAddress()
 	return pb.WithGrpcClient(context.Background(), streamingMode, util.RandomInt32(), func(conn *grpc.ClientConn) error {
-		return fn(filer_pb.NewSeaweedFilerClient(conn))
+		return fn(filer_pb.NewSeaweedFilerClient(security.WithFilerClientAuth(conn, security.FilerAdminToken)))
 	}, addr, false, fs.grpcDialOption)
 }
 func (fs *SftpServer) withTimeoutContext(fn func(ctx context.Context) error) error {

@@ -20,7 +20,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/security/advancedtls"
 )
 
@@ -33,6 +32,10 @@ var CredRefreshingInterval = certreload.DefaultRefreshInterval
 type Authenticator struct {
 	AllowedWildcardDomain string
 	AllowedCommonNames    map[string]bool
+	// HealthCheckCommonNames pass the handshake like AllowedCommonNames, but
+	// the server lets them call only the gRPC health service. See
+	// healthCheckOnlyTap.
+	HealthCheckCommonNames map[string]bool
 }
 
 // SNIStrippingTransportCredentials wraps another TransportCredentials
@@ -79,7 +82,7 @@ func loadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		return nil, nil, nil
 	}
 
-	serverOptions := pemfile.Options{
+	serverOptions := certreload.Options{
 		CertFile:        config.GetString(component + ".cert"),
 		KeyFile:         config.GetString(component + ".key"),
 		RefreshDuration: CredRefreshingInterval,
@@ -94,18 +97,18 @@ func loadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		return nil, nil, err
 	}
 
-	serverIdentityProvider, err := pemfile.NewProvider(serverOptions)
+	serverIdentityProvider, err := certreload.NewProvider(serverOptions)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pemfile.NewProvider(%v) failed: %w", serverOptions, err)
+		return nil, nil, fmt.Errorf("certreload.NewProvider(%v) failed: %w", serverOptions, err)
 	}
 
-	serverRootOptions := pemfile.Options{
+	serverRootOptions := certreload.Options{
 		RootFile:        config.GetString("grpc.ca"),
 		RefreshDuration: CredRefreshingInterval,
 	}
-	serverRootProvider, err := pemfile.NewProvider(serverRootOptions)
+	serverRootProvider, err := certreload.NewProvider(serverRootOptions)
 	if err != nil {
-		return nil, nil, fmt.Errorf("pemfile.NewProvider(%v) failed: %w", serverRootOptions, err)
+		return nil, nil, fmt.Errorf("certreload.NewProvider(%v) failed: %w", serverRootOptions, err)
 	}
 
 	// Start a server and create a client using advancedtls API with Provider.
@@ -131,9 +134,11 @@ func loadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	if err != nil {
 		return nil, nil, err
 	}
+	healthCheckNames := parseAllowedCommonNames(config.GetString("grpc.health_check_commonNames"))
 	auther := Authenticator{
-		AllowedCommonNames:    parseAllowedCommonNames(config.GetString(component + ".allowed_commonNames")),
-		AllowedWildcardDomain: config.GetString("grpc.allowed_wildcard_domain"),
+		AllowedCommonNames:     parseAllowedCommonNames(config.GetString(component + ".allowed_commonNames")),
+		AllowedWildcardDomain:  config.GetString("grpc.allowed_wildcard_domain"),
+		HealthCheckCommonNames: healthCheckNames,
 	}
 	if len(auther.AllowedCommonNames) != 0 || auther.AllowedWildcardDomain != "" {
 		options.AdditionalPeerVerification = auther.Authenticate
@@ -146,7 +151,11 @@ func loadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	if err != nil {
 		return nil, nil, fmt.Errorf("advancedtls.NewServerCreds failed: %w", err)
 	}
-	return grpc.Creds(ta), nil, nil
+	var healthCheckOnly grpc.ServerOption
+	if len(healthCheckNames) != 0 {
+		healthCheckOnly = grpc.InTapHandle(healthCheckOnlyTap(healthCheckNames))
+	}
+	return grpc.Creds(ta), healthCheckOnly, nil
 }
 
 func LoadClientTLSFromFile(configFile string, component string) (grpc.DialOption, error) {
@@ -219,22 +228,22 @@ func loadClientTLS(config *util.ViperProxy, component, targetComponent string) (
 		return nil, err
 	}
 
-	clientOptions := pemfile.Options{
+	clientOptions := certreload.Options{
 		CertFile:        certFileName,
 		KeyFile:         keyFileName,
 		RefreshDuration: CredRefreshingInterval,
 	}
-	clientProvider, err := pemfile.NewProvider(clientOptions)
+	clientProvider, err := certreload.NewProvider(clientOptions)
 	if err != nil {
-		return nil, fmt.Errorf("pemfile.NewProvider(%v) failed: %w", clientOptions, err)
+		return nil, fmt.Errorf("certreload.NewProvider(%v) failed: %w", clientOptions, err)
 	}
-	clientRootOptions := pemfile.Options{
+	clientRootOptions := certreload.Options{
 		RootFile:        caFileName,
 		RefreshDuration: CredRefreshingInterval,
 	}
-	clientRootProvider, err := pemfile.NewProvider(clientRootOptions)
+	clientRootProvider, err := certreload.NewProvider(clientRootOptions)
 	if err != nil {
-		return nil, fmt.Errorf("pemfile.NewProvider(%v) failed: %w", clientRootOptions, err)
+		return nil, fmt.Errorf("certreload.NewProvider(%v) failed: %w", clientRootOptions, err)
 	}
 	options := &advancedtls.Options{
 		IdentityOptions: advancedtls.IdentityCertificateOptions{
@@ -331,8 +340,8 @@ func LoadClientTLSHTTP(clientCertFile string) *tls.Config {
 	}
 }
 
-// checkTLSFiles validates configured TLS material up front: the pemfile
-// providers read lazily, so without this a typo'd or unparseable file would
+// checkTLSFiles validates configured TLS material up front: the providers
+// read lazily, so without this a typo'd or unparseable file would
 // only surface at handshake time instead of at startup.
 func checkTLSFiles(certFile, keyFile, caFile string) error {
 	if _, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
@@ -454,6 +463,9 @@ func (a Authenticator) Authenticate(params *advancedtls.HandshakeVerificationInf
 		return &advancedtls.PostHandshakeVerificationResults{}, nil
 	}
 	if _, ok := a.AllowedCommonNames[params.Leaf.Subject.CommonName]; ok {
+		return &advancedtls.PostHandshakeVerificationResults{}, nil
+	}
+	if a.HealthCheckCommonNames[params.Leaf.Subject.CommonName] {
 		return &advancedtls.PostHandshakeVerificationResults{}, nil
 	}
 	err := fmt.Errorf("Authenticate: invalid subject client common name: %s", params.Leaf.Subject.CommonName)

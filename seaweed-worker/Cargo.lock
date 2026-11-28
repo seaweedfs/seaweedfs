@@ -6364,6 +6364,7 @@ dependencies = [
  "reqwest 0.12.28",
  "rustls",
  "rustls-pemfile",
+ "seaweed-common",
  "thiserror 2.0.20",
  "tokio",
  "tokio-rustls",

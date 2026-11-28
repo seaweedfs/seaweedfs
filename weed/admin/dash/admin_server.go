@@ -113,14 +113,15 @@ func getCollectionName(filerGroup, bucketName string) string {
 }
 
 type AdminServer struct {
-	masterClient    *wdclient.MasterClient
-	templateFS      http.FileSystem
-	dataDir         string
-	filerGroup      string
-	grpcDialOption  grpc.DialOption
-	cacheExpiration time.Duration
-	lastCacheUpdate time.Time
-	cachedTopology  *ClusterTopology
+	masterClient     *wdclient.MasterClient
+	templateFS       http.FileSystem
+	dataDir          string
+	filerGroup       string
+	grpcDialOption   grpc.DialOption
+	filerTokenSource security.FilerTokenSource
+	cacheExpiration  time.Duration
+	lastCacheUpdate  time.Time
+	cachedTopology   *ClusterTopology
 
 	// dashSamples is a bounded in-memory ring of recent cluster snapshots that
 	// powers the dashboard's at-a-glance sparklines (see dashboard_metrics.go),
@@ -215,6 +216,7 @@ func NewAdminServer(masters string, filerGroup string, templateFS http.FileSyste
 		dataDir:                       dataDir,
 		filerGroup:                    filerGroup,
 		grpcDialOption:                grpcDialOption,
+		filerTokenSource:              security.FilerAdminToken,
 		cacheExpiration:               defaultCacheTimeout,
 		filerCacheExpiration:          defaultFilerCacheTimeout,
 		configPersistence:             NewConfigPersistence(dataDir),
@@ -443,6 +445,7 @@ func (s *AdminServer) publishMaintenanceMetrics(ctx context.Context) {
 	// Seed one sample so the dashboard has something to draw before the first tick.
 	s.recordDashboardSample()
 
+	var maintenanceOverlap string
 	for {
 		select {
 		case <-ctx.Done():
@@ -450,6 +453,7 @@ func (s *AdminServer) publishMaintenanceMetrics(ctx context.Context) {
 		case <-ticker.C:
 			s.collectMaintenanceMetrics()
 			s.recordDashboardSample()
+			maintenanceOverlap = s.warnOnMaintenanceOverlap(maintenanceOverlap)
 		}
 	}
 }

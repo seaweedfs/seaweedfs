@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // formatBytes converts bytes to human readable format
@@ -97,4 +98,11 @@ func pluginLaneDescription(lane string) string {
 	default:
 		return "Default workers, scheduler state, queue, and execution flows."
 	}
+}
+
+func formatLastHeartbeat(t time.Time) string {
+	if t.IsZero() {
+		return "unknown"
+	}
+	return t.Format("2006-01-02 15:04:05")
 }

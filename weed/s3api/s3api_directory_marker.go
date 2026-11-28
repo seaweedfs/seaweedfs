@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -159,7 +160,7 @@ func (s3a *S3ApiServer) deleteDirectoryMarker(r *http.Request, bucket, object st
 		}
 		return s3err.ErrNone
 	}
-	if err := pb.WithFilerClient(false, 0, priorOwner, s3a.option.GrpcDialOption, deleteMarker); err != nil {
+	if err := pb.WithGrpcFilerClient(false, 0, priorOwner, s3a.option.GrpcDialOption, security.FilerAdminToken, deleteMarker); err != nil {
 		glog.Errorf("deleteDirectoryMarker: failed to delete %s/%s on prior owner %s: %v", bucket, object, priorOwner, err)
 		return s3err.ErrInternalError
 	}

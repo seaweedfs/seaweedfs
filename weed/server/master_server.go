@@ -493,6 +493,7 @@ func (ms *MasterServer) startAdminScripts() {
 	var shellOptions shell.ShellOptions
 	shellOptions.GrpcDialOption = security.LoadClientTLS(v, "grpc.master")
 	shellOptions.Masters = &masterAddress
+	shellOptions.FilerTokenSource = security.FilerAdminToken
 
 	shellOptions.Directory = "/"
 	emptyFilerGroup := ""

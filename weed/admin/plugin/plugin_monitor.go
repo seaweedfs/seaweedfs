@@ -10,6 +10,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -805,6 +806,9 @@ func mergeTrackedStatusIntoDetail(detail *TrackedJob, tracked *TrackedJob) {
 	if detail.DedupeKey == "" {
 		detail.DedupeKey = tracked.DedupeKey
 	}
+	if detail.VolumeID == 0 {
+		detail.VolumeID = tracked.VolumeID
+	}
 	if detail.Summary == "" {
 		detail.Summary = tracked.Summary
 	}
@@ -942,6 +946,7 @@ func (r *Plugin) trackExecutionStart(requestID, workerID string, job *plugin_pb.
 	tracked.RequestID = requestID
 	tracked.WorkerID = workerID
 	tracked.DedupeKey = job.DedupeKey
+	tracked.VolumeID = pluginworker.ReadUint32Config(job.Parameters, "volume_id", 0)
 	tracked.Summary = job.Summary
 	tracked.State = strings.ToLower(plugin_pb.JobState_JOB_STATE_ASSIGNED.String())
 	tracked.Progress = 0
@@ -962,6 +967,7 @@ func (r *Plugin) trackExecutionStart(requestID, workerID string, job *plugin_pb.
 		detail.RequestID = requestID
 		detail.WorkerID = workerID
 		detail.DedupeKey = job.DedupeKey
+		detail.VolumeID = trackedSnapshot.VolumeID
 		detail.Summary = job.Summary
 		detail.Detail = job.Detail
 		detail.Parameters = enrichTrackedJobParameters(job.JobType, configValueMapToPlain(job.Parameters))
@@ -1017,6 +1023,7 @@ func (r *Plugin) trackExecutionQueued(job *plugin_pb.JobSpec) {
 
 	tracked.JobType = job.JobType
 	tracked.DedupeKey = job.DedupeKey
+	tracked.VolumeID = pluginworker.ReadUint32Config(job.Parameters, "volume_id", 0)
 	tracked.Summary = job.Summary
 	tracked.State = strings.ToLower(plugin_pb.JobState_JOB_STATE_PENDING.String())
 	tracked.Progress = 0
@@ -1034,6 +1041,7 @@ func (r *Plugin) trackExecutionQueued(job *plugin_pb.JobSpec) {
 		detail.JobID = job.JobId
 		detail.JobType = job.JobType
 		detail.DedupeKey = job.DedupeKey
+		detail.VolumeID = trackedSnapshot.VolumeID
 		detail.Summary = job.Summary
 		detail.Detail = job.Detail
 		detail.Parameters = enrichTrackedJobParameters(job.JobType, configValueMapToPlain(job.Parameters))

@@ -1,5 +1,6 @@
 package seaweedfs.client;
 
+import org.apache.http.client.config.RequestConfig;
 import org.apache.http.config.Registry;
 import org.apache.http.config.RegistryBuilder;
 import org.apache.http.conn.socket.ConnectionSocketFactory;
@@ -90,4 +91,7 @@ public class SeaweedUtil {
         }
         return host + ":" + port;
     }
+
+    // Redirects would carry the filer credential to the redirect target.
+    static final RequestConfig PROXY_CHUNK_REQUEST_CONFIG = RequestConfig.custom().setRedirectsEnabled(false).build();
 }

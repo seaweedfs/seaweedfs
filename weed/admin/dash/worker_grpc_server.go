@@ -100,9 +100,9 @@ func (s *WorkerGrpcServer) StartWithTLS(bindIp string, port int, listener net.Li
 	}
 
 	// Create gRPC server with optional TLS
-	tlsOption, _ := security.LoadServerTLS(util.GetViper(), "grpc.admin")
+	tlsOption, healthCheckOption := security.LoadServerTLS(util.GetViper(), "grpc.admin")
 	s.mtlsEnabled = tlsOption != nil
-	grpcServer := pb.NewGrpcServer(tlsOption)
+	grpcServer := pb.NewGrpcServer(tlsOption, healthCheckOption)
 
 	worker_pb.RegisterWorkerServiceServer(grpcServer, s)
 	if plugin := s.adminServer.GetPlugin(); plugin != nil {
@@ -182,6 +182,7 @@ func (s *WorkerGrpcServer) Stop() error {
 
 	// Stop gRPC server
 	if s.grpcServer != nil {
+		pb.StopHealthWatches(s.grpcServer)
 		s.grpcServer.GracefulStop()
 	}
 

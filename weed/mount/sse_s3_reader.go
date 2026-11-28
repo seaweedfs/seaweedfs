@@ -66,7 +66,7 @@ func NewSSES3Reader(ctx context.Context, bucketPath string, filers []pb.ServerAd
 func listS3Endpoints(ctx context.Context, filers []pb.ServerAddress, grpcDialOption grpc.DialOption) ([]string, error) {
 	var masters []string
 	var filerGroup string
-	if err := pb.WithOneOfGrpcFilerClients(false, filers, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	if err := pb.WithOneOfGrpcFilerClients(false, filers, grpcDialOption, nil, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return err

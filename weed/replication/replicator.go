@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 )
@@ -26,12 +27,18 @@ func NewReplicator(sourceConfig util.Configuration, configPrefix string, dataSin
 
 	source := &source.FilerSource{}
 	source.Initialize(sourceConfig, configPrefix)
+	source.SetFilerTokenSource(security.FilerAdminToken)
 
 	if err := repl_util.InitializeSSEForReplication(source); err != nil {
 		glog.Warningf("SSE initialization failed: %v (encrypted objects may fail to replicate)", err)
 	}
 
 	dataSink.SetSourceFiler(source)
+	if tokenSink, ok := dataSink.(interface {
+		SetFilerTokenSource(security.FilerTokenSource)
+	}); ok {
+		tokenSink.SetFilerTokenSource(security.FilerAdminToken)
+	}
 
 	return &Replicator{
 		sink:        dataSink,
@@ -180,8 +187,8 @@ func metadataEventTarget(key string, newEntry *filer_pb.Entry, newParentPath str
 
 // ReadFilerSignature returns the filer's signature and the digest it reports,
 // empty for a filer that predates the setting.
-func ReadFilerSignature(grpcDialOption grpc.DialOption, filer pb.ServerAddress) (filerSignature int32, digest string, readErr error) {
-	if readErr = pb.WithFilerClient(false, 0, filer, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+func ReadFilerSignature(grpcDialOption grpc.DialOption, filer pb.ServerAddress, tokenSource security.FilerTokenSource) (filerSignature int32, digest string, readErr error) {
+	if readErr = pb.WithGrpcFilerClient(false, 0, filer, grpcDialOption, tokenSource, func(client filer_pb.SeaweedFilerClient) error {
 		if resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{}); err != nil {
 			return fmt.Errorf("GetFilerConfiguration %s: %v", filer, err)
 		} else {

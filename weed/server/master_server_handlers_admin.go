@@ -19,10 +19,20 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.Request) {
-	collectionName := r.FormValue("collection")
+	if r.Method != http.MethodDelete {
+		w.Header().Set("Allow", http.MethodDelete)
+		writeJsonError(w, r, http.StatusMethodNotAllowed, fmt.Errorf("/col/delete requires the DELETE method"))
+		return
+	}
+	collectionName, err := ms.collectionToDelete(r)
+	if err != nil {
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
 	if _, ok := ms.Topo.FindCollection(collectionName); !ok {
 		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("collection %s does not exist", collectionName))
 		return
@@ -38,6 +48,36 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 
 	w.WriteHeader(http.StatusNoContent)
 	return
+}
+
+// collectionToDelete reads the collection a /col/delete request names. The
+// default collection is the empty-named one, and an absent or empty parameter
+// also reads as "", so a bare /col/delete would delete the default collection.
+// Require it to be named explicitly, with the keywords weed shell uses for it.
+// A collection literally named a keyword keeps its name, and when both exist
+// the request is refused rather than guessing which one to delete.
+func (ms *MasterServer) collectionToDelete(r *http.Request) (string, error) {
+	name := r.FormValue("collection")
+	if name == "" {
+		return "", fmt.Errorf("collection parameter is required; use collection=%s to delete the default (empty-named) collection", wildcard.CollectionDefault)
+	}
+	keywords := []string{wildcard.CollectionDefault, wildcard.CollectionDefault + "_"}
+	if name != keywords[0] && name != keywords[1] {
+		return name, nil
+	}
+	if _, literal := ms.Topo.FindCollection(name); !literal {
+		return "", nil
+	}
+	if _, hasDefault := ms.Topo.FindCollection(""); !hasDefault {
+		return name, nil
+	}
+	hint := "use weed shell collection.delete to delete the default collection"
+	for _, other := range keywords {
+		if _, taken := ms.Topo.FindCollection(other); !taken {
+			hint = fmt.Sprintf("use collection=%s to delete the default collection", other)
+		}
+	}
+	return "", fmt.Errorf("collection=%s is ambiguous: both a collection named %s and the default (empty-named) collection exist; %s", name, name, hint)
 }
 
 func (ms *MasterServer) dirStatusHandler(w http.ResponseWriter, r *http.Request) {

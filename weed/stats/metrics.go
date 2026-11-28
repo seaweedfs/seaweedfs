@@ -548,6 +548,14 @@ var (
 			Help:      "Number of read only volumes.",
 		}, []string{"collection", "type"})
 
+	VolumeServerEcShardDiskMismatchGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemVolumeServer,
+			Name:      "ec_shard_disk_mismatch",
+			Help:      "Mounted EC shards whose file on disk is gone or replaced (ghost) or changed size (stale_size).",
+		}, []string{"reason"})
+
 	VolumeServerMaxVolumeCounter = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: Namespace,
@@ -757,6 +765,14 @@ var (
 			Help:      "Reads of an EC interval served by reconstructing from other shards; success means reconstruction produced data, not that the needle passed validation.",
 		}, []string{"result"})
 
+	VolumeServerEcShardCopyFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemVolumeServer,
+			Name:      "ec_shard_copy_failures_total",
+			Help:      "Counter of failed EC shard copies into this server by collection and reason.",
+		}, []string{"collection", "reason"})
+
 	S3RequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -764,6 +780,14 @@ var (
 			Name:      "request_total",
 			Help:      "Counter of s3 requests.",
 		}, []string{"type", "code", "bucket"})
+
+	S3ReadAbortedCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: subsystemS3,
+			Name:      "read_aborted_total",
+			Help:      "Counter of s3 object reads that failed after the response status was sent, by bucket and cause.",
+		}, []string{"bucket", "cause"})
 
 	S3HandlerCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -1172,6 +1196,7 @@ func init() {
 	Gather.MustRegister(VolumeServerVolumeGauge)
 	Gather.MustRegister(VolumeServerMaxVolumeCounter)
 	Gather.MustRegister(VolumeServerReadOnlyVolumeGauge)
+	Gather.MustRegister(VolumeServerEcShardDiskMismatchGauge)
 	Gather.MustRegister(VolumeServerDiskSizeGauge)
 	Gather.MustRegister(VolumeServerResourceGauge)
 	Gather.MustRegister(VolumeServerDiskErrorGauge)
@@ -1195,11 +1220,13 @@ func init() {
 	Gather.MustRegister(VolumeServerECRebuildHistogram)
 	Gather.MustRegister(VolumeServerECRebuildCounter)
 	Gather.MustRegister(VolumeServerECReconstructedIntervalCounter)
+	Gather.MustRegister(VolumeServerEcShardCopyFailures)
 	Gather.MustRegister(MasterUnderReplicatedVolumes)
 	Gather.MustRegister(MasterWritableVolumesPerDisk)
 	Gather.MustRegister(MasterVolumeCreationCounter)
 
 	Gather.MustRegister(S3RequestCounter)
+	Gather.MustRegister(S3ReadAbortedCounter)
 	Gather.MustRegister(S3HandlerCounter)
 	Gather.MustRegister(S3RequestHistogram)
 	Gather.MustRegister(S3InFlightRequestsGauge)
@@ -1316,6 +1343,7 @@ func DeleteBucketMetrics(bucket string) {
 
 	labels := prometheus.Labels{"bucket": bucket}
 	c := S3RequestCounter.DeletePartialMatch(labels)
+	c += S3ReadAbortedCounter.DeletePartialMatch(labels)
 	c += S3RequestHistogram.DeletePartialMatch(labels)
 	c += S3TimeToFirstByteHistogram.DeletePartialMatch(labels)
 	c += S3BucketTrafficReceivedBytesCounter.DeletePartialMatch(labels)

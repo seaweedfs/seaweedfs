@@ -314,3 +314,26 @@ func TestClusterTopologyDiskTotals(t *testing.T) {
 	require.Equal(t, int64(1_000_000_000_000+10*30000*1024*1024), topology.DiskCapacity)
 	require.Equal(t, int64(590_000_000_000+30_000_000_000+5_000_000_000), topology.TotalSize)
 }
+
+func TestVolumeServerLastHeartbeat(t *testing.T) {
+	reported := time.Date(2026, 11, 27, 12, 0, 5, 0, time.UTC)
+	topology := volumeAccessTestTopology(
+		&master_pb.DataNodeInfo{Id: "node-a", LastHeartbeatNs: reported.UnixNano()},
+		&master_pb.DataNodeInfo{Id: "node-b"},
+	)
+	want := map[string]time.Time{"node-a": reported, "node-b": {}}
+
+	servers, err := newVolumeServersTestAdmin(t, topology).GetClusterVolumeServers()
+	require.NoError(t, err)
+	require.Len(t, servers.VolumeServers, 2)
+	for _, vs := range servers.VolumeServers {
+		require.True(t, want[vs.Address].Equal(vs.LastHeartbeat), "volume servers page %s: %v", vs.Address, vs.LastHeartbeat)
+	}
+
+	clusterTopology, err := newVolumeServersTestAdmin(t, topology).GetClusterTopology()
+	require.NoError(t, err)
+	require.Len(t, clusterTopology.VolumeServers, 2)
+	for _, vs := range clusterTopology.VolumeServers {
+		require.True(t, want[vs.Address].Equal(vs.LastHeartbeat), "topology %s: %v", vs.Address, vs.LastHeartbeat)
+	}
+}

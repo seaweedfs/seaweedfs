@@ -314,6 +314,9 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			rack := dc.GetOrCreateRack(rackName)
 			dn = rack.GetOrCreateDataNode(heartbeat.Ip, int(heartbeat.Port), int(heartbeat.GrpcPort), heartbeat.PublicUrl, heartbeat.Id, heartbeat.MaxVolumeCounts)
 			glog.V(0).Infof("added volume server %d: %v (id=%s, ip=%v:%d) %v", dn.Counter, dn.Id(), heartbeat.Id, heartbeat.GetIp(), heartbeat.GetPort(), heartbeat.LocationUuids)
+			if ms.Topo.DefaultPlacementStandsOut(dcName, rackName) {
+				glog.Warningf("volume server %v registered in data center %q rack %q while other volume servers name theirs; set -dataCenter and -rack on it", dn.Id(), dcName, rackName)
+			}
 			uuidlist, err := ms.RegisterUuids(heartbeat)
 			if err != nil {
 				if stream_err := stream.Send(&master_pb.HeartbeatResponse{
@@ -342,6 +345,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		glog.V(4).Infof("master received heartbeat %s", heartbeat.String())
 		stats.MasterReceivedHeartbeatCounter.WithLabelValues("total").Inc()
+		dn.SetLastHeartbeat(time.Now())
 
 		// Every heartbeat may carry the state, so a master that just took over
 		// learns about a server already in maintenance from the first one.

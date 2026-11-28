@@ -22,6 +22,15 @@ fn process_env(key: &str) -> Option<OsString> {
 
 /// `std::env::var`'s view of an [`EnvLookup`]: unset and non-UTF-8 both read
 /// as absent, exactly as `std::env::var(key).ok()` does.
+fn parse_common_names(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(String::from)
+        .collect()
+}
+
 fn env_string(env: EnvLookup<'_>, key: &str) -> Option<String> {
     env(key).and_then(|value| value.into_string().ok())
 }
@@ -324,6 +333,7 @@ pub struct VolumeServerConfig {
     pub grpc_ca_file: String,
     pub grpc_allowed_wildcard_domain: String,
     pub grpc_volume_allowed_common_names: Vec<String>,
+    pub grpc_health_check_common_names: Vec<String>,
     pub tls_policy: TlsPolicy,
     /// Path to security.toml — stored for SIGHUP reload.
     pub security_file: String,
@@ -1019,6 +1029,7 @@ fn resolve_config_with_env(cli: Cli, env: EnvLookup<'_>) -> VolumeServerConfig {
         grpc_ca_file: sec.grpc_ca_file,
         grpc_allowed_wildcard_domain: sec.grpc_allowed_wildcard_domain,
         grpc_volume_allowed_common_names: sec.grpc_volume_allowed_common_names,
+        grpc_health_check_common_names: sec.grpc_health_check_common_names,
         tls_policy: sec.tls_policy,
         security_file: cli.security_file,
         allow_untrusted_remote_endpoints: cli.allow_untrusted_remote_endpoints,
@@ -1052,12 +1063,16 @@ pub struct SecurityConfig {
     pub grpc_ca_file: String,
     pub grpc_allowed_wildcard_domain: String,
     pub grpc_volume_allowed_common_names: Vec<String>,
+    pub grpc_health_check_common_names: Vec<String>,
     pub tls_policy: TlsPolicy,
     pub access_ui: bool,
     /// The file was read; otherwise only defaults and WEED_ overrides are set.
     pub file_read: bool,
     /// IPs from [guard] white_list in security.toml
     pub guard_white_list: Vec<String>,
+    /// `[fips] mode` as the file sets it, read like every other key here;
+    /// `WEED_FIPS_MODE` is applied by `seaweed_common::fips::resolve`.
+    pub fips_mode: Option<String>,
 }
 
 /// Parse a security.toml file to extract JWT signing keys and TLS configuration.
@@ -1132,6 +1147,7 @@ fn parse_security_config_with_env(path: &str, env: EnvLookup<'_>) -> SecurityCon
         Tls,
         Guard,
         Access,
+        Fips,
     }
 
     let mut section = Section::None;
@@ -1177,6 +1193,10 @@ fn parse_security_config_with_env(path: &str, env: EnvLookup<'_>) -> SecurityCon
             section = Section::Access;
             continue;
         }
+        if trimmed == "[fips]" {
+            section = Section::Fips;
+            continue;
+        }
         if trimmed.starts_with('[') {
             section = Section::None;
             continue;
@@ -1213,6 +1233,9 @@ fn parse_security_config_with_env(path: &str, env: EnvLookup<'_>) -> SecurityCon
                     "ca" => cfg.grpc_ca_file = value.to_string(),
                     "allowed_wildcard_domain" => {
                         cfg.grpc_allowed_wildcard_domain = value.to_string()
+                    }
+                    "health_check_commonNames" => {
+                        cfg.grpc_health_check_common_names = parse_common_names(value)
                     }
                     _ => {}
                 },
@@ -1254,6 +1277,11 @@ fn parse_security_config_with_env(path: &str, env: EnvLookup<'_>) -> SecurityCon
                         cfg.access_ui = value.parse().unwrap_or(false)
                     }
                 }
+                Section::Fips => {
+                    if key == "mode" {
+                        cfg.fips_mode = Some(value.to_string())
+                    }
+                }
                 Section::None => {}
             }
         }
@@ -1289,6 +1317,34 @@ fn toml_value_text(raw: &str) -> String {
         },
         Err(_) => raw.trim().trim_matches('"').to_string(),
     }
+}
+
+/// The FIPS mode this volume server runs in: `WEED_FIPS_MODE`, else
+/// `fips.mode` in the security.toml `--securityFile` names or the search
+/// finds, read by the same loader as the JWT keys, else off. A file that
+/// exists but cannot be read is an error, since it may set the mode.
+pub fn resolve_fips_setting(
+    security_file: &str,
+) -> Result<seaweed_common::fips::Setting, seaweed_common::fips::FipsModeError> {
+    resolve_fips_setting_with_env(security_file, &process_env)
+}
+
+fn resolve_fips_setting_with_env(
+    security_file: &str,
+    env: EnvLookup<'_>,
+) -> Result<seaweed_common::fips::Setting, seaweed_common::fips::FipsModeError> {
+    let path = resolve_security_config_path(security_file, env).filter(|p| p.exists());
+    let Some(path) = path else {
+        return seaweed_common::fips::resolve(None, None, env);
+    };
+    if let Err(e) = std::fs::read_to_string(&path) {
+        return Err(seaweed_common::fips::FipsModeError::File {
+            path,
+            reason: e.to_string(),
+        });
+    }
+    let file_value = parse_security_config_with_env(&path.to_string_lossy(), env).fips_mode;
+    seaweed_common::fips::resolve(Some(&path), file_value.as_deref(), env)
 }
 
 fn resolve_security_config_path(path: &str, env: EnvLookup<'_>) -> Option<PathBuf> {
@@ -1366,6 +1422,9 @@ fn apply_env_overrides(cfg: &mut SecurityConfig, env: EnvLookup<'_>) {
     }
     if let Some(v) = env_string(env, "WEED_GRPC_VOLUME_ALLOWED_COMMONNAMES") {
         cfg.grpc_volume_allowed_common_names = v.split(',').map(|name| name.to_string()).collect();
+    }
+    if let Some(v) = env_string(env, "WEED_GRPC_HEALTH_CHECK_COMMONNAMES") {
+        cfg.grpc_health_check_common_names = parse_common_names(&v);
     }
     if let Some(v) = env_string(env, "WEED_TLS_MIN_VERSION") {
         cfg.tls_policy.min_version = v;
@@ -2026,6 +2085,7 @@ client_key = "/etc/seaweedfs/volume-client-key.pem"
             r#"
 [grpc]
 allowed_wildcard_domain = ".example.com"
+health_check_commonNames = "blackbox, ,probe"
 
 [grpc.volume]
 allowed_commonNames = "volume-a.internal,volume-b.internal"
@@ -2041,6 +2101,10 @@ allowed_commonNames = "volume-a.internal,volume-b.internal"
                 String::from("volume-a.internal"),
                 String::from("volume-b.internal")
             ]
+        );
+        assert_eq!(
+            cfg.grpc_health_check_common_names,
+            vec![String::from("blackbox"), String::from("probe")]
         );
     }
 
@@ -2236,6 +2300,59 @@ previous_key = "read-old"
         let cfg = parse_security_config_with_env(&path, &env);
         assert!(!cfg.file_read);
         assert_eq!(cfg.jwt_signing_key, b"env-secret");
+    }
+
+    #[test]
+    fn test_fips_mode_from_the_security_file_and_env() {
+        use seaweed_common::fips::FipsMode;
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "[fips]\nmode = \"on\"\n").unwrap();
+        let path = tmp.path().to_str().unwrap();
+
+        let setting = resolve_fips_setting_with_env(path, &fake_env(&[])).unwrap();
+        assert_eq!(setting.mode, FipsMode::On);
+        let env = fake_env(&[("WEED_FIPS_MODE", "strict")]);
+        let setting = resolve_fips_setting_with_env(path, &env).unwrap();
+        assert_eq!(setting.mode, FipsMode::Strict);
+        let env = fake_env(&[("WEED_FIPS_MODE", "only")]);
+        assert!(resolve_fips_setting_with_env(path, &env).is_err());
+
+        std::fs::write(tmp.path(), "[jwt.signing]\nkey = \"secret\"\n").unwrap();
+        let setting = resolve_fips_setting_with_env(path, &fake_env(&[])).unwrap();
+        assert_eq!(setting.mode, FipsMode::Off);
+    }
+
+    #[test]
+    fn test_fips_mode_is_read_with_the_jwt_keys_from_a_lenient_file() {
+        use seaweed_common::fips::FipsMode;
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let text = "[fips]\nmode = \"on\"\n[jwt.signing]\nkey = unquoted-secret\n";
+        std::fs::write(tmp.path(), text).unwrap();
+        let path = tmp.path().to_str().unwrap();
+        assert!(text.parse::<toml::Table>().is_err(), "not TOML");
+        let cfg = parse_security_config_with_env(path, &fake_env(&[]));
+        assert_eq!(cfg.jwt_signing_key, b"unquoted-secret");
+        let setting = resolve_fips_setting_with_env(path, &fake_env(&[])).unwrap();
+        assert_eq!(setting.mode, FipsMode::On);
+
+        std::fs::write(tmp.path(), "[fips]\nmode = [\"strict\"]\n").unwrap();
+        assert!(resolve_fips_setting_with_env(path, &fake_env(&[])).is_err());
+    }
+
+    #[test]
+    fn test_fips_mode_refuses_a_security_file_it_cannot_read() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), b"[fips]\nmode = \"on\"\n\xff\xfe\n").unwrap();
+        let path = tmp.path().to_str().unwrap();
+        let err = resolve_fips_setting_with_env(path, &fake_env(&[])).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("cannot tell whether it sets fips.mode"),
+            "{err}"
+        );
+        let missing = format!("{path}.missing");
+        let setting = resolve_fips_setting_with_env(&missing, &fake_env(&[])).unwrap();
+        assert_eq!(setting.mode, seaweed_common::fips::FipsMode::Off);
     }
 
     #[test]
