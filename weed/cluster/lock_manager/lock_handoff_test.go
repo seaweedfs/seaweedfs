@@ -24,7 +24,9 @@ func TestDLM_TransferLockUsesFreshSnapshot(t *testing.T) {
 		require.Equal(t, renewed, current.Token)
 		require.EqualValues(t, 2, current.Seq)
 		// The receiver can replicate the lease back before acknowledging.
-		dlm.InsertBackupLock(current.Key, current.ExpiredAtNs, current.Token, current.PrevToken, current.Owner, current.Generation, current.Seq)
+		within(t, "incoming replication during the handoff", func() {
+			dlm.InsertBackupLock(current.Key, current.ExpiredAtNs, current.Token, current.PrevToken, current.Owner, current.Generation, current.Seq)
+		})
 		return nil
 	}))
 	current, found := dlm.GetLock("key")
@@ -46,7 +48,10 @@ func TestDLM_TransferLockFailureFreezesAuthority(t *testing.T) {
 		// The receiver committed, but its acknowledgement was lost.
 		target.InsertLock(current.Key, current.ExpiredAtNs, current.Token, current.PrevToken, current.Owner, current.Generation, current.Seq)
 		// A stalled handoff must not hold a global mutex across its RPC.
-		_, _, _, _, err := dlm.LockWithTimeout("other-key", expires, "", "other-owner")
+		var err error
+		within(t, "another key during the stalled handoff", func() {
+			_, _, _, _, err = dlm.LockWithTimeout("other-key", expires, "", "other-owner")
+		})
 		require.NoError(t, err)
 		return failed
 	}), failed)
@@ -205,4 +210,19 @@ func TestDLM_ServesLocallyWhenHandoffEndsHere(t *testing.T) {
 	require.Empty(t, movedTo)
 	_, found := source.GetLock("key")
 	require.False(t, found)
+}
+
+// within fails the test if fn has not returned after five seconds.
+func within(t *testing.T, what string, fn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("%s did not finish", what)
+	}
 }
