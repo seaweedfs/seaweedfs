@@ -131,7 +131,7 @@ func (s *AdminServer) InspectS3Object(ctx context.Context, bucket, key string) (
 			return fmt.Errorf("bucket %s: %w", bucket, err)
 		}
 		if resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: objectDir, Name: objectName}); err == nil {
-			if !resp.Entry.IsDirectory {
+			if !resp.Entry.IsDirectory || resp.Entry.IsPrefixObject() {
 				baseEntry = resp.Entry
 			}
 		} else if !errors.Is(err, filer_pb.ErrNotFound) {
