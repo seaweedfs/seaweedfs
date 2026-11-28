@@ -523,7 +523,7 @@ func initMiniVolumeFlags() {
 	miniOptions.v.concurrentDownloadLimitMB = cmdMini.Flag.Int("volume.concurrentDownloadLimitMB", 0, "limit total concurrent download size; reads over the limit are sent to a replica unless volume.readMode is local")
 	miniOptions.v.pprof = cmdMini.Flag.Bool("volume.pprof", false, "enable pprof http handlers")
 	miniOptions.v.idxFolder = cmdMini.Flag.String("volume.dir.idx", "", "directory to store .idx files")
-	miniOptions.v.inflightUploadDataTimeout = cmdMini.Flag.Duration("volume.inflightUploadDataTimeout", 60*time.Second, "inflight upload data wait timeout")
+	miniOptions.v.inflightUploadDataTimeout = cmdMini.Flag.Duration("volume.inflightUploadDataTimeout", 60*time.Second, "how long a client upload waits for room under -volume.concurrentUploadLimitMB before it is rejected with 503 and Retry-After; client writes wait at most 5s, and 0 means that 5s cap; primary-to-replica forwards are never refused")
 	miniOptions.v.inflightDownloadDataTimeout = cmdMini.Flag.Duration("volume.inflightDownloadDataTimeout", 60*time.Second, "inflight download data wait timeout")
 	miniOptions.v.hasSlowRead = cmdMini.Flag.Bool("volume.hasSlowRead", true, "if true, prevents slow reads from blocking other requests")
 	miniOptions.v.readBufferSizeMB = cmdMini.Flag.Int("volume.readBufferSizeMB", 4, "read buffer size in MB")
@@ -1440,6 +1440,7 @@ func runMini(cmd *Command, args []string) bool {
 	// flag (-v / -logtostderr / -alsologtostderr / -stderrthreshold) so they
 	// can opt back into verbose output.
 	quietMiniLogs()
+	util.LogTransparentHugePages()
 
 	// Capture which flags were explicitly provided on the command line or via
 	// WEED_* env vars BEFORE the saved options file is applied. Saved options
@@ -2473,7 +2474,7 @@ func ensureMiniBuckets(bucketSpec string) error {
 	// Derive from miniClientsCtx so Ctrl+C cancels the bucket RPCs, and bound
 	// with a short timeout (per bucket) so a stalled filer cannot block the
 	// welcome message indefinitely.
-	return pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		for _, name := range names {
 			if err := s3bucket.VerifyS3BucketName(name); err != nil {
 				glog.Warningf("invalid bucket name %q: %v", name, err)
@@ -2551,7 +2552,7 @@ func createMiniTableBuckets(servable []tableBucketEntry) ([]tableBucketEntry, er
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	var ready []tableBucketEntry
-	err := pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err := pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 		manager := s3tables.NewManager()
 		mgrClient := s3tables.NewManagerClient(client)
 		for _, bucket := range servable {

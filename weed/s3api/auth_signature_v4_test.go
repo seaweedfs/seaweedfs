@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -674,7 +675,7 @@ func TestExtractSignedHeadersCase(t *testing.T) {
 			if errCode != s3err.ErrNone {
 				t.Fatalf("extractSignedHeaders failed: %v", errCode)
 			}
-			actual := getCanonicalHeaders(extracted)
+			actual := getCanonicalHeaders(extracted, signV4TrimAll)
 			if actual != tt.expected {
 				t.Errorf("%s: expected %q, got %q", tt.name, tt.expected, actual)
 			}
@@ -693,7 +694,7 @@ func TestExtractSignedHeadersContentLength(t *testing.T) {
 	if errCode != s3err.ErrNone {
 		t.Fatalf("extractSignedHeaders failed: %v", errCode)
 	}
-	if got := getCanonicalHeaders(extracted); got != "content-length:0\nhost:bucket.domain.com\n" {
+	if got := getCanonicalHeaders(extracted, signV4TrimAll); got != "content-length:0\nhost:bucket.domain.com\n" {
 		t.Fatalf("unexpected canonical headers %q", got)
 	}
 }
@@ -766,5 +767,61 @@ func TestSignatureV4WithForwardedPrefixUnicodeKey(t *testing.T) {
 
 	if _, _, errCode := iam.doesSignatureMatch(r); errCode != s3err.ErrNone {
 		t.Fatalf("signature verification failed for unicode key behind forwarded prefix: code %d", int(errCode))
+	}
+}
+
+func TestSignV4TrimAll(t *testing.T) {
+	tests := []struct {
+		in, sdkGoV2, sdkJava, botocore string
+	}{
+		{"  a   b  ", "a b", "a b", "a b"},
+		{"plain", "plain", "plain", "plain"},
+		{"tab\tkept", "tab\tkept", "tab kept", "tab kept"},
+		{"at 2.20.09\u202fPM.png", "at 2.20.09\u202fPM.png", "at 2.20.09\u202fPM.png", "at 2.20.09 PM.png"},
+		{"news\u00a0| headline.txt", "news\u00a0| headline.txt", "news\u00a0| headline.txt", "news | headline.txt"},
+		{" report.txt\u00a0 ", "report.txt", "report.txt\u00a0", "report.txt"},
+		{"at 2.20.09\u202fPM\tcopy.png", "at 2.20.09\u202fPM\tcopy.png", "at 2.20.09\u202fPM copy.png", "at 2.20.09 PM copy.png"},
+	}
+	for _, tt := range tests {
+		if got := signV4TrimAll(tt.in); got != tt.sdkGoV2 {
+			t.Errorf("signV4TrimAll(%q) = %q, want %q", tt.in, got, tt.sdkGoV2)
+		}
+		if got := signV4TrimAllASCIIWhitespace(tt.in); got != tt.sdkJava {
+			t.Errorf("signV4TrimAllASCIIWhitespace(%q) = %q, want %q", tt.in, got, tt.sdkJava)
+		}
+		if got := signV4TrimAllWhitespace(tt.in); got != tt.botocore {
+			t.Errorf("signV4TrimAllWhitespace(%q) = %q, want %q", tt.in, got, tt.botocore)
+		}
+	}
+}
+
+func TestCalculateAndVerifySignatureTrimVariants(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("Host", "bucket.domain.com")
+	headers.Set("X-Amz-Meta-Filename", "at 2.20.09\u202fPM\tcopy.png")
+	date := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	const secret, payload = "secret", "UNSIGNED-PAYLOAD"
+	scope := getScope(date, "us-east-1", "s3")
+	signingKey := getSigningKey(secret, date.Format(yyyymmdd), "us-east-1", "s3")
+
+	for name, trim := range map[string]func(string) string{
+		"sdk-go-v2":   signV4TrimAll,
+		"sdk-java-v2": signV4TrimAllASCIIWhitespace,
+		"botocore":    signV4TrimAllWhitespace,
+	} {
+		t.Run(name, func(t *testing.T) {
+			canonical := getCanonicalRequest(headers, payload, "", "/bucket/key", http.MethodPut, trim)
+			signature := getSignature(signingKey, getStringToSign(canonical, date, scope))
+			authInfo := &v4AuthInfo{HashedPayload: payload, Date: date, Scope: scope, Region: "us-east-1", Service: "s3", Signature: signature}
+			got, errCode := calculateAndVerifySignature(secret, http.MethodPut, "/bucket/key", "", headers, authInfo)
+			if errCode != s3err.ErrNone || got != signature {
+				t.Fatalf("got %q, %v; want %q", got, errCode, signature)
+			}
+		})
+	}
+
+	authInfo := &v4AuthInfo{HashedPayload: payload, Date: date, Scope: scope, Region: "us-east-1", Service: "s3", Signature: strings.Repeat("0", 64)}
+	if _, errCode := calculateAndVerifySignature(secret, http.MethodPut, "/bucket/key", "", headers, authInfo); errCode != s3err.ErrSignatureDoesNotMatch {
+		t.Fatalf("wrong signature: got %v, want ErrSignatureDoesNotMatch", errCode)
 	}
 }

@@ -133,7 +133,13 @@ func (f *scopeFakeFiler) scopeKvGet(_ context.Context, key []byte) ([]byte, erro
 
 func (f *scopeFakeFiler) LookupDirectoryEntry(_ context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
 	f.record("LookupDirectoryEntry", req)
-	return &filer_pb.LookupDirectoryEntryResponse{}, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	entry := f.entries[scopeJoin(req.GetDirectory(), req.GetName())]
+	if entry == nil {
+		return &filer_pb.LookupDirectoryEntryResponse{}, nil
+	}
+	return &filer_pb.LookupDirectoryEntryResponse{Entry: proto.Clone(entry).(*filer_pb.Entry)}, nil
 }
 
 func (f *scopeFakeFiler) LookupDirectoryEntries(_ context.Context, req *filer_pb.LookupDirectoryEntriesRequest) (*filer_pb.LookupDirectoryEntriesResponse, error) {

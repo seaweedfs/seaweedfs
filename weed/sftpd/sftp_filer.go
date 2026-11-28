@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,7 +96,7 @@ func (fs *SftpServer) GetDataCenter() string                          { return f
 func (fs *SftpServer) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	addr := fs.filerAddr.ToGrpcAddress()
 	return pb.WithGrpcClient(context.Background(), streamingMode, util.RandomInt32(), func(conn *grpc.ClientConn) error {
-		return fn(filer_pb.NewSeaweedFilerClient(conn))
+		return fn(filer_pb.NewSeaweedFilerClient(security.WithFilerClientAuth(conn, security.FilerAdminToken)))
 	}, addr, false, fs.grpcDialOption)
 }
 func (fs *SftpServer) withTimeoutContext(fn func(ctx context.Context) error) error {
@@ -650,6 +651,9 @@ func (fs *SftpServer) putFile(filepath string, reader io.Reader, user *user.User
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
+	if err := fs.applyBucketDefaultRetention(filepath, req.Header); err != nil {
+		return err
+	}
 
 	// Add JWT authorization if filer signing key is configured
 	if len(fs.filerSigningKey) > 0 {
@@ -716,6 +720,32 @@ func (fs *SftpServer) putFile(filepath string, reader io.Reader, user *user.User
 		}
 	}
 
+	return nil
+}
+
+// applyBucketDefaultRetention gives a new object its bucket's default Object
+// Lock retention, as an S3 PutObject would.
+func (fs *SftpServer) applyBucketDefaultRetention(absPath string, header http.Header) error {
+	if fs.bucketsDir == "" {
+		return nil
+	}
+	root := strings.TrimSuffix(path.Clean("/"+fs.bucketsDir), "/")
+	rel, inBuckets := strings.CutPrefix(absPath, root+"/")
+	bucket, _, isObject := strings.Cut(rel, "/")
+	if !inBuckets || !isObject || bucket == "" {
+		return nil
+	}
+	bucketEntry, err := fs.getEntry(root + "/" + bucket)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read bucket %s: %w", bucket, err)
+	}
+	if mode, retainUntil, ok := s3_objectlock.DefaultRetention(bucketEntry, time.Now()); ok {
+		header.Set(s3_constants.ExtObjectLockModeKey, mode)
+		header.Set(s3_constants.ExtRetentionUntilDateKey, strconv.FormatInt(retainUntil.Unix(), 10))
+	}
 	return nil
 }
 

@@ -123,68 +123,35 @@ func (c *commandVolumeBalance) HasTag(CommandTag) bool {
 }
 
 func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
-	allowedVolumeBy := map[string]*bool{
-		"ALL":    nil,
-		"ACTIVE": new(bool),
-		"FULL":   new(bool),
-	}
-	*allowedVolumeBy["ACTIVE"] = true
-	balanceCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
-	verbose := balanceCommand.Bool("v", false, "verbose mode")
-	collection := balanceCommand.String("collection", "ALL_COLLECTIONS", "comma-separated collection names, wildcards, or regex patterns, or \"ALL_COLLECTIONS\" across collections, \"EACH_COLLECTION\" for each collection")
-	dc := balanceCommand.String("dataCenter", "", "only apply the balancing for this dataCenter")
-	racks := balanceCommand.String("racks", "", "only apply the balancing for this racks")
-	nodes := balanceCommand.String("nodes", "", "only apply the balancing for this nodes")
-	ioBytePerSecond := balanceCommand.Int64("ioBytePerSecond", 0, "limit volume-move copy speed in bytes per second (default 0 is unlimited)")
-	noLock := balanceCommand.Bool("noLock", false, "do not lock the admin shell at one's own risk")
-	applyBalancing := balanceCommand.Bool("apply", false, "apply the balancing plan.")
-	// TODO: remove this alias
-	applyBalancingAlias := balanceCommand.Bool("force", false, "apply the balancing plan (alias for -apply)")
-	volumesPerExec := balanceCommand.Int("volumesPerExec", 0, "how many volumes to move in one run (default is 0 for unlimited)")
-	maxParallelization := balanceCommand.Int("maxParallelization", 1, "run up to X volume moves in parallel, whenever possible")
-	byDiskUsage := balanceCommand.Bool("byDiskUsage", false, "rank servers by reported physical disk used percent instead of slot density; falls back to sum of volume sizes for all servers when any server does not report disk bytes. Use when maxVolumeCount is set too high for the disk.")
-	maxDiskUsagePercent := balanceCommand.Int("maxDiskUsagePercent", balancer.DefaultMaxDiskUsagePercent, "skip a move target whose physical disk used%% is at/above this; judged per server against its own disk, so heterogeneous disk sizes are fine. 0 or >=100 disables. Auto-skipped for servers that do not report disk bytes.")
-
-	balanceCommand.Func("volumeBy", "only apply the balancing for ALL volumes and ACTIVE or FULL", func(flagValue string) error {
-		if flagValue == "" {
-			return nil
-		}
-		for allowed, volumeBy := range allowedVolumeBy {
-			if flagValue == allowed {
-				c.volumeByActive = volumeBy
-				return nil
-			}
-		}
-		return fmt.Errorf("use \"ALL\", \"ACTIVE\" or \"FULL\"")
-	})
+	balanceCommand, f := newVolumeBalanceFlagSet(c.Name())
 	if err = balanceCommand.Parse(args); err != nil {
 		return err
 	}
-	handleDeprecatedForceFlag(writer, balanceCommand, applyBalancingAlias, applyBalancing)
-	c.applyBalancing = *applyBalancing
-	if *volumesPerExec < 0 {
-		return fmt.Errorf("volumesPerExec must be >= 0")
+	handleDeprecatedForceFlag(writer, balanceCommand, f.force, f.apply)
+	if err = f.validate(); err != nil {
+		return err
 	}
-	if *maxParallelization < 1 {
-		return fmt.Errorf("maxParallelization must be >= 1")
+	if f.volumeBySet {
+		c.volumeByActive = f.volumeByActive
 	}
-	c.ioBytePerSecond = *ioBytePerSecond
-	c.volumesPerExec = *volumesPerExec
-	c.maxParallelization = *maxParallelization
+	c.applyBalancing = *f.apply
+	c.ioBytePerSecond = *f.ioBytePerSecond
+	c.volumesPerExec = *f.volumesPerExec
+	c.maxParallelization = *f.maxParallelization
 	c.movedCount = 0
-	c.byDiskUsage = *byDiskUsage
-	c.diskUsageHighWaterPercent = *maxDiskUsagePercent
+	c.byDiskUsage = *f.byDiskUsage
+	c.diskUsageHighWaterPercent = *f.maxDiskUsagePercent
 
 	infoAboutSimulationMode(writer, c.applyBalancing, "-apply")
 
-	if *noLock {
+	if *f.noLock {
 		commandEnv.noLock = true
 	} else {
 		if err = commandEnv.confirmIsLocked(args); err != nil {
 			return
 		}
 	}
-	commandEnv.verbose = *verbose
+	commandEnv.verbose = *f.verbose
 	c.commandEnv = commandEnv
 
 	// collect topology information
@@ -194,11 +161,11 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 		return err
 	}
 
-	volumeServers := collectVolumeServersByDcRackNode(topologyInfo, *dc, *racks, *nodes)
+	volumeServers := collectVolumeServersByDcRackNode(topologyInfo, *f.dc, *f.racks, *f.nodes)
 	volumeReplicas, _ := collectVolumeReplicaLocations(topologyInfo)
 	diskTypes := collectVolumeDiskTypes(topologyInfo)
 
-	if *collection == string(wildcard.CollectionFilterEach) {
+	if *f.collection == string(wildcard.CollectionFilterEach) {
 		collections, err := ListCollectionNames(commandEnv, true, false)
 		if err != nil {
 			return err
@@ -212,23 +179,89 @@ func (c *commandVolumeBalance) Do(args []string, commandEnv *CommandEnv, writer 
 				return err
 			}
 		}
-	} else if *collection == string(wildcard.CollectionFilterAll) || *collection == "*" {
+	} else if *f.collection == string(wildcard.CollectionFilterAll) || *f.collection == "*" {
 		// Pass nil matcher for all collections
 		if err = c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, nil, string(wildcard.CollectionFilterAll)); err != nil {
 			return err
 		}
 	} else {
 		// Compile user-provided pattern
-		collectionMatcher, err := compileCollectionPattern(*collection)
+		collectionMatcher, err := compileCollectionPattern(*f.collection)
 		if err != nil {
-			return fmt.Errorf("invalid collection pattern '%s': %v", *collection, err)
+			return fmt.Errorf("invalid collection pattern '%s': %v", *f.collection, err)
 		}
-		if err = c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, collectionMatcher, *collection); err != nil {
+		if err = c.balanceVolumeServers(diskTypes, volumeReplicas, volumeServers, collectionMatcher, *f.collection); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+type volumeBalanceFlags struct {
+	verbose, noLock, apply, force, byDiskUsage              *bool
+	collection, dc, racks, nodes                            *string
+	ioBytePerSecond                                         *int64
+	volumesPerExec, maxParallelization, maxDiskUsagePercent *int
+	volumeBySet                                             bool
+	volumeByActive                                          *bool
+}
+
+func newVolumeBalanceFlagSet(name string) (*flag.FlagSet, *volumeBalanceFlags) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	f := &volumeBalanceFlags{
+		verbose:             fs.Bool("v", false, "verbose mode"),
+		collection:          fs.String("collection", "ALL_COLLECTIONS", "comma-separated collection names, wildcards, or regex patterns, or \"ALL_COLLECTIONS\" across collections, \"EACH_COLLECTION\" for each collection"),
+		dc:                  fs.String("dataCenter", "", "only apply the balancing for this dataCenter"),
+		racks:               fs.String("racks", "", "only apply the balancing for this racks"),
+		nodes:               fs.String("nodes", "", "only apply the balancing for this nodes"),
+		ioBytePerSecond:     fs.Int64("ioBytePerSecond", 0, "limit volume-move copy speed in bytes per second (default 0 is unlimited)"),
+		noLock:              fs.Bool("noLock", false, "do not lock the admin shell at one's own risk"),
+		apply:               fs.Bool("apply", false, "apply the balancing plan."),
+		force:               fs.Bool("force", false, "apply the balancing plan (alias for -apply)"),
+		volumesPerExec:      fs.Int("volumesPerExec", 0, "how many volumes to move in one run (default is 0 for unlimited)"),
+		maxParallelization:  fs.Int("maxParallelization", 1, "run up to X volume moves in parallel, whenever possible"),
+		byDiskUsage:         fs.Bool("byDiskUsage", false, "rank servers by reported physical disk used percent instead of slot density; falls back to sum of volume sizes for all servers when any server does not report disk bytes. Use when maxVolumeCount is set too high for the disk."),
+		maxDiskUsagePercent: fs.Int("maxDiskUsagePercent", balancer.DefaultMaxDiskUsagePercent, "skip a move target whose physical disk used%% is at/above this; judged per server against its own disk, so heterogeneous disk sizes are fine. 0 or >=100 disables. Auto-skipped for servers that do not report disk bytes."),
+	}
+	fs.Func("volumeBy", "only apply the balancing for ALL volumes and ACTIVE or FULL", func(flagValue string) error {
+		switch flagValue {
+		case "":
+			return nil
+		case "ALL":
+			f.volumeByActive = nil
+		case "ACTIVE":
+			f.volumeByActive = new(bool)
+			*f.volumeByActive = true
+		case "FULL":
+			f.volumeByActive = new(bool)
+		default:
+			return fmt.Errorf("use \"ALL\", \"ACTIVE\" or \"FULL\"")
+		}
+		f.volumeBySet = true
+		return nil
+	})
+	return fs, f
+}
+
+func (f *volumeBalanceFlags) validate() error {
+	if *f.volumesPerExec < 0 {
+		return fmt.Errorf("volumesPerExec must be >= 0")
+	}
+	if *f.maxParallelization < 1 {
+		return fmt.Errorf("maxParallelization must be >= 1")
+	}
+	return nil
+}
+
+func (c *commandVolumeBalance) argsApply(args []string) bool {
+	fs, f := newVolumeBalanceFlagSet(c.Name())
+	fs.SetOutput(io.Discard)
+	if fs.Parse(args) != nil {
+		return false
+	}
+	handleDeprecatedForceFlag(io.Discard, fs, f.force, f.apply)
+	return f.validate() == nil && *f.apply
 }
 
 func (c *commandVolumeBalance) balanceVolumeServers(diskTypes []types.DiskType, volumeReplicas map[uint32][]*VolumeReplica, nodes []*Node, collectionMatcher *wildcard.CollectionMatcher, collectionName string) error {

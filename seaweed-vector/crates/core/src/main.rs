@@ -180,7 +180,6 @@ impl Tables {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    weed_lance_worker::tls::install_default_crypto_provider();
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
@@ -191,6 +190,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     let security = weed_lance_worker::security::Security::load(args.security_toml.as_deref())?;
+    weed_lance_worker::tls::install_for_fips_mode(&security)?;
     let signing_key = SigningKey::new(
         args.filer_signing_key
             .or_else(|| security.get("jwt.filer_signing.key")),

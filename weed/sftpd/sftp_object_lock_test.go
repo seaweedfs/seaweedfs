@@ -383,3 +383,68 @@ func TestRenameRefusesDirectoryHoldingProtectedEntries(t *testing.T) {
 		})
 	}
 }
+
+func TestPutFileAppliesBucketDefaultRetention(t *testing.T) {
+	bucket := func(name string, extended map[string]string) *filer_pb.Entry {
+		entry := lockedEntry(name, extended)
+		entry.IsDirectory = true
+		return entry
+	}
+	fs, _ := newLockTestServer(t, map[string]*filer_pb.Entry{
+		"/buckets/days":       bucket("days", map[string]string{s3_constants.ExtObjectLockEnabledKey: s3_constants.ObjectLockEnabled, s3_constants.ExtObjectLockDefaultModeKey: s3_constants.RetentionModeGovernance, s3_constants.ExtObjectLockDefaultDaysKey: "2"}),
+		"/buckets/years":      bucket("years", map[string]string{s3_constants.ExtObjectLockEnabledKey: s3_constants.ObjectLockEnabled, s3_constants.ExtObjectLockDefaultModeKey: s3_constants.RetentionModeCompliance, s3_constants.ExtObjectLockDefaultYearsKey: "1"}),
+		"/buckets/no-default": bucket("no-default", map[string]string{s3_constants.ExtObjectLockEnabledKey: s3_constants.ObjectLockEnabled}),
+		"/buckets/plain":      bucket("plain", nil),
+	})
+	var gotHeader http.Header
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeader = r.Header.Clone()
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(ts.Close)
+	_, grpcPort, _ := net.SplitHostPort(fs.filerAddr.ToGrpcAddress())
+	fs.filerAddr = pb.ServerAddress(strings.TrimPrefix(ts.URL, "http://") + "." + grpcPort)
+
+	now := time.Now()
+	tests := []struct {
+		path        string
+		mode        string
+		retainUntil time.Time
+	}{
+		{"/buckets/days/a/b.txt", s3_constants.RetentionModeGovernance, now.AddDate(0, 0, 2)},
+		{"/buckets/years/f", s3_constants.RetentionModeCompliance, now.AddDate(1, 0, 0)},
+		{"/buckets/no-default/f", "", time.Time{}},
+		{"/buckets/plain/f", "", time.Time{}},
+		{"/buckets/missing/f", "", time.Time{}},
+		{"/buckets/days", "", time.Time{}},
+		{"/home/days/f", "", time.Time{}},
+	}
+	for _, bucketsDir := range []string{"/buckets", "/buckets/", "//buckets"} {
+		fs.bucketsDir = bucketsDir
+		for _, tt := range tests {
+			gotHeader = nil
+			if err := fs.putFile(tt.path, strings.NewReader("data"), nil); err != nil {
+				t.Fatalf("putFile %s: %v", tt.path, err)
+			}
+			mode := gotHeader[s3_constants.ExtObjectLockModeKey]
+			until := gotHeader[s3_constants.ExtRetentionUntilDateKey]
+			if tt.mode == "" {
+				if mode != nil || until != nil {
+					t.Errorf("%s %s: got retention %v until %v, want none", fs.bucketsDir, tt.path, mode, until)
+				}
+				continue
+			}
+			if len(mode) != 1 || mode[0] != tt.mode {
+				t.Errorf("%s %s: mode %v, want %s", fs.bucketsDir, tt.path, mode, tt.mode)
+			}
+			if len(until) != 1 {
+				t.Errorf("%s: retain-until %v", tt.path, until)
+				continue
+			}
+			sec, err := strconv.ParseInt(until[0], 10, 64)
+			if err != nil || sec < tt.retainUntil.Unix()-5 || sec > tt.retainUntil.Unix()+5 {
+				t.Errorf("%s: retain-until %s, want about %d", tt.path, until[0], tt.retainUntil.Unix())
+			}
+		}
+	}
+}

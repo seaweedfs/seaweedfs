@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"syscall"
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"google.golang.org/grpc/codes"
+	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -104,6 +107,42 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		oldEntry = fresh
 	}
 
+	// A new name resolves the remote object from its own path, so the names
+	// have to share local chunks before the link.
+	if oldEntry.IsInRemoteOnly() {
+		// An open handle publishes its buffered writes, then caches as a read
+		// does, so its base moves with the stored entry.
+		if fh, ok := wfs.fhMap.FindFileHandle(sourceInode); ok {
+			if fh.dirtyMetadata || fh.dirtyPages.HasWrites() {
+				if flushStatus := wfs.doFlush(context.Background(), fh, in.Uid, in.Gid, false, metadataFlushTimeout); flushStatus != fuse.OK {
+					return flushStatus
+				}
+			}
+			fhLock := wfs.fhLockTable.AcquireLock("Link", fh.fh, util.SharedLock)
+			fh.entryLock.RLock()
+			entry := fh.GetEntry()
+			entry.RLock()
+			remoteOnly := entry.Entry.IsInRemoteOnly()
+			entry.RUnlock()
+			var err error
+			if remoteOnly {
+				err = fh.downloadRemoteEntry(ctx, entry)
+			}
+			fh.entryLock.RUnlock()
+			wfs.fhLockTable.ReleaseLock(fh.fh, fhLock)
+			if err != nil {
+				glog.V(0).Infof("Link %v: cache remote object: %v", oldEntryPath, err)
+				return fuse.EIO
+			}
+		}
+		cached, err := wfs.cacheRemoteOnlyEntry(ctx, oldEntryPath)
+		if err != nil {
+			glog.V(0).Infof("Link %v: cache remote object: %v", oldEntryPath, err)
+			return fuse.EIO
+		}
+		oldEntry = cached
+	}
+
 	// update old file to hardlink mode
 	origHardLinkId := oldEntry.HardLinkId
 	origHardLinkCounter := oldEntry.HardLinkCounter
@@ -134,6 +173,8 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 			IsDirectory:     false,
 			Attributes:      oldEntry.Attributes,
 			Chunks:          oldEntry.GetChunks(),
+			Content:         oldEntry.Content,
+			RemoteEntry:     oldEntry.RemoteEntry,
 			Extended:        oldEntry.Extended,
 			HardLinkId:      oldEntry.HardLinkId,
 			HardLinkCounter: oldEntry.HardLinkCounter,
@@ -145,7 +186,46 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	// apply changes to the filer, and also apply to local metaCache
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	updateResp, err := wfs.streamUpdateEntry(context.Background(), updateOldEntryRequest)
+	var updateResp *filer_pb.UpdateEntryResponse
+	var err error
+	if len(origHardLinkId) > 0 {
+		updateResp, err = wfs.streamUpdateEntry(context.Background(), updateOldEntryRequest)
+	} else {
+		// The file's first link, under a link id made up here. Another client
+		// may have linked the file since the entry was read, and the filer
+		// refuses the file a second id. The stream reduces that refusal to
+		// EIO; the unary RPC keeps it apart from an I/O failure.
+		update := func() error {
+			return wfs.withFilerClient(context.Background(), false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+				var updateErr error
+				updateResp, updateErr = client.UpdateEntry(ctx, updateOldEntryRequest)
+				if grpcstatus.Code(updateErr) == codes.FailedPrecondition {
+					// the filer's verdict: no other filer's error replaces it
+					return errors.Join(filer_pb.ErrPreconditionFailed, updateErr)
+				}
+				return updateErr
+			})
+		}
+		if err = update(); errors.Is(err, filer_pb.ErrPreconditionFailed) {
+			// link under the id the file has by now
+			stored, _, _, getErr := filer_pb.GetEntry(ctx, wfs, oldEntryPath)
+			if getErr == nil && stored != nil && len(stored.HardLinkId) > 0 && stored.Attributes != nil {
+				glog.V(1).Infof("Link: %s is hard link %x already, not %x", oldEntryPath, stored.HardLinkId, oldEntry.HardLinkId)
+				// a rollback puts back what the file has now
+				origHardLinkId, origHardLinkCounter = stored.HardLinkId, stored.HardLinkCounter
+				// both writes carry the file as stored now, not as first read
+				oldEntry = stored
+				oldEntry.HardLinkCounter++
+				oldEntry.Attributes.Mtime, oldEntry.Attributes.MtimeNs = linkNow.Unix(), int32(linkNow.Nanosecond())
+				oldEntry.Attributes.Ctime, oldEntry.Attributes.CtimeNs = linkNow.Unix(), int32(linkNow.Nanosecond())
+				updateOldEntryRequest.Entry = oldEntry
+				request.Entry.Attributes, request.Entry.Chunks, request.Entry.Extended = oldEntry.Attributes, oldEntry.GetChunks(), oldEntry.Extended
+				request.Entry.Content, request.Entry.RemoteEntry = oldEntry.Content, oldEntry.RemoteEntry
+				request.Entry.HardLinkId, request.Entry.HardLinkCounter = oldEntry.HardLinkId, oldEntry.HardLinkCounter
+				err = update()
+			}
+		}
+	}
 	if err == nil {
 		updateEvent := updateResp.GetMetadataEvent()
 		if updateEvent == nil {
@@ -224,6 +304,33 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	wfs.outputPbEntry(out, sourceInode, request.Entry)
 
 	return fuse.OK
+}
+
+// cacheRemoteOnlyEntry has the filer download the remote object of the entry
+// at path and returns the entry, in local ids, with its local chunks.
+func (wfs *WFS) cacheRemoteOnlyEntry(ctx context.Context, path util.FullPath) (*filer_pb.Entry, error) {
+	dir, name := path.DirAndName()
+	var cached *filer_pb.Entry
+	err := wfs.withFilerClient(ctx, false, 0, func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.CacheRemoteObjectToLocalCluster(ctx, &filer_pb.CacheRemoteObjectToLocalClusterRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if err != nil {
+			return err
+		}
+		cached = resp.GetEntry()
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if cached == nil || cached.IsInRemoteOnly() {
+		return nil, fmt.Errorf("%s is still remote-only", path)
+	}
+	cached = proto.Clone(cached).(*filer_pb.Entry)
+	wfs.mapPbIdFromFilerToLocal(cached)
+	return cached, nil
 }
 
 // adoptLinkChange moves the handle past a hard link change this mount made,

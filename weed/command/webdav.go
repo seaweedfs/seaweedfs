@@ -118,7 +118,7 @@ func (wo *WebDavOption) startWebDav() bool {
 	var digest string
 	// connect to filer
 	for {
-		err := pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		err := pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, security.FilerAdminToken, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err != nil {
 				return fmt.Errorf("get filer %s configuration: %v", filerAddress, err)
@@ -156,7 +156,7 @@ func (wo *WebDavOption) startWebDav() bool {
 		glog.Fatalf("WebDav Server startup error: %v", webdavServer_err)
 	}
 
-	httpS := &http.Server{Handler: ws.Handler}
+	httpS := newHttpServer(ws.Handler, nil)
 
 	idleTimeout := idleTimeoutSeconds(wo.idleTimeout)
 

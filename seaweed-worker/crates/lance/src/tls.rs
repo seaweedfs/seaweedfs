@@ -1,10 +1,37 @@
 // aws-lc-rs and ring both get linked transitively (lance's aws backend pulls
 // aws-lc-rs, reqwest's rustls-tls pulls ring), so rustls can't auto-select a
 // provider and tonic's client TLS panics on first use. Pin the default to
-// aws-lc-rs. The body lives in seaweed-common so this binary and the Rust
-// volume server cannot end up installing different providers; re-exported here
-// so callers keep their import path.
-pub use seaweed_common::tls::install_default_crypto_provider;
+// aws-lc-rs (filtered to the FIPS lists in FIPS mode). The body lives in
+// seaweed-common so this binary and the Rust volume server cannot end up
+// installing different providers; re-exported here so callers keep their
+// import path.
+pub use seaweed_common::tls::{crypto_provider, install_default_crypto_provider, require_ems};
+
+/// Resolves the FIPS mode of a process that reads `security`
+/// (`WEED_FIPS_MODE`, else its `fips.mode`, read from the same parsed file
+/// as the JWT keys), installs the matching rustls provider as the process
+/// default and logs the mode. Call it once at startup, before anything
+/// configures TLS.
+pub fn install_for_fips_mode(
+    security: &crate::security::Security,
+) -> anyhow::Result<seaweed_common::fips::FipsMode> {
+    let setting = seaweed_common::fips::resolve(
+        security.path(),
+        security
+            .file_setting(seaweed_common::fips::SETTING)
+            .as_deref(),
+        &|key| std::env::var_os(key),
+    )?;
+    seaweed_common::tls::install_process_provider(setting.mode)?;
+    if setting.mode.is_fips() {
+        tracing::info!(
+            "{setting}: TLS limited to the FIPS 140-3 versions, suites, groups and signature schemes Go allows; the cryptographic module is not validated"
+        );
+    } else {
+        tracing::info!("{setting}");
+    }
+    Ok(setting.mode)
+}
 
 #[cfg(test)]
 mod tests {

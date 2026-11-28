@@ -9,6 +9,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // A write that replaces one name of a hard-linked file unlinks that name and
@@ -19,8 +21,12 @@ import (
 const replacedChunk, writtenChunk = "3,0c03", "4,0d04"
 
 func fileEntryWithChunk(path string, inode uint64, fileId string) *filer.Entry {
+	return fileEntryWithChunkValue(path, inode, &filer_pb.FileChunk{FileId: fileId, Offset: 0, Size: 4, ModifiedTsNs: 1})
+}
+
+func fileEntryWithChunkValue(path string, inode uint64, chunk *filer_pb.FileChunk) *filer.Entry {
 	entry := newFileEntry(path, inode)
-	entry.Chunks = []*filer_pb.FileChunk{{FileId: fileId, Offset: 0, Size: 4, ModifiedTsNs: 1}}
+	entry.Chunks = []*filer_pb.FileChunk{chunk}
 	return entry
 }
 
@@ -33,13 +39,13 @@ func queuedDeletions(f *filer.Filer) []string {
 	return ids
 }
 
-// hardLinkedTarget puts /dir/dst.txt in the store as one of links hard links
-// to a file whose only chunk is 3,0c03; with two links /dir/other.txt is the
-// second.
-func hardLinkedTarget(t *testing.T, store *renameTestStore, links int32) filer.HardLinkId {
+// hardLinkedTargetWithChunkValue puts /dir/dst.txt in the store as one of
+// links hard links to a file whose only chunk is chunk; with two links
+// /dir/other.txt is the second.
+func hardLinkedTargetWithChunkValue(t *testing.T, store *renameTestStore, links int32, chunk *filer_pb.FileChunk) filer.HardLinkId {
 	t.Helper()
 	id := filer.HardLinkId("hl-chunks-test-01")
-	shared := fileEntryWithChunk("/dir/dst.txt", 303, replacedChunk)
+	shared := fileEntryWithChunkValue("/dir/dst.txt", 303, chunk)
 	shared.HardLinkId, shared.HardLinkCounter = id, links
 	blob, err := shared.EncodeAttributesAndChunks()
 	if err != nil {
@@ -52,6 +58,10 @@ func hardLinkedTarget(t *testing.T, store *renameTestStore, links int32) filer.H
 		store.entries[p] = link
 	}
 	return id
+}
+
+func hardLinkedTarget(t *testing.T, store *renameTestStore, links int32) filer.HardLinkId {
+	return hardLinkedTargetWithChunkValue(t, store, links, &filer_pb.FileChunk{FileId: replacedChunk, Offset: 0, Size: 4, ModifiedTsNs: 1})
 }
 
 func hardLinkChunkServer(t *testing.T, links int32) (*FilerServer, *filer.Filer, *renameTestStore, filer.HardLinkId) {
@@ -216,6 +226,101 @@ func TestUpdateEntryThroughHardLinkDeletesReplacedChunk(t *testing.T) {
 	checkOtherLink(t, f, writtenChunk, 2)
 }
 
+func TestUpdateEntryThroughHardLinkKeepsEquivalentChunkSpellings(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		stored    *filer_pb.FileChunk
+		requested *filer_pb.FileChunk
+	}{
+		{
+			name:      "suffix to structured",
+			stored:    &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 1},
+			requested: &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}, Offset: 0, Size: 4, ModifiedTsNs: 2},
+		},
+		{
+			name:      "structured to suffix",
+			stored:    &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}, Offset: 0, Size: 4, ModifiedTsNs: 1},
+			requested: &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 2},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newRenameTestStore()
+			store.entries["/dir"] = newDirectoryEntry("/dir", 100)
+			id := hardLinkedTargetWithChunkValue(t, store, 2, tc.stored)
+			swapNotificationQueue(t, &captureQueue{})
+			f := newRenameTestFiler(t, store)
+			server := &FilerServer{filer: f, option: &FilerOption{}, entryLockTable: util.NewLockTable[util.FullPath]()}
+
+			updateDst(t, server, dstEntry(id, 2, tc.requested))
+
+			checkDeletions(t, f)
+			checkOtherLink(t, f, tc.requested.GetFileIdString(), 2)
+		})
+	}
+}
+
+func TestUpdateEntryDoesNotDeleteCoveredEquivalentChunkSpellings(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		stored     *filer_pb.FileChunk
+		older      *filer_pb.FileChunk
+		newer      *filer_pb.FileChunk
+		wantDelete string
+	}{
+		{
+			name:   "suffix to structured",
+			stored: &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 1},
+			older:  &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 1},
+			newer:  &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}, Offset: 0, Size: 4, ModifiedTsNs: 2},
+		},
+		{
+			name:   "structured to suffix",
+			stored: &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}, Offset: 0, Size: 4, ModifiedTsNs: 1},
+			older:  &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 3, FileKey: 13, Cookie: 3}, Offset: 0, Size: 4, ModifiedTsNs: 1},
+			newer:  &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 2},
+		},
+		{
+			name:       "different needle remains garbage",
+			stored:     &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 1},
+			older:      &filer_pb.FileChunk{FileId: "3,0c00000003_1", Offset: 0, Size: 4, ModifiedTsNs: 1},
+			newer:      &filer_pb.FileChunk{FileId: "3,0c00000004_1", Offset: 0, Size: 4, ModifiedTsNs: 2},
+			wantDelete: "3,0c00000003_1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server, f, store, id := hardLinkChunkServer(t, 1)
+			// hardLinkChunkServer already installed the shared record; replace its
+			// chunk with the spelling under test while retaining the same link ID.
+			shared := fileEntryWithChunkValue("/dir/dst.txt", 303, tc.stored)
+			shared.HardLinkId, shared.HardLinkCounter = id, 1
+			blob, err := shared.EncodeAttributesAndChunks()
+			if err != nil {
+				t.Fatalf("encode shared chunk: %v", err)
+			}
+			store.kv = map[string][]byte{}
+			store.kv[string(id)] = blob
+
+			updateDst(t, server, dstEntry(id, 1, tc.older, tc.newer))
+			if tc.wantDelete == "" {
+				checkDeletions(t, f)
+			} else {
+				checkDeletions(t, f, tc.wantDelete)
+			}
+			stored, err := f.FindEntry(context.Background(), "/dir/dst.txt")
+			if err != nil {
+				t.Fatalf("find updated entry: %v", err)
+			}
+			if len(stored.GetChunks()) != 1 {
+				t.Fatalf("updated chunks = %v, want only the visible chunk", stored.GetChunks())
+			}
+			got := stored.GetChunks()[0]
+			if got.GetFileIdString() != tc.newer.GetFileIdString() || got.Offset != tc.newer.Offset || got.Size != tc.newer.Size || got.ModifiedTsNs != tc.newer.ModifiedTsNs {
+				t.Fatalf("updated chunk = %v, want visible chunk %v", got, tc.newer)
+			}
+		})
+	}
+}
+
 func renameSrcOverHardLinkedDst(t *testing.T, server *FilerServer, store *renameTestStore) {
 	t.Helper()
 	store.entries["/dir/src.txt"] = fileEntryWithChunk("/dir/src.txt", 101, "1,0a01")
@@ -254,5 +359,82 @@ func TestAtomicRenameEntryOverLastHardLinkDeletesItsChunks(t *testing.T) {
 	checkDeletions(t, f, replacedChunk)
 	if _, found := store.kv[string(id)]; found {
 		t.Fatal("hard link record kept after its last link was replaced")
+	}
+}
+
+// Two clients link a file at the same moment, each from an entry that had no
+// link yet, so each gives the name a link id of its own. The file has the
+// first one's when the second arrives. Taken, the second would move the name
+// to its id and leave the first client's new name alone on the other: one
+// file's chunks under two link ids, each deleting them under the other with
+// its last name. The update is refused, nothing changes, and the client links
+// under the id the file has.
+func TestUpdateEntryRefusesAFileASecondLinkId(t *testing.T) {
+	server, f, store, id := hardLinkChunkServer(t, 2)
+	second := filer.HardLinkId("hl-chunks-test-02")
+
+	_, err := server.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+		Directory: "/dir", Entry: dstEntry(second, 2, written(replacedChunk, 1)),
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("update with a second link id: %v, want FailedPrecondition", err)
+	}
+	checkDeletions(t, f)
+	checkOtherLink(t, f, replacedChunk, 2)
+	dst, err := f.FindEntry(context.Background(), "/dir/dst.txt")
+	if err != nil {
+		t.Fatalf("find dst: %v", err)
+	}
+	if string(dst.HardLinkId) != string(id) {
+		t.Fatalf("dst has link id %q, want the file's %q", dst.HardLinkId, id)
+	}
+	if _, found := store.kv[string(second)]; found {
+		t.Fatal("the refused link id got a record")
+	}
+
+	updateDst(t, server, dstEntry(id, 3, written(replacedChunk, 1)))
+	checkDeletions(t, f)
+}
+
+// filer.sync sends the other cluster's link id without its record: taken.
+func TestUpdateEntryFromOtherClusterTakesItsLinkId(t *testing.T) {
+	server, f, _, _ := hardLinkChunkServer(t, 2)
+	other := filer.HardLinkId("hl-chunks-test-02")
+
+	if _, err := server.UpdateEntry(context.Background(), &filer_pb.UpdateEntryRequest{
+		Directory: "/dir", Entry: dstEntry(other, 2, written(replacedChunk, 1)), IsFromOtherCluster: true,
+	}); err != nil {
+		t.Fatalf("replicated update with another link id: %v", err)
+	}
+	dst, err := f.FindEntry(context.Background(), "/dir/dst.txt")
+	if err != nil {
+		t.Fatalf("find dst: %v", err)
+	}
+	if string(dst.HardLinkId) != string(other) {
+		t.Fatalf("dst has link id %q, want the replicated %q", dst.HardLinkId, other)
+	}
+}
+
+// A link id that has a record is another file's, not a second one for this
+// file: an update that carries it puts that file at the name, which leaves
+// the old file as a create over the name does.
+func TestUpdateEntryWithAnotherFilesLinkIdReplacesTheName(t *testing.T) {
+	server, f, store, id := hardLinkChunkServer(t, 2)
+	another := filer.HardLinkId("hl-chunks-test-03")
+	shared := fileEntryWithChunk("/dir/third.txt", 505, writtenChunk)
+	shared.HardLinkId, shared.HardLinkCounter = another, 1
+	blob, err := shared.EncodeAttributesAndChunks()
+	if err != nil {
+		t.Fatalf("encode hard link: %v", err)
+	}
+	store.kv[string(another)] = blob
+	store.entries["/dir/third.txt"] = shared
+
+	updateDst(t, server, dstEntry(another, 2, written(writtenChunk, 2)))
+
+	checkDeletions(t, f)
+	checkOtherLink(t, f, replacedChunk, 1)
+	if _, found := store.kv[string(id)]; !found {
+		t.Fatal("hard link record deleted while a link remains")
 	}
 }

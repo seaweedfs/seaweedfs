@@ -45,6 +45,19 @@ func TestParseURL(t *testing.T) {
 	}
 }
 
+func TestBaseFid(t *testing.T) {
+	for fid, want := range map[string]string{
+		"06dfa8a684":    "06dfa8a684",
+		"06dfa8a684_1":  "06dfa8a684",
+		"06dfa8a684_12": "06dfa8a684",
+		"_1":            "_1",
+	} {
+		if got := baseFid(fid); got != want {
+			t.Errorf("baseFid(%q) = %q, want %q", fid, got, want)
+		}
+	}
+}
+
 func TestWriteJsonNoJSONP(t *testing.T) {
 	// callback= must be ignored; response is always application/json with nosniff.
 	cases := []string{"", "myCb", "<script>alert(1)</script>"}

@@ -13,11 +13,19 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc"
 )
 
 type LockClient struct {
-	grpcDialOption  grpc.DialOption
+	grpcDialOption grpc.DialOption
+	// RequestContext, when set before using the client, supplies per-attempt
+	// metadata for lock, renewal and unlock RPCs. Generic clients retain their
+	// existing authority when it is nil.
+	RequestContext func(context.Context) context.Context
+	// TokenSource supplies per-call filer authorization. A nil source preserves
+	// the existing anonymous behavior.
+	TokenSource     security.FilerTokenSource
 	maxLockDuration time.Duration
 	sleepDuration   time.Duration
 	seedFiler       pb.ServerAddress
@@ -432,9 +440,12 @@ func (lock *LiveLock) StopShortLivedLock() error {
 	defer func() {
 		atomic.StoreInt32(&lock.isLocked, 0)
 	}()
-	return pb.WithFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithGrpcFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, lock.lc.TokenSource, func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithTimeout(context.Background(), lock.lc.lockRpcTimeout)
 		defer cancel()
+		if lock.lc.RequestContext != nil {
+			ctx = lock.lc.RequestContext(ctx)
+		}
 		_, err := client.DistributedUnlock(ctx, &filer_pb.UnlockRequest{
 			Name:       lock.key,
 			RenewToken: lock.renewToken,
@@ -488,11 +499,14 @@ func (lock *LiveLock) doLock(lockDuration, attemptTimeout time.Duration) (errorM
 	previousHostFiler := lock.hostFiler
 	previousOwner := lock.owner
 
-	err = pb.WithFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithGrpcFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, lock.lc.TokenSource, func(client filer_pb.SeaweedFilerClient) error {
 		// Bound each attempt: a ring member that is reachable from the masters
 		// but not from this filer would otherwise block on the connect timeout.
 		ctx, cancel := context.WithTimeout(context.Background(), attemptTimeout)
 		defer cancel()
+		if lock.lc.RequestContext != nil {
+			ctx = lock.lc.RequestContext(ctx)
+		}
 		resp, err := client.DistributedLock(ctx, &filer_pb.LockRequest{
 			Name:          lock.key,
 			SecondsToLock: int64(lockDuration.Seconds()),

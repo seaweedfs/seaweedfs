@@ -1,6 +1,6 @@
 module github.com/seaweedfs/seaweedfs/test/kafka
 
-go 1.26.6
+go 1.27.4
 
 require (
 	github.com/IBM/sarama v1.46.0

@@ -245,7 +245,7 @@ func init() {
 	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	v.metricsHttpIp = cmdVolume.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
 	v.idxFolder = cmdVolume.Flag.String("dir.idx", "", "directory to store .idx files")
-	v.inflightUploadDataTimeout = cmdVolume.Flag.Duration("inflightUploadDataTimeout", 60*time.Second, "inflight upload data wait timeout of volume servers")
+	v.inflightUploadDataTimeout = cmdVolume.Flag.Duration("inflightUploadDataTimeout", 60*time.Second, "how long a client upload waits for room under -concurrentUploadLimitMB before it is rejected with 503 and Retry-After; client writes wait at most 5s, and 0 means that 5s cap; primary-to-replica forwards are never refused")
 	v.inflightDownloadDataTimeout = cmdVolume.Flag.Duration("inflightDownloadDataTimeout", 60*time.Second, "inflight download data wait timeout of volume servers")
 	v.hasSlowRead = cmdVolume.Flag.Bool("hasSlowRead", true, "<experimental> if true, this prevents slow reads from blocking other requests, but large file read P99 latency will increase.")
 	v.readBufferSizeMB = cmdVolume.Flag.Int("readBufferSizeMB", 4, "<experimental> larger values can optimize query performance but will increase some memory usage,Use with hasSlowRead normally.")
@@ -591,6 +591,7 @@ func shutdown(publicHttpDown httpdown.Server, clusterHttpServer httpdown.Server,
 	}
 
 	glog.V(0).Infof("graceful stop gRPC ...")
+	pb.StopHealthWatches(grpcS)
 	grpcS.GracefulStop()
 
 	volumeServer.Shutdown()

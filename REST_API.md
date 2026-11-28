@@ -278,11 +278,24 @@ automatic vacuum or another request is running does nothing and gets
 ### Delete a collection
 
 ```bash
-curl "http://localhost:9333/col/delete?collection=benchmark"
+curl -X DELETE "http://localhost:9333/col/delete?collection=benchmark"
 ```
 
 Deletes all volumes of the collection, including erasure-coded shards.
-`204 No Content` on success.
+`204 No Content` on success. Only the `DELETE` method is accepted; any other
+method gets `405 Method Not Allowed`.
+
+The `collection` parameter is required: a request without it, or with an
+empty value, gets `400 Bad Request`. To delete the default (empty-named)
+collection, name it explicitly with `collection=_default` or
+`collection=_default_`, the keywords `weed shell collection.delete` accepts.
+If a collection is literally named a keyword, that name deletes it, and when
+it exists next to the default collection the request gets
+`400 Bad Request`; use the other keyword for the default collection. If both
+keyword names are literal collections next to the default collection, both
+keywords get `400 Bad Request`; delete the default collection with
+`weed shell` `collection.delete -collection _default -apply`, where the
+keywords always mean the default collection.
 
 ### Health
 

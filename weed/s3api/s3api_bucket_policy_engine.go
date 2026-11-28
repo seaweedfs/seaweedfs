@@ -91,6 +91,10 @@ func (bpe *BucketPolicyEngine) HasPolicyForBucket(bucket string) bool {
 	return bpe.engine.HasPolicyForBucket(bucket)
 }
 
+func (bpe *BucketPolicyEngine) HasExistingObjectTagDeny(bucket string) bool {
+	return bpe.engine.HasExistingObjectTagDeny(bucket)
+}
+
 // GetBucketPolicy gets the policy for a bucket
 func (bpe *BucketPolicyEngine) GetBucketPolicy(bucket string) (*policy_engine.PolicyDocument, error) {
 	return bpe.engine.GetBucketPolicy(bucket)

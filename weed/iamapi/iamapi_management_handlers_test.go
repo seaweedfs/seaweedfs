@@ -656,8 +656,8 @@ func TestCreateAccessKeyWithCallerSuppliedKeys(t *testing.T) {
 		Identities: []*iam_pb.Identity{{Name: "alice"}},
 	}
 	values := url.Values{
-		"UserName":       []string{"alice"},
-		"AccessKeyId":    []string{"myappkey"},
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{"myappkey"},
 		"SecretAccessKey": []string{"mysecret1234"},
 	}
 	resp, iamErr := iama.CreateAccessKey(s3cfg, values)
@@ -691,8 +691,8 @@ func TestCreateAccessKeyRejectsWeakKeys(t *testing.T) {
 	}
 	// Too short
 	values := url.Values{
-		"UserName":       []string{"alice"},
-		"AccessKeyId":    []string{"ab"},
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{"ab"},
 		"SecretAccessKey": []string{"validsecret1"},
 	}
 	_, iamErr := iama.CreateAccessKey(s3cfg, values)
@@ -701,8 +701,8 @@ func TestCreateAccessKeyRejectsWeakKeys(t *testing.T) {
 
 	// Short secret
 	values = url.Values{
-		"UserName":       []string{"alice"},
-		"AccessKeyId":    []string{"validkey"},
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{"validkey"},
 		"SecretAccessKey": []string{"short"},
 	}
 	_, iamErr = iama.CreateAccessKey(s3cfg, values)
@@ -711,8 +711,8 @@ func TestCreateAccessKeyRejectsWeakKeys(t *testing.T) {
 
 	// SigV4 delimiters
 	values = url.Values{
-		"UserName":       []string{"alice"},
-		"AccessKeyId":    []string{"foo/bar=baz"},
+		"UserName":        []string{"alice"},
+		"AccessKeyId":     []string{"foo/bar=baz"},
 		"SecretAccessKey": []string{"validsecret1"},
 	}
 	_, iamErr = iama.CreateAccessKey(s3cfg, values)

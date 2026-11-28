@@ -20,6 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc"
 )
 
@@ -103,6 +104,7 @@ func NewCoordinatorRegistry(gatewayAddress string, masters []pb.ServerAddress, g
 	}
 
 	lockClient := cluster.NewLockClient(grpcDialOption, seedFiler)
+	lockClient.TokenSource = security.FilerAdminToken
 
 	registry := &CoordinatorRegistry{
 		activeGateways:        make(map[string]*GatewayInfo),
@@ -118,6 +120,7 @@ func NewCoordinatorRegistry(gatewayAddress string, masters []pb.ServerAddress, g
 		GetGrpcDialOption: func() grpc.DialOption {
 			return grpcDialOption
 		},
+		TokenSource: security.FilerAdminToken,
 		GetFilers: func() []pb.ServerAddress {
 			return registry.filerDiscoveryService.GetFilers()
 		},

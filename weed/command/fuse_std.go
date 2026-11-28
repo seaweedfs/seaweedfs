@@ -369,6 +369,8 @@ func runFuse(cmd *Command, args []string) bool {
 		}
 	}
 
+	util.LogTransparentHugePages()
+
 	// just call "weed mount" command
 	return runMount(cmdMount, []string{})
 }

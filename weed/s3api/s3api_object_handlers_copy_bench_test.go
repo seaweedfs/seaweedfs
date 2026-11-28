@@ -134,7 +134,7 @@ func BenchmarkCopyChunk_Buffered(b *testing.B) {
 				if err != nil {
 					b.Fatalf("download: %v", err)
 				}
-				if err := s3a.uploadChunkData(data, env.assign, false); err != nil {
+				if err := s3a.uploadChunkData(data, env.assign, false, ""); err != nil {
 					b.Fatalf("upload: %v", err)
 				}
 			}
@@ -160,7 +160,7 @@ func BenchmarkCopyChunk_Streamed(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				if err := s3a.streamCopyChunkRange(context.Background(),
 					[]string{env.srcSrv.URL}, env.assign.FileId, 0, int64(size),
-					true /*isFullChunk*/, env.assign, nil); err != nil {
+					true /*isFullChunk*/, env.assign, nil, ""); err != nil {
 					b.Fatalf("stream: %v", err)
 				}
 			}

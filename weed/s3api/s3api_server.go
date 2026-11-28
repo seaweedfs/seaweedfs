@@ -250,6 +250,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		// server's filer group.
 		if len(option.Filers) > 0 {
 			objectWriteLockClient = cluster.NewLockClient(option.GrpcDialOption, option.Filers[0])
+			objectWriteLockClient.TokenSource = security.FilerAdminToken
 			masterClient.SetOnLockRingUpdateFn(func(update *master_pb.LockRingUpdate) {
 				servers := make([]pb.ServerAddress, 0, len(update.Servers))
 				for _, s := range update.Servers {
@@ -267,6 +268,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			DiscoveryInterval: 5 * time.Minute,
 			HomeFiler:         option.HomeFiler,
 			GrpcTimeout:       option.VolumeLookupTimeout,
+			FilerTokenSource:  security.FilerAdminToken,
 		})
 		masterClient.SetOnPeerUpdateFn(filerClient.OnPeerUpdate)
 		masterClient.SetOnVolumeLocationChangeFn(filerClient.OnVolumeLocationChange)
@@ -281,8 +283,9 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			len(option.Filers), option.FilerGroup, option.Masters)
 	} else {
 		filerClient = wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, option.DataCenter, &wdclient.FilerClientOption{
-			HomeFiler:   option.HomeFiler,
-			GrpcTimeout: option.VolumeLookupTimeout,
+			HomeFiler:        option.HomeFiler,
+			GrpcTimeout:      option.VolumeLookupTimeout,
+			FilerTokenSource: security.FilerAdminToken,
 		})
 		glog.V(1).Infof("S3 API initialized FilerClient with %d filer(s) (no discovery)", len(option.Filers))
 	}
@@ -389,6 +392,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		// ring updates); create a plain one when no masters are configured.
 		if objectWriteLockClient == nil {
 			objectWriteLockClient = cluster.NewLockClient(option.GrpcDialOption, option.Filers[0])
+			objectWriteLockClient.TokenSource = security.FilerAdminToken
 		}
 		s3ApiServer.objectWriteLockClient = objectWriteLockClient
 		s3ApiServer.newObjectWriteLock = func(bucket, object string) (objectWriteLock, error) {
@@ -428,6 +432,13 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	iam.primeBucketForIAM = func(bucket string) s3err.ErrorCode {
 		_, code := s3ApiServer.getBucketConfig(bucket)
 		return code
+	}
+	iam.objectEntryForPolicy = func(r *http.Request, bucket, object string) (map[string][]byte, bool) {
+		entry, err := s3ApiServer.resolveObjectEntry(bucket, object, r.URL.Query().Get("versionId"))
+		if err != nil || entry == nil {
+			return nil, false
+		}
+		return entry.Extended, true
 	}
 
 	// Initialize advanced IAM system if config is provided or explicitly enabled
@@ -703,6 +714,7 @@ func (s3a *S3ApiServer) checkPolicyWithEntry(r *http.Request, bucket, object, ac
 //
 // Returns s3err.ErrNone if allowed, or an error code if denied or on error.
 func (s3a *S3ApiServer) recheckPolicyWithObjectEntry(r *http.Request, bucket, object, action string, objectEntry map[string][]byte, handlerName string) s3err.ErrorCode {
+	recordServedObjectEntry(r, bucket, object, objectEntry)
 	if isAnonymousObjectRead(r) {
 		// Refined like writeAnonymousAwareNotFound's masked miss, so a denied
 		// existing key and a missing key answer alike on a malformed name.

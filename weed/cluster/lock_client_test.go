@@ -2,8 +2,11 @@ package cluster
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -11,8 +14,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 )
 
 // The gateway must resolve a lock key to the same primary the filers do,
@@ -321,6 +328,166 @@ type grantingLockFiler struct {
 
 func (s *grantingLockFiler) DistributedLock(ctx context.Context, req *filer_pb.LockRequest) (*filer_pb.LockResponse, error) {
 	return &filer_pb.LockResponse{RenewToken: "tok"}, nil
+}
+
+type rotatingAuthLockFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	keys           []security.SigningKey
+	authorizations chan int
+}
+
+type identityLockFiler struct {
+	filer_pb.UnimplementedSeaweedFilerServer
+	seen chan bool
+}
+
+func (s *identityLockFiler) DistributedLock(ctx context.Context, req *filer_pb.LockRequest) (*filer_pb.LockResponse, error) {
+	md, _ := metadata.FromIncomingContext(ctx)
+	values := md.Get("authorization")
+	valid := len(values) == 1 && values[0] == "Bearer caller-identity"
+	s.seen <- valid
+	if !valid {
+		return nil, status.Error(codes.Unauthenticated, "missing caller identity")
+	}
+	return &filer_pb.LockResponse{RenewToken: "tok"}, nil
+}
+
+func (s *rotatingAuthLockFiler) DistributedLock(ctx context.Context, req *filer_pb.LockRequest) (*filer_pb.LockResponse, error) {
+	md, _ := metadata.FromIncomingContext(ctx)
+	values := md.Get("authorization")
+	authenticatedBy := -1
+	if len(values) == 1 && strings.HasPrefix(values[0], security.BearerPrefix) {
+		for i, key := range s.keys {
+			if security.IsFilerAdminToken(key, security.EncodedJwt(strings.TrimPrefix(values[0], security.BearerPrefix))) {
+				authenticatedBy = i
+				break
+			}
+		}
+	}
+
+	s.authorizations <- authenticatedBy
+	if authenticatedBy < 0 {
+		return nil, status.Error(codes.Unauthenticated, "missing or invalid filer authorization")
+	}
+	return &filer_pb.LockResponse{RenewToken: "tok"}, nil
+}
+
+func lockTestSigningKey(t *testing.T) security.SigningKey {
+	t.Helper()
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		t.Fatal(err)
+	}
+	return security.SigningKey(hex.EncodeToString(bytes))
+}
+
+func TestLockClientResolvesFilerTokenForEachAttempt(t *testing.T) {
+	keys := []security.SigningKey{lockTestSigningKey(t), lockTestSigningKey(t)}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	filer := &rotatingAuthLockFiler{keys: keys, authorizations: make(chan int, 2)}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, filer)
+	go grpcServer.Serve(listener)
+	defer grpcServer.Stop()
+
+	host, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	lc := NewLockClient(grpc.WithTransportCredentials(insecure.NewCredentials()), pb.ServerAddress(fmt.Sprintf("%s:0.%s", host, port)))
+	var tokenNumber uint64
+	lc.TokenSource = func(context.Context) (security.EncodedJwt, error) {
+		n := atomic.AddUint64(&tokenNumber, 1)
+		return security.GenJwtForFilerAdmin(keys[(n-1)%uint64(len(keys))], 60), nil
+	}
+
+	lock := lc.NewShortLivedLock("test-key", "test-owner")
+	if lock == nil {
+		t.Fatal("expected the lock to be acquired")
+	}
+	if err := lock.AttemptToLock(time.Second); err != nil {
+		t.Fatalf("renew lock: %v", err)
+	}
+
+	first := <-filer.authorizations
+	second := <-filer.authorizations
+	if first < 0 || second < 0 {
+		t.Fatal("expected authorization on both attempts")
+	}
+	if first == second {
+		t.Fatal("expected a freshly resolved token on renewal")
+	}
+}
+
+func TestLockClientTokenSourceErrorDoesNotDispatch(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	filer := &rotatingAuthLockFiler{authorizations: make(chan int, 1)}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, filer)
+	go grpcServer.Serve(listener)
+	defer grpcServer.Stop()
+
+	host, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	lc := NewLockClient(grpc.WithTransportCredentials(insecure.NewCredentials()), pb.ServerAddress(fmt.Sprintf("%s:0.%s", host, port)))
+	lc.TokenSource = func(context.Context) (security.EncodedJwt, error) {
+		return "", fmt.Errorf("token source unavailable")
+	}
+	lock := &LiveLock{
+		key:            "test-key",
+		hostFiler:      lc.seedFiler,
+		grpcDialOption: lc.grpcDialOption,
+		lc:             lc,
+	}
+	if _, _, err := lock.doLock(time.Second, time.Second); err == nil {
+		t.Fatal("expected token-source error")
+	}
+	select {
+	case <-filer.authorizations:
+		t.Fatal("token-source error dispatched a filer RPC")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestLockClientNilTokenSourcePreservesRequestContext(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	filer := &identityLockFiler{seen: make(chan bool, 1)}
+	grpcServer := grpc.NewServer()
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, filer)
+	go grpcServer.Serve(listener)
+	defer grpcServer.Stop()
+
+	host, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	lc := NewLockClient(grpc.WithTransportCredentials(insecure.NewCredentials()), pb.ServerAddress(fmt.Sprintf("%s:0.%s", host, port)))
+	lc.RequestContext = func(ctx context.Context) context.Context {
+		return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer caller-identity")
+	}
+	lock := lc.NewShortLivedLock("test-key", "test-owner")
+	if lock == nil {
+		t.Fatal("expected the existing caller identity to acquire the lock")
+	}
+	select {
+	case valid := <-filer.seen:
+		if !valid {
+			t.Fatal("existing caller identity was not preserved")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("filer did not receive the request")
+	}
 }
 
 // A ring member that accepts connections but never answers must not swallow

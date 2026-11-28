@@ -238,6 +238,8 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				glog.Errorf("PutObjectHandler: failed to read directory marker content %s/%s: %v", bucket, object, readErr)
 				if strings.Contains(readErr.Error(), s3err.ErrMsgContentSha256Mismatch) {
 					s3err.WriteErrorResponse(w, r, s3err.ErrContentSHA256Mismatch)
+				} else if errors.Is(readErr, errDecodedLengthExceeded) {
+					s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 				} else {
 					s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 				}
@@ -593,6 +595,28 @@ func multipartPartUpload(r *http.Request) (uploadFilerClient, bool) {
 	return upload, marked
 }
 
+// newPutChunkedUploadOption builds the chunked-upload options putToFiler uses.
+// Every chunk records the object path as the needle's Content-Location pair.
+func (s3a *S3ApiServer) newPutChunkedUploadOption(r *http.Request, bucket, object, collection string,
+	assignFunc func(ctx context.Context, count int, expectedDataSize uint64) (*operation.VolumeAssignRequest, *operation.AssignResult, error)) *operation.ChunkedUploadOption {
+	const smallFileLimit = 256 * 1024 // 256KB - store inline in filer
+	return &operation.ChunkedUploadOption{
+		ChunkSize:       s3a.uploadChunkSize(),
+		SmallFileLimit:  smallFileLimit,
+		Collection:      collection,
+		DataCenter:      s3a.option.DataCenter,
+		SaveSmallInline: false, // S3 API always creates chunks, never stores inline
+		MimeType:        r.Header.Get("Content-Type"),
+		Cipher:          s3a.cipher, // encrypt data on volume servers
+		PairMap:         contentLocationPairMap(s3a.objectContentLocation(r, bucket, object)),
+		AssignFunc:      assignFunc,
+		LookupJwtFunc:   s3a.lookupVolumeJwt,
+		// A body that crawls below the minimum rate is cut and answered as
+		// SlowDown, so the gateway does not hold chunk buffers on it.
+		BodyDeadline: true,
+	}
+}
+
 // putToFiler writes one chunk of object bytes (a full PutObject body, a
 // single MPU part, a copy-part destination). lifecycleTTLSec is non-zero
 // only for top-level PutObject paths where the lifecycle XML's
@@ -721,9 +745,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	// filePath is already provided directly - no URL parsing needed
 	// Step 1 & 2: Use auto-chunking to handle large files without OOM
-	chunkSize := s3a.uploadChunkSize()
-	const smallFileLimit = 256 * 1024 // 256KB - store inline in filer
-
+	// Chunk size and inline limit are set in newPutChunkedUploadOption.
 	collection := ""
 	if s3a.option.FilerGroup != "" {
 		collection = s3a.getCollectionName(bucket)
@@ -736,26 +758,15 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	// Create assign function for chunked upload
 	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*operation.VolumeAssignRequest, *operation.AssignResult, error) {
-		var assignResult *filer_pb.AssignVolumeResponse
-		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			resp, err := client.AssignVolume(ctx, &filer_pb.AssignVolumeRequest{
-				Count:            int32(count),
-				Replication:      "",
-				Collection:       collection,
-				DiskType:         "",
-				DataCenter:       s3a.option.DataCenter,
-				Path:             assignPath,
-				ExpectedDataSize: expectedDataSize,
-				TtlSec:           lifecycleTTLSec,
-			})
-			if err != nil {
-				return fmt.Errorf("assign volume: %w", err)
-			}
-			if err := filer_pb.AssignVolumeResponseError(resp); err != nil {
-				return fmt.Errorf("assign volume: %w", err)
-			}
-			assignResult = resp
-			return nil
+		assignResult, err := s3a.assignUploadVolume(ctx, &filer_pb.AssignVolumeRequest{
+			Count:            int32(count),
+			Replication:      "",
+			Collection:       collection,
+			DiskType:         "",
+			DataCenter:       s3a.option.DataCenter,
+			Path:             assignPath,
+			ExpectedDataSize: expectedDataSize,
+			TtlSec:           lifecycleTTLSec,
 		})
 		if err != nil {
 			return nil, nil, err
@@ -781,21 +792,18 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	// Upload with auto-chunking
-	// Use context.Background() to ensure chunk uploads complete even if HTTP request is cancelled
-	// This prevents partial uploads and data corruption
-	chunkResult, err := stages.upload(context.Background(), dataReader, &operation.ChunkedUploadOption{
-		ChunkSize:       chunkSize,
-		SmallFileLimit:  smallFileLimit,
-		Collection:      collection,
-		DataCenter:      s3a.option.DataCenter,
-		SaveSmallInline: false, // S3 API always creates chunks, never stores inline
-		MimeType:        r.Header.Get("Content-Type"),
-		Cipher:          s3a.cipher, // encrypt data on volume servers
-		AssignFunc:      assignFunc,
-		LookupJwtFunc:   s3a.lookupVolumeJwt,
-	})
+	// Chunk uploads follow the request context: when the client goes away the
+	// uploads stop and release their buffers. Orphan cleanup below and the
+	// metadata commit later run on context.Background(), so an aborted upload
+	// still has its already-written chunks deleted and a commit in flight is
+	// never cut short.
+	chunkResult, err := stages.upload(r.Context(), dataReader, s3a.newPutChunkedUploadOption(r, bucket, object, collection, assignFunc))
 	if err != nil {
-		glog.Errorf("putToFiler: chunked upload failed: %v", err)
+		if errors.Is(r.Context().Err(), context.Canceled) {
+			glog.V(1).Infof("putToFiler: chunked upload stopped, client gone: %v", err)
+		} else {
+			glog.Errorf("putToFiler: chunked upload failed: %v", err)
+		}
 
 		// CRITICAL: Cleanup orphaned chunks before returning error
 		// UploadReaderInChunks now returns partial results even on error,
@@ -1098,7 +1106,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			// its ring view agrees — exactly what is not guaranteed after an
 			// ambiguous write. The create goes to the owner alone; an
 			// unreachable owner leaves the outcome uncertain.
-			createErr = pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, create)
+			createErr = pb.WithGrpcFilerClient(false, 0, owner, s3a.option.GrpcDialOption, security.FilerAdminToken, create)
 			switch status.Code(createErr) {
 			case codes.Unavailable, codes.Canceled, codes.DeadlineExceeded:
 				s3a.markOwnerUnreachable(owner)
@@ -1327,7 +1335,7 @@ func (s3a *S3ApiServer) createAfterAmbiguousRoute(filePath, bucket, object strin
 				}
 				continue
 			}
-			resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
+			resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient, false)
 			if resolveErr != nil || !sameFileChunks(resolved, uploaded) {
 				glog.Warningf("putToFiler: ambiguous routed PUT for %s was superseded by another write; not committing stale entry", filePath)
 				return s3err.ErrServiceUnavailable
@@ -1473,7 +1481,7 @@ func (s3a *S3ApiServer) confirmCreateLanded(filePath, bucket, object, routeObjec
 				return s3err.ErrNone
 			}
 		} else {
-			resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient)
+			resolved, _, resolveErr := filer.ResolveChunkManifest(lookupCtx, s3a.createLookupFileIdFunction(), existing.GetChunks(), 0, math.MaxInt64, s3a.filerClient, false)
 			if resolveErr != nil || !sameFileChunks(resolved, uploaded) {
 				return s3err.ErrNone
 			}
@@ -1890,6 +1898,32 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 	}
 }
 
+// s3AssignVolumeTimeout bounds one AssignVolume RPC; it mirrors operation's
+// unexported assignVolumeTimeout.
+const s3AssignVolumeTimeout = 30 * time.Second
+
+// assignUploadVolume asks a filer for a volume for one upload chunk. ctx follows
+// the client, so the call is bounded by s3AssignVolumeTimeout too, and the filer
+// walk gets the same context: a client that went away is not evidence against
+// the filer that was answering, and the next filer is not asked on its behalf.
+func (s3a *S3ApiServer) assignUploadVolume(ctx context.Context, req *filer_pb.AssignVolumeRequest) (*filer_pb.AssignVolumeResponse, error) {
+	assignCtx, cancel := context.WithTimeout(ctx, s3AssignVolumeTimeout)
+	defer cancel()
+	var assignResult *filer_pb.AssignVolumeResponse
+	err := s3a.withFilerClient(assignCtx, false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.AssignVolume(assignCtx, req)
+		if err != nil {
+			return fmt.Errorf("assign volume: %w", err)
+		}
+		if err := filer_pb.AssignVolumeResponseError(resp); err != nil {
+			return fmt.Errorf("assign volume: %w", err)
+		}
+		assignResult = resp
+		return nil
+	})
+	return assignResult, err
+}
+
 // mapChunkedUploadErrorToS3Error classifies a failed streaming upload. A truncated
 // request body (client abort or reverse-proxy timeout) is a request error, so report
 // IncompleteBody (400) rather than a 500 a reverse proxy would relay as a confusing
@@ -1900,8 +1934,10 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 // peer that went away, and a body that arrived short while the peer was still there.
 // Both surface as the same read error, so without this they are indistinguishable in
 // logs even though they point at opposite causes — a network path versus a client.
-// The upload itself deliberately runs on a background context, so cancellation of
-// reqCtx races the read error; a missed signal degrades to IncompleteBody as before.
+// The chunk uploads run on reqCtx, so once the peer is gone any upload error
+// (including a gRPC Canceled or a transport "context canceled") is the client
+// going away, not a fault; that is checked first. Orphan cleanup and the
+// metadata commit do not use reqCtx.
 //
 // This reads cancellation as "the peer is gone", which is what net/http means by it
 // today: nothing on the S3 request path cancels reqCtx for its own reasons. Anything
@@ -1913,6 +1949,8 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 // quota) is AccessDenied, as in filerErrorToS3Error and mapCopyErrorToS3Error.
 func mapChunkedUploadErrorToS3Error(reqCtx context.Context, err error) s3err.ErrorCode {
 	switch {
+	case errors.Is(reqCtx.Err(), context.Canceled):
+		return s3err.ErrClientDisconnected
 	case errors.Is(err, weed_server.ErrReadOnly):
 		return s3err.ErrAccessDenied
 	case strings.Contains(err.Error(), s3err.ErrMsgContentSha256Mismatch):
@@ -1920,10 +1958,13 @@ func mapChunkedUploadErrorToS3Error(reqCtx context.Context, err error) s3err.Err
 	case strings.Contains(err.Error(), s3err.ErrMsgPayloadChecksumMismatch):
 		return s3err.ErrInvalidDigest
 	case errors.Is(err, operation.ErrTruncatedBody):
-		if errors.Is(reqCtx.Err(), context.Canceled) {
-			return s3err.ErrClientDisconnected
-		}
 		return s3err.ErrIncompleteBody
+	case errors.Is(err, errDecodedLengthExceeded):
+		return s3err.ErrInvalidRequest
+	case operation.IsUploadOverloaded(err), errors.Is(err, operation.ErrUploadStalled):
+		// The volumes are short of upload budget, or a stalled write used up
+		// its retries: load the client should back off from, not a fault.
+		return s3err.ErrTooManyRequest
 	default:
 		return s3err.ErrInternalError
 	}
@@ -2843,6 +2884,11 @@ func (s3a *S3ApiServer) getObjectETag(entry *filer_pb.Entry) string {
 	return objectETag(entry)
 }
 
+// ObjectETag exposes objectETag to callers outside this package.
+func ObjectETag(entry *filer_pb.Entry) string {
+	return objectETag(entry)
+}
+
 func objectETag(entry *filer_pb.Entry) string {
 	// Try to get ETag from Extended attributes first
 	if etagBytes, hasETag := entry.Extended[s3_constants.ExtETagKey]; hasETag {
@@ -2878,20 +2924,10 @@ func objectETag(entry *filer_pb.Entry) string {
 	return quoteETag(filer.ETagChunks(entry.Chunks))
 }
 
-func (s3a *S3ApiServer) etagMatches(headerValue, objectETag string) bool {
-	// Clean the object ETag
-	objectETag = strings.Trim(objectETag, `"`)
-
-	// Split header value by commas to handle multiple ETags
-	etags := strings.Split(headerValue, ",")
-	for _, etag := range etags {
-		etag = strings.TrimSpace(etag)
-		etag = strings.Trim(etag, `"`)
-		if etag == objectETag {
-			return true
-		}
-	}
-	return false
+// etagMatches reports whether an If-Match (weak=false) or If-None-Match
+// (weak=true) value matches the object's ETag.
+func (s3a *S3ApiServer) etagMatches(headerValue, objectETag string, weak bool) bool {
+	return util.ETagListMatches(headerValue, objectETag, weak)
 }
 
 func normalizeConditionalTargetEntry(entry *filer_pb.Entry) *filer_pb.Entry {
@@ -2934,7 +2970,7 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 			// Use production getObjectETag method
 			objectETag := s3a.getObjectETag(entry)
 			// Use production etagMatches method
-			if !s3a.etagMatches(headers.ifMatch, objectETag) {
+			if !s3a.etagMatches(headers.ifMatch, objectETag, false) {
 				return s3err.ErrPreconditionFailed
 			}
 		}
@@ -2967,7 +3003,7 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 			// Use production getObjectETag method
 			objectETag := s3a.getObjectETag(entry)
 			// Use production etagMatches method
-			if s3a.etagMatches(headers.ifNoneMatch, objectETag) {
+			if s3a.etagMatches(headers.ifNoneMatch, objectETag, true) {
 				glog.V(3).Infof("validateConditionalHeaders: If-None-Match failed - ETag matches %s", objectETag)
 				return s3err.ErrPreconditionFailed
 			}
@@ -3063,7 +3099,7 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 			// Use production getObjectETag method
 			objectETag := s3a.getObjectETag(entry)
 			// Use production etagMatches method
-			if !s3a.etagMatches(headers.ifMatch, objectETag) {
+			if !s3a.etagMatches(headers.ifMatch, objectETag, false) {
 				glog.V(3).Infof("validateConditionalHeadersForReads: If-Match failed for object %s/%s - header If-Match: [%s], object ETag: [%s]", bucket, object, headers.ifMatch, objectETag)
 				return ConditionalHeaderResult{ErrorCode: s3err.ErrPreconditionFailed, Entry: entry}
 			}
@@ -3093,7 +3129,7 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 			return ConditionalHeaderResult{ErrorCode: s3err.ErrNotModified, ETag: objectETag, Entry: entry}
 		}
 		// Use production etagMatches method
-		if s3a.etagMatches(headers.ifNoneMatch, objectETag) {
+		if s3a.etagMatches(headers.ifNoneMatch, objectETag, true) {
 			glog.V(3).Infof("validateConditionalHeadersForReads: If-None-Match failed - ETag matches %s", objectETag)
 			return ConditionalHeaderResult{ErrorCode: s3err.ErrNotModified, ETag: objectETag, Entry: entry}
 		}

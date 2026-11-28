@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -433,7 +434,7 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 		return fmt.Errorf("connect to filer: %w", err)
 	}
 	defer conn.Close()
-	filerClient := filer_pb.NewSeaweedFilerClient(conn)
+	filerClient := filer_pb.NewSeaweedFilerClient(security.WithFilerClientAuth(conn, security.FilerAdminToken))
 
 	maxResults := int(request.MaxResults)
 	scanLimit := maxResults
@@ -546,7 +547,7 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 		return fmt.Errorf("connect to filer %s: %w", filerGrpcAddress, err)
 	}
 	defer conn.Close()
-	filerClient := filer_pb.NewSeaweedFilerClient(conn)
+	filerClient := filer_pb.NewSeaweedFilerClient(security.WithFilerClientAuth(conn, security.FilerAdminToken))
 
 	// Resolve once for the whole job: compaction commits new metadata as it
 	// runs, and a job should not change settings halfway through. Both reads
@@ -717,7 +718,7 @@ func (h *Handler) dialFiler(ctx context.Context, grpcAddress string) (*grpc.Clie
 		return nil, err
 	}
 
-	client := filer_pb.NewSeaweedFilerClient(conn)
+	client := filer_pb.NewSeaweedFilerClient(security.WithFilerClientAuth(conn, security.FilerAdminToken))
 	if _, err := client.Ping(opCtx, &filer_pb.PingRequest{}); err != nil {
 		_ = conn.Close()
 		return nil, err

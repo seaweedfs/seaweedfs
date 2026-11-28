@@ -76,6 +76,9 @@ type VolumeGrowOption struct {
 	// refused holds the data nodes that refused an allocation earlier in the
 	// same grow request; they offer no free slots for the rest of it.
 	refused map[*DataNode]bool
+	// collection is the collection the grow request started in, so a delete
+	// of it stops the request instead of the request recreating it.
+	collection *Collection
 
 	Collection         string                        `json:"collection,omitempty"`
 	ReplicaPlacement   *super_block.ReplicaPlacement `json:"replication,omitempty"`
@@ -150,6 +153,9 @@ func (vg *VolumeGrowth) AutomaticGrowByType(option *VolumeGrowOption, grpcDialOp
 	return result, err
 }
 func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targetCount uint32, option *VolumeGrowOption, topo *Topology) (result []*master_pb.VolumeLocation, err error) {
+	// Taken before waiting for the lock: a delete that lands while this request
+	// waits behind another grow stops it as well.
+	collection := topo.getOrCreateCollection(option.Collection)
 	vg.accessLock.Lock()
 	defer vg.accessLock.Unlock()
 
@@ -160,6 +166,7 @@ func (vg *VolumeGrowth) GrowByCountAndType(grpcDialOption grpc.DialOption, targe
 	placed := *option
 	placed.layoutLoad = nil
 	placed.refused = nil
+	placed.collection = collection
 	option = &placed
 	retries := 0
 	for i := uint32(0); i < targetCount; i++ {
@@ -205,6 +212,10 @@ func (vg *VolumeGrowth) findAndGrow(grpcDialOption grpc.DialOption, topo *Topolo
 		glog.V(0).Infof("wait for volume servers to join back")
 		time.Sleep(topo.WarmupDuration() / WarmupPulseMultiplier / 2)
 	}
+	if !topo.lockForGrowth(option) {
+		return nil, fmt.Errorf("collection %q is being deleted", option.Collection)
+	}
+	defer option.collection.unlockForGrowth()
 	if option.layoutLoad == nil {
 		option.layoutLoad = option.withLayoutLoad(topo).layoutLoad
 	}

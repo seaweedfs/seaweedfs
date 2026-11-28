@@ -19,3 +19,7 @@ func (r *StatusRecorder) WriteHeader(status int) {
 func (r *StatusRecorder) Flush() {
 	r.ResponseWriter.(http.Flusher).Flush()
 }
+
+func (r *StatusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}

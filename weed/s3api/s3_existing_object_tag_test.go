@@ -1,12 +1,18 @@
 package s3api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -669,4 +675,199 @@ func TestCheckVersionReadGrantPreservesQueryAuth(t *testing.T) {
 	assert.Equal(t, "AK", q.Get("AWSAccessKeyId"))
 	assert.Equal(t, "v1", q.Get("versionId"))
 	assert.False(t, q.Has("attributes"))
+}
+
+// A Deny with a negated condition on the object's existing tag is decided on
+// the tags the object has, not on the missing entry the auth layer starts with.
+func TestNegatedExistingObjectTagDenyDecidedOnObjectTags(t *testing.T) {
+	const (
+		bucket    = "scan-bucket"
+		accessKey = "LOCALSCANKEY00000001"
+		secretKey = "local-scan-secret-for-loopback-only"
+	)
+	tagged := func(value string) map[string][]byte {
+		return map[string][]byte{s3_constants.AmzObjectTaggingPrefix + "ScanStatus": []byte(value)}
+	}
+	objects := map[string]map[string][]byte{
+		"scanned/clean.txt":    tagged("CLEAN"),
+		"scanned/infected.txt": tagged("INFECTED"),
+		"scanned/untagged.txt": nil,
+		"other/plain.txt":      nil,
+	}
+	conditions := []struct {
+		name, condition string
+		infected        s3err.ErrorCode
+	}{
+		{"StringNotEquals", `{"StringNotEquals":{"s3:ExistingObjectTag/ScanStatus":"CLEAN"}}`, s3err.ErrAccessDenied},
+		{"StringNotLike", `{"StringNotLike":{"s3:ExistingObjectTag/ScanStatus":"CLEAN"}}`, s3err.ErrAccessDenied},
+		{"StringNotEqualsIgnoreCase", `{"StringNotEqualsIgnoreCase":{"s3:ExistingObjectTag/ScanStatus":"clean"}}`, s3err.ErrAccessDenied},
+		{"Null", `{"Null":{"s3:ExistingObjectTag/ScanStatus":"true"}}`, s3err.ErrNone},
+	}
+
+	for _, tc := range conditions {
+		condition := tc.condition
+		want := map[string]s3err.ErrorCode{
+			"scanned/clean.txt":    s3err.ErrNone,
+			"scanned/infected.txt": tc.infected,
+			"scanned/untagged.txt": s3err.ErrAccessDenied,
+			"scanned/missing.txt":  s3err.ErrAccessDenied,
+			"other/plain.txt":      s3err.ErrNone,
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			iam := &IdentityAccessManagement{
+				hashes:       make(map[string]*sync.Pool),
+				hashCounters: make(map[string]*int32),
+			}
+			require.NoError(t, iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+				Identities: []*iam_pb.Identity{{
+					Name:        "app",
+					Actions:     []string{"Read", "Write", "List", "Tagging"},
+					Credentials: []*iam_pb.Credential{{AccessKey: accessKey, SecretKey: secretKey}},
+				}},
+			}))
+			iam.policyEngine = NewBucketPolicyEngine()
+			require.NoError(t, iam.policyEngine.engine.SetBucketPolicy(bucket, `{"Version":"2012-10-17","Statement":[{
+				"Effect":"Deny","Principal":"*","Action":["s3:GetObject","s3:GetObjectVersion"],
+				"Resource":"arn:aws:s3:::`+bucket+`/scanned/*","Condition":`+condition+`}]}`))
+			iam.objectEntryForPolicy = func(r *http.Request, b, object string) (map[string][]byte, bool) {
+				extended, found := objects[strings.TrimPrefix(object, "/")]
+				return extended, found && b == bucket
+			}
+
+			for key, code := range want {
+				for _, method := range []string{http.MethodGet, http.MethodHead} {
+					req := mustNewRequest(method, "http://127.0.0.1:9000/"+bucket+"/"+key, 0, nil, t)
+					require.NoError(t, signRequestV4(req, accessKey, secretKey))
+					req = mux.SetURLVars(req, map[string]string{"bucket": bucket, "object": key})
+					_, got := iam.authRequest(req, s3_constants.ACTION_READ)
+					assert.Equal(t, code, got, "%s %s", method, key)
+				}
+			}
+		})
+	}
+}
+
+// Only a Deny that reads the object's tags costs an entry lookup.
+func TestDenyWithoutExistingObjectTagSkipsEntryLookup(t *testing.T) {
+	const bucket = "ip-bucket"
+	engine := NewBucketPolicyEngine()
+	require.NoError(t, engine.engine.SetBucketPolicy(bucket, `{"Version":"2012-10-17","Statement":[
+		{"Effect":"Deny","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::`+bucket+`/*",
+		 "Condition":{"StringNotEquals":{"aws:UserAgent":"scanner"}}},
+		{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::`+bucket+`/*",
+		 "Condition":{"StringEquals":{"s3:ExistingObjectTag/public":"yes"}}}]}`))
+	assert.False(t, engine.HasExistingObjectTagDeny(bucket))
+
+	lookups := 0
+	iam := &IdentityAccessManagement{policyEngine: engine}
+	iam.objectEntryForPolicy = func(*http.Request, string, string) (map[string][]byte, bool) {
+		lookups++
+		return nil, true
+	}
+	req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/a.txt", nil)
+	_, _, evaluated, err := iam.evaluateBucketPolicy(bucket, "/a.txt", string(s3_constants.ACTION_READ), "*", req, nil)
+	require.NoError(t, err)
+	assert.True(t, evaluated)
+	assert.Zero(t, lookups)
+}
+
+// The identity checks that follow evaluate the mirrored bucket policy again,
+// so the request they get carries the tags the Deny was decided on.
+func TestEvaluateBucketPolicyHandsOnObjectTags(t *testing.T) {
+	const bucket = "scan-bucket"
+	engine := NewBucketPolicyEngine()
+	require.NoError(t, engine.engine.SetBucketPolicy(bucket, `{"Version":"2012-10-17","Statement":[{
+		"Effect":"Deny","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::`+bucket+`/*",
+		"Condition":{"StringNotEquals":{"s3:ExistingObjectTag/ScanStatus":"CLEAN"}}}]}`))
+	iam := &IdentityAccessManagement{policyEngine: engine}
+	iam.objectEntryForPolicy = func(*http.Request, string, string) (map[string][]byte, bool) {
+		return map[string][]byte{s3_constants.AmzObjectTaggingPrefix + "ScanStatus": []byte("CLEAN")}, true
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/a.txt", nil)
+	policyReq, _, evaluated, err := iam.evaluateBucketPolicy(bucket, "/a.txt", string(s3_constants.ACTION_READ), "*", req, nil)
+	require.NoError(t, err)
+	assert.False(t, evaluated, "no statement matches an object tagged CLEAN")
+	assert.Equal(t, []string{"CLEAN"}, policy_engine.RequestConditionValues(policyReq)["s3:ExistingObjectTag/ScanStatus"])
+}
+
+// A tracked request is checked again on the version it is serving, not on
+// the one that became current while it ran.
+func TestEvaluateBucketPolicyRechecksTheServedVersion(t *testing.T) {
+	const bucket = "scan-bucket"
+	engine := NewBucketPolicyEngine()
+	require.NoError(t, engine.engine.SetBucketPolicy(bucket, `{"Version":"2012-10-17","Statement":[{
+		"Effect":"Deny","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::`+bucket+`/*",
+		"Condition":{"StringNotEquals":{"s3:ExistingObjectTag/ScanStatus":"CLEAN"}}}]}`))
+	iam := &IdentityAccessManagement{policyEngine: engine}
+	iam.objectEntryForPolicy = func(*http.Request, string, string) (map[string][]byte, bool) {
+		return map[string][]byte{s3_constants.AmzObjectTaggingPrefix + "ScanStatus": []byte("CLEAN")}, true
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/"+bucket+"/a.txt", nil)
+	req = req.WithContext(context.WithValue(req.Context(), servedObjectEntriesKey{}, &sync.Map{}))
+	recordServedObjectEntry(req, bucket, "/a.txt", map[string][]byte{s3_constants.AmzObjectTaggingPrefix + "ScanStatus": []byte("INFECTED")})
+
+	_, allowed, evaluated, err := iam.evaluateBucketPolicy(bucket, "/a.txt", string(s3_constants.ACTION_READ), "*", req, nil)
+	require.NoError(t, err)
+	assert.True(t, evaluated && !allowed, "the served version is not tagged CLEAN")
+}
+
+// The first request on a bucket whose policy is not loaded yet is decided
+// like any later one.
+func TestColdBucketDecidesExistingObjectTagDenyOnObjectTags(t *testing.T) {
+	const (
+		bucket    = "scan-bucket"
+		accessKey = "LOCALSCANKEY00000001"
+		secretKey = "local-scan-secret-for-loopback-only"
+	)
+	objects := map[string]string{"scanned/clean.txt": "CLEAN", "scanned/infected.txt": "INFECTED"}
+	want := map[string]s3err.ErrorCode{"scanned/clean.txt": s3err.ErrNone, "scanned/infected.txt": s3err.ErrAccessDenied}
+
+	for key, code := range want {
+		iam := &IdentityAccessManagement{
+			hashes:       make(map[string]*sync.Pool),
+			hashCounters: make(map[string]*int32),
+		}
+		require.NoError(t, iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+			Identities: []*iam_pb.Identity{{
+				Name:        "app",
+				Actions:     []string{"Read"},
+				Credentials: []*iam_pb.Credential{{AccessKey: accessKey, SecretKey: secretKey}},
+			}},
+		}))
+		iam.policyEngine = NewBucketPolicyEngine()
+		iam.primeBucketForIAM = func(b string) s3err.ErrorCode {
+			require.NoError(t, iam.policyEngine.engine.SetBucketPolicy(b, `{"Version":"2012-10-17","Statement":[{
+				"Effect":"Deny","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::`+b+`/scanned/*",
+				"Condition":{"StringNotEquals":{"s3:ExistingObjectTag/ScanStatus":"CLEAN"}}}]}`))
+			return s3err.ErrNone
+		}
+		iam.objectEntryForPolicy = func(r *http.Request, b, object string) (map[string][]byte, bool) {
+			value, found := objects[strings.TrimPrefix(object, "/")]
+			return map[string][]byte{s3_constants.AmzObjectTaggingPrefix + "ScanStatus": []byte(value)}, found
+		}
+
+		req := mustNewRequest(http.MethodGet, "http://127.0.0.1:9000/"+bucket+"/"+key, 0, nil, t)
+		require.NoError(t, signRequestV4(req, accessKey, secretKey))
+		req = mux.SetURLVars(req, map[string]string{"bucket": bucket, "object": key})
+		_, got := iam.authRequest(req, s3_constants.ACTION_READ)
+		assert.Equal(t, code, got, key)
+	}
+}
+
+// A handler changing the entry it served after the check leaves the recorded
+// tags as they were authorized.
+func TestServedObjectEntryKeepsTheTagsAuthorized(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPut, "/scan-bucket/a.txt?tagging", nil)
+	req = req.WithContext(context.WithValue(req.Context(), servedObjectEntriesKey{}, &sync.Map{}))
+	extended := map[string][]byte{s3_constants.AmzObjectTaggingPrefix + "ScanStatus": []byte("CLEAN")}
+	recordServedObjectEntry(req, "scan-bucket", "/a.txt", extended)
+
+	delete(extended, s3_constants.AmzObjectTaggingPrefix+"ScanStatus")
+	extended[s3_constants.AmzObjectTaggingPrefix+"ScanStatus"] = []byte("INFECTED")
+
+	served, found := servedObjectEntry(req, "scan-bucket", "/a.txt")
+	require.True(t, found)
+	assert.Equal(t, "CLEAN", string(served[s3_constants.AmzObjectTaggingPrefix+"ScanStatus"]))
 }

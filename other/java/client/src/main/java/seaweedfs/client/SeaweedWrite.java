@@ -135,7 +135,7 @@ public class SeaweedWrite {
             cipherKeyString = ByteString.copyFrom(cipherKey);
         }
 
-        String etag = multipartUpload(targetUrl, auth, bytes, bytesOffset, bytesLength, cipherKey);
+        String etag = multipartUpload(filerClient, targetUrl, auth, bytes, bytesOffset, bytesLength, cipherKey);
 
         return FilerProto.FileChunk.newBuilder()
                 .setFileId(fileId)
@@ -167,7 +167,8 @@ public class SeaweedWrite {
         }
     }
 
-    private static String multipartUpload(String targetUrl,
+    private static String multipartUpload(FilerClient filerClient,
+            String targetUrl,
             String auth,
             final byte[] bytes,
             final long bytesOffset, final long bytesLength,
@@ -193,7 +194,14 @@ public class SeaweedWrite {
         }
 
         HttpPost post = new HttpPost(targetUrl);
-        if (auth != null && auth.length() != 0) {
+        String filerAuthHeader = null;
+        if (filerClient.isProxyChunkUrl(targetUrl)) {
+            filerAuthHeader = filerClient.getFilerCredentials().getAuthorizationHeaderValue(true);
+            post.setConfig(SeaweedUtil.PROXY_CHUNK_REQUEST_CONFIG);
+        }
+        if (filerAuthHeader != null) {
+            post.addHeader("Authorization", filerAuthHeader);
+        } else if (auth != null && auth.length() != 0) {
             // Volume JWT and Basic Auth both use the Authorization header; the JWT wins
             // when present. Front the volume with a JWT-free path to use Basic Auth here.
             post.addHeader("Authorization", "BEARER " + auth);

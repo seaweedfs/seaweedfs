@@ -27,6 +27,7 @@ const (
 	// Pinned: the connector is as much the thing under test as the server, and
 	// an unrelated release should not change what an old commit reproduces.
 	lancePackages  = "org.lance:lance-spark-bundle-3.5_2.12:0.7.1"
+	mavenMirror    = "https://maven-central.storage-download.googleapis.com/maven2/"
 	startupTimeout = 60 * time.Second
 	clientTimeout  = 25 * time.Minute
 )
@@ -297,6 +298,7 @@ func (env *environment) runSpark(t *testing.T, bucket string) {
 		sparkImage,
 		"/opt/spark/bin/spark-submit",
 		"--packages", lancePackages,
+		"--repositories", mavenMirror,
 		"--conf", "spark.jars.ivy=/tmp/ivy",
 		"/opt/spark/work-dir/spark_lance_ops.py",
 		"--namespace-url", namespaceURL,

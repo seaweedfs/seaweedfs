@@ -8,6 +8,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +18,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/stretchr/testify/require"
 )
 
 // TestUploadReaderInChunksReturnsPartialResultsOnError verifies that when
@@ -292,6 +296,82 @@ func TestUploadChunkToHoldersRollsBackOnPartialFailure(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&badDeletes); got != 0 {
 		t.Errorf("expected no cleanup DELETE to the failed holder, got %d", got)
+	}
+}
+
+// TestUploadReaderInChunks_PassesPairMap checks that every chunk of a
+// multi-chunk upload carries ChunkedUploadOption.PairMap, not only the first.
+func TestUploadReaderInChunks_PassesPairMap(t *testing.T) {
+	const chunkSize = 8 * 1024
+	testData := bytes.Repeat([]byte("x"), 3*chunkSize)
+
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+		return nil, &AssignResult{Fid: "3,01637037d6", Url: "volume:8080", Count: 1}, nil
+	}
+
+	var mu sync.Mutex
+	var seen []string
+	uploadFunc := func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+		mu.Lock()
+		seen = append(seen, option.PairMap["Seaweed-Content-Location"])
+		mu.Unlock()
+		return &UploadResult{Size: uint32(len(data))}, nil
+	}
+
+	_, err := UploadReaderInChunks(context.Background(), bytes.NewReader(testData), &ChunkedUploadOption{
+		ChunkSize:      chunkSize,
+		SmallFileLimit: 256,
+		AssignFunc:     assignFunc,
+		UploadFunc:     uploadFunc,
+		PairMap:        map[string]string{"Seaweed-Content-Location": "/buckets/b/k"},
+	})
+	if err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	if len(seen) != 3 {
+		t.Fatalf("expected 3 chunk uploads, got %d", len(seen))
+	}
+	for i, v := range seen {
+		if v != "/buckets/b/k" {
+			t.Errorf("chunk %d: Seaweed-Content-Location = %q, want %q", i, v, "/buckets/b/k")
+		}
+	}
+}
+
+// TestUploadChunkToHolders_PassesPairMap checks that the replica fan-out path
+// sends ChunkedUploadOption.PairMap to every holder.
+func TestUploadChunkToHolders_PassesPairMap(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Header.Get("Seaweed-Content-Location"))
+		mu.Unlock()
+		fmt.Fprintf(w, `{"name":"f","size":11}`)
+	})
+	a := httptest.NewServer(handler)
+	defer a.Close()
+	b := httptest.NewServer(handler)
+	defer b.Close()
+
+	hosts := []string{strings.TrimPrefix(a.URL, "http://"), strings.TrimPrefix(b.URL, "http://")}
+	prepared, err := prepareUploadData([]byte("hello world"), &UploadOption{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = uploadChunkToHolders(context.Background(), hosts, "3,01637037d6", prepared, "", "", false, &ChunkedUploadOption{
+		PairMap: map[string]string{"Seaweed-Content-Location": "/buckets/b/k"},
+	})
+	if err != nil {
+		t.Fatalf("fan-out upload: %v", err)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("expected 2 holder uploads, got %d", len(seen))
+	}
+	for i, v := range seen {
+		if v != "/buckets/b/k" {
+			t.Errorf("holder %d: Seaweed-Content-Location = %q, want %q", i, v, "/buckets/b/k")
+		}
 	}
 }
 
@@ -766,5 +846,325 @@ func TestDeleteChunkFromHoldersRenewsPerHolder(t *testing.T) {
 	}
 	if atomic.LoadInt32(&acceptedDeletes) != 1 {
 		t.Fatalf("expected the second holder's retried delete to land, got %d", acceptedDeletes)
+	}
+}
+
+// TestUploadChunkToHoldersMarksClientSource verifies that the gateway's own
+// fan-out writes are tagged as client traffic, so a volume server can tell
+// them apart from a primary-to-replica forward.
+func TestUploadChunkToHoldersMarksClientSource(t *testing.T) {
+	var mu sync.Mutex
+	var queries []url.Values
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		queries = append(queries, r.URL.Query())
+		mu.Unlock()
+		fmt.Fprintf(w, `{"name":"f","size":11}`)
+	})
+	h1 := httptest.NewServer(handler)
+	defer h1.Close()
+	h2 := httptest.NewServer(handler)
+	defer h2.Close()
+
+	assignResult := &AssignResult{
+		Fid:      "3,01abcdef",
+		Url:      strings.TrimPrefix(h1.URL, "http://"),
+		Replicas: []Location{{Url: strings.TrimPrefix(h2.URL, "http://")}},
+	}
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+		return nil, assignResult, nil
+	}
+	_, err := UploadReaderInChunks(context.Background(), strings.NewReader("hello world"), &ChunkedUploadOption{
+		ChunkSize:  1024,
+		AssignFunc: assignFunc,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, queries, 2)
+	for _, q := range queries {
+		require.Equal(t, "replicate", q.Get("type"))
+		require.Equal(t, ReplicateSourceClient, q.Get(ReplicateSourceParam))
+		require.False(t, IsReplicaForward(q))
+	}
+}
+
+func TestIsReplicaForward(t *testing.T) {
+	require.True(t, IsReplicaForward(url.Values{"type": {"replicate"}}))
+	require.False(t, IsReplicaForward(url.Values{"type": {"replicate"}, "src": {"client"}}))
+	require.False(t, IsReplicaForward(url.Values{}))
+}
+
+// A volume overload is retried on one fresh assignment and then given up, so
+// a busy cluster is not hit again and again while the chunk buffer is held.
+// A 429 from a volume server that predates the 503 gets the same treatment.
+func TestUploadReaderInChunksReassignsOnceOnOverload(t *testing.T) {
+	for _, status := range []int{http.StatusServiceUnavailable, http.StatusTooManyRequests} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			testUploadReaderInChunksReassignsOnceOnOverload(t, status)
+		})
+	}
+}
+
+func testUploadReaderInChunksReassignsOnceOnOverload(t *testing.T, status int) {
+	t.Run("relay", func(t *testing.T) {
+		_, assigns, err := uploadSingleChunk(t, func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) {
+			return nil, &uploadStatusError{StatusCode: status, err: errors.New("volume server upload limit")}
+		})
+		if !IsUploadOverloaded(err) {
+			t.Fatalf("expected the overload to reach the caller, got %v", err)
+		}
+		if assigns != 2 {
+			t.Fatalf("expected 2 assignments, got %d", assigns)
+		}
+	})
+
+	t.Run("fan-out", func(t *testing.T) {
+		var overloadedPosts int32
+		overloaded := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+			atomic.AddInt32(&overloadedPosts, 1)
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(status)
+			fmt.Fprint(w, `{"error":"volume server upload limit"}`)
+		}))
+		defer overloaded.Close()
+		healthy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"name":"chunk","size":4096}`)
+		}))
+		defer healthy.Close()
+		host := func(s *httptest.Server) string { return strings.TrimPrefix(s.URL, "http://") }
+
+		var assigns int32
+		_, err := UploadReaderInChunks(context.Background(), bytes.NewReader(bytes.Repeat([]byte("x"), 4096)), &ChunkedUploadOption{
+			ChunkSize:  8 * 1024,
+			Collection: "test",
+			AssignFunc: func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+				n := atomic.AddInt32(&assigns, 1)
+				// Two holders, so uploadChunk takes the fan-out path.
+				return nil, &AssignResult{
+					Fid:      fmt.Sprintf("%d,0a0b0c0d", n),
+					Url:      host(healthy),
+					Replicas: []Location{{Url: host(overloaded)}},
+					Count:    1,
+				}, nil
+			},
+		})
+		if !IsUploadOverloaded(err) {
+			t.Fatalf("expected the overload to reach the caller, got %v", err)
+		}
+		if got := atomic.LoadInt32(&assigns); got != 2 {
+			t.Fatalf("expected 2 assignments, got %d", got)
+		}
+		// One POST per assignment: no same-holder retry under the reassign.
+		if got := atomic.LoadInt32(&overloadedPosts); got != 2 {
+			t.Fatalf("overloaded holder saw %d POSTs, want 2", got)
+		}
+	})
+}
+
+// hostCountingClient counts the requests an Uploader sends per host, then
+// hands them to inner.
+type hostCountingClient struct {
+	inner HTTPClient
+	mu    sync.Mutex
+	calls map[string]int
+}
+
+func (c *hostCountingClient) Do(req *http.Request) (*http.Response, error) {
+	c.mu.Lock()
+	if c.calls == nil {
+		c.calls = map[string]int{}
+	}
+	c.calls[req.URL.Host]++
+	c.mu.Unlock()
+	return c.inner.Do(req)
+}
+
+func (c *hostCountingClient) callsTo(host string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls[host]
+}
+
+// useGlobalUploaderClient points the process-wide Uploader, which the chunk
+// loop writes through, at client for one test. Tests that call it must not
+// run in parallel.
+func useGlobalUploaderClient(t *testing.T, client HTTPClient) {
+	t.Helper()
+	u, err := NewUploader()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := u.httpClient
+	u.httpClient = client
+	t.Cleanup(func() { u.httpClient = orig })
+}
+
+// deleteRecorder is a holder that only answers the cleanup DELETEs the chunk
+// loop sends, recording each fid; uploads never reach it in these tests.
+type deleteRecorder struct {
+	srv  *httptest.Server
+	mu   sync.Mutex
+	fids []string
+}
+
+func newDeleteRecorder(t *testing.T) *deleteRecorder {
+	d := &deleteRecorder{}
+	d.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			d.mu.Lock()
+			d.fids = append(d.fids, strings.TrimPrefix(r.URL.Path, "/"))
+			d.mu.Unlock()
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(d.srv.Close)
+	return d
+}
+
+func (d *deleteRecorder) host() string { return strings.TrimPrefix(d.srv.URL, "http://") }
+
+func (d *deleteRecorder) deleted() []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]string(nil), d.fids...)
+}
+
+// A holder whose link crawls below the body deadline's rate on every attempt
+// is back-pressure, like an overload: the chunk gets one fresh assignment, no
+// same-holder retry under it, and then the stall reaches the caller (S3 maps
+// it to SlowDown) — not three reassigns of three attempts each.
+func TestUploadReaderInChunksReassignsOnceOnBodyDeadline(t *testing.T) {
+	setUploadBodyMinWait(t, 100*time.Millisecond)
+
+	for _, tc := range []struct {
+		name    string
+		holders int
+	}{
+		{name: "relay", holders: 1},
+		{name: "fan-out", holders: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &hostCountingClient{inner: &tricklingHTTPClient{chunk: 1 << 10, interval: 20 * time.Millisecond}}
+			useGlobalUploaderClient(t, client)
+			var holders []*deleteRecorder
+			for i := 0; i < tc.holders; i++ {
+				holders = append(holders, newDeleteRecorder(t))
+			}
+
+			var assigns int32
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			start := time.Now()
+			_, err := UploadReaderInChunks(ctx, bytes.NewReader(incompressibleBytes(t, 64<<10)), &ChunkedUploadOption{
+				ChunkSize:    128 << 10,
+				Collection:   "test",
+				BodyDeadline: true,
+				AssignFunc: func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+					n := atomic.AddInt32(&assigns, 1)
+					result := &AssignResult{Fid: fmt.Sprintf("%d,0a0b0c0d", n), Url: holders[0].host(), Count: 1}
+					for _, h := range holders[1:] {
+						result.Replicas = append(result.Replicas, Location{Url: h.host()})
+					}
+					return nil, result, nil
+				},
+			})
+			elapsed := time.Since(start)
+			if !errors.Is(err, ErrUploadStalled) || !IsUploadBackpressure(err) {
+				t.Fatalf("expected the body deadline stall to reach the caller, got %v after %v", err, elapsed)
+			}
+			if got := atomic.LoadInt32(&assigns); got != 2 {
+				t.Fatalf("expected 2 assignments, got %d", got)
+			}
+			for i, h := range holders {
+				if got := client.callsTo(h.host()); got < 1 || got > 2 {
+					t.Fatalf("holder %d saw %d uploads over 2 assignments, want at most one per assignment", i, got)
+				}
+			}
+			if elapsed >= 5*time.Second {
+				t.Fatalf("two deadline cuts took %v", elapsed)
+			}
+		})
+	}
+}
+
+// A caller that goes away after the chunk's body reached the holders must not
+// leave the fid behind: a volume commits on a context that ignores the
+// cancel, so each holder of the chunk — not only those that answered — gets a
+// cleanup DELETE.
+func TestUploadReaderInChunksDeletesChunkOnCallerCancel(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		holders int
+	}{
+		{name: "relay", holders: 1},
+		{name: "fan-out", holders: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotBody := make(chan struct{}, tc.holders)
+			var mu sync.Mutex
+			deleted := map[string][]string{} // host → fids
+			var hosts []string
+			for i := 0; i < tc.holders; i++ {
+				var srv *httptest.Server
+				srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodDelete {
+						mu.Lock()
+						host := strings.TrimPrefix(srv.URL, "http://")
+						deleted[host] = append(deleted[host], strings.TrimPrefix(r.URL.Path, "/"))
+						mu.Unlock()
+						w.WriteHeader(http.StatusAccepted)
+						return
+					}
+					_, _ = io.Copy(io.Discard, r.Body)
+					gotBody <- struct{}{}
+					<-r.Context().Done()
+				}))
+				t.Cleanup(srv.Close)
+				hosts = append(hosts, strings.TrimPrefix(srv.URL, "http://"))
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			go func() {
+				for i := 0; i < tc.holders; i++ {
+					<-gotBody
+				}
+				cancel()
+			}()
+			_, err := UploadReaderInChunks(ctx, strings.NewReader("hello world"), &ChunkedUploadOption{
+				ChunkSize:  1024,
+				Collection: "test",
+				AssignFunc: func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error) {
+					result := &AssignResult{Fid: "3,01abcdef", Url: hosts[0], Count: 1}
+					for _, h := range hosts[1:] {
+						result.Replicas = append(result.Replicas, Location{Url: h})
+					}
+					return nil, result, nil
+				},
+			})
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected the caller's cancel to end the upload, got %v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			for _, h := range hosts {
+				if !slices.Contains(deleted[h], "3,01abcdef") {
+					t.Fatalf("holder %s got no DELETE for the cancelled chunk, deletes=%v", h, deleted)
+				}
+			}
+		})
 	}
 }

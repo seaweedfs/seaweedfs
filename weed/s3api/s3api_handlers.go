@@ -11,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 
@@ -39,7 +40,7 @@ func (s3a *S3ApiServer) withFilerClient(ctx context.Context, streamingMode bool,
 	// Fallback to direct connection if filerClient not initialized
 	// This should only happen during initialization or testing
 	return pb.WithGrpcClient(context.Background(), streamingMode, s3a.randomClientId, func(grpcConnection *grpc.ClientConn) error {
-		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+		client := filer_pb.NewSeaweedFilerClient(security.WithFilerClientAuth(grpcConnection, security.FilerAdminToken))
 		return fn(client)
 	}, s3a.getFilerAddress().ToGrpcAddress(), false, s3a.option.GrpcDialOption)
 
@@ -118,7 +119,8 @@ func (s3a *S3ApiServer) withFilerClientFailover(ctx context.Context, preferred p
 				return errFilerConnNotReady
 			}
 			fnRan = true
-			return fn(filer_pb.NewSeaweedFilerClient(receiveTrackingConn{ClientConnInterface: grpcConnection, received: &received}))
+			authedConn := security.WithFilerClientAuth(grpcConnection, security.FilerAdminToken)
+			return fn(filer_pb.NewSeaweedFilerClient(receiveTrackingConn{ClientConnInterface: authedConn, received: &received}))
 		}, filer.ToGrpcAddress(), false, s3a.option.GrpcDialOption)
 
 		if err == nil {

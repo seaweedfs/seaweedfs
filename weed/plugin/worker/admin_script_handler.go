@@ -6,13 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/shell"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -29,8 +29,6 @@ const defaultAdminScript = `fs.log.purge -daysAgo=7
 volume.deleteEmpty -quietFor=24h -apply
 volume.fix.replication -apply
 s3.clean.uploads -timeAgo=24h`
-
-var adminScriptTokenRegex = regexp.MustCompile(`'.*?'|".*?"|\S+`)
 
 func init() {
 	RegisterHandler(HandlerFactory{
@@ -430,16 +428,12 @@ func parseAdminScriptCommands(script string) []adminScriptCommand {
 			if chunk == "" {
 				continue
 			}
-			parts := adminScriptTokenRegex.FindAllString(chunk, -1)
-			if len(parts) == 0 {
+			name, args, ok := shell.SplitScriptCommand(chunk)
+			if !ok {
 				continue
 			}
-			args := make([]string, 0, len(parts)-1)
-			for _, arg := range parts[1:] {
-				args = append(args, strings.Trim(arg, "\"'"))
-			}
 			commands = append(commands, adminScriptCommand{
-				Name: strings.TrimSpace(parts[0]),
+				Name: name,
 				Args: args,
 				Raw:  chunk,
 			})
@@ -560,10 +554,11 @@ func (h *AdminScriptHandler) buildAdminScriptShellOptions(clusterContext *plugin
 	filerGroup := ""
 	mastersValue := strings.Join(masters, ",")
 	options := shell.ShellOptions{
-		Masters:        &mastersValue,
-		GrpcDialOption: h.grpcDialOption,
-		FilerGroup:     &filerGroup,
-		Directory:      "/",
+		Masters:          &mastersValue,
+		GrpcDialOption:   h.grpcDialOption,
+		FilerGroup:       &filerGroup,
+		Directory:        "/",
+		FilerTokenSource: security.FilerAdminToken,
 	}
 
 	// FilerAddresses are pb.ServerAddress strings (host:httpPort.grpcPort).

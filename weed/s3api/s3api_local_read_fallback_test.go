@@ -10,11 +10,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/stretchr/testify/assert"
@@ -363,4 +366,78 @@ func TestStreamRangeToClientFinishesFromRemote(t *testing.T) {
 		assert.Zero(t, written)
 		assert.Nil(t, client.gotLoc, "the client is gone; refetching from the remote is wasted work")
 	})
+}
+
+func TestS3ReadFailingAfterCommitCountsAbortedRead(t *testing.T) {
+	const bucket = "abortedreadbkt"
+	content := []byte("0123456789")
+	s3a := newLocalReadFallbackServer(t, startStreamThroughFiler(t, "faketest-abortedread", nil))
+	cache := chunk_cache.NewChunkCacheInMemory(16)
+	cache.SetChunk("1,0123456789ab", content[:5])
+	s3a.readerCache = filer.NewReaderCache(8, cache, s3a.filerClient.GetLookupFileIdFunction(), s3a.filerClient)
+	entry := &filer_pb.Entry{
+		Name:       "obj.bin",
+		Attributes: &filer_pb.FuseAttributes{FileSize: uint64(len(content))},
+		Chunks: []*filer_pb.FileChunk{
+			{FileId: "1,0123456789ab", Size: 5, Offset: 0, ModifiedTsNs: 1},
+			{FileId: "2,0123456789cd", Size: 5, Offset: 5, ModifiedTsNs: 1},
+		},
+	}
+	aborted := func() float64 {
+		return testutil.ToFloat64(stats_collect.S3ReadAbortedCounter.WithLabelValues(bucket, readAbortedReadError))
+	}
+	defer stats_collect.DeleteBucketMetrics(bucket)
+	before := aborted()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	r := httptest.NewRequest(http.MethodGet, "/"+bucket+"/obj.bin", nil).WithContext(ctx)
+	r = mux.SetURLVars(r, map[string]string{"bucket": bucket, "object": "obj.bin"})
+	w := httptest.NewRecorder()
+
+	err := s3a.streamFromVolumeServers(w, r, entry, "", bucket, "obj.bin", "")
+
+	var streamErr *StreamError
+	require.True(t, errors.As(err, &streamErr) && streamErr.ResponseWritten, "a failure after the first chunk must leave the 200 committed: %v", err)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, content[:5], w.Body.Bytes())
+	assert.Equal(t, before+1, aborted(), "a read that dies after the status line must be counted")
+}
+
+type failingResponseWriter struct {
+	*httptest.ResponseRecorder
+	err error
+}
+
+func (f failingResponseWriter) Write(p []byte) (int, error) { return 0, f.err }
+
+func TestS3InlineReadFailingWriteCountsAbortedRead(t *testing.T) {
+	const bucket = "abortedinlinebkt"
+	content := []byte("0123456789")
+	s3a := newLocalReadFallbackServer(t, startStreamThroughFiler(t, "faketest-abortedinline", nil))
+	entry := &filer_pb.Entry{
+		Name:       "obj.bin",
+		Attributes: &filer_pb.FuseAttributes{FileSize: uint64(len(content))},
+		Content:    content,
+	}
+	aborted := func() float64 {
+		return testutil.ToFloat64(stats_collect.S3ReadAbortedCounter.WithLabelValues(bucket, readAbortedReadError))
+	}
+	defer stats_collect.DeleteBucketMetrics(bucket)
+
+	for _, rangeHeader := range []string{"", "bytes=2-5"} {
+		before := aborted()
+		r := httptest.NewRequest(http.MethodGet, "/"+bucket+"/obj.bin", nil)
+		if rangeHeader != "" {
+			r.Header.Set("Range", rangeHeader)
+		}
+		r = mux.SetURLVars(r, map[string]string{"bucket": bucket, "object": "obj.bin"})
+		w := failingResponseWriter{ResponseRecorder: httptest.NewRecorder(), err: errors.New("write: connection reset by peer")}
+
+		err := s3a.streamFromVolumeServers(w, r, entry, "", bucket, "obj.bin", "")
+
+		var streamErr *StreamError
+		require.True(t, errors.As(err, &streamErr) && streamErr.ResponseWritten, "range %q: %v", rangeHeader, err)
+		assert.Equal(t, before+1, aborted(), "range %q: a failed inline write must be counted", rangeHeader)
+	}
 }

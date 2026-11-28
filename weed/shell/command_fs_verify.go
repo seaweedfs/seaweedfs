@@ -166,13 +166,14 @@ type ItemEntry struct {
 	attr      *filer_pb.FuseAttributes
 }
 
-// resolveAndVerify expands chunk manifests and verifies the entry's needles.
+// resolveAndVerify expands chunk manifests, cut to their spans since chunks
+// past a shortened manifest are never read, and verifies the entry's needles.
 // An unresolvable manifest is an entry-level failure even when raw chunks are
 // healthy; raw chunks are still checked so a missing manifest needle can be pruned.
 func (c *commandFsVerify) resolveAndVerify(entryPath string, chunks []*filer_pb.FileChunk, errorChunksCount *atomic.Uint64, wg *sync.WaitGroup) (verified bool, hasMissingNeedles bool) {
 	dataChunks := chunks
 	manifestResolveFailed := false
-	if resolved, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), chunks, 0, math.MaxInt64, nil); resolveErr == nil {
+	if resolved, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), chunks, 0, math.MaxInt64, nil, true); resolveErr == nil {
 		dataChunks = append(resolved, manifestChunks...)
 	} else {
 		manifestResolveFailed = true
@@ -251,6 +252,7 @@ func (c *commandFsVerify) verifyProcessMetadata(path string, wg *sync.WaitGroup)
 		StartTsNs:              time.Now().Add(-1 * time.Second * time.Duration(c.modifyTimeAgoAtSec)).UnixNano(),
 		StopTsNs:               time.Now().UnixNano(),
 		EventErrorType:         pb.DontLogError,
+		FilerTokenSource:       c.env.option.FilerTokenSource,
 	}
 	err = pb.FollowMetadata(c.env.FilerAddress(), c.env.option.GrpcDialOption, metadataFollowOption, processEventFn)
 	return fileCount, errCount, prunedCount, err
@@ -495,7 +497,7 @@ func (c *commandFsVerify) verifyTraverseBfs(path string) (fileCount uint64, errC
 					return nil
 				}
 			}
-			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64, nil)
+			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64, nil, true)
 			if resolveErr != nil {
 				return fmt.Errorf("failed to ResolveChunkManifest: %+v", resolveErr)
 			}

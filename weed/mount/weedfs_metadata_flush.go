@@ -155,10 +155,12 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 
 	// Try to create manifest chunks for large files
 	// no chunk deleter here: a failed fold reports the blobs it saved
+	unfolded := compactedChunks
 	compactedChunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), nil, compactedChunks)
 	if manifestErr != nil {
 		glog.V(0).Infof("flushFileMetadata MaybeManifestize: %v", manifestErr)
 	}
+	fold := newChunkFold(unfolded, compactedChunks)
 
 	processedPrefix := append(compactedChunks, manifestChunks...)
 
@@ -191,11 +193,15 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	requestEntry.Chunks = append(requestEntry.Chunks, fh.unpublishedChunks(covered, requestEntry.Chunks)...)
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	resp, merged, err := wfs.createContentEntry(context.Background(), fh, request, baseSnapshot, true, &contentPublication{})
+	resp, merged, err := wfs.createContentEntry(context.Background(), fh, request, baseSnapshot, true, &contentPublication{}, fold)
 	if err != nil {
+		fold.revert(fh)
 		return err
 	}
 	if merged != nil {
+		// Install what the filer stored, which becomes the base: it may have
+		// folded the merged chunks the request sent unfolded.
+		merged = wfs.ackedBase(resp, merged)
 		fh.rebaseEntry(merged, requestEntry)
 		baseSnapshot = merged
 	}

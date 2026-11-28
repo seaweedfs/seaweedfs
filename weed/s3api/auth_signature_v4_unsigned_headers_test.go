@@ -358,7 +358,7 @@ func preSignV4WithHeaders(_ *IdentityAccessManagement, req *http.Request, access
 		}
 	}
 
-	canonicalRequest := getCanonicalRequest(extracted, hashedPayload, req.URL.RawQuery, req.URL.Path, req.Method)
+	canonicalRequest := getCanonicalRequest(extracted, hashedPayload, req.URL.RawQuery, req.URL.Path, req.Method, signV4TrimAll)
 	stringToSign := getStringToSign(canonicalRequest, now, scope)
 	signingKey := getSigningKey(secretKey, now.Format(yyyymmdd), "us-east-1", "s3")
 	signature := getSignature(signingKey, stringToSign)

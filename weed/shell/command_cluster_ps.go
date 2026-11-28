@@ -129,7 +129,7 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 		if node.Rack != "" {
 			fmt.Fprintf(writer, "    Rack: %v\n", node.Rack)
 		}
-		pb.WithFilerClient(false, 0, pb.ServerAddress(node.Address), commandEnv.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		commandEnv.WithFilerClientAt(pb.ServerAddress(node.Address), false, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
 			if err == nil {
 				if resp.FilerGroup != "" {
@@ -144,7 +144,7 @@ func (c *commandClusterPs) Do(args []string, commandEnv *CommandEnv, writer io.W
 		})
 	}
 	for _, node := range filerNodes {
-		pb.WithFilerClient(false, 0, pb.ServerAddress(node.Address), commandEnv.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		commandEnv.WithFilerClientAt(pb.ServerAddress(node.Address), false, func(client filer_pb.SeaweedFilerClient) error {
 			fmt.Fprintf(writer, "* filer %s metadata sync time\n", node.Address)
 			selfSignature := filerSignatures[node]
 			for peer, peerSignature := range filerSignatures {

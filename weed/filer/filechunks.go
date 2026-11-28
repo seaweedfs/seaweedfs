@@ -5,8 +5,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
@@ -103,6 +105,9 @@ func SeparateGarbageChunks(visibles *IntervalList[*VisibleInterval], chunks []*f
 			garbage = append(garbage, chunk)
 		}
 	}
+	if len(garbage) > 0 {
+		garbage = DoMinusChunks(garbage, compacted)
+	}
 	return compacted, garbage
 }
 
@@ -120,11 +125,11 @@ func FindGarbageChunks(visibles *IntervalList[*VisibleInterval], start int64, st
 
 func MinusChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, as, bs []*filer_pb.FileChunk, invalidator CacheInvalidator) (delta []*filer_pb.FileChunk, err error) {
 
-	aData, aMeta, aErr := ResolveChunkManifest(ctx, lookupFileIdFn, as, 0, math.MaxInt64, invalidator)
+	aData, aMeta, aErr := ResolveChunkManifest(ctx, lookupFileIdFn, as, 0, math.MaxInt64, invalidator, false)
 	if aErr != nil {
 		return nil, aErr
 	}
-	bData, bMeta, bErr := ResolveChunkManifest(ctx, lookupFileIdFn, bs, 0, math.MaxInt64, invalidator)
+	bData, bMeta, bErr := ResolveChunkManifest(ctx, lookupFileIdFn, bs, 0, math.MaxInt64, invalidator, false)
 	if bErr != nil {
 		return nil, bErr
 	}
@@ -137,11 +142,11 @@ func MinusChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFuncti
 func DoMinusChunks(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {
 
 	fileIds := make(map[string]bool)
-	for _, interval := range bs {
-		fileIds[interval.GetFileIdString()] = true
+	for _, chunk := range bs {
+		fileIds[ChunkIdentity(chunk.GetFileIdString())] = true
 	}
 	for _, chunk := range as {
-		if _, found := fileIds[chunk.GetFileIdString()]; !found {
+		if _, found := fileIds[ChunkIdentity(chunk.GetFileIdString())]; !found {
 			delta = append(delta, chunk)
 		}
 	}
@@ -149,16 +154,34 @@ func DoMinusChunks(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {
 	return
 }
 
+// ChunkIdentity names the needle a file ID reads, so equivalent spellings
+// compare equal. Malformed IDs are returned unchanged.
+func ChunkIdentity(fid string) string {
+	volume, path, ok := strings.Cut(fid, ",")
+	if !ok {
+		return fid
+	}
+	vid, err := needle.NewVolumeId(volume)
+	if err != nil {
+		return fid
+	}
+	var n needle.Needle
+	if err := n.ParsePath(path); err != nil {
+		return fid
+	}
+	return (&needle.FileId{VolumeId: vid, Key: n.Id, Cookie: n.Cookie}).String()
+}
+
 func DoMinusChunksBySourceFileId(as, bs []*filer_pb.FileChunk) (delta []*filer_pb.FileChunk) {
 
 	fileIds := make(map[string]bool)
 	for _, interval := range bs {
-		fileIds[interval.GetFileIdString()] = true
-		fileIds[interval.GetSourceFileId()] = true
+		fileIds[ChunkIdentity(interval.GetFileIdString())] = true
+		fileIds[ChunkIdentity(interval.GetSourceFileId())] = true
 	}
 	for _, chunk := range as {
-		_, sourceFileIdFound := fileIds[chunk.GetSourceFileId()]
-		_, fileIdFound := fileIds[chunk.GetFileId()]
+		_, sourceFileIdFound := fileIds[ChunkIdentity(chunk.GetSourceFileId())]
+		_, fileIdFound := fileIds[ChunkIdentity(chunk.GetFileId())]
 		if !sourceFileIdFound && !fileIdFound {
 			delta = append(delta, chunk)
 		}
@@ -313,7 +336,7 @@ func MergeIntoChunkViews(chunkViews *IntervalList[*ChunkView], start int64, stop
 // If the file chunk content is a chunk manifest
 func NonOverlappingVisibleIntervals(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk, startOffset int64, stopOffset int64) (visibles *IntervalList[*VisibleInterval], err error) {
 
-	chunks, _, err = ResolveChunkManifest(ctx, lookupFileIdFn, chunks, startOffset, stopOffset, nil)
+	chunks, _, err = ResolveChunkManifest(ctx, lookupFileIdFn, chunks, startOffset, stopOffset, nil, true)
 	if err != nil {
 		return
 	}

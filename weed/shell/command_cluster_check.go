@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
 func init() {
@@ -50,6 +51,7 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 		return err
 	}
 	fmt.Fprintf(writer, "Topology volumeSizeLimit:%d MB%s\n", volumeSizeLimitMb, diskInfosToString(topologyInfo.DiskInfos))
+	printDefaultPlacementWarnings(writer, topologyInfo)
 
 	if len(topologyInfo.DiskInfos) == 0 {
 		return fmt.Errorf("no disk type defined")
@@ -177,7 +179,7 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 	for _, filer := range filers {
 		for _, master := range masters {
 			fmt.Fprintf(writer, "checking filer %s to master %s ... ", string(filer), string(master))
-			err := pb.WithFilerClient(false, 0, filer, commandEnv.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			err := commandEnv.WithFilerClientAt(filer, false, func(client filer_pb.SeaweedFilerClient) error {
 				pong, err := client.Ping(context.Background(), &filer_pb.PingRequest{
 					Target:     string(master),
 					TargetType: cluster.MasterType,
@@ -197,7 +199,7 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 	for _, filer := range filers {
 		for _, volumeServer := range volumeServers {
 			fmt.Fprintf(writer, "checking filer %s to volume server %s ... ", string(filer), string(volumeServer))
-			err := pb.WithFilerClient(false, 0, filer, commandEnv.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			err := commandEnv.WithFilerClientAt(filer, false, func(client filer_pb.SeaweedFilerClient) error {
 				pong, err := client.Ping(context.Background(), &filer_pb.PingRequest{
 					Target:     string(volumeServer),
 					TargetType: cluster.VolumeServerType,
@@ -223,7 +225,7 @@ func (c *commandClusterCheck) Do(args []string, commandEnv *CommandEnv, writer i
 	for _, sourceFiler := range filers {
 		for _, targetFiler := range filers {
 			fmt.Fprintf(writer, "checking filer %s to %s ... ", string(sourceFiler), string(targetFiler))
-			err := pb.WithFilerClient(false, 0, sourceFiler, commandEnv.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			err := commandEnv.WithFilerClientAt(sourceFiler, false, func(client filer_pb.SeaweedFilerClient) error {
 				pong, err := client.Ping(context.Background(), &filer_pb.PingRequest{
 					Target:     string(targetFiler),
 					TargetType: cluster.FilerType,
@@ -246,4 +248,25 @@ func printTiming(writer io.Writer, startNs, remoteNs, stopNs int64) {
 	roundTripTimeMs := float32(stopNs-startNs) / 1000000
 	deltaTimeMs := float32(remoteNs-(startNs+stopNs)/2) / 1000000
 	fmt.Fprintf(writer, "ok round trip %.3fms clock delta %.3fms\n", roundTripTimeMs, deltaTimeMs)
+}
+
+func printDefaultPlacementWarnings(writer io.Writer, t *master_pb.TopologyInfo) {
+	dcRacks := make(map[string][]string)
+	for _, dc := range t.DataCenterInfos {
+		for _, r := range dc.RackInfos {
+			if len(r.DataNodeInfos) > 0 {
+				dcRacks[dc.Id] = append(dcRacks[dc.Id], r.Id)
+			}
+		}
+	}
+	for _, dc := range t.DataCenterInfos {
+		for _, r := range dc.RackInfos {
+			if !topology.DefaultPlacementStandsOut(dc.Id, r.Id, dcRacks) {
+				continue
+			}
+			for _, dn := range r.DataNodeInfos {
+				fmt.Fprintf(writer, "warning: volume server %s is in data center %s rack %s while other volume servers name theirs; set -dataCenter and -rack on it\n", pb.NewServerAddressFromDataNode(dn), dc.Id, r.Id)
+			}
+		}
+	}
 }

@@ -87,9 +87,9 @@ func TestCheckGrpcAdminTokenAcceptsPreviousKey(t *testing.T) {
 	require.NoError(t, CheckGrpcAdminToken(ctx, current, previous))
 	require.NoError(t, CheckGrpcAdminPeer(ctx, current, previous))
 
-	_, err := CheckGrpcMetadataSubscription(ctx, SigningKey("subscribe-key"), current, nil, MethodSubscribeMetadata)
+	_, err := CheckGrpcMetadataSubscription(ctx, SigningKey("subscribe-key"), current, nil, MethodSubscribeMetadata, 0)
 	require.Error(t, err)
-	scope, err := CheckGrpcMetadataSubscription(ctx, SigningKey("subscribe-key"), current, previous, MethodSubscribeMetadata)
+	scope, err := CheckGrpcMetadataSubscription(ctx, SigningKey("subscribe-key"), current, previous, MethodSubscribeMetadata, 0)
 	require.NoError(t, err)
 	require.Nil(t, scope)
 }

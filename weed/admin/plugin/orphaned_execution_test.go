@@ -110,12 +110,9 @@ func TestExecutionFailsWhenWorkerRestartsWithoutJob(t *testing.T) {
 		t.Fatal("dispatch was not failed after its worker restarted without the job")
 	}
 
-	tracked, ok := p.GetTrackedJob(jobID)
-	if !ok || tracked == nil {
-		t.Fatalf("job %s is not tracked", jobID)
-	}
-	if tracked.State != StateFailed || tracked.RequestID != requestID {
-		t.Fatalf("expected request %s failed, got state=%s request=%s", requestID, tracked.State, tracked.RequestID)
+	// the dispatcher gets the completion before the record is updated
+	if tracked := waitTrackedState(t, p, jobID, StateFailed); tracked.RequestID != requestID {
+		t.Fatalf("expected request %s failed, got request %s", requestID, tracked.RequestID)
 	}
 }
 

@@ -44,7 +44,7 @@ jobs:
       - name: Run Client Unit Tests
         working-directory: other/java/client
         run: |
-          mvn test -Dtest=SeaweedReadTest,SeaweedCipherTest
+          mvn test -Dtest=SeaweedReadTest,SeaweedCipherTest,FilerJwtTest
       
       - name: Run HDFS3 Configuration Tests
         working-directory: other/java/hdfs3

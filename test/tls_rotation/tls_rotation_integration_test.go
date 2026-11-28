@@ -145,6 +145,104 @@ func TestMasterHTTPSCertRotation(t *testing.T) {
 	waitForCert(t, addr, caPool, leafSerial2, 15*time.Second, "rotated cert")
 }
 
+// TestMasterHTTPSCertRotationOnSIGHUP is the same rotation flow as
+// TestMasterHTTPSCertRotation, but with a one-hour refresh window and a
+// SIGHUP instead of waiting for the periodic tick. It verifies the
+// grace.OnReload hook forces certreload providers to re-read cert/key
+// immediately.
+func TestMasterHTTPSCertRotationOnSIGHUP(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping HTTPS rotation integration test in -short mode")
+	}
+
+	weedBin := findWeedBinary(t)
+
+	dir := t.TempDir()
+	tlsDir := filepath.Join(dir, "tls")
+	if err := os.MkdirAll(tlsDir, 0o755); err != nil {
+		t.Fatalf("mkdir tls: %v", err)
+	}
+	certPath := filepath.Join(tlsDir, "server.crt")
+	keyPath := filepath.Join(tlsDir, "server.key")
+
+	ca, caKey := generateCA(t)
+	leafSerial1 := big.NewInt(20001)
+	leafSerial2 := big.NewInt(20002)
+
+	writeLeaf(t, certPath, keyPath, ca, caKey, leafSerial1)
+
+	masterDir := filepath.Join(dir, "master")
+	if err := os.MkdirAll(masterDir, 0o755); err != nil {
+		t.Fatalf("mkdir master: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(masterDir, "security.toml"), []byte("# test\n"), 0o644); err != nil {
+		t.Fatalf("write security.toml: %v", err)
+	}
+
+	port, grpcPort := getFreeTCPPort(t), getFreeTCPPort(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, weedBin, "master",
+		"-ip", "127.0.0.1",
+		"-port", strconv.Itoa(port),
+		"-port.grpc", strconv.Itoa(grpcPort),
+		"-mdir", masterDir,
+	)
+	cmd.Dir = masterDir
+	cmd.Env = append(os.Environ(),
+		"HOME="+dir,
+		"WEED_HTTPS_MASTER_CERT="+certPath,
+		"WEED_HTTPS_MASTER_KEY="+keyPath,
+		// Keep the periodic refresh out of the way: the new cert must
+		// appear because of SIGHUP, not because of a tick.
+		"WEED_TLS_CERT_REFRESH_INTERVAL=1h",
+	)
+	logPath := filepath.Join(masterDir, "master.log")
+	logOut, err := os.Create(logPath)
+	if err != nil {
+		t.Fatalf("create master log: %v", err)
+	}
+	cmd.Stdout = logOut
+	cmd.Stderr = logOut
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start master: %v", err)
+	}
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+			done := make(chan struct{})
+			go func() { _ = cmd.Wait(); close(done) }()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				_ = cmd.Process.Kill()
+				<-done
+			}
+		}
+		_ = logOut.Close()
+		if t.Failed() {
+			if b, readErr := os.ReadFile(logPath); readErr == nil {
+				t.Logf("master.log:\n%s", string(b))
+			}
+		}
+	})
+
+	caPool := x509.NewCertPool()
+	caPool.AddCert(ca)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+
+	waitForCert(t, addr, caPool, leafSerial1, 30*time.Second, "initial cert")
+
+	writeLeaf(t, certPath, keyPath, ca, caKey, leafSerial2)
+	if err := cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatalf("send SIGHUP: %v", err)
+	}
+
+	waitForCert(t, addr, caPool, leafSerial2, 10*time.Second, "rotated cert after SIGHUP")
+}
+
 // waitForCert polls until a TLS handshake against addr yields a peer
 // cert with the expected serial, or fails the test at the deadline.
 // The last handshake error is surfaced in the fatal message so that a

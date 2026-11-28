@@ -23,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -473,6 +474,9 @@ func (ms *MasterServer) VacuumVolume(ctx context.Context, req *master_pb.VacuumV
 }
 
 func (ms *MasterServer) DisableVacuum(ctx context.Context, req *master_pb.DisableVacuumRequest) (*master_pb.DisableVacuumResponse, error) {
+	if err := ms.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	// The caller explicitly indicates whether this disable request comes
 	// from the vacuum plugin monitor. Track ownership so the safety net
 	// in the vacuum loop won't override an operator's intentional disable.
@@ -486,6 +490,9 @@ func (ms *MasterServer) DisableVacuum(ctx context.Context, req *master_pb.Disabl
 }
 
 func (ms *MasterServer) EnableVacuum(ctx context.Context, req *master_pb.EnableVacuumRequest) (*master_pb.EnableVacuumResponse, error) {
+	if err := ms.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if req.GetByPlugin() {
 		ms.Topo.EnableVacuumByPlugin()
 	} else {
@@ -540,6 +547,9 @@ func (ms *MasterServer) VolumeMarkReadonly(ctx context.Context, req *master_pb.V
 }
 
 func (ms *MasterServer) ResumeVolumeGrowth(ctx context.Context, req *master_pb.ResumeVolumeGrowthRequest) (*master_pb.ResumeVolumeGrowthResponse, error) {
+	if err := ms.checkGrpcAdminAuth(ctx); err != nil {
+		return nil, err
+	}
 	if !ms.Topo.IsLeader() {
 		return nil, raft.NotLeaderError
 	}
@@ -547,6 +557,12 @@ func (ms *MasterServer) ResumeVolumeGrowth(ctx context.Context, req *master_pb.R
 }
 
 func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGrowRequest) (*master_pb.VolumeGrowResponse, error) {
+	// The growth loop calls this in-process, without a gRPC peer.
+	if _, fromPeer := peer.FromContext(ctx); fromPeer {
+		if err := ms.checkGrpcAdminAuth(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if !ms.Topo.IsLeader() {
 		return nil, raft.NotLeaderError
 	}

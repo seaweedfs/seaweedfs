@@ -40,6 +40,8 @@ func TestValidateConditionalHeadersMissingObject(t *testing.T) {
 		{"if-none-match star on missing object", s3_constants.IfNoneMatch, "*", nil, s3err.ErrNone},
 		{"if-none-match star on delete marker", s3_constants.IfNoneMatch, "*", deleteMarker, s3err.ErrNone},
 		{"if-none-match star on existing object", s3_constants.IfNoneMatch, "*", existing, s3err.ErrPreconditionFailed},
+		{"if-none-match weak hit on existing object", s3_constants.IfNoneMatch, `W/"d41d8cd98f00b204e9800998ecf8427e"`, existing, s3err.ErrPreconditionFailed},
+		{"if-match weak tag on existing object", s3_constants.IfMatch, `W/"d41d8cd98f00b204e9800998ecf8427e"`, existing, s3err.ErrPreconditionFailed},
 	}
 
 	for _, tc := range testCases {

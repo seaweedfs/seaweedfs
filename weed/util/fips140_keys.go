@@ -25,6 +25,8 @@ var jwtSigningKeySettings = []string{
 	"jwt.filer_signing.previous_key",
 	"jwt.filer_signing.read.key",
 	"jwt.filer_signing.read.previous_key",
+	"jwt.filer_signing.grpc_key",
+	"jwt.filer_signing.grpc_previous_key",
 	"jwt.filer_signing.subscribe.key",
 }
 

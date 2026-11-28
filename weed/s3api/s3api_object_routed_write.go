@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -79,8 +80,8 @@ func routeWriteCondition(r *http.Request, uniqueWritePath bool) (*filer_pb.Write
 
 // buildWriteCondition reduces the request's conditional headers to a
 // WriteCondition evaluated under the owner's object-path lock. Every header
-// form reduces to clauses (ETag lists and weak ETags compare through the same
-// canonicalization the gateway applies; time conditions become unix bounds),
+// form reduces to clauses (ETag lists compare as the gateway does: weakly for
+// If-None-Match, strongly for If-Match; time conditions become unix bounds),
 // composed per RFC 7232 precedence: If-Unmodified-Since is ignored when
 // If-Match is present, If-Modified-Since when If-None-Match is. ok=false only
 // when the headers cannot even parse; a nil condition with ok=true means
@@ -105,7 +106,7 @@ func buildWriteCondition(r *http.Request) (*filer_pb.WriteCondition, bool) {
 	if headers.ifNoneMatch == "*" {
 		clauses = append(clauses, &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_NOT_EXISTS})
 	} else if headers.ifNoneMatch != "" {
-		clauses = append(clauses, &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ETAG_NOT_MATCH, Etags: etagList(headers.ifNoneMatch)})
+		clauses = append(clauses, &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_ETAG_NOT_MATCH, Etags: etagList(headers.ifNoneMatch), AllowWeak: true})
 	}
 	if !headers.ifModifiedSince.IsZero() && headers.ifNoneMatch == "" {
 		clauses = append(clauses, &filer_pb.WriteCondition_Clause{Kind: filer_pb.WriteCondition_IF_MODIFIED_SINCE, UnixTime: headers.ifModifiedSince.Unix()})
@@ -132,14 +133,17 @@ func clause(kind filer_pb.WriteCondition_Kind) *filer_pb.WriteCondition {
 	return &filer_pb.WriteCondition{Clauses: []*filer_pb.WriteCondition_Clause{{Kind: kind}}}
 }
 
-// etagList splits a conditional ETag header into its candidates, each kept
-// verbatim — the evaluator's canonicalization handles quotes and weak markers.
+// etagList splits a conditional ETag header into its candidates the way
+// util.ETagListMatches does, each kept verbatim — the evaluator's
+// canonicalization handles quotes and weak markers.
 func etagList(v string) []string {
-	parts := strings.Split(v, ",")
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
+	var tags []string
+	for _, tag := range util.SplitETagList(v) {
+		if tag = strings.TrimSpace(tag); tag != "" {
+			tags = append(tags, tag)
+		}
 	}
-	return parts
+	return tags
 }
 
 // objectTxnOnFiler applies a routed transaction, preferring the object's owner
@@ -164,7 +168,7 @@ func (s3a *S3ApiServer) objectTxnOnFiler(owner pb.ServerAddress, req *filer_pb.O
 		return e
 	}
 	if s3a.filerClient == nil {
-		err := pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, txn)
+		err := pb.WithGrpcFilerClient(false, 0, owner, s3a.option.GrpcDialOption, security.FilerAdminToken, txn)
 		return resp, err
 	}
 	// Skip an owner whose recent write hit a transport error so a dead/stale
@@ -189,7 +193,7 @@ func (s3a *S3ApiServer) withWriteOwnerFilerClient(owner pb.ServerAddress, fn fun
 		return s3a.WithFilerClient(false, fn)
 	}
 	if s3a.filerClient == nil {
-		return pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, fn)
+		return pb.WithGrpcFilerClient(false, 0, owner, s3a.option.GrpcDialOption, security.FilerAdminToken, fn)
 	}
 	preferred := owner
 	if s3a.ownerRecentlyUnreachable(owner) {
@@ -392,7 +396,7 @@ func (s3a *S3ApiServer) routedSelfCopy(ctx context.Context, owner pb.ServerAddre
 	}
 	var err error
 	if s3a.filerClient == nil {
-		err = pb.WithFilerClient(false, 0, owner, s3a.option.GrpcDialOption, update)
+		err = pb.WithGrpcFilerClient(false, 0, owner, s3a.option.GrpcDialOption, security.FilerAdminToken, update)
 	} else {
 		err = s3a.withFilerClientFailover(ctx, owner, false, false, update)
 	}

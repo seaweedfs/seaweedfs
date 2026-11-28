@@ -424,7 +424,9 @@ func NewWebDavFileSystem(option *WebDavOption) (webdav.FileSystem, error) {
 	// a volume's locations, so a read that failed against every cached location
 	// looks the volume up again instead of retrying a server that has moved or
 	// died.
-	t.filerClient = wdclient.NewFilerClient([]pb.ServerAddress{option.Filer}, option.GrpcDialOption, "")
+	t.filerClient = wdclient.NewFilerClient([]pb.ServerAddress{option.Filer}, option.GrpcDialOption, "", &wdclient.FilerClientOption{
+		FilerTokenSource: security.FilerAdminToken,
+	})
 	t.readerCache = filer.NewReaderCache(32, chunkCache, t.filerClient.GetLookupFileIdFunction(), t.filerClient)
 	return t, nil
 }
@@ -434,7 +436,7 @@ var _ = filer_pb.FilerClient(&WebDavFileSystem{})
 func (fs *WebDavFileSystem) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	return pb.WithGrpcClient(context.Background(), streamingMode, fs.signature, func(grpcConnection *grpc.ClientConn) error {
-		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+		client := filer_pb.NewSeaweedFilerClient(security.WithFilerClientAuth(grpcConnection, security.FilerAdminToken))
 		return fn(client)
 	}, fs.option.Filer.ToGrpcAddress(), false, fs.option.GrpcDialOption)
 

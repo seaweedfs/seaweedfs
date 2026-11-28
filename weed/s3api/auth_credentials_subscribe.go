@@ -222,6 +222,10 @@ func (s3a *S3ApiServer) onBucketMetadataChange(dir string, oldEntry *filer_pb.En
 			// Remove from bucket configuration cache
 			s3a.invalidateBucketConfigCache(oldEntry.Name)
 		}
+		// A bucket policy change can deny requests already being served.
+		removeName, updateName, _ := bucketPolicyMirrorOps(oldEntry, newEntry)
+		s3a.iam.revalidateBucketInFlight(removeName)
+		s3a.iam.revalidateBucketInFlight(updateName)
 	}
 	return nil
 }

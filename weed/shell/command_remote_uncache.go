@@ -58,7 +58,7 @@ func (c *commandRemoteUncache) Do(args []string, commandEnv *CommandEnv, writer 
 		return err
 	}
 
-	mappings, listErr := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress())
+	mappings, listErr := filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), commandEnv.option.FilerTokenSource)
 	if listErr != nil {
 		return listErr
 	}

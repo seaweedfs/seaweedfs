@@ -424,3 +424,22 @@ func TestPrintRedistributionPlan_Output(t *testing.T) {
 	assert.Contains(t, out, "5 ->")
 	assert.Contains(t, out, "1 ->")
 }
+
+// The entry is rewritten with the resolved chunks, so a chunk past a
+// shortened manifest's span must not come back with it.
+func TestResolveEntryDataChunksCutsAShortenedManifest(t *testing.T) {
+	chunk := func(key uint64, offset int64) *filer_pb.FileChunk {
+		return &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: key, Cookie: 1}, Offset: offset, Size: 100}
+	}
+	shortened := &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 7, FileKey: 1, Cookie: 1}, Size: 150, IsChunkManifest: true}
+	env := startStubFiler(t, &stubFilerServer{volumeUrls: map[string]string{"7": startStubManifestVolume(t, map[*filer_pb.FileChunk][]*filer_pb.FileChunk{
+		shortened: {chunk(2, 0), chunk(3, 100), chunk(4, 200)},
+	})}})
+
+	dataChunks, hadManifest, err := resolveEntryDataChunks(env, &filer_pb.Entry{Chunks: []*filer_pb.FileChunk{shortened}})
+	require.NoError(t, err)
+	assert.True(t, hadManifest)
+	require.Len(t, dataChunks, 2)
+	assert.Equal(t, [2]int64{0, 100}, [2]int64{dataChunks[0].Offset, dataChunks[0].Offset + int64(dataChunks[0].Size)})
+	assert.Equal(t, [2]int64{100, 150}, [2]int64{dataChunks[1].Offset, dataChunks[1].Offset + int64(dataChunks[1].Size)})
+}

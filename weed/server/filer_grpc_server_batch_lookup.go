@@ -115,7 +115,7 @@ func resolveFidsBehindManifests(ctx context.Context, response *filer_pb.LookupDi
 		if result == nil || result.Entry == nil || !filer.HasChunkManifest(result.Entry.Chunks) {
 			continue
 		}
-		dataChunks, manifestChunks, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, result.Entry.Chunks, 0, math.MaxInt64, invalidator)
+		dataChunks, manifestChunks, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, result.Entry.Chunks, 0, math.MaxInt64, invalidator, false)
 		if err != nil {
 			glog.V(1).InfofCtx(ctx, "read auth: resolve manifests of %s: %v", result.Entry.Name, err)
 			continue

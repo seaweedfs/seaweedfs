@@ -173,8 +173,10 @@ func TestMaybeManifestizeRollbackWithoutDeleter(t *testing.T) {
 func TestMaybeManifestizeRollsBackSmallFold(t *testing.T) {
 	store := &fakeManifestStore{failOn: 3}
 	chunks := flatTestChunks(2*ManifestBatch + 50)
+	// appended after the full-size chunks, so they make one run to fold
+	end := int64(len(chunks)) * smallChunkSize
 	for i := 0; i < SmallChunkManifestBatch; i++ {
-		chunks = append(chunks, &filer_pb.FileChunk{FileId: fmt.Sprintf("3,%x", i+1), Offset: int64(i) * 8, Size: 8})
+		chunks = append(chunks, &filer_pb.FileChunk{FileId: fmt.Sprintf("3,%x", i+1), Offset: end + int64(i)*8, Size: 8})
 	}
 
 	result, err := MaybeManifestize(store.save, store.delete, chunks)

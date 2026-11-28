@@ -707,6 +707,11 @@ const DefaultNeedleSizeEstimate uint64 = 1024 * 1024 // 1 MB
 func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption, volumeLayout *VolumeLayout, expectedDataSize uint64) (fileId string, count uint64, volumeLocationList *VolumeLocationList, shouldGrow bool, err error) {
 	var vid needle.VolumeId
 	vid, count, volumeLocationList, shouldGrow, err = volumeLayout.PickForWrite(requestedCount, option)
+	// Its volumes are about to be deleted: a write placed there is lost, and a
+	// grow queued for it would recreate the collection after the delete.
+	if c, found := t.FindCollection(option.Collection); found && c.isDeleting() {
+		return "", 0, nil, false, fmt.Errorf("collection %q is being deleted", option.Collection)
+	}
 	if err != nil {
 		return "", 0, nil, shouldGrow, fmt.Errorf("failed to find writable volumes for collection:%s replication:%s ttl:%s error: %v", option.Collection, option.ReplicaPlacement.String(), option.Ttl.String(), err)
 	}
@@ -814,7 +819,11 @@ func (t *Topology) ListCollections(includeNormalVolumes, includeEcVolumes bool) 
 
 	if includeNormalVolumes {
 		for _, c := range t.collectionMap.Items() {
-			found[c.(*Collection).Name] = true
+			// A grow request publishes its collection before its first volume
+			// registers, and one that fails leaves it empty.
+			if len(c.(*Collection).GetAllVolumeLayouts()) > 0 {
+				found[c.(*Collection).Name] = true
+			}
 		}
 	}
 
@@ -870,7 +879,7 @@ func (t *Topology) DeleteLayout(collectionName string, rp *super_block.ReplicaPl
 	}
 	collection.DeleteVolumeLayout(rp, ttl, diskType)
 	if len(collection.storageType2VolumeLayout.Items()) == 0 {
-		t.DeleteCollection(collectionName)
+		t.deleteEmptyCollection(collection)
 	}
 }
 
@@ -1312,6 +1321,21 @@ func (t *Topology) ListDCAndRacks() (dcs map[NodeId][]NodeId) {
 		}
 	}
 	return dcs
+}
+
+func (t *Topology) DefaultPlacementStandsOut(dcName, rackName string) bool {
+	if dcName != DefaultDataCenter && rackName != DefaultRack {
+		return false
+	}
+	dcRacks := make(map[string][]string)
+	for dc, racks := range t.ListDCAndRacks() {
+		names := make([]string, 0, len(racks))
+		for _, r := range racks {
+			names = append(names, string(r))
+		}
+		dcRacks[string(dc)] = names
+	}
+	return DefaultPlacementStandsOut(dcName, rackName, dcRacks)
 }
 
 func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformationMessage, dn *DataNode) (newVolumes, deletedVolumes, changedVolumes []storage.VolumeInfo) {

@@ -1,6 +1,7 @@
 package policy_engine
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"net/http"
@@ -107,6 +108,30 @@ func (engine *PolicyEngine) HasPolicyForBucket(bucketName string) bool {
 	defer engine.mutex.RUnlock()
 	_, exists := engine.contexts[bucketName]
 	return exists
+}
+
+// HasExistingObjectTagDeny reports whether the bucket policy has a Deny
+// statement conditioned on s3:ExistingObjectTag/<key>.
+func (engine *PolicyEngine) HasExistingObjectTagDeny(bucketName string) bool {
+	engine.mutex.RLock()
+	context, exists := engine.contexts[bucketName]
+	engine.mutex.RUnlock()
+	if !exists {
+		return false
+	}
+	for _, stmt := range context.policy.Statements {
+		if stmt.Statement.Effect != PolicyEffectDeny {
+			continue
+		}
+		for _, conditionMap := range stmt.Statement.Condition {
+			for key := range conditionMap {
+				if strings.HasPrefix(key, ExistingObjectTagPrefix) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // EvaluatePolicy evaluates a policy for the given arguments
@@ -436,18 +461,39 @@ func (engine *PolicyEngine) ExtractConditionValuesFromRequest(r *http.Request) m
 	return values
 }
 
+type requestTimeKey struct{}
+
+// WithRequestTime makes aws:CurrentTime and aws:RequestTime read t instead of
+// the current time, so a request checked again while it runs is judged as of
+// when it was admitted.
+func WithRequestTime(ctx context.Context, t time.Time) context.Context {
+	return context.WithValue(ctx, requestTimeKey{}, t)
+}
+
+type existingObjectTagsKey struct{}
+
+// WithExistingObjectTags makes RequestConditionValues report the tags held in
+// an object entry's extended attributes as s3:ExistingObjectTag/<key>.
+func WithExistingObjectTags(ctx context.Context, extended map[string][]byte) context.Context {
+	return context.WithValue(ctx, existingObjectTagsKey{}, extended)
+}
+
 // RequestConditionValues returns the condition keys read from the request
 // itself, leaving out aws:SourceIp and the bucket-listing keys, which depend
 // on the caller's proxy and listing handling.
 func RequestConditionValues(r *http.Request) map[string][]string {
 	values := make(map[string][]string)
 
+	now := time.Now()
+	if t, ok := r.Context().Value(requestTimeKey{}).(time.Time); ok {
+		now = t
+	}
 	// AWS condition keys
 	values["aws:SecureTransport"] = []string{fmt.Sprintf("%t", r.TLS != nil)}
 	// Use AWS standard condition key for current time
-	values["aws:CurrentTime"] = []string{time.Now().Format(time.RFC3339)}
+	values["aws:CurrentTime"] = []string{now.Format(time.RFC3339)}
 	// Keep RequestTime for backward compatibility
-	values["aws:RequestTime"] = []string{time.Now().Format(time.RFC3339)}
+	values["aws:RequestTime"] = []string{now.Format(time.RFC3339)}
 
 	// S3 specific condition keys
 	if userAgent := r.Header.Get("User-Agent"); userAgent != "" {
@@ -458,8 +504,13 @@ func RequestConditionValues(r *http.Request) map[string][]string {
 		values["aws:Referer"] = []string{referer}
 	}
 
-	// Note: s3:ExistingObjectTag/<key> conditions are evaluated using objectEntry
-	// passed to EvaluatePolicy, not extracted from the request.
+	if extended, ok := r.Context().Value(existingObjectTagsKey{}).(map[string][]byte); ok {
+		for key, value := range extended {
+			if tagKey, found := strings.CutPrefix(key, s3_constants.AmzObjectTaggingPrefix); found && tagKey != "" {
+				values[ExistingObjectTagPrefix+tagKey] = []string{string(value)}
+			}
+		}
+	}
 
 	if tags := requestObjectTags(r); len(tags) > 0 {
 		for key, value := range tags {

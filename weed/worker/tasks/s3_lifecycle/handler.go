@@ -20,6 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/dispatcher"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle/scheduler"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
@@ -246,13 +247,13 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	})
 
 	dialCtx, dialCancel := context.WithTimeout(runCtx, 30*time.Second)
-	filerConn, err := pb.GrpcDial(dialCtx, filerAddress, false, h.grpcDialOption)
-	dialCancel()
+	filerConn, filerClient, err := h.dialFiler(dialCtx, filerAddress)
 	if err != nil {
+		dialCancel()
 		return fmt.Errorf("dial filer %s: %w", filerAddress, err)
 	}
+	dialCancel()
 	defer filerConn.Close()
-	filerClient := filer_pb.NewSeaweedFilerClient(filerConn)
 
 	bucketsPath, err := lookupBucketsPath(runCtx, filerClient)
 	if err != nil {
@@ -304,6 +305,17 @@ func sendCompletion(request *plugin_pb.ExecuteJobRequest, sender pluginworker.Ex
 			OutputValues: report.outputValues(),
 		},
 	})
+}
+
+// dialFiler connects a lifecycle worker to a filer and attaches the current
+// admin token per filer RPC. The connection is returned separately so callers
+// can close it after the lifecycle pass completes.
+func (h *Handler) dialFiler(ctx context.Context, filerAddress string) (*grpc.ClientConn, filer_pb.SeaweedFilerClient, error) {
+	conn, err := pb.GrpcDial(ctx, filerAddress, false, h.grpcDialOption)
+	if err != nil {
+		return nil, nil, err
+	}
+	return conn, filer_pb.NewSeaweedFilerClient(security.WithFilerClientAuth(conn, security.FilerAdminToken)), nil
 }
 
 // executeDailyReplay runs one bounded daily-replay pass via

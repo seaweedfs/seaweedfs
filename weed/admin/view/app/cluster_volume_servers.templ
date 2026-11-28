@@ -20,6 +20,20 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
     </div>
 
     <div id="hosts-content">
+        if len(data.DefaultPlacementServers) > 0 {
+            <div class="alert alert-warning d-flex align-items-start" role="alert">
+                <i class="bi bi-exclamation-triangle-fill me-2 mt-1"></i>
+                <div>
+                    <strong>Volume servers without explicit placement.</strong>
+                    These servers fell back to DefaultDataCenter or DefaultRack while other servers name theirs, so placement and balancing treat them as a separate failure domain. Restart them with -dataCenter and -rack.
+                    <ul class="mb-0 mt-1">
+                        for _, vs := range data.DefaultPlacementServers {
+                            <li>{vs.GetDisplayAddress()}: data center {vs.DataCenter}, rack {vs.Rack}, {fmt.Sprintf("%d volumes, %d EC shards", vs.Volumes, vs.EcShards)}</li>
+                        }
+                    </ul>
+                </div>
+            </div>
+        }
         <!-- Summary Cards -->
         <div class="row mb-4">
             <div class="col-xl-3 col-md-6 mb-4">
@@ -193,7 +207,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                                         data-remote-size={fmt.Sprintf("%d", host.RemoteSize)}
                                                         data-ec-volumes={fmt.Sprintf("%d", host.EcVolumes)}
                                                         data-ec-shards={fmt.Sprintf("%d", host.EcShards)}
-                                                        data-last-heartbeat={host.LastHeartbeat.Format("2006-01-02 15:04:05")}>
+                                                        data-last-heartbeat={formatLastHeartbeat(host.LastHeartbeat)}>
                                                     <i class="bi bi-eye"></i>
                                                 </button>
                                             } else {
@@ -213,7 +227,7 @@ templ ClusterVolumeServers(data dash.ClusterVolumeServersData) {
                                                         data-remote-size={fmt.Sprintf("%d", host.RemoteSize)}
                                                         data-ec-volumes={fmt.Sprintf("%d", host.EcVolumes)}
                                                         data-ec-shards={fmt.Sprintf("%d", host.EcShards)}
-                                                        data-last-heartbeat={host.LastHeartbeat.Format("2006-01-02 15:04:05")}>
+                                                        data-last-heartbeat={formatLastHeartbeat(host.LastHeartbeat)}>
                                                     <i class="bi bi-eye"></i>
                                                 </button>
                                             }

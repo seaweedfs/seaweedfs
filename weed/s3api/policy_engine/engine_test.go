@@ -1467,3 +1467,21 @@ func TestMultipartUploadInheritsPutObjectPermission(t *testing.T) {
 		}
 	})
 }
+
+func TestRequestConditionValuesReportExistingObjectTags(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/bucket/key", nil)
+	if _, found := RequestConditionValues(r)[ExistingObjectTagPrefix+"ScanStatus"]; found {
+		t.Fatal("existing object tag reported without an entry")
+	}
+	r = r.WithContext(WithExistingObjectTags(r.Context(), map[string][]byte{
+		s3_constants.AmzObjectTaggingPrefix + "ScanStatus": []byte("CLEAN"),
+		s3_constants.AmzUserMetaPrefix + "Other":           []byte("x"),
+	}))
+	values := RequestConditionValues(r)
+	if got := values[ExistingObjectTagPrefix+"ScanStatus"]; len(got) != 1 || got[0] != "CLEAN" {
+		t.Errorf("s3:ExistingObjectTag/ScanStatus = %v, want [CLEAN]", got)
+	}
+	if _, found := values[ExistingObjectTagPrefix+"Other"]; found {
+		t.Error("user metadata reported as an object tag")
+	}
+}

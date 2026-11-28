@@ -2,7 +2,10 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"net"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -57,7 +60,7 @@ func (fs *FilerServer) forwardDeleteEntry(ctx context.Context, req *filer_pb.Del
 		glog.V(2).InfofCtx(ctx, "DeleteEntry %s: forwarding to owner %s", fullpath, owner)
 		req.IsMoved = true
 		return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-			forwarded, e := client.DeleteEntry(ctx, req)
+			forwarded, e := client.DeleteEntry(withCallerAuthContext(ctx), req)
 			if e != nil {
 				return e
 			}
@@ -69,6 +72,111 @@ func (fs *FilerServer) forwardDeleteEntry(ctx context.Context, req *filer_pb.Del
 		return &filer_pb.DeleteEntryResponse{}, handled, err
 	}
 	return ownerResp, handled, nil
+}
+
+// forwardAtomicRenameEntry sends the rename to its source's write owner.
+// handled=false means this filer is the owner and applies it.
+func (fs *FilerServer) forwardAtomicRenameEntry(ctx context.Context, req *filer_pb.AtomicRenameEntryRequest, oldPath util.FullPath) (*filer_pb.AtomicRenameEntryResponse, bool, error) {
+	newPath := util.FullPath(filepath.ToSlash(req.NewDirectory)).Child(req.NewName)
+	handled, err := fs.forwardToWriteOwner(ctx, entryRouteKey(oldPath), func(owner pb.ServerAddress) error {
+		// The owner checks the target against its own store, which may not
+		// have replayed one this filer already has.
+		if req.FailIfTargetExists && newPath != oldPath {
+			if _, findErr := fs.filer.FindEntry(ctx, newPath); findErr == nil {
+				return fmt.Errorf("%s: %w", newPath, filer_pb.ErrEntryAlreadyExists)
+			} else if findErr != filer_pb.ErrNotFound {
+				return findErr
+			}
+		}
+		glog.V(2).InfofCtx(ctx, "AtomicRenameEntry %s: forwarding to owner %s", oldPath, owner)
+		req.IsMoved = true
+		return pb.WithFilerClient(false, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			forwarded, e := client.AtomicRenameEntry(withCallerAuthContext(ctx), req)
+			if e != nil {
+				return e
+			}
+			fs.awaitOwnerEvents(ctx, owner, forwarded.TsNs)
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, handled, err
+	}
+	return &filer_pb.AtomicRenameEntryResponse{}, handled, nil
+}
+
+// forwardStreamRenameEntry sends the rename to its source's write owner and
+// relays the owner's responses. handled=false means this filer is the owner
+// and applies it.
+func (fs *FilerServer) forwardStreamRenameEntry(req *filer_pb.StreamRenameEntryRequest, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldPath util.FullPath) (bool, error) {
+	ctx := stream.Context()
+	return fs.forwardToWriteOwner(ctx, entryRouteKey(oldPath), func(owner pb.ServerAddress) error {
+		glog.V(2).InfofCtx(ctx, "StreamRenameEntry %s: forwarding to owner %s", oldPath, owner)
+		req.IsMoved = true
+		return pb.WithFilerClient(true, 0, owner, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+			forwarded, err := client.StreamRenameEntry(withCallerAuthContext(ctx), req)
+			if err != nil {
+				return err
+			}
+			var lastEventTsNs int64
+			for {
+				resp, recvErr := forwarded.Recv()
+				if recvErr == io.EOF {
+					fs.awaitOwnerEvents(ctx, owner, lastEventTsNs)
+					return nil
+				}
+				if recvErr != nil {
+					return recvErr
+				}
+				if resp.EventNotification == nil {
+					lastEventTsNs = resp.TsNs
+					continue
+				}
+				if sendErr := stream.Send(resp); sendErr != nil {
+					return sendErr
+				}
+			}
+		})
+	})
+}
+
+// ownerEventsCatchUpCap bounds how long a forwarded rename waits for this
+// filer to replay the owner's events; past it the rename is answered anyway.
+const ownerEventsCatchUpCap = 5 * time.Second
+
+// ownerEventsPollInterval re-checks the owner's watermark, which can rise
+// without lifting the low watermark that wakes the wait, or reappear when
+// the owner's stream reconnects.
+const ownerEventsPollInterval = 10 * time.Millisecond
+
+// awaitOwnerEvents waits until this filer has replayed the owner's metadata
+// log through tsNs. A forwarded rename stores its target on the owner only,
+// and a follow-up request for that target that this filer handles itself,
+// an unlink of a name it owns, would otherwise find nothing.
+func (fs *FilerServer) awaitOwnerEvents(ctx context.Context, owner pb.ServerAddress, tsNs int64) {
+	ma := fs.filer.MetaAggregator
+	if ma == nil || tsNs <= 0 {
+		return
+	}
+	deadline := time.NewTimer(ownerEventsCatchUpCap)
+	defer deadline.Stop()
+	poll := time.NewTicker(ownerEventsPollInterval)
+	defer poll.Stop()
+	for {
+		advanced := ma.DeliveryWatermarkAdvancedChan()
+		if ma.PeerDeliveredThrough(owner, tsNs) {
+			return
+		}
+		select {
+		case <-advanced:
+		case <-poll.C:
+		case <-ctx.Done():
+			return
+		case <-deadline.C:
+			glog.WarningfCtx(ctx, "%s not replayed through %d after %v, answering the forwarded rename anyway", owner, tsNs, ownerEventsCatchUpCap)
+			return
+		}
+	}
 }
 
 // forwardToWriteOwner sends the request to key's write owner so a single filer's

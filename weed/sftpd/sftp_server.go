@@ -27,10 +27,11 @@ type SftpServer struct {
 	user                     *user.User
 	filerSigningKey          []byte
 	filerSigningExpiresAfter int
+	bucketsDir               string
 }
 
 // NewSftpServer constructs the server.
-func NewSftpServer(filerAddr pb.ServerAddress, grpcDialOption grpc.DialOption, dataCenter, filerGroup string, user *user.User, filerSigningKey []byte, filerSigningExpiresAfter int) SftpServer {
+func NewSftpServer(filerAddr pb.ServerAddress, grpcDialOption grpc.DialOption, dataCenter, filerGroup string, user *user.User, filerSigningKey []byte, filerSigningExpiresAfter int, bucketsDir string) SftpServer {
 
 	return SftpServer{
 		filerAddr:                filerAddr,
@@ -40,6 +41,7 @@ func NewSftpServer(filerAddr pb.ServerAddress, grpcDialOption grpc.DialOption, d
 		user:                     user,
 		filerSigningKey:          filerSigningKey,
 		filerSigningExpiresAfter: filerSigningExpiresAfter,
+		bucketsDir:               bucketsDir,
 	}
 }
 

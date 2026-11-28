@@ -6338,6 +6338,7 @@ dependencies = [
  "protoc-bin-vendored",
  "reqwest 0.12.28",
  "rustls",
+ "seaweed-common",
  "thiserror 2.0.21",
  "tokio",
  "tonic",

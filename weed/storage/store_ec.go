@@ -230,6 +230,30 @@ func ecFreeShardCount(loc *DiskLocation, dataShardCount int) int32 {
 	return free
 }
 
+// CheckMountedEcShards compares every mounted EC shard with its file on disk,
+// logs each mismatch and returns the counts per reason.
+func (s *Store) CheckMountedEcShards() map[string]int {
+	counts := map[string]int{erasure_coding.EcShardGhost: 0, erasure_coding.EcShardStaleSize: 0}
+	for _, location := range s.Locations {
+		var shards []*erasure_coding.EcVolumeShard
+		location.ecVolumesLock.RLock()
+		for _, ecVolume := range location.ecVolumes {
+			shards = append(shards, ecVolume.Shards...)
+		}
+		location.ecVolumesLock.RUnlock()
+		for _, shard := range shards {
+			if reason := shard.DiskMismatch(); reason != "" {
+				counts[reason]++
+				glog.Warningf("ec shard %d.%d on %s: mounted %d bytes, %s on disk", shard.VolumeId, shard.ShardId, location.Directory, shard.Size(), reason)
+			}
+		}
+	}
+	for reason, n := range counts {
+		stats.VolumeServerEcShardDiskMismatchGauge.WithLabelValues(reason).Set(float64(n))
+	}
+	return counts
+}
+
 func (s *Store) CollectErasureCodingHeartbeat() *master_pb.Heartbeat {
 	var ecShardMessages []*master_pb.VolumeEcShardInformationMessage
 	collectionEcShardSize := make(map[string]int64)

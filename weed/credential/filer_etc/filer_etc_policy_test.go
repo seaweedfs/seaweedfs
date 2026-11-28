@@ -5,6 +5,7 @@ import (
 	"net"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,11 +15,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
@@ -32,6 +35,68 @@ type policyTestFilerServer struct {
 	afterListEntry       func(string, string)
 	beforeDelete         func(string, string) error
 	beforeUpdate         func(string, string) error
+}
+
+const filerEtcAuthTestKey = "filer-etc-auth-test-key-32-bytes-long"
+
+func TestFilerEtcStoreUsesPerCallAdminToken(t *testing.T) {
+	t.Setenv("WEED_JWT_FILER_SIGNING_GRPC_KEY", "")
+	t.Setenv("WEED_JWT_FILER_SIGNING_KEY", filerEtcAuthTestKey)
+
+	server := newPolicyTestFilerServer()
+	checkAuth := func(ctx context.Context) error {
+		md, _ := metadata.FromIncomingContext(ctx)
+		values := md.Get("authorization")
+		if len(values) != 1 || !strings.HasPrefix(values[0], security.BearerPrefix) {
+			return status.Error(codes.Unauthenticated, "missing filer admin token")
+		}
+		token := security.EncodedJwt(strings.TrimPrefix(values[0], security.BearerPrefix))
+		if !security.IsFilerAdminToken(security.SigningKey(filerEtcAuthTestKey), token) {
+			return status.Error(codes.Unauthenticated, "invalid filer admin token")
+		}
+		return nil
+	}
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+			if err := checkAuth(ctx); err != nil {
+				return nil, err
+			}
+			return handler(ctx, req)
+		}),
+		grpc.StreamInterceptor(func(srv any, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+			if err := checkAuth(stream.Context()); err != nil {
+				return err
+			}
+			return handler(srv, stream)
+		}),
+	)
+	filer_pb.RegisterSeaweedFilerServer(grpcServer, server)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = grpcServer.Serve(listener) }()
+	t.Cleanup(func() {
+		grpcServer.Stop()
+		_ = listener.Close()
+	})
+
+	host, portString, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	grpcPort, err := strconv.Atoi(portString)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &FilerEtcStore{}
+	store.SetFilerAddressFunc(func() pb.ServerAddress {
+		return pb.NewServerAddress(host, 1, grpcPort)
+	}, grpc.WithTransportCredentials(insecure.NewCredentials()))
+
+	if _, err := store.ListPolicyNames(context.Background()); err != nil {
+		t.Fatalf("ListPolicyNames: %v", err)
+	}
 }
 
 func newPolicyTestFilerServer() *policyTestFilerServer {

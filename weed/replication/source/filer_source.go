@@ -31,15 +31,16 @@ var ErrVolumeNotFound = errors.New("volume not found")
 var ErrChunkNotFound = errors.New("chunk not found on any volume replica")
 
 type FilerSource struct {
-	grpcAddress    string
-	grpcDialOption grpc.DialOption
-	Dir            string
-	address        string
-	proxyByFiler   bool
-	dataCenter     string
-	signature      int32
-	httpClient     *util_http_client.HTTPClient
-	jwtForFiler    security.FilerJwtProvider
+	grpcAddress      string
+	grpcDialOption   grpc.DialOption
+	Dir              string
+	address          string
+	proxyByFiler     bool
+	dataCenter       string
+	signature        int32
+	httpClient       *util_http_client.HTTPClient
+	jwtForFiler      security.FilerJwtProvider
+	filerTokenSource security.FilerTokenSource
 
 	digestMu    sync.Mutex
 	digestKnown bool
@@ -79,6 +80,13 @@ func (fs *FilerSource) SetHttpClient(client *util_http_client.HTTPClient) {
 
 func (fs *FilerSource) SetFilerJwtProvider(provider security.FilerJwtProvider) {
 	fs.jwtForFiler = provider
+}
+
+// SetFilerTokenSource sets the per-RPC gRPC credential source for this filer.
+// It is separate from the HTTP filer JWT provider because each destination
+// may use a different gRPC signing key.
+func (fs *FilerSource) SetFilerTokenSource(source security.FilerTokenSource) {
+	fs.filerTokenSource = source
 }
 
 // FilerJwt returns the side-specific filer API credential, or nil when the
@@ -269,7 +277,7 @@ var _ = filer_pb.FilerClient(&FilerSource{})
 func (fs *FilerSource) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 
 	return pb.WithGrpcClient(context.Background(), streamingMode, fs.signature, func(grpcConnection *grpc.ClientConn) error {
-		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
+		client := filer_pb.NewSeaweedFilerClient(security.WithFilerClientAuth(grpcConnection, fs.filerTokenSource))
 		return fn(client)
 	}, fs.grpcAddress, false, fs.grpcDialOption)
 

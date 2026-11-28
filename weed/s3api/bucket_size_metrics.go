@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
@@ -63,6 +64,7 @@ func (s3a *S3ApiServer) startBucketSizeMetricsLoop(ctx context.Context) {
 	}
 	filer := s3a.option.Filers[0]
 	lockClient := cluster.NewLockClient(s3a.option.GrpcDialOption, filer)
+	lockClient.TokenSource = security.FilerAdminToken
 	owner := string(filer) + "-s3-metrics"
 
 	// Start long-lived lock - this S3 instance will only collect metrics when it holds the lock
@@ -80,12 +82,19 @@ func (s3a *S3ApiServer) startBucketSizeMetricsLoop(ctx context.Context) {
 			glog.V(1).Infof("Stopping bucket size metrics collection")
 			return
 		case <-ticker.C:
-			// Only collect metrics if we hold the lock
-			if lock.IsLocked() {
-				s3a.collectAndUpdateBucketSizeMetrics(ctx)
-			}
+			s3a.bucketSizeMetricsTick(ctx, lock.IsLocked())
 		}
 	}
+}
+
+// bucketSizeMetricsTick drops the bucket gauges while this instance does not
+// hold the lock; otherwise it would keep exporting the values it last collected.
+func (s3a *S3ApiServer) bucketSizeMetricsTick(ctx context.Context, locked bool) {
+	if !locked {
+		stats.ResetBucketSizeMetrics()
+		return
+	}
+	s3a.collectAndUpdateBucketSizeMetrics(ctx)
 }
 
 // collectAndUpdateBucketSizeMetrics collects bucket sizes from master topology
@@ -128,7 +137,7 @@ func (s3a *S3ApiServer) enforceBucketQuotas(ctx context.Context, buckets []*file
 		return
 	}
 
-	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil)
+	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil, security.FilerAdminToken)
 	if err != nil {
 		glog.V(1).Infof("read filer.conf for quota enforcement: %v", err)
 		return

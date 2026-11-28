@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 )
@@ -27,9 +28,9 @@ func FindMountedRemoteMapping(mappings *remote_pb.RemoteStorageMapping, dir stri
 	return
 }
 
-func ReadMountMappings(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress) (mappings *remote_pb.RemoteStorageMapping, readErr error) {
+func ReadMountMappings(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, tokenSource ...security.FilerTokenSource) (mappings *remote_pb.RemoteStorageMapping, readErr error) {
 	var oldContent []byte
-	if readErr = pb.WithFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	if readErr = pb.WithGrpcFilerClient(false, 0, filerAddress, grpcDialOption, firstTokenSource(tokenSource), func(client filer_pb.SeaweedFilerClient) error {
 		oldContent, readErr = ReadInsideFiler(context.Background(), client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
 		return readErr
 	}); readErr != nil {
@@ -44,6 +45,13 @@ func ReadMountMappings(grpcDialOption grpc.DialOption, filerAddress pb.ServerAdd
 	}
 
 	return
+}
+
+func firstTokenSource(sources []security.FilerTokenSource) security.FilerTokenSource {
+	if len(sources) == 0 {
+		return nil
+	}
+	return sources[0]
 }
 
 func InsertMountMapping(filerClient filer_pb.FilerClient, dir string, remoteStorageLocation *remote_pb.RemoteStorageLocation) (err error) {

@@ -136,7 +136,7 @@ public class SeaweedRead {
             for (FilerProto.Location location : locations.getLocationsList()) {
                 String url = filerClient.getChunkUrl(chunkView.fileId, location.getUrl(), location.getPublicUrl());
                 try {
-                    byte[] fetched = doFetchOneFullChunkData(chunkView, url);
+                    byte[] fetched = doFetchOneFullChunkData(filerClient, chunkView, url);
                     // An empty (or null) body for a chunk we are reading from is never
                     // valid; treat it as a transient failure so the retry loop tries
                     // another location and backs off, rather than caching an empty chunk.
@@ -171,15 +171,19 @@ public class SeaweedRead {
 
     }
 
-    private static byte[] doFetchOneFullChunkData(ChunkView chunkView, String url) throws IOException {
+    private static byte[] doFetchOneFullChunkData(FilerClient filerClient, ChunkView chunkView, String url) throws IOException {
 
         HttpGet request = new HttpGet(url);
 
         request.setHeader(HttpHeaders.ACCEPT_ENCODING, "gzip");
 
-        String basicAuthHeader = FilerSecurityContext.getBasicAuthHeaderValue();
-        if (basicAuthHeader != null) {
-            request.setHeader(HttpHeaders.AUTHORIZATION, basicAuthHeader);
+        String authHeader = FilerSecurityContext.getBasicAuthHeaderValue();
+        if (filerClient.isProxyChunkUrl(url)) {
+            authHeader = filerClient.getFilerCredentials().getAuthorizationHeaderValue(false);
+            request.setConfig(SeaweedUtil.PROXY_CHUNK_REQUEST_CONFIG);
+        }
+        if (authHeader != null) {
+            request.setHeader(HttpHeaders.AUTHORIZATION, authHeader);
         }
 
         byte[] data = null;
@@ -187,6 +191,11 @@ public class SeaweedRead {
         CloseableHttpResponse response = SeaweedUtil.getClosableHttpClient().execute(request);
 
         try {
+            int status = response.getStatusLine().getStatusCode();
+            if (status / 100 != 2) {
+                throw new IOException("fetch " + url + ": " + response.getStatusLine());
+            }
+
             HttpEntity entity = response.getEntity();
 
             Header contentEncodingHeader = entity.getContentEncoding();

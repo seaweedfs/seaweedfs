@@ -25,6 +25,8 @@ func TestMaskRemoteConfSecrets(t *testing.T) {
 		FilebaseSecretKey:       "filebase-secret",
 		StorjSecretKey:          "storj-secret",
 		ContaboSecretKey:        "contabo-secret",
+		YandexToken:             `{"access_token":"access","refresh_token":"refresh"}`,
+		YandexClientSecret:      "yandex-secret",
 	}
 	original := proto.Clone(conf).(*remote_pb.RemoteConf)
 	maskRemoteConfSecrets(conf)
@@ -40,6 +42,8 @@ func TestMaskRemoteConfSecrets(t *testing.T) {
 		"filebase":  {original.FilebaseSecretKey, conf.FilebaseSecretKey},
 		"storj":     {original.StorjSecretKey, conf.StorjSecretKey},
 		"contabo":   {original.ContaboSecretKey, conf.ContaboSecretKey},
+		"yandex tk": {original.YandexToken, conf.YandexToken},
+		"yandex cs": {original.YandexClientSecret, conf.YandexClientSecret},
 	} {
 		if want := strings.Repeat("*", len(pair[0])); pair[1] != want {
 			t.Errorf("%s secret masked as %q, want %q", name, pair[1], want)
@@ -65,5 +69,54 @@ func TestMaskRemoteConfSecrets(t *testing.T) {
 	maskRemoteConfSecrets(path)
 	if path.GcsGoogleApplicationCredentials != "/etc/seaweedfs/gcs.json" {
 		t.Errorf("a gcs credentials path must stay listed, got %q", path.GcsGoogleApplicationCredentials)
+	}
+}
+
+func TestConfigureFlagSetYandex(t *testing.T) {
+	c := &commandRemoteConfigure{}
+	conf := &remote_pb.RemoteConf{}
+	fs, _, _, _, code, oauthURL := c.configureFlagSet(conf, false)
+	err := fs.Parse([]string{
+		"-name=disk", "-type=yandex",
+		"-yandex.token=token-json",
+		"-yandex.client_id=app", "-yandex.client_secret=secret",
+		"-yandex.root=/seaweedfs", "-yandex.trash", "-yandex.app_folder",
+		"-yandex.code=the-code",
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if conf.Type != "yandex" || conf.YandexToken != "token-json" || conf.YandexClientId != "app" || conf.YandexClientSecret != "secret" {
+		t.Fatalf("conf = %+v", conf)
+	}
+	if conf.YandexRoot != "/seaweedfs" || !conf.YandexTrash || !conf.YandexAppFolder {
+		t.Fatalf("yandex options = %+v", conf)
+	}
+	if *code != "the-code" || *oauthURL {
+		t.Fatalf("one-time flags: code %q, oauth url %v", *code, *oauthURL)
+	}
+
+	existing := &remote_pb.RemoteConf{Type: "yandex", YandexRoot: "/kept"}
+	fs, _, _, _, _, _ = c.configureFlagSet(existing, true)
+	if err = fs.Parse([]string{"-yandex.token=next"}); err != nil {
+		t.Fatalf("parse existing: %v", err)
+	}
+	if existing.YandexRoot != "/kept" {
+		t.Fatalf("an omitted flag reset the root to %q", existing.YandexRoot)
+	}
+	if existing.YandexToken != "next" {
+		t.Fatalf("token = %q", existing.YandexToken)
+	}
+}
+
+func TestApplyTypeDefaultsYandex(t *testing.T) {
+	c := &commandRemoteConfigure{}
+	conf := &remote_pb.RemoteConf{Type: "yandex", YandexRoot: "/stale", S3Region: "us-east-2"}
+	c.applyTypeDefaults(conf)
+	if conf.YandexRoot != "/" {
+		t.Fatalf("root = %q, want /", conf.YandexRoot)
+	}
+	if conf.S3Region != "" {
+		t.Fatalf("s3 region = %q, want it cleared", conf.S3Region)
 	}
 }

@@ -60,21 +60,21 @@ func TestSyncOffset_HistoricalFallbackThenIndependence(t *testing.T) {
 	prefixB := getSignaturePrefixByPath("/data", "/backup-b")
 
 	// pre-upgrade state: both syncs shared the historical key
-	if err := setOffset(dial, filerAddr, historical, sourceSig, 111); err != nil {
+	if err := setOffset(dial, filerAddr, nil, historical, sourceSig, 111); err != nil {
 		t.Fatalf("seed historical offset: %v", err)
 	}
-	if got, err := getOffsetWithFallback(dial, filerAddr, prefixA, sourceSig, historical, sourceSig); err != nil || got != 111 {
+	if got, err := getOffsetWithFallback(dial, filerAddr, nil, prefixA, sourceSig, historical, sourceSig); err != nil || got != 111 {
 		t.Fatalf("A fallback read = (%d, %v), want (111, nil)", got, err)
 	}
 
 	// A checkpoints under its own key; B still resumes from the historical one
-	if err := setOffset(dial, filerAddr, prefixA, sourceSig, 222); err != nil {
+	if err := setOffset(dial, filerAddr, nil, prefixA, sourceSig, 222); err != nil {
 		t.Fatalf("write A offset: %v", err)
 	}
-	if got, err := getOffsetWithFallback(dial, filerAddr, prefixA, sourceSig, historical, sourceSig); err != nil || got != 222 {
+	if got, err := getOffsetWithFallback(dial, filerAddr, nil, prefixA, sourceSig, historical, sourceSig); err != nil || got != 222 {
 		t.Fatalf("A read = (%d, %v), want (222, nil)", got, err)
 	}
-	if got, err := getOffsetWithFallback(dial, filerAddr, prefixB, sourceSig, historical, sourceSig); err != nil || got != 111 {
+	if got, err := getOffsetWithFallback(dial, filerAddr, nil, prefixB, sourceSig, historical, sourceSig); err != nil || got != 111 {
 		t.Fatalf("B read = (%d, %v), want (111, nil)", got, err)
 	}
 }
@@ -88,7 +88,7 @@ func TestSyncOffset_StaleWriteDropped(t *testing.T) {
 	prefix := getSignaturePrefixByPath("/data", "/backup-stale")
 	sourceSig := int32(77)
 
-	if err := setOffset(dial, filerAddr, prefix, sourceSig, 300); err != nil {
+	if err := setOffset(dial, filerAddr, nil, prefix, sourceSig, 300); err != nil {
 		t.Fatalf("seed offset: %v", err)
 	}
 
@@ -107,10 +107,10 @@ func TestSyncOffset_StaleWriteDropped(t *testing.T) {
 	checkpoint.lastSeq = offsetWriteSeq.Load() + 1000
 	checkpoint.Unlock()
 
-	if err := setOffset(dial, filerAddr, prefix, sourceSig, 100); err != nil {
+	if err := setOffset(dial, filerAddr, nil, prefix, sourceSig, 100); err != nil {
 		t.Fatalf("stale write: %v", err)
 	}
-	if got, err := getOffset(dial, filerAddr, prefix, sourceSig); err != nil || got != 300 {
+	if got, err := getOffset(dial, filerAddr, nil, prefix, sourceSig); err != nil || got != 300 {
 		t.Fatalf("after stale write = (%d, %v), want (300, nil)", got, err)
 	}
 
@@ -118,10 +118,10 @@ func TestSyncOffset_StaleWriteDropped(t *testing.T) {
 	checkpoint.Lock()
 	checkpoint.lastSeq = 0
 	checkpoint.Unlock()
-	if err := setOffset(dial, filerAddr, prefix, sourceSig, 199); err != nil {
+	if err := setOffset(dial, filerAddr, nil, prefix, sourceSig, 199); err != nil {
 		t.Fatalf("floored write: %v", err)
 	}
-	if got, err := getOffset(dial, filerAddr, prefix, sourceSig); err != nil || got != 199 {
+	if got, err := getOffset(dial, filerAddr, nil, prefix, sourceSig); err != nil || got != 199 {
 		t.Fatalf("after floored write = (%d, %v), want (199, nil)", got, err)
 	}
 }

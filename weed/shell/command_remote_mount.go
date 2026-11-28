@@ -85,7 +85,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	// find configuration for remote storage
-	remoteConf, err := filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), remote_storage.ParseLocationName(*remote))
+	remoteConf, err := filer.ReadRemoteStorageConf(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), remote_storage.ParseLocationName(*remote), commandEnv.option.FilerTokenSource)
 	if err != nil {
 		return fmt.Errorf("find configuration for %s: %v", *remote, err)
 	}
@@ -139,7 +139,7 @@ func (c *commandRemoteMount) Do(args []string, commandEnv *CommandEnv, writer io
 // filer.remote.sync starts it from the same creation time after its wait.
 func saveMountSyncOffset(commandEnv *CommandEnv, writer io.Writer, dir string) {
 	err := saveMountSyncOffsetWith(func() (int64, error) {
-		return remote_storage.GetSyncOffset(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), dir)
+		return remote_storage.GetSyncOffset(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), dir, commandEnv.option.FilerTokenSource)
 	}, func() (int64, error) {
 		entry, _, _, err := filer_pb.GetEntry(context.Background(), commandEnv, util.FullPath(dir))
 		if err != nil {
@@ -147,7 +147,7 @@ func saveMountSyncOffset(commandEnv *CommandEnv, writer io.Writer, dir string) {
 		}
 		return entry.GetAttributes().GetCrtime(), nil
 	}, func(ts int64) error {
-		return remote_storage.SetSyncOffset(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), dir, ts)
+		return remote_storage.SetSyncOffset(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), dir, ts, commandEnv.option.FilerTokenSource)
 	}, dir)
 	if err != nil {
 		fmt.Fprintf(writer, "warning: mounted %s, but %v\n", dir, err)
@@ -178,7 +178,7 @@ func saveMountSyncOffsetWith(read func() (int64, error), crtime func() (int64, e
 func listExistingRemoteStorageMounts(commandEnv *CommandEnv, writer io.Writer) (mappings *remote_pb.RemoteStorageMapping, err error) {
 
 	// read current mapping
-	mappings, err = filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress())
+	mappings, err = filer.ReadMountMappings(commandEnv.option.GrpcDialOption, commandEnv.FilerAddress(), commandEnv.option.FilerTokenSource)
 	if err != nil {
 		return mappings, err
 	}

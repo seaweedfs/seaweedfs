@@ -109,7 +109,7 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 	if fhIn.entry.IsDirectory || fhOut.entry.IsDirectory {
 		return 0, fuse.EISDIR
 	}
-	if fhIn.entry.hasSSES3Data() {
+	if fhIn.entry.sseType() != filer_pb.SSEType_NONE {
 		return 0, fuse.ENOTSUP
 	}
 
@@ -135,6 +135,11 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 
 	// We want to stream the copy operation to avoid allocating massive buffers.
 	nowUnixNano := time.Now().UnixNano()
+	// The destination's bytes inside its entry, as a write before the copy.
+	if err := fhOut.bufferInlineContent(fhOut.entry.Entry, nowUnixNano); err != nil {
+		glog.Errorf("%v", err)
+		return 0, writeErrorToFuseStatus(err)
+	}
 	totalCopied := int64(0)
 	buff := wfs.copyBufferPool.Get().([]byte)
 	defer wfs.copyBufferPool.Put(buff)
@@ -162,7 +167,7 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 		numBytesRead, err := readDataByFileHandle(
 			buff[:readLen], fhIn, offsetIn)
 		if err != nil {
-			if err == errNativeSSES3Read {
+			if err == errNativeSSERead {
 				return 0, fuse.ENOTSUP
 			}
 			glog.Warningf("file handle read %s %d (total %d): %v",
@@ -213,7 +218,6 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 		totalCopied+int64(in.OffOut),
 		int64(fhOut.entry.Attributes.FileSize),
 	))
-	fhOut.entry.Content = nil
 	fhOut.dirtyMetadata = true
 
 	written = uint32(totalCopied)

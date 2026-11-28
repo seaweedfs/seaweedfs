@@ -42,6 +42,7 @@ tokio-io-timeout = "1"
 tonic = { version = "0.14", features = ["tls-aws-lc"] }
 tonic-prost = "0.14"
 tonic-reflection = "0.14"
+tonic-health = "0.14"
 prost = "0.14"
 prost-types = "0.14"
 

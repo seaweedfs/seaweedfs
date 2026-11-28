@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -66,6 +65,7 @@ type FilerSink struct {
 	activeTransfers   sync.Map // chunkFileId -> *ChunkTransferStatus
 	uploader          *operation.Uploader
 	jwtForFiler       security.FilerJwtProvider
+	filerTokenSource  security.FilerTokenSource
 	// lastServedFileId is the most recent chunk the source did serve, the probe
 	// sourceStillServesChunks re-checks before writing an entry off.
 	lastServedFileId atomic.Pointer[string]
@@ -147,6 +147,12 @@ func (fs *FilerSink) SetUploader(uploader *operation.Uploader) {
 // Must be called during initialization, before any replication goroutines start.
 func (fs *FilerSink) SetFilerJwtProvider(provider security.FilerJwtProvider) {
 	fs.jwtForFiler = provider
+}
+
+// SetFilerTokenSource sets the per-RPC gRPC credential source for this filer.
+// It is resolved again for every RPC attempt, including reconnects.
+func (fs *FilerSink) SetFilerTokenSource(source security.FilerTokenSource) {
+	fs.filerTokenSource = source
 }
 
 func (fs *FilerSink) getUploader() (*operation.Uploader, error) {
@@ -290,16 +296,20 @@ func (fs *FilerSink) entryMissing(key string) (bool, error) {
 		if lookupErr == nil {
 			return nil
 		}
-		// The string check is a deliberate compatibility fallback: a cross-cluster
-		// gRPC error often arrives as a plain status string that no longer wraps the
-		// filer_pb.ErrNotFound sentinel, so errors.Is alone would miss it.
-		if errors.Is(lookupErr, filer_pb.ErrNotFound) || strings.Contains(lookupErr.Error(), filer_pb.ErrNotFound.Error()) {
+		if isEntryNotFound(lookupErr) {
 			missing = true
 			return nil
 		}
 		return lookupErr
 	})
 	return missing, err
+}
+
+// isEntryNotFound reports a lookup not-found. filer_pb.LookupEntry already maps
+// every miss, plain-text ones included, to the sentinel; the same text on any
+// other status is a failed read.
+func isEntryNotFound(err error) bool {
+	return errors.Is(err, filer_pb.ErrNotFound)
 }
 
 func (fs *FilerSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int32) error {
@@ -400,27 +410,32 @@ func (fs *FilerSink) UpdateEntry(key string, oldEntry *filer_pb.Entry, newParent
 
 	// read existing entry
 	var existingEntry *filer_pb.Entry
-	err = fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	err = util.RetryOnError("lookup "+key, func(err error) bool { return !isEntryNotFound(err) }, func() error {
+		return fs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
-		request := &filer_pb.LookupDirectoryEntryRequest{
-			Directory: dir,
-			Name:      name,
-		}
+			request := &filer_pb.LookupDirectoryEntryRequest{
+				Directory: dir,
+				Name:      name,
+			}
 
-		glog.V(4).Infof("lookup entry: %v", request)
-		resp, err := filer_pb.LookupEntry(context.Background(), client, request)
-		if err != nil {
-			glog.V(0).Infof("lookup %s: %v", key, err)
-			return err
-		}
+			glog.V(4).Infof("lookup entry: %v", request)
+			resp, err := filer_pb.LookupEntry(context.Background(), client, request)
+			if err != nil {
+				glog.V(0).Infof("lookup %s: %v", key, err)
+				return err
+			}
 
-		existingEntry = resp.Entry
+			existingEntry = resp.Entry
 
-		return nil
+			return nil
+		})
 	})
 
 	if err != nil {
-		return false, fmt.Errorf("lookup %s: %w", key, err)
+		// Only a real not-found lets the caller delete and recreate the key; any
+		// other lookup error must be retried, or a transient failure would wipe
+		// a directory with everything under it.
+		return !isEntryNotFound(err), fmt.Errorf("lookup %s: %w", key, err)
 	}
 
 	glog.V(4).Infof("entry %s: old %q new %q existing %q", key, oldEntry.GetName(), newEntry.GetName(), existingEntry.GetName())
@@ -867,13 +882,13 @@ func hasStaleBackupChunk(existing, reference *filer_pb.Entry) bool {
 	}
 	refFids := make(map[string]bool, len(reference.GetChunks()))
 	for _, c := range reference.GetChunks() {
-		refFids[c.GetFileIdString()] = true
+		refFids[filer.ChunkIdentity(c.GetFileIdString())] = true
 	}
 	for _, c := range existing.GetChunks() {
 		if c.SourceFileId == "" {
 			continue // not backup-written → do not judge staleness
 		}
-		if !refFids[c.SourceFileId] {
+		if !refFids[filer.ChunkIdentity(c.SourceFileId)] {
 			return true
 		}
 	}

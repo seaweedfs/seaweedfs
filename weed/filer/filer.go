@@ -61,12 +61,18 @@ type Filer struct {
 	MasterClient        *wdclient.MasterClient
 	FileIdDeletionQueue *util.UnboundedQueue
 	GrpcDialOption      grpc.DialOption
-	dialOptions         *DialOptions
-	DirBucketsPath      string
-	Cipher              bool
-	LocalMetaLogBuffer  *log_buffer.LogBuffer
-	metaLogCollection   string
-	metaLogReplication  string
+	// PeerContext supplies fresh per-call authentication for filer-owned RPCs.
+	// Set it before bootstrap or peer aggregation starts.
+	PeerContext func(context.Context) context.Context
+	// PeerSubscriptionContext authenticates peer metadata subscriptions; when
+	// nil, PeerContext is used.
+	PeerSubscriptionContext func(context.Context) context.Context
+	dialOptions             *DialOptions
+	DirBucketsPath          string
+	Cipher                  bool
+	LocalMetaLogBuffer      *log_buffer.LogBuffer
+	metaLogCollection       string
+	metaLogReplication      string
 	// Override where system metadata-log chunks are assigned, keeping the
 	// internal log out of the default collection; empty keeps today's
 	// behaviour. Set via viper: filer.options.metaLog.collection / .replication.
@@ -281,7 +287,7 @@ func (f *Filer) readPeerDigest(ctx context.Context, peer pb.ServerAddress) (sign
 	ctx, cancel := context.WithTimeout(ctx, peerDigestReadTimeout)
 	defer cancel()
 	err = pb.WithFilerClient(false, f.UniqueFilerId, peer, f.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
+		resp, err := client.GetFilerConfiguration(f.peerCallContext(ctx), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return err
 		}
@@ -306,14 +312,14 @@ func (f *Filer) MaybeBootstrapFromOnePeer(ctx context.Context, self pb.ServerAdd
 	glog.V(0).Infof("bootstrap from %v clientId:%d", earliestNode.Address, f.UniqueFilerId)
 
 	return pb.WithFilerClient(false, f.UniqueFilerId, pb.ServerAddress(earliestNode.Address), f.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.GetFilerConfiguration(ctx, &filer_pb.GetFilerConfigurationRequest{})
+		resp, err := client.GetFilerConfiguration(f.peerCallContext(ctx), &filer_pb.GetFilerConfigurationRequest{})
 		if err != nil {
 			return fmt.Errorf("read configuration of %s: %w", earliestNode.Address, err)
 		}
 		if err := checkPeerDigest(pb.ServerAddress(earliestNode.Address), resp.Digest, false); err != nil {
 			return err
 		}
-		return filer_pb.StreamBfs(ctx, client, "/", snapshotTime.UnixNano(), func(parentPath util.FullPath, pbEntry *filer_pb.Entry, entryTsNs int64) error {
+		return filer_pb.StreamBfs(f.peerCallContext(ctx), client, "/", snapshotTime.UnixNano(), func(parentPath util.FullPath, pbEntry *filer_pb.Entry, entryTsNs int64) error {
 			entry := FromPbEntry(string(parentPath), pbEntry)
 			peerTsNs := entryTsNs
 			if peerTsNs == 0 {
@@ -472,7 +478,10 @@ func (f *Filer) ListExistingPeerUpdates(ctx context.Context) (existingNodes []*m
 }
 
 func (f *Filer) SetStore(store FilerStore) (isFresh bool) {
-	f.Store = NewFilerStoreWrapper(store)
+	wrapper := NewFilerStoreWrapper(store)
+	// this store holds every name of a hard-linked file: it counts them
+	wrapper.countsLinks = true
+	f.Store = wrapper
 
 	isFresh = f.setOrLoadFilerStoreSignature(store)
 

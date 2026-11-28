@@ -122,6 +122,18 @@ pub static VOLUME_GAUGE: LazyLock<GaugeVec> = LazyLock::new(|| {
     .expect("metric can be created")
 });
 
+/// Mounted EC shards whose file on disk is gone or replaced (ghost) or changed size (stale_size).
+pub static EC_SHARD_DISK_MISMATCH_GAUGE: LazyLock<GaugeVec> = LazyLock::new(|| {
+    GaugeVec::new(
+        Opts::new(
+            "SeaweedFS_volumeServer_ec_shard_disk_mismatch",
+            "Mounted EC shards whose file on disk is gone or replaced (ghost) or changed size (stale_size).",
+        ),
+        &["reason"],
+    )
+    .expect("metric can be created")
+});
+
 /// Read-only volumes per collection and type.
 pub static READ_ONLY_VOLUME_GAUGE: LazyLock<GaugeVec> = LazyLock::new(|| {
     GaugeVec::new(
@@ -280,6 +292,19 @@ pub static EC_RECONSTRUCTED_INTERVAL_COUNTER: LazyLock<IntCounterVec> = LazyLock
     .expect("metric can be created")
 });
 
+/// Failed EC shard copies into this server, with labels `collection` and
+/// `reason`. Mirrors Go's VolumeServerEcShardCopyFailures.
+pub static EC_SHARD_COPY_FAILURES: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    IntCounterVec::new(
+        Opts::new(
+            "SeaweedFS_volumeServer_ec_shard_copy_failures_total",
+            "Counter of failed EC shard copies into this server by collection and reason.",
+        ),
+        &["collection", "reason"],
+    )
+    .expect("metric can be created")
+});
+
 /// Counter of storage read/write EIO errors on volumes and EC shards.
 /// Mirrors Go's VolumeServerStorageIoErrorCounter.
 pub static STORAGE_IO_ERROR_COUNTER: LazyLock<IntCounter> = LazyLock::new(|| {
@@ -392,6 +417,14 @@ pub const ERROR_WRITE_TO_LOCAL_DISK: &str = "errorWriteToLocalDisk";
 pub const ERROR_UNMARSHAL_PAIRS: &str = "errorUnmarshalPairs";
 pub const ERROR_WRITE_TO_REPLICAS: &str = "errorWriteToReplicas";
 
+// EC shard copy failure reasons (Go: stats.EcShardCopy*).
+pub const EC_SHARD_COPY_SOURCE_NOT_FOUND: &str = "source_not_found";
+pub const EC_SHARD_COPY_EMPTY_INDEX: &str = "empty_index";
+pub const EC_SHARD_COPY_NO_SPACE: &str = "no_space";
+pub const EC_SHARD_COPY_TIMEOUT: &str = "timeout";
+pub const EC_SHARD_COPY_IO_ERROR: &str = "io_error";
+pub const EC_SHARD_COPY_OTHER: &str = "other";
+
 // Go volume heartbeat metric label values.
 pub const READ_ONLY_LABEL_IS_READ_ONLY: &str = "IsReadOnly";
 pub const READ_ONLY_LABEL_NO_WRITE_OR_DELETE: &str = "noWriteOrDelete";
@@ -418,6 +451,7 @@ pub fn register_metrics() {
             Box::new(VACUUMING_DROPPED_NEEDLES_COUNTER.clone()),
             Box::new(VOLUME_GAUGE.clone()),
             Box::new(READ_ONLY_VOLUME_GAUGE.clone()),
+            Box::new(EC_SHARD_DISK_MISMATCH_GAUGE.clone()),
             Box::new(MAX_VOLUMES.clone()),
             Box::new(DISK_SIZE_GAUGE.clone()),
             Box::new(RESOURCE_GAUGE.clone()),
@@ -432,6 +466,7 @@ pub fn register_metrics() {
             Box::new(SCRUB_SHARD_FAILURES.clone()),
             Box::new(STORAGE_IO_ERROR_COUNTER.clone()),
             Box::new(EC_RECONSTRUCTED_INTERVAL_COUNTER.clone()),
+            Box::new(EC_SHARD_COPY_FAILURES.clone()),
             Box::new(IO_QUARANTINE_GAUGE.clone()),
             // Legacy metrics
             Box::new(VOLUMES_TOTAL.clone()),

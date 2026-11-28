@@ -53,7 +53,7 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 	ifMatchValues := r.Header.Values("If-Match")
 	ifUnmodifiedSinceHeader := r.Header.Get("If-Unmodified-Since")
 	if len(ifMatchValues) != 0 {
-		if !etagListMatches(strings.Join(ifMatchValues, ","), etag, false) {
+		if !util.ETagListMatches(strings.Join(ifMatchValues, ","), etag, false) {
 			w.WriteHeader(http.StatusPreconditionFailed)
 			return true
 		}
@@ -69,7 +69,7 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 	ifNoneMatchValues := r.Header.Values("If-None-Match")
 	ifModifiedSinceHeader := r.Header.Get("If-Modified-Since")
 	if len(ifNoneMatchValues) != 0 {
-		if etagListMatches(strings.Join(ifNoneMatchValues, ","), etag, true) {
+		if util.ETagListMatches(strings.Join(ifNoneMatchValues, ","), etag, true) {
 			SetEtag(w, etag)
 			w.WriteHeader(http.StatusNotModified)
 			return true
@@ -85,52 +85,6 @@ func checkPreconditions(w http.ResponseWriter, r *http.Request, entry *filer.Ent
 	}
 
 	return false
-}
-
-// etagListMatches reports whether an If-Match or If-None-Match value, "*" or a
-// list of entity tags, matches etag (RFC 9110 13.1.1, 13.1.2). If-Match uses the
-// strong comparison, so a weak tag never matches; If-None-Match the weak one.
-func etagListMatches(header, etag string, weak bool) bool {
-	if strings.TrimSpace(header) == "*" {
-		return true
-	}
-	for _, tag := range splitETagList(header) {
-		tag = strings.TrimSpace(tag)
-		if strings.HasPrefix(tag, "W/") {
-			if !weak {
-				continue
-			}
-			tag = tag[len("W/"):]
-		}
-		// Empty list elements are ignored, so padding like a trailing
-		// comma cannot match an empty opaque tag.
-		if tag == "" {
-			continue
-		}
-		if util.CanonicalizeETag(tag) == util.CanonicalizeETag(etag) {
-			return true
-		}
-	}
-	return false
-}
-
-// splitETagList splits an entity-tag list on the commas between tags; a comma
-// inside a quoted opaque tag does not split.
-func splitETagList(header string) []string {
-	var tags []string
-	start, quoted := 0, false
-	for i := 0; i < len(header); i++ {
-		switch header[i] {
-		case '"':
-			quoted = !quoted
-		case ',':
-			if !quoted {
-				tags = append(tags, header[start:i])
-				start = i + 1
-			}
-		}
-	}
-	return append(tags, header[start:])
 }
 
 func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +134,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			if entry.Chunks, _, err = filer.ResolveChunkManifest(
 				ctx,
 				fs.filer.MasterClient.GetLookupFileIdFunction(),
-				entry.GetChunks(), 0, math.MaxInt64, fs.filer.MasterClient); err != nil {
+				entry.GetChunks(), 0, math.MaxInt64, fs.filer.MasterClient, false); err != nil {
 				err = fmt.Errorf("failed to resolve chunk manifest, err: %s", err.Error())
 				writeJsonError(w, r, http.StatusInternalServerError, err)
 				return

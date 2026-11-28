@@ -31,6 +31,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
@@ -504,6 +505,9 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
+	if !s3a.iam.untrackInFlight(r) {
+		return
+	}
 	// The filer resolves and drops the bucket's collection inside the delete;
 	// it keeps a shared one rather than risk another bucket's volumes.
 	err := s3a.rm(r.Context(), s3a.option.BucketsPath, bucket, false, true)
@@ -1207,7 +1211,7 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 		return
 	}
 	// ReadFilerConfFromFilers provides multi-filer failover
-	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil)
+	fc, err := filer.ReadFilerConfFromFilers(s3a.option.Filers, s3a.option.GrpcDialOption, nil, security.FilerAdminToken)
 	if err != nil {
 		glog.Errorf("GetBucketLifecycleConfigurationHandler: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)

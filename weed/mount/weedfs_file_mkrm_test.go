@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 )
 
 type createEntryTestServer struct {
@@ -27,6 +28,11 @@ type createEntryTestServer struct {
 	lastUID       uint32
 	lastGID       uint32
 	lastMode      uint32
+	lastEntry     *filer_pb.Entry
+	cachedRemote  *filer_pb.Entry
+	// updateEntry and lookupEntry answer those calls when set
+	updateEntry func(*filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error)
+	lookupEntry func(*filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error)
 }
 
 type createEntrySnapshot struct {
@@ -43,6 +49,7 @@ func (s *createEntryTestServer) CreateEntry(ctx context.Context, req *filer_pb.C
 	s.lastDirectory = req.GetDirectory()
 	if req.GetEntry() != nil {
 		s.lastName = req.GetEntry().GetName()
+		s.lastEntry = proto.Clone(req.GetEntry()).(*filer_pb.Entry)
 		if req.GetEntry().GetAttributes() != nil {
 			s.lastUID = req.GetEntry().GetAttributes().GetUid()
 			s.lastGID = req.GetEntry().GetAttributes().GetGid()
@@ -53,7 +60,17 @@ func (s *createEntryTestServer) CreateEntry(ctx context.Context, req *filer_pb.C
 }
 
 func (s *createEntryTestServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	if s.updateEntry != nil {
+		return s.updateEntry(req)
+	}
 	return &filer_pb.UpdateEntryResponse{}, nil
+}
+
+func (s *createEntryTestServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
+	if s.lookupEntry != nil {
+		return s.lookupEntry(req)
+	}
+	return s.UnimplementedSeaweedFilerServer.LookupDirectoryEntry(ctx, req)
 }
 
 func (s *createEntryTestServer) snapshot() createEntrySnapshot {

@@ -138,3 +138,37 @@ func TestMaintenanceManager_LogThrottling(t *testing.T) {
 		t.Errorf("Expected error count to be 25, got %d", manager.errorCount)
 	}
 }
+
+func TestMaintenanceManager_IsTaskTypeEnabled(t *testing.T) {
+	config := DefaultMaintenanceConfig()
+	config.Policy = &MaintenancePolicy{TaskPolicies: map[string]*TaskPolicy{
+		"ec_balance": {Enabled: true},
+		"vacuum":     {Enabled: false},
+	}}
+	manager := NewMaintenanceManager(nil, config, nil)
+
+	if manager.IsTaskTypeEnabled("ec_balance") {
+		t.Fatal("a stopped manager queues nothing")
+	}
+	manager.mutex.Lock()
+	manager.running = true
+	manager.mutex.Unlock()
+	if manager.IsTaskTypeEnabled("ec_balance") {
+		t.Fatal("no registered worker can run ec_balance")
+	}
+	manager.queue.workers["w1"] = &MaintenanceWorker{ID: "w1", Status: "active", LastHeartbeat: time.Now(), Capabilities: []MaintenanceTaskType{"vacuum"}}
+	if manager.IsTaskTypeEnabled("ec_balance") {
+		t.Fatal("the only worker cannot run ec_balance")
+	}
+	manager.queue.workers["w2"] = &MaintenanceWorker{ID: "w2", Status: "active", LastHeartbeat: time.Now().Add(-time.Hour), Capabilities: []MaintenanceTaskType{"ec_balance"}}
+	if manager.IsTaskTypeEnabled("ec_balance") {
+		t.Fatal("a worker past its heartbeat timeout cannot run ec_balance")
+	}
+	manager.queue.workers["w3"] = &MaintenanceWorker{ID: "w3", Status: "busy", LastHeartbeat: time.Now(), Capabilities: []MaintenanceTaskType{"ec_balance"}}
+	if !manager.IsTaskTypeEnabled("ec_balance") {
+		t.Fatal("ec_balance is enabled and a worker can run it")
+	}
+	if manager.IsTaskTypeEnabled("vacuum") || manager.IsTaskTypeEnabled("balance") {
+		t.Fatal("disabled and missing task types are not enabled")
+	}
+}
