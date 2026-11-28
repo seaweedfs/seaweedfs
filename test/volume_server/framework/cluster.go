@@ -326,9 +326,17 @@ func (c *Cluster) waitForTCP(addr string) error {
 	return fmt.Errorf("timed out waiting for tcp %s", addr)
 }
 
-// stopProcess interrupts cmd and waits for it to exit, killing it after 10s.
-// A server that does not exit cleanly on SIGINT fails the test: a panic or a
-// hang on shutdown is a bug the tests would otherwise never see.
+// stopTimeout bounds a server's exit after SIGINT; stopDiskTimeout replaces it
+// once a thread of the server has been seen in an uninterruptible wait, such
+// as the close fsync on a slow CI disk.
+var (
+	stopTimeout     = 10 * time.Second
+	stopDiskTimeout = time.Minute
+)
+
+// stopProcess interrupts cmd and waits for it to exit, killing it after
+// stopTimeout. A server that does not exit cleanly on SIGINT fails the test: a
+// panic or a hang on shutdown is a bug the tests would otherwise never see.
 func stopProcess(tb testing.TB, name string, cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil {
 		return
@@ -340,16 +348,70 @@ func stopProcess(tb testing.TB, name string, cmd *exec.Cmd) {
 		done <- cmd.Wait()
 	}()
 
-	select {
-	case <-time.After(10 * time.Second):
+	start := time.Now()
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	diskWait := false
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				tb.Errorf("%s did not exit cleanly on SIGINT: %v", name, err)
+			}
+			return
+		case <-tick.C:
+		}
+		threads, inDiskWait := processThreads(cmd.Process.Pid)
+		diskWait = diskWait || inDiskWait
+		limit := stopTimeout
+		if diskWait {
+			limit = stopDiskTimeout
+		}
+		if time.Since(start) < limit {
+			continue
+		}
 		_ = cmd.Process.Kill()
 		<-done
-		tb.Errorf("%s did not exit within 10s of SIGINT", name)
-	case err := <-done:
-		if err != nil {
-			tb.Errorf("%s did not exit cleanly on SIGINT: %v", name, err)
-		}
+		tb.Errorf("%s did not exit within %v of SIGINT, threads: %s", name, limit, threads)
+		return
 	}
+}
+
+// processThreads summarizes pid's threads from /proc as "name state wchan"
+// with counts, and reports whether any is in uninterruptible sleep (D).
+func processThreads(pid int) (string, bool) {
+	dir := fmt.Sprintf("/proc/%d/task", pid)
+	tasks, err := os.ReadDir(dir)
+	if err != nil {
+		return "unavailable", false
+	}
+	counts := map[string]int{}
+	var order []string
+	inDiskWait := false
+	for _, task := range tasks {
+		stat, err := os.ReadFile(filepath.Join(dir, task.Name(), "stat"))
+		if err != nil {
+			continue
+		}
+		s := string(stat)
+		open, end := strings.IndexByte(s, '('), strings.LastIndexByte(s, ')')
+		if open < 0 || end < open || end+2 >= len(s) {
+			continue
+		}
+		state := s[end+2]
+		inDiskWait = inDiskWait || state == 'D'
+		wchan, _ := os.ReadFile(filepath.Join(dir, task.Name(), "wchan"))
+		key := fmt.Sprintf("%s %c %s", s[open+1:end], state, wchan)
+		if counts[key] == 0 {
+			order = append(order, key)
+		}
+		counts[key]++
+	}
+	parts := make([]string, 0, len(order))
+	for _, key := range order {
+		parts = append(parts, fmt.Sprintf("%dx[%s]", counts[key], key))
+	}
+	return strings.Join(parts, " "), inDiskWait
 }
 
 func newWorkDir() (dir string, keepLogs bool, err error) {
