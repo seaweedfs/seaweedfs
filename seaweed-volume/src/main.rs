@@ -5,6 +5,7 @@ use tracing::{error, info, warn};
 use seaweed_volume::config::{self, VolumeServerConfig};
 use seaweed_volume::metrics;
 use seaweed_volume::pb::volume_server_pb::volume_server_server::VolumeServerServer;
+use seaweed_volume::security::health_check_access::HealthCheckOnlyLayer;
 use seaweed_volume::security::tls::{
     GrpcClientAuthPolicy, TlsPolicy, build_rustls_server_config,
     build_rustls_server_config_with_grpc_client_auth,
@@ -249,6 +250,7 @@ fn build_grpc_server_tls_acceptor(
     tls_policy: &TlsPolicy,
     allowed_wildcard_domain: &str,
     allowed_common_names: &[String],
+    health_check_common_names: &[String],
 ) -> Result<Option<TlsAcceptor>, Box<dyn std::error::Error>> {
     if cert_path.is_empty() && key_path.is_empty() {
         return Ok(None);
@@ -262,6 +264,7 @@ fn build_grpc_server_tls_acceptor(
     let client_auth_policy = GrpcClientAuthPolicy {
         allowed_common_names: allowed_common_names.to_vec(),
         allowed_wildcard_domain: allowed_wildcard_domain.to_string(),
+        health_check_common_names: health_check_common_names.to_vec(),
     };
     let mut server_config = build_rustls_server_config_with_grpc_client_auth(
         cert_path,
@@ -327,6 +330,32 @@ fn build_volume_grpc_service(
     VolumeServerServer::new(grpc_service)
         .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
         .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+}
+
+const GRPC_HEALTH_SERVICES: [&str; 3] = [
+    "",
+    <VolumeServerServer<VolumeGrpcService> as tonic::server::NamedService>::NAME,
+    <tonic_health::pb::health_server::HealthServer<tonic_health::server::HealthService> as tonic::server::NamedService>::NAME,
+];
+
+async fn build_grpc_health_service() -> (
+    tonic_health::server::HealthReporter,
+    tonic_health::pb::health_server::HealthServer<impl tonic_health::pb::health_server::Health>,
+) {
+    let (reporter, service) = tonic_health::server::health_reporter();
+    for name in GRPC_HEALTH_SERVICES {
+        reporter
+            .set_service_status(name, tonic_health::ServingStatus::Serving)
+            .await;
+    }
+    (reporter, service)
+}
+
+/// Ends open Watch streams, which graceful shutdown would otherwise wait on.
+async fn end_grpc_health_watches(mut reporter: tonic_health::server::HealthReporter) {
+    for name in GRPC_HEALTH_SERVICES {
+        reporter.clear_service_status(name).await;
+    }
 }
 
 fn apply_idle_timeout<S>(
@@ -578,6 +607,7 @@ async fn run(
         &config.tls_policy,
         &config.grpc_allowed_wildcard_domain,
         &config.grpc_volume_allowed_common_names,
+        &config.grpc_health_check_common_names,
     )?;
 
     info!("Starting HTTP server on {}", admin_addr);
@@ -740,6 +770,7 @@ async fn run(
     let grpc_handle = {
         let grpc_state = state.clone();
         let grpc_tls_acceptor = grpc_tls_acceptor.clone();
+        let health_check_only = HealthCheckOnlyLayer::new(&config.grpc_health_check_common_names);
         let mut shutdown_rx = shutdown_tx.subscribe();
         let shutdown_tx_grpc = shutdown_tx.clone();
         tokio::spawn(async move {
@@ -754,17 +785,21 @@ async fn run(
                 .register_encoded_file_descriptor_set(seaweed_volume::pb::FILE_DESCRIPTOR_SET)
                 .build_v1alpha()
                 .expect("Failed to build gRPC reflection v1alpha service");
+            let (health_reporter, health_service) = build_grpc_health_service().await;
             let result = if let Some(tls_acceptor) = grpc_tls_acceptor {
                 let incoming =
                     grpc_tls_incoming(grpc_listener, tls_acceptor, GRPC_TLS_HANDSHAKE_TIMEOUT);
                 info!("gRPC server listening on {} (TLS enabled)", grpc_local_addr);
                 build_grpc_server_builder()
+                    .layer(health_check_only)
                     .layer(GrpcRequestIdLayer)
                     .add_service(reflection_v1)
                     .add_service(reflection_v1alpha)
+                    .add_service(health_service)
                     .add_service(build_volume_grpc_service(grpc_service))
                     .serve_with_incoming_shutdown(incoming, async move {
                         let _ = shutdown_rx.recv().await;
+                        end_grpc_health_watches(health_reporter).await;
                     })
                     .await
             } else {
@@ -774,9 +809,11 @@ async fn run(
                     .layer(GrpcRequestIdLayer)
                     .add_service(reflection_v1)
                     .add_service(reflection_v1alpha)
+                    .add_service(health_service)
                     .add_service(build_volume_grpc_service(grpc_service))
                     .serve_with_incoming_shutdown(incoming, async move {
                         let _ = shutdown_rx.recv().await;
+                        end_grpc_health_watches(health_reporter).await;
                     })
                     .await
             };
@@ -1165,6 +1202,61 @@ mod tests {
     /// A connect that never finishes fails at the 5 s bound. It stalls in the
     /// resolver, which the connect bound also covers, because that needs no
     /// routing: a real unanswered SYN depends on the host's network.
+    #[tokio::test]
+    async fn grpc_health_answers_for_the_volume_server() {
+        use tonic_health::pb::{HealthCheckRequest, health_client::HealthClient};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (health_reporter, health_service) = super::build_grpc_health_service().await;
+        tokio::spawn(
+            tonic::transport::Server::builder()
+                .add_service(health_service)
+                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener)),
+        );
+        let channel = tonic::transport::Endpoint::from_shared(format!("http://{}", addr))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let mut client = HealthClient::new(channel);
+        for service in ["", "volume_server_pb.VolumeServer", "grpc.health.v1.Health"] {
+            let response = client
+                .check(HealthCheckRequest {
+                    service: service.to_string(),
+                })
+                .await
+                .unwrap_or_else(|e| panic!("Check({:?}): {}", service, e));
+            assert_eq!(
+                response.into_inner().status,
+                tonic_health::pb::health_check_response::ServingStatus::Serving as i32,
+                "Check({:?})",
+                service
+            );
+        }
+        let err = client
+            .check(HealthCheckRequest {
+                service: "master_pb.Seaweed".to_string(),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::NotFound);
+
+        let mut watch = client
+            .watch(HealthCheckRequest {
+                service: String::new(),
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(watch.message().await.unwrap().is_some());
+        super::end_grpc_health_watches(health_reporter).await;
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(5), watch.message())
+            .await
+            .expect("Watch still open after end_grpc_health_watches");
+        assert!(matches!(ended, Ok(None)), "{:?}", ended);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn outgoing_client_bounds_a_stalled_connect() {
         struct Stalled;
@@ -1205,7 +1297,7 @@ mod tests {
         let ca = write_pem(dir, "ca.pem", TEST_CA_PEM);
         let cert = write_pem(dir, "leaf.pem", TEST_LEAF_PEM);
         let key = write_pem(dir, "leaf.key", TEST_LEAF_KEY_PEM);
-        build_grpc_server_tls_acceptor(&cert, &key, &ca, &TlsPolicy::default(), "", &[])
+        build_grpc_server_tls_acceptor(&cert, &key, &ca, &TlsPolicy::default(), "", &[], &[])
             .unwrap()
             .unwrap()
     }
@@ -1287,9 +1379,76 @@ mod tests {
         );
 
         assert!(
-            build_grpc_server_tls_acceptor(&cert, &key, "", &TlsPolicy::default(), "", &[])
+            build_grpc_server_tls_acceptor(&cert, &key, "", &TlsPolicy::default(), "", &[], &[])
                 .is_err()
         );
+    }
+
+    /// A certificate on grpc.health_check_commonNames passes the handshake even
+    /// with allowed_commonNames set, and reaches only the health service.
+    #[tokio::test]
+    async fn test_grpc_health_check_common_name_reaches_only_health() {
+        use seaweed_volume::pb::volume_server_pb::{
+            VolumeServerStatusRequest, volume_server_client::VolumeServerClient,
+        };
+        use seaweed_volume::security::health_check_access::HealthCheckOnlyLayer;
+        use tonic::transport::{Certificate, ClientTlsConfig, Endpoint, Identity};
+        use tonic_health::pb::{HealthCheckRequest, health_client::HealthClient};
+
+        seaweed_volume::security::tls::install_default_crypto_provider();
+        let dir = tempfile::tempdir().unwrap();
+        let cert = write_pem(&dir, "leaf.pem", TEST_LEAF_PEM);
+        let key = write_pem(&dir, "leaf.key", TEST_LEAF_KEY_PEM);
+        let ca = write_pem(&dir, "ca.pem", TEST_CA_PEM);
+        let health_names = vec!["localhost".to_string()];
+        let acceptor = build_grpc_server_tls_acceptor(
+            &cert,
+            &key,
+            &ca,
+            &TlsPolicy::default(),
+            "",
+            &["volume".to_string()],
+            &health_names,
+        )
+        .unwrap()
+        .unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let incoming = grpc_tls_incoming(listener, acceptor, GRPC_TLS_HANDSHAKE_TIMEOUT);
+        let (_health_reporter, health_service) = super::build_grpc_health_service().await;
+        tokio::spawn(
+            tonic::transport::Server::builder()
+                .layer(HealthCheckOnlyLayer::new(&health_names))
+                .add_service(health_service)
+                .serve_with_incoming(incoming),
+        );
+
+        let tls = ClientTlsConfig::new()
+            .ca_certificate(Certificate::from_pem(TEST_CA_PEM))
+            .identity(Identity::from_pem(TEST_LEAF_PEM, TEST_LEAF_KEY_PEM))
+            .domain_name("localhost");
+        let channel = Endpoint::from_shared(format!("https://{}", addr))
+            .unwrap()
+            .tls_config(tls)
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let response = HealthClient::new(channel.clone())
+            .check(HealthCheckRequest {
+                service: String::new(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            response.into_inner().status,
+            tonic_health::pb::health_check_response::ServingStatus::Serving as i32
+        );
+        let err = VolumeServerClient::new(channel)
+            .volume_server_status(VolumeServerStatusRequest {})
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::PermissionDenied, "{}", err);
     }
 
     #[test]
@@ -1301,6 +1460,7 @@ mod tests {
                 "/missing/ca.crt",
                 &TlsPolicy::default(),
                 "",
+                &[],
                 &[],
             )
             .is_err()
@@ -1337,6 +1497,7 @@ mod tests {
                     cipher_suites: String::new(),
                 },
                 "",
+                &[],
                 &[],
             )
             .is_err()

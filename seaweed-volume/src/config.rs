@@ -22,6 +22,15 @@ fn process_env(key: &str) -> Option<OsString> {
 
 /// `std::env::var`'s view of an [`EnvLookup`]: unset and non-UTF-8 both read
 /// as absent, exactly as `std::env::var(key).ok()` does.
+fn parse_common_names(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(String::from)
+        .collect()
+}
+
 fn env_string(env: EnvLookup<'_>, key: &str) -> Option<String> {
     env(key).and_then(|value| value.into_string().ok())
 }
@@ -324,6 +333,7 @@ pub struct VolumeServerConfig {
     pub grpc_ca_file: String,
     pub grpc_allowed_wildcard_domain: String,
     pub grpc_volume_allowed_common_names: Vec<String>,
+    pub grpc_health_check_common_names: Vec<String>,
     pub tls_policy: TlsPolicy,
     /// Path to security.toml — stored for SIGHUP reload.
     pub security_file: String,
@@ -1019,6 +1029,7 @@ fn resolve_config_with_env(cli: Cli, env: EnvLookup<'_>) -> VolumeServerConfig {
         grpc_ca_file: sec.grpc_ca_file,
         grpc_allowed_wildcard_domain: sec.grpc_allowed_wildcard_domain,
         grpc_volume_allowed_common_names: sec.grpc_volume_allowed_common_names,
+        grpc_health_check_common_names: sec.grpc_health_check_common_names,
         tls_policy: sec.tls_policy,
         security_file: cli.security_file,
         allow_untrusted_remote_endpoints: cli.allow_untrusted_remote_endpoints,
@@ -1052,6 +1063,7 @@ pub struct SecurityConfig {
     pub grpc_ca_file: String,
     pub grpc_allowed_wildcard_domain: String,
     pub grpc_volume_allowed_common_names: Vec<String>,
+    pub grpc_health_check_common_names: Vec<String>,
     pub tls_policy: TlsPolicy,
     pub access_ui: bool,
     /// The file was read; otherwise only defaults and WEED_ overrides are set.
@@ -1221,6 +1233,9 @@ fn parse_security_config_with_env(path: &str, env: EnvLookup<'_>) -> SecurityCon
                     "ca" => cfg.grpc_ca_file = value.to_string(),
                     "allowed_wildcard_domain" => {
                         cfg.grpc_allowed_wildcard_domain = value.to_string()
+                    }
+                    "health_check_commonNames" => {
+                        cfg.grpc_health_check_common_names = parse_common_names(value)
                     }
                     _ => {}
                 },
@@ -1407,6 +1422,9 @@ fn apply_env_overrides(cfg: &mut SecurityConfig, env: EnvLookup<'_>) {
     }
     if let Some(v) = env_string(env, "WEED_GRPC_VOLUME_ALLOWED_COMMONNAMES") {
         cfg.grpc_volume_allowed_common_names = v.split(',').map(|name| name.to_string()).collect();
+    }
+    if let Some(v) = env_string(env, "WEED_GRPC_HEALTH_CHECK_COMMONNAMES") {
+        cfg.grpc_health_check_common_names = parse_common_names(&v);
     }
     if let Some(v) = env_string(env, "WEED_TLS_MIN_VERSION") {
         cfg.tls_policy.min_version = v;
@@ -2067,6 +2085,7 @@ client_key = "/etc/seaweedfs/volume-client-key.pem"
             r#"
 [grpc]
 allowed_wildcard_domain = ".example.com"
+health_check_commonNames = "blackbox, ,probe"
 
 [grpc.volume]
 allowed_commonNames = "volume-a.internal,volume-b.internal"
@@ -2082,6 +2101,10 @@ allowed_commonNames = "volume-a.internal,volume-b.internal"
                 String::from("volume-a.internal"),
                 String::from("volume-b.internal")
             ]
+        );
+        assert_eq!(
+            cfg.grpc_health_check_common_names,
+            vec![String::from("blackbox"), String::from("probe")]
         );
     }
 

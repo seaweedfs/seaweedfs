@@ -4,6 +4,7 @@
 //! - Guard: combines whitelist IP checking with JWT token validation
 //! - JWT: HS256 HMAC signing with file-id claims
 
+pub mod health_check_access;
 pub mod tls;
 
 use std::collections::HashSet;

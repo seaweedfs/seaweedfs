@@ -287,7 +287,9 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 			options = append(options, opt)
 		}
 	}
-	return grpc.NewServer(options...)
+	server := grpc.NewServer(options...)
+	registerHealthServer(server)
+	return server
 }
 
 // GrpcDial establishes a gRPC connection.

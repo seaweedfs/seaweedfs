@@ -32,6 +32,10 @@ var CredRefreshingInterval = certreload.DefaultRefreshInterval
 type Authenticator struct {
 	AllowedWildcardDomain string
 	AllowedCommonNames    map[string]bool
+	// HealthCheckCommonNames pass the handshake like AllowedCommonNames, but
+	// the server lets them call only the gRPC health service. See
+	// healthCheckOnlyTap.
+	HealthCheckCommonNames map[string]bool
 }
 
 // SNIStrippingTransportCredentials wraps another TransportCredentials
@@ -130,9 +134,11 @@ func loadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	if err != nil {
 		return nil, nil, err
 	}
+	healthCheckNames := parseAllowedCommonNames(config.GetString("grpc.health_check_commonNames"))
 	auther := Authenticator{
-		AllowedCommonNames:    parseAllowedCommonNames(config.GetString(component + ".allowed_commonNames")),
-		AllowedWildcardDomain: config.GetString("grpc.allowed_wildcard_domain"),
+		AllowedCommonNames:     parseAllowedCommonNames(config.GetString(component + ".allowed_commonNames")),
+		AllowedWildcardDomain:  config.GetString("grpc.allowed_wildcard_domain"),
+		HealthCheckCommonNames: healthCheckNames,
 	}
 	if len(auther.AllowedCommonNames) != 0 || auther.AllowedWildcardDomain != "" {
 		options.AdditionalPeerVerification = auther.Authenticate
@@ -145,7 +151,11 @@ func loadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 	if err != nil {
 		return nil, nil, fmt.Errorf("advancedtls.NewServerCreds failed: %w", err)
 	}
-	return grpc.Creds(ta), nil, nil
+	var healthCheckOnly grpc.ServerOption
+	if len(healthCheckNames) != 0 {
+		healthCheckOnly = grpc.InTapHandle(healthCheckOnlyTap(healthCheckNames))
+	}
+	return grpc.Creds(ta), healthCheckOnly, nil
 }
 
 func LoadClientTLSFromFile(configFile string, component string) (grpc.DialOption, error) {
@@ -453,6 +463,9 @@ func (a Authenticator) Authenticate(params *advancedtls.HandshakeVerificationInf
 		return &advancedtls.PostHandshakeVerificationResults{}, nil
 	}
 	if _, ok := a.AllowedCommonNames[params.Leaf.Subject.CommonName]; ok {
+		return &advancedtls.PostHandshakeVerificationResults{}, nil
+	}
+	if a.HealthCheckCommonNames[params.Leaf.Subject.CommonName] {
 		return &advancedtls.PostHandshakeVerificationResults{}, nil
 	}
 	err := fmt.Errorf("Authenticate: invalid subject client common name: %s", params.Leaf.Subject.CommonName)

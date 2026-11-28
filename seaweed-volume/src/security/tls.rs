@@ -26,6 +26,9 @@ pub struct TlsPolicy {
 pub struct GrpcClientAuthPolicy {
     pub allowed_common_names: Vec<String>,
     pub allowed_wildcard_domain: String,
+    /// Pass the handshake like allowed_common_names, but HealthCheckOnlyLayer
+    /// lets them call only the gRPC health service.
+    pub health_check_common_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +56,7 @@ struct CommonNameVerifier {
     inner: Arc<dyn ClientCertVerifier>,
     allowed_common_names: HashSet<String>,
     allowed_wildcard_domain: String,
+    health_check_common_names: HashSet<String>,
 }
 
 impl ClientCertVerifier for CommonNameVerifier {
@@ -86,7 +90,8 @@ impl ClientCertVerifier for CommonNameVerifier {
             &common_name,
             &self.allowed_common_names,
             &self.allowed_wildcard_domain,
-        ) {
+        ) || self.health_check_common_names.contains(&common_name)
+        {
             return Ok(ClientCertVerified::assertion());
         }
         Err(rustls::Error::General(format!(
@@ -186,6 +191,11 @@ fn build_rustls_server_config_with_client_auth(
                     .cloned()
                     .collect(),
                 allowed_wildcard_domain: client_auth_policy.allowed_wildcard_domain.clone(),
+                health_check_common_names: client_auth_policy
+                    .health_check_common_names
+                    .iter()
+                    .cloned()
+                    .collect(),
             })
         } else {
             verifier
@@ -449,7 +459,7 @@ fn parse_cipher_suite_name(value: &str) -> Result<CipherSuite, TlsPolicyError> {
     }
 }
 
-fn parse_common_name(cert: &CertificateDer<'_>) -> Result<String, TlsPolicyError> {
+pub(crate) fn parse_common_name(cert: &CertificateDer<'_>) -> Result<String, TlsPolicyError> {
     let (_, certificate) = X509Certificate::from_der(cert.as_ref())
         .map_err(|e| TlsPolicyError(format!("parse X.509 certificate failed: {}", e)))?;
     let common_name = certificate
