@@ -47,10 +47,10 @@ func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64
 		// authoritative for locks it still holds.
 		if token != "" {
 			if lock, found := dlm.lockManager.GetLock(key); found && !lock.IsBackup && (lock.Token == token || lock.PrevToken == token) {
-				var seq int64
-				lockOwner, renewToken, generation, seq, err = dlm.lockManager.Lock(key, expiredAtNs, token, owner)
+				var seq, leaseExpires int64
+				lockOwner, renewToken, generation, seq, leaseExpires, err = dlm.lockManager.lockWithExpiry(key, expiredAtNs, token, owner)
 				if err == nil && renewToken != "" {
-					dlm.replicateToBackup(key, expiredAtNs, renewToken, token, owner, generation, seq, false)
+					dlm.replicateToBackup(key, leaseExpires, renewToken, token, owner, generation, seq, false)
 				}
 				return
 			}
@@ -58,10 +58,10 @@ func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64
 		movedTo = primary
 		return
 	}
-	var seq int64
-	lockOwner, renewToken, generation, seq, err = dlm.lockManager.Lock(key, expiredAtNs, token, owner)
+	var seq, leaseExpires int64
+	lockOwner, renewToken, generation, seq, leaseExpires, err = dlm.lockManager.lockWithExpiry(key, expiredAtNs, token, owner)
 	if err == nil && renewToken != "" {
-		dlm.replicateToBackup(key, expiredAtNs, renewToken, token, owner, generation, seq, false)
+		dlm.replicateToBackup(key, leaseExpires, renewToken, token, owner, generation, seq, false)
 	}
 	return
 }
@@ -94,26 +94,17 @@ func (dlm *DistributedLockManager) Unlock(key string, token string) (movedTo pb.
 		return
 	}
 	if primary != dlm.Host {
-		// If we still hold this lock locally, serve the unlock here
-		if lock, found := dlm.lockManager.GetLock(key); found && !lock.IsBackup && token != "" && (lock.Token == token || lock.PrevToken == token) {
-			var isUnlocked bool
-			var generation int64
-			var seq int64
-			isUnlocked, generation, seq, err = dlm.lockManager.Unlock(key, token)
-			if isUnlocked {
-				dlm.replicateToBackup(key, 0, "", "", "", generation, seq, true)
-			}
+		// The old primary can still release a lease awaiting handoff.
+		lock, found := dlm.lockManager.GetLock(key)
+		if !found || lock.IsBackup || token == "" || (lock.Token != token && lock.PrevToken != token) {
+			movedTo = primary
 			return
 		}
-		movedTo = primary
-		return
 	}
-	var isUnlocked bool
-	var generation int64
-	var seq int64
-	isUnlocked, generation, seq, err = dlm.lockManager.Unlock(key, token)
-	if isUnlocked {
-		dlm.replicateToBackup(key, 0, "", "", "", generation, seq, true)
+	released, unlockErr := dlm.lockManager.unlock(key, token)
+	err = unlockErr
+	if released != nil {
+		dlm.replicateToBackup(key, released.ExpiredAtNs, released.Token, "", released.Owner, released.Generation, released.Seq, true)
 	}
 	return
 }
@@ -137,9 +128,9 @@ func (dlm *DistributedLockManager) RemoveBackupLock(key string) {
 	dlm.lockManager.RemoveLock(key)
 }
 
-// RemoveBackupLockIfSeq removes a local copy only if the incoming mutation is not older.
-func (dlm *DistributedLockManager) RemoveBackupLockIfSeq(key string, generation int64, seq int64) {
-	dlm.lockManager.RemoveBackupLockIfSeq(key, generation, seq)
+// RemoveBackupLockIfSeq records a release and removes only the matching lease.
+func (dlm *DistributedLockManager) RemoveBackupLockIfSeq(key string, generation int64, seq int64, token string, expiredAtNs int64) {
+	dlm.lockManager.RemoveBackupLockIfSeq(key, generation, seq, token, expiredAtNs)
 }
 
 func (dlm *DistributedLockManager) SelectNotOwnedLocks(servers []pb.ServerAddress) (locks []*Lock) {
@@ -180,6 +171,18 @@ func (dlm *DistributedLockManager) GetLock(key string) (*Lock, bool) {
 	return dlm.lockManager.GetLock(key)
 }
 
+// PrepareLockTransfer records that a handoff may send this lease elsewhere.
+// Do not send a snapshot if its lease has already been released locally.
+func (dlm *DistributedLockManager) PrepareLockTransfer(lock *Lock) bool {
+	return dlm.lockManager.markReplicated(lock.Key, lock.Token)
+}
+
+// ReplicateLock sends an existing lease to its current backup after a topology
+// change, recording that the local lease may now have a remote copy.
+func (dlm *DistributedLockManager) ReplicateLock(lock *Lock) {
+	dlm.replicateToBackup(lock.Key, lock.ExpiredAtNs, lock.Token, lock.PrevToken, lock.Owner, lock.Generation, lock.Seq, false)
+}
+
 // replicateToBackup asynchronously replicates a lock operation to the backup server
 func (dlm *DistributedLockManager) replicateToBackup(key string, expiredAtNs int64, token string, prevToken string, owner string, generation int64, seq int64, isUnlock bool) {
 	_, backup := dlm.LockRing.GetPrimaryAndBackup(key)
@@ -187,6 +190,9 @@ func (dlm *DistributedLockManager) replicateToBackup(key string, expiredAtNs int
 		return // single-server deployment, no backup
 	}
 	if dlm.ReplicateFn != nil {
+		if !isUnlock && !dlm.lockManager.markReplicated(key, token) {
+			return
+		}
 		go dlm.ReplicateFn(backup, key, expiredAtNs, token, prevToken, owner, generation, seq, isUnlock)
 	}
 }

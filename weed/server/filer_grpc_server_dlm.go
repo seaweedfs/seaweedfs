@@ -164,7 +164,7 @@ func (fs *FilerServer) TransferLocks(ctx context.Context, req *filer_pb.Transfer
 // Uses seq for causal ordering — rejects stale mutations.
 func (fs *FilerServer) ReplicateLock(ctx context.Context, req *filer_pb.ReplicateLockRequest) (*filer_pb.ReplicateLockResponse, error) {
 	if req.IsUnlock {
-		fs.filer.Dlm.RemoveBackupLockIfSeq(req.Name, req.Generation, req.Seq)
+		fs.filer.Dlm.RemoveBackupLockIfSeq(req.Name, req.Generation, req.Seq, req.RenewToken, req.ExpiredAtNs)
 		glog.V(4).Infof("FILER REPLICATE: removed backup lock %s generation=%d seq=%d", req.Name, req.Generation, req.Seq)
 	} else {
 		fs.filer.Dlm.InsertBackupLock(req.Name, req.ExpiredAtNs, req.RenewToken, req.PrevRenewToken, req.Owner, req.Generation, req.Seq)
@@ -197,12 +197,13 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 				glog.V(0).Infof("DLM: promoted backup lock %s to primary", lock.Key)
 			}
 			// Replicate to (possibly new) backup
-			if backup != "" && fs.filer.Dlm.ReplicateFn != nil {
-				go fs.filer.Dlm.ReplicateFn(backup, lock.Key, lock.ExpiredAtNs, lock.Token, lock.PrevToken, lock.Owner, lock.Generation, lock.Seq, false)
-			}
+			fs.filer.Dlm.ReplicateLock(lock)
 		} else if backup == fs.option.Host {
 			if !lock.IsBackup {
 				// We were primary, now we're backup → transfer to new primary first, then demote
+				if !fs.filer.Dlm.PrepareLockTransfer(lock) {
+					continue
+				}
 				glog.V(0).Infof("DLM: transferring primary lock %s to new primary=%s", lock.Key, primary)
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				err := pb.WithFilerClient(false, 0, primary, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -233,6 +234,9 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 			// else: already backup, keep as is
 		} else {
 			// We're neither primary nor backup → transfer to primary and remove locally
+			if !fs.filer.Dlm.PrepareLockTransfer(lock) {
+				continue
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			err := pb.WithFilerClient(false, 0, primary, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 				_, err := client.TransferLocks(ctx, &filer_pb.TransferLocksRequest{

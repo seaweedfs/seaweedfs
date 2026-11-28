@@ -20,12 +20,12 @@ func TestFormalAuditReleasedLockMustNotResurrect(t *testing.T) {
 			backup := lm.NewLockManager()
 			expires := time.Now().Add(time.Minute).UnixNano()
 			if !releaseFirst {
-				backup.InsertBackupLock("key", expires, "token", "", "owner", 1, 1)
+				backup.InsertBackupLock("key", expires, "lease/token", "", "owner", 1, 1)
 			}
-			if !backup.RemoveBackupLockIfSeq("key", 1, 3) {
+			if !backup.RemoveBackupLockIfSeq("key", 1, 3, "lease/token3", expires) {
 				t.Fatal("release unexpectedly rejected")
 			}
-			backup.InsertBackupLock("key", expires, "token2", "token", "owner", 1, 2)
+			backup.InsertBackupLock("key", expires, "lease/token2", "lease/token", "owner", 1, 2)
 			if got, ok := backup.GetLock("key"); ok {
 				t.Fatalf("released lock resurrected: owner=%s generation=%d seq=%d", got.Owner, got.Generation, got.Seq)
 			}
@@ -48,13 +48,13 @@ func TestFormalAuditStaleTransferMustNotResurrect(t *testing.T) {
 func TestFormalAuditOrderedReplicationControl(t *testing.T) {
 	backup := lm.NewLockManager()
 	expires := time.Now().Add(time.Minute).UnixNano()
-	backup.InsertBackupLock("key", expires, "token", "", "owner", 1, 1)
-	backup.RemoveBackupLockIfSeq("key", 1, 2)
+	backup.InsertBackupLock("key", expires, "lease/token", "", "owner", 1, 1)
+	backup.RemoveBackupLockIfSeq("key", 1, 2, "lease/token", expires)
 	if _, ok := backup.GetLock("key"); ok {
 		t.Fatal("ordered release failed")
 	}
 	backup.InsertBackupLock("key", expires, "new", "", "new-owner", 2, 1)
-	backup.RemoveBackupLockIfSeq("key", 1, 2)
+	backup.RemoveBackupLockIfSeq("key", 1, 2, "lease/token", expires)
 	got, ok := backup.GetLock("key")
 	if !ok || got.Generation != 2 {
 		t.Fatal("older delete removed a newer live record")
@@ -100,7 +100,7 @@ func TestFormalAuditAsyncReplicationReleaseFailover(t *testing.T) {
 			}
 			deliver := func(m message) {
 				if m.isUnlock {
-					b.RemoveBackupLockIfSeq(key, m.generation, m.seq)
+					b.RemoveBackupLockIfSeq(key, m.generation, m.seq, m.token, m.expires)
 				} else {
 					b.InsertBackupLock(key, m.expires, m.token, m.prev, m.owner, m.generation, m.seq)
 				}

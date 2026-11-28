@@ -41,7 +41,7 @@ func newTestCluster(hosts ...pb.ServerAddress) *testCluster {
 				return // server is down
 			}
 			if isUnlock {
-				target.RemoveBackupLockIfSeq(key, generation, seq)
+				target.RemoveBackupLockIfSeq(key, generation, seq, token, expiredAtNs)
 			} else {
 				target.InsertBackupLock(key, expiredAtNs, token, prevToken, owner, generation, seq)
 			}
@@ -78,7 +78,7 @@ func (c *testCluster) addNode(host pb.ServerAddress) {
 			return
 		}
 		if isUnlock {
-			target.RemoveBackupLockIfSeq(key, generation, seq)
+			target.RemoveBackupLockIfSeq(key, generation, seq, token, expiredAtNs)
 		} else {
 			target.InsertBackupLock(key, expiredAtNs, token, prevToken, owner, generation, seq)
 		}
@@ -767,13 +767,13 @@ func TestDLM_StaleReplicationRejected(t *testing.T) {
 	assert.Equal(t, int64(4), lock.Seq)
 
 	// Stale unlock (seq=2) should not delete the lock
-	removed := lm.RemoveBackupLockIfSeq("key1", 1, 2)
+	removed := lm.RemoveBackupLockIfSeq("key1", 1, 2, "token-newer", time.Now().Add(30*time.Second).UnixNano())
 	assert.False(t, removed, "stale unlock should be rejected")
 	_, found = lm.GetLock("key1")
 	assert.True(t, found, "lock should still exist after stale unlock")
 
 	// Valid unlock (seq=5) should delete
-	removed = lm.RemoveBackupLockIfSeq("key1", 1, 5)
+	removed = lm.RemoveBackupLockIfSeq("key1", 1, 5, "token-newer", time.Now().Add(30*time.Second).UnixNano())
 	assert.True(t, removed, "valid unlock should be accepted")
 	_, found = lm.GetLock("key1")
 	assert.False(t, found, "lock should be removed after valid unlock")
