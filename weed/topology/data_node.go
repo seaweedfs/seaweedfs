@@ -3,6 +3,7 @@ package topology
 import (
 	"fmt"
 	"sync/atomic"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -31,6 +32,9 @@ type DataNode struct {
 	// lookupDigest covers the volumes reachable through this node in the volume
 	// layouts, for comparison against what its disks actually hold.
 	lookupDigest atomic.Uint64
+	// lastHeartbeatNs is when the master last processed a heartbeat from the
+	// node, unlike LastSeen which only moves when the node registers.
+	lastHeartbeatNs atomic.Int64
 	// duplicateVolumeIds records that the node last reported one volume id more
 	// than once, which the master cannot represent.
 	duplicateVolumeIds atomic.Bool
@@ -423,6 +427,18 @@ func (dn *DataNode) ToInfo() (info DataNodeInfo) {
 	return
 }
 
+func (dn *DataNode) SetLastHeartbeat(t time.Time) {
+	dn.lastHeartbeatNs.Store(t.UnixNano())
+}
+
+func (dn *DataNode) LastHeartbeat() time.Time {
+	ns := dn.lastHeartbeatNs.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
+}
+
 func (dn *DataNode) ToDataNodeInfo(filter VolumeFilter) *master_pb.DataNodeInfo {
 	m := &master_pb.DataNodeInfo{
 		Id: string(dn.Id()),
@@ -432,6 +448,7 @@ func (dn *DataNode) ToDataNodeInfo(filter VolumeFilter) *master_pb.DataNodeInfo 
 		GrpcPort:  uint32(dn.GrpcPort),
 		Address:   dn.Url(), // ip:port for connecting to the volume server
 	}
+	m.LastHeartbeatNs = dn.lastHeartbeatNs.Load()
 	if m.DiskInfos == nil {
 		m.DiskInfos = make(map[string]*master_pb.DiskInfo)
 	}

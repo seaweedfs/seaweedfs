@@ -345,6 +345,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 		glog.V(4).Infof("master received heartbeat %s", heartbeat.String())
 		stats.MasterReceivedHeartbeatCounter.WithLabelValues("total").Inc()
+		dn.SetLastHeartbeat(time.Now())
 
 		// Every heartbeat may carry the state, so a master that just took over
 		// learns about a server already in maintenance from the first one.
