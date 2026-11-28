@@ -5540,7 +5540,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum by (instance, collection, reason) ((increase(SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"}[$__rate_interval]) + (min_over_time(SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"}[$__rate_interval]) unless SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"} offset $__rate_interval)) or increase(SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"}[$__rate_interval]) or (min_over_time(SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"}[$__rate_interval]) unless SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"} offset $__rate_interval))",
+              "expr": "sum by (instance, collection, reason) ((increase(SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"}[$__rate_interval]) and count_over_time(SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"}[1d] offset $__rate_interval)) or (last_over_time(SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"}[$__rate_interval]) unless count_over_time(SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"}[1d] offset $__rate_interval)))",
               "range": true,
               "refId": "A",
               "legendFormat": "{{instance}} {{collection}} {{reason}}"
