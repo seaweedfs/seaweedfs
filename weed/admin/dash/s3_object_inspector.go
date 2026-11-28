@@ -330,7 +330,7 @@ func summarizeS3ObjectVolumes(volumeIds []uint32, topology *master_pb.TopologyIn
 	for _, id := range volumeIds {
 		health[id] = &S3ObjectVolumeHealth{VolumeId: id, Kind: s3ObjectVolumeMissing}
 	}
-	ecBits := make(map[uint32]erasure_coding.ShardBits)
+	ecRuns := make(map[uint32]map[int64]*s3ObjectEcRun)
 	if topology != nil {
 		for _, dc := range topology.DataCenterInfos {
 			for _, rack := range dc.RackInfos {
@@ -340,11 +340,6 @@ func summarizeS3ObjectVolumes(volumeIds []uint32, topology *master_pb.TopologyIn
 							h := health[v.Id]
 							if h == nil {
 								continue
-							}
-							if h.Kind == s3ObjectVolumeEc {
-								h.Servers = nil
-								h.EcDataShards = 0
-								h.EcTotalShards = 0
 							}
 							h.Kind = s3ObjectVolumeReplicated
 							h.Collection = v.Collection
@@ -362,10 +357,18 @@ func summarizeS3ObjectVolumes(volumeIds []uint32, topology *master_pb.TopologyIn
 							}
 							h.Kind = s3ObjectVolumeEc
 							h.Collection = ec.Collection
-							h.Servers = append(h.Servers, node.Id)
-							h.EcDataShards = erasure_coding.EcShardsVolumeDataShards(ec)
-							h.EcTotalShards = h.EcDataShards + erasure_coding.EcShardsVolumeParityShards(ec)
-							ecBits[ec.Id] |= erasure_coding.ShardBits(ec.EcIndexBits)
+							if ecRuns[ec.Id] == nil {
+								ecRuns[ec.Id] = make(map[int64]*s3ObjectEcRun)
+							}
+							run := ecRuns[ec.Id][ec.EncodeTsNs]
+							if run == nil {
+								run = &s3ObjectEcRun{}
+								ecRuns[ec.Id][ec.EncodeTsNs] = run
+							}
+							run.servers = append(run.servers, node.Id)
+							run.dataShards = erasure_coding.EcShardsVolumeDataShards(ec)
+							run.totalShards = run.dataShards + erasure_coding.EcShardsVolumeParityShards(ec)
+							run.bits |= erasure_coding.ShardBits(ec.EcIndexBits)
 						}
 					}
 				}
@@ -379,7 +382,11 @@ func summarizeS3ObjectVolumes(volumeIds []uint32, topology *master_pb.TopologyIn
 		case s3ObjectVolumeReplicated:
 			h.Healthy = h.CopiesPresent >= h.CopiesExpected
 		case s3ObjectVolumeEc:
-			bits := ecBits[id]
+			run := currentS3ObjectEcRun(ecRuns[id])
+			h.Servers = run.servers
+			h.EcDataShards = run.dataShards
+			h.EcTotalShards = run.totalShards
+			bits := run.bits
 			for shardId := 0; shardId < h.EcTotalShards; shardId++ {
 				if bits.Has(erasure_coding.ShardId(shardId)) {
 					h.EcShardsPresent++
@@ -393,6 +400,28 @@ func summarizeS3ObjectVolumes(volumeIds []uint32, topology *master_pb.TopologyIn
 		result = append(result, *h)
 	}
 	return result
+}
+
+type s3ObjectEcRun struct {
+	bits        erasure_coding.ShardBits
+	dataShards  int
+	totalShards int
+	servers     []string
+}
+
+// currentS3ObjectEcRun returns the newest encode run of a volume's EC shards,
+// joined by shards whose server reports no encode run.
+func currentS3ObjectEcRun(runs map[int64]*s3ObjectEcRun) s3ObjectEcRun {
+	var newest int64
+	for encodeTsNs := range runs {
+		newest = max(newest, encodeTsNs)
+	}
+	current := *runs[newest]
+	if unknown := runs[0]; newest != 0 && unknown != nil {
+		current.bits |= unknown.bits
+		current.servers = append(append([]string(nil), current.servers...), unknown.servers...)
+	}
+	return current
 }
 
 type S3ObjectInspectorData struct {

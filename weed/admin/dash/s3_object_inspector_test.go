@@ -274,3 +274,22 @@ func TestListInspectedS3ObjectVersionsSkipsNonVersionEntries(t *testing.T) {
 		t.Errorf("empty: got %d truncated=%v err=%v", len(got), truncated, err)
 	}
 }
+
+func TestSummarizeS3ObjectVolumesCountsOneEncodeRun(t *testing.T) {
+	holder := func(id string, shards ...*master_pb.VolumeEcShardInformationMessage) *master_pb.DataNodeInfo {
+		return &master_pb.DataNodeInfo{Id: id, DiskInfos: map[string]*master_pb.DiskInfo{"": {EcShardInfos: shards}}}
+	}
+	topology := &master_pb.TopologyInfo{DataCenterInfos: []*master_pb.DataCenterInfo{{
+		RackInfos: []*master_pb.RackInfo{{
+			DataNodeInfos: []*master_pb.DataNodeInfo{
+				holder("old:8080", &master_pb.VolumeEcShardInformationMessage{Id: 7, EcIndexBits: 0x01f, EncodeTsNs: 100}),
+				holder("new:8080", &master_pb.VolumeEcShardInformationMessage{Id: 7, EcIndexBits: 0x3e0, EncodeTsNs: 200}),
+				holder("legacy:8080", &master_pb.VolumeEcShardInformationMessage{Id: 7, EcIndexBits: 0x400}),
+			},
+		}},
+	}}}
+	got := summarizeS3ObjectVolumes([]uint32{7}, topology)
+	if v := got[0]; v.Kind != s3ObjectVolumeEc || v.EcShardsPresent != 6 || v.Healthy || !reflect.DeepEqual(v.Servers, []string{"legacy:8080", "new:8080"}) {
+		t.Fatalf("volume 7 = %+v", v)
+	}
+}
