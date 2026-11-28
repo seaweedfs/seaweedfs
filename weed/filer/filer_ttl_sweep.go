@@ -134,6 +134,9 @@ func (f *Filer) sweepExpiredEntriesUnder(ctx context.Context, locationPrefix str
 func (f *Filer) sweepExpiredEntriesIn(ctx context.Context, dir util.FullPath, namePrefix string) (expired int64, err error) {
 	startFileName := ""
 	for {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return expired, ctxErr
+		}
 		var subDirs []util.FullPath
 		var listed int64
 		expiredCount, lastFileName, listErr := f.doListDirectoryEntries(ctx, dir, startFileName, false, expiredEntrySweepPageSize, namePrefix, func(entry *Entry) (bool, error) {
