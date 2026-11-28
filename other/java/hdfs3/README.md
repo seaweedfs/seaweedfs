@@ -149,6 +149,75 @@ The test suite covers:
    hadoop fs -put local.txt seaweedfs://localhost:8888/test/
    ```
 
+### Secured filer
+
+With `fs.seaweed.volume.server.access` set to `filerProxy`, chunk reads and writes go to the
+filer's HTTP port, so they need the filer's HTTP credentials. The client signs a filer JWT
+when it has the filer's `jwt.filer_signing` key (writes) or
+`jwt.filer_signing.read` key (reads), and otherwise sends the `[filer.basic_auth]`
+credentials. These credentials are sent only to the filer, never to volume servers. In `direct`
+and `publicUrl` modes chunk requests go straight to volume servers, so the filer's HTTP
+credentials are not used; writes carry the volume token from the volume assignment as before.
+gRPC mTLS comes from the `[grpc]` section as before, but it does not cover these HTTP chunk requests:
+to keep the credentials off plain HTTP, serve the filer HTTP port over HTTPS (`[https.filer]`
+on the filer) and enable `[https.client]` here. The client checks the certificate chain but
+not the host name, so set `https.client.ca` to a CA that issues certificates only for your
+SeaweedFS servers.
+
+`security.toml` (read from `./`, `~/.seaweedfs/` or `/etc/seaweedfs/`), using the filer's
+own values:
+
+```toml
+[jwt.filer_signing]
+key = "<filer write key>"
+
+[jwt.filer_signing.read]
+key = "<filer read key>"
+
+# or, for a filer with Basic Auth
+[filer.basic_auth]
+user = "<user>"
+password = "<password>"
+
+[grpc]
+ca = "/etc/seaweedfs/ca.crt"
+
+[grpc.client]
+cert = "/etc/seaweedfs/client.crt"
+key = "/etc/seaweedfs/client.key"
+
+[https.client]
+enabled = true
+ca = "/etc/seaweedfs/ca.crt"
+cert = "/etc/seaweedfs/client.crt"
+key = "/etc/seaweedfs/client.key"
+```
+
+The same values can be set in `core-site.xml`. Each option overrides only its own
+`security.toml` value (for example, a password alone keeps the `security.toml` user), and
+applies only to that filesystem. The secrets can also come from a Hadoop credential provider:
+
+```xml
+<property>
+  <name>fs.seaweed.volume.server.access</name>
+  <value>filerProxy</value>
+</property>
+<property>
+  <name>fs.seaweed.filer.jwt.signing.key</name>
+  <value>filer write key</value>
+</property>
+<property>
+  <name>fs.seaweed.filer.jwt.signing.read.key</name>
+  <value>filer read key</value>
+</property>
+<!-- token lifetimes, defaults 10 and 60 seconds:
+     fs.seaweed.filer.jwt.signing.expires.after.seconds
+     fs.seaweed.filer.jwt.signing.read.expires.after.seconds -->
+<!-- or Basic Auth:
+     fs.seaweed.filer.basic.auth.user
+     fs.seaweed.filer.basic.auth.password -->
+```
+
 ## Continuous Integration
 
 For CI environments, tests can be run in two modes:
