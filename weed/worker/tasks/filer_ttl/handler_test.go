@@ -483,6 +483,9 @@ func TestExecuteSavesTheFailurePointBeforeWalkingOn(t *testing.T) {
 	if cp.Prefix != "/a/" || cp.Cursor != fmt.Sprintf("/a/d2/f-%05d", walkPageSize-1) {
 		t.Fatalf("checkpoint while walking /b/ = %+v", cp)
 	}
+	if ttl := time.Duration(duringLaterPrefix.GetAttributes().GetTtlSec()) * time.Second; ttl != checkpointMaxAge {
+		t.Fatalf("checkpoint ttl = %v, want %v so a path TTL rule cannot shorten it", ttl, checkpointMaxAge)
+	}
 }
 
 func TestExecuteStartsOverWhenTheTTLPathsChanged(t *testing.T) {

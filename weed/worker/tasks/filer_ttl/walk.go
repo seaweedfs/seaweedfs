@@ -198,7 +198,24 @@ func (w *walker) save(ctx context.Context) error {
 		return err
 	}
 	w.onDisk = true
-	return filer.SaveInsideFiler(ctx, w.client, checkpointDir, w.name, content)
+	// An explicit TTL stops a filer.conf TTL rule over /etc/ from expiring
+	// the record before load would stop using it.
+	now := time.Now().Unix()
+	return filer_pb.CreateEntry(ctx, w.client, &filer_pb.CreateEntryRequest{
+		Directory: checkpointDir,
+		Entry: &filer_pb.Entry{
+			Name:    w.name,
+			Content: content,
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime:    now,
+				Crtime:   now,
+				FileMode: 0644,
+				FileSize: uint64(len(content)),
+				Md5:      util.Md5(content),
+				TtlSec:   int32(checkpointMaxAge / time.Second),
+			},
+		},
+	})
 }
 
 func (w *walker) clear(ctx context.Context) error {
