@@ -657,6 +657,9 @@ templ Plugin(page string, initialJob string, lane string) {
             }
 
             function readMonitorVolumeFilter(input) {
+                if (input.validity && input.validity.badInput) {
+                    return null;
+                }
                 var value = String(input.value || '').trim();
                 if (!value) {
                     return '';
