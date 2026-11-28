@@ -76,6 +76,7 @@ type walker struct {
 	cp      walkCheckpoint
 	onDisk  bool
 	frozen  bool
+	stored  bool
 	savedAt time.Time
 }
 
@@ -127,7 +128,9 @@ func walkLocationPrefixes(ctx context.Context, client filer_pb.SeaweedFilerClien
 		}
 	}
 	if len(failed) > 0 {
-		w.persist()
+		if !w.stored {
+			w.persist()
+		}
 		return resumed, errors.New(strings.Join(failed, "; "))
 	}
 	return resumed, w.clear(ctx)
@@ -154,7 +157,7 @@ func (w *walker) load(ctx context.Context, prefixes []string) *walkCheckpoint {
 	return &cp
 }
 
-// stop keeps the checkpoint at the first place this run failed; later
+// stop saves the checkpoint at the first place this run failed; later
 // prefixes still get walked but are not recorded as done.
 func (w *walker) stop(prefix, cursor string) {
 	if w.frozen {
@@ -162,6 +165,7 @@ func (w *walker) stop(prefix, cursor string) {
 	}
 	w.cp.Prefix, w.cp.Cursor = prefix, cursor
 	w.frozen = true
+	w.persist()
 }
 
 func (w *walker) advance(ctx context.Context, done util.FullPath) {
@@ -181,7 +185,9 @@ func (w *walker) advance(ctx context.Context, done util.FullPath) {
 func (w *walker) persist() {
 	ctx, cancel := context.WithTimeout(context.Background(), checkpointSaveWait)
 	defer cancel()
-	if err := w.save(ctx); err != nil {
+	err := w.save(ctx)
+	w.stored = err == nil
+	if err != nil {
 		glog.Warningf("filer_ttl: save checkpoint: %v", err)
 	}
 }

@@ -38,6 +38,7 @@ type ttlFiler struct {
 	files     map[string]*filer_pb.Entry
 	lists     map[string]int
 	failList  func(*filer_pb.ListEntriesRequest) bool
+	onList    func(dir string)
 }
 
 func newTTLFiler(signature int32) *ttlFiler {
@@ -147,6 +148,9 @@ func (f *ttlFiler) ListEntries(req *filer_pb.ListEntriesRequest, stream filer_pb
 	}
 	if req.StartFromFileName == "" {
 		f.lists[dir]++
+	}
+	if f.onList != nil {
+		f.onList(dir)
 	}
 	var names []string
 	for name := range f.dirs[dir] {
@@ -446,6 +450,38 @@ func TestExecuteResumesWhereAFailedWalkStopped(t *testing.T) {
 	}
 	if f.checkpoint() != nil {
 		t.Fatal("a finished pass left its checkpoint")
+	}
+}
+
+func TestExecuteSavesTheFailurePointBeforeWalkingOn(t *testing.T) {
+	saved := checkpointInterval
+	checkpointInterval = time.Hour
+	t.Cleanup(func() { checkpointInterval = saved })
+
+	f := resumeTree()
+	f.failList = func(req *filer_pb.ListEntriesRequest) bool {
+		return req.Directory == "/a/d2" && req.StartFromFileName != ""
+	}
+	var duringLaterPrefix *filer_pb.Entry
+	f.onList = func(dir string) {
+		if entry := f.files[checkpointDir+"/"+checkpointName(f.signature)]; dir == "/b" && entry != nil {
+			duringLaterPrefix = proto.Clone(entry).(*filer_pb.Entry)
+		}
+	}
+	address := serveFiler(t, f)
+
+	if done := executeOn(t, address, "/a/", "/b/"); done.Success {
+		t.Fatal("the interrupted walk reported success")
+	}
+	if duringLaterPrefix == nil {
+		t.Fatal("no checkpoint was stored while a later prefix was walked")
+	}
+	var cp walkCheckpoint
+	if err := json.Unmarshal(duringLaterPrefix.Content, &cp); err != nil {
+		t.Fatal(err)
+	}
+	if cp.Prefix != "/a/" || cp.Cursor != fmt.Sprintf("/a/d2/f-%05d", walkPageSize-1) {
+		t.Fatalf("checkpoint while walking /b/ = %+v", cp)
 	}
 }
 
