@@ -109,6 +109,11 @@ func TestAssembleS3ObjectVersionsNullLatest(t *testing.T) {
 	})
 	v1 := inspectorTestEntry("v_v1", 100, map[string]string{s3_constants.ExtVersionIdKey: "v1"})
 	versions := assembleS3ObjectVersions("/buckets/b", "k", base, versionsEntry, []*filer_pb.Entry{v1}, false)
+	if len(versions) != 2 || versions[0].VersionId != "v1" || !versions[0].IsLatest || versions[1].IsLatest {
+		t.Fatalf("pointer with stale null flag = %+v", versions)
+	}
+	suspended := inspectorTestEntry("k.versions", 0, map[string]string{s3_constants.ExtNullVersionIsLatestKey: "true"})
+	versions = assembleS3ObjectVersions("/buckets/b", "k", base, suspended, []*filer_pb.Entry{v1}, false)
 	if len(versions) != 2 || versions[0].VersionId != "null" || !versions[0].IsLatest || versions[1].IsLatest {
 		t.Fatalf("suspended = %+v", versions)
 	}

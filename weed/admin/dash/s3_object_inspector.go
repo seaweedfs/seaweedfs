@@ -207,7 +207,7 @@ func assembleS3ObjectVersions(objectDir, objectName string, baseEntry, versionsE
 	nullIsLatest := versionsEntry == nil
 	if versionsEntry != nil {
 		latestVersionId = string(versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey])
-		nullIsLatest = latestVersionId == "" || string(versionsEntry.Extended[s3_constants.ExtNullVersionIsLatestKey]) == "true"
+		nullIsLatest = latestVersionId == ""
 	}
 	if baseEntry == nil && latestVersionId == "" {
 		nullIsLatest = false
