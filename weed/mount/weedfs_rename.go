@@ -462,7 +462,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		// instead of raw errno to stay portable across platforms (errno
 		// numeric values differ between Linux and macOS).
 		msg := err.Error()
-		if strings.Contains(msg, "not found") {
+		if strings.Contains(msg, "not found") || strings.Contains(msg, filer_pb.ErrNotFound.Error()) {
 			return fuse.Status(syscall.ENOENT)
 		} else if strings.Contains(msg, "not empty") {
 			return fuse.Status(syscall.ENOTEMPTY)

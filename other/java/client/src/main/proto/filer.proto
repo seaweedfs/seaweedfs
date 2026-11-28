@@ -556,9 +556,15 @@ message AtomicRenameEntryRequest {
     // already exists. Lets a caller that authorized the rename without delete
     // access on an absent target stay safe if one is created concurrently.
     bool fail_if_target_exists = 6;
+    // Set on a rename forwarded to the source's write owner, so it is not
+    // forwarded again.
+    bool is_moved = 7;
 }
 
 message AtomicRenameEntryResponse {
+    // Set for a forwarded rename: the owner's metadata log position of
+    // the rename's last event.
+    int64 ts_ns = 1;
 }
 
 message StreamRenameEntryRequest {
@@ -567,6 +573,9 @@ message StreamRenameEntryRequest {
     string new_directory = 3;
     string new_name = 4;
     repeated int32 signatures = 5;
+    // Set on a rename forwarded to the source's write owner, so it is not
+    // forwarded again.
+    bool is_moved = 6;
 }
 message StreamRenameEntryResponse {
     string directory = 1;
