@@ -5458,7 +5458,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "title": "EC Shard Copy Failures by reason",
-          "description": "Rate of failed EC shard copies into each volume server by collection and reason (source_not_found, empty_index, no_space, timeout, io_error, other). The volume server log names the volume, shards and source of each failure.",
+          "description": "Failed EC shard copies into each volume server per rate interval, by collection and reason (source_not_found, empty_index, no_space, timeout, io_error, other). The volume server log names the volume, shards and source of each failure.",
           "type": "timeseries",
           "id": 269,
           "gridPos": {
@@ -5505,7 +5505,7 @@
                 }
               },
               "mappings": [],
-              "unit": "ops",
+              "unit": "short",
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
@@ -5540,7 +5540,7 @@
                 "uid": "${DS_PROMETHEUS}"
               },
               "editorMode": "code",
-              "expr": "sum by (instance, collection, reason) (rate(SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"}[$__rate_interval]))",
+              "expr": "sum by (instance, collection, reason) ((increase(SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"}[$__rate_interval]) + (min_over_time(SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"}[$__rate_interval]) unless SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"} offset $__rate_interval)) or increase(SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"}[$__rate_interval]) or (min_over_time(SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"}[$__rate_interval]) unless SeaweedFS_volumeServer_ec_shard_copy_failures_total{cluster=~\"$cluster\"} offset $__rate_interval))",
               "range": true,
               "refId": "A",
               "legendFormat": "{{instance}} {{collection}} {{reason}}"
