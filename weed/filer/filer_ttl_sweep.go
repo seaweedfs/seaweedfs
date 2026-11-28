@@ -186,7 +186,7 @@ func (f *Filer) deleteExpiredEntry(ctx context.Context, p util.FullPath) error {
 		}
 		return err
 	}
-	if current.IsDirectory() || current.TtlSec <= 0 || !current.Crtime.Add(time.Duration(current.TtlSec)*time.Second).Before(time.Now()) {
+	if current.IsDirectory() || current.TtlSec <= 0 || current.IsExpireS3Enabled() || !current.Crtime.Add(time.Duration(current.TtlSec)*time.Second).Before(time.Now()) {
 		return nil
 	}
 	return f.Store.DeleteOneEntry(ctx, current)

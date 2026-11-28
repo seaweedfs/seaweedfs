@@ -199,6 +199,19 @@ func TestDeleteExpiredEntryKeepsAReplacement(t *testing.T) {
 		t.Fatal("removed while a writer held the path")
 	}
 
+	s3Expiring := &Entry{FullPath: p, Attr: Attr{Mode: 0o644, Crtime: time.Now().Add(-time.Hour), Mtime: time.Now(), TtlSec: 120},
+		Extended: map[string][]byte{s3_constants.SeaweedFSExpiresS3: []byte("true")}}
+	if err := store.InsertEntry(ctx, s3Expiring); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.deleteExpiredEntry(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if store.getEntry(string(p)) == nil {
+		t.Fatal("replacement under S3 expiration removed by its creation time")
+	}
+
+	putSweepTestEntry(t, store, string(p), false, 120, time.Now().Add(-time.Hour))
 	if err := f.deleteExpiredEntry(ctx, p); err != nil {
 		t.Fatal(err)
 	}
