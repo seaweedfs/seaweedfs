@@ -1,13 +1,19 @@
 package dash
 
 import (
+	"context"
+	"fmt"
+	"io"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 func TestValidateInspectedS3Object(t *testing.T) {
@@ -208,5 +214,63 @@ func TestSummarizeS3ObjectVolumesPrefersReplicaOverEcShards(t *testing.T) {
 	got := summarizeS3ObjectVolumes([]uint32{6}, topology)
 	if v := got[0]; v.Kind != s3ObjectVolumeReplicated || !reflect.DeepEqual(v.Servers, []string{"b-vol:8080"}) || v.EcTotalShards != 0 || v.EcShardsPresent != 0 || !v.Healthy {
 		t.Fatalf("volume 6 = %+v", v)
+	}
+}
+
+type inspectorListStream struct {
+	grpc.ServerStreamingClient[filer_pb.ListEntriesResponse]
+	entries []*filer_pb.Entry
+}
+
+func (s *inspectorListStream) Recv() (*filer_pb.ListEntriesResponse, error) {
+	if len(s.entries) == 0 {
+		return nil, io.EOF
+	}
+	e := s.entries[0]
+	s.entries = s.entries[1:]
+	return &filer_pb.ListEntriesResponse{Entry: e}, nil
+}
+
+func (s *inspectorListStream) Trailer() metadata.MD { return nil }
+
+type inspectorListClient struct {
+	filer_pb.SeaweedFilerClient
+	entries []*filer_pb.Entry
+}
+
+func (c *inspectorListClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	i := sort.Search(len(c.entries), func(i int) bool { return c.entries[i].Name > in.StartFromFileName })
+	end := min(len(c.entries), i+int(in.Limit))
+	return &inspectorListStream{entries: c.entries[i:end]}, nil
+}
+
+func TestListInspectedS3ObjectVersionsSkipsNonVersionEntries(t *testing.T) {
+	versions := func(n int) []*filer_pb.Entry {
+		entries := []*filer_pb.Entry{{Name: "a-not-a-version"}}
+		for i := 0; i < n; i++ {
+			id := fmt.Sprintf("%032x", i)
+			entries = append(entries, inspectorTestEntry("v_"+id, 1, map[string]string{s3_constants.ExtVersionIdKey: id}))
+		}
+		return entries
+	}
+	ctx := context.Background()
+	for _, c := range []struct {
+		versions  int
+		want      int
+		truncated bool
+	}{
+		{0, 0, false},
+		{maxInspectedS3ObjectVersions, maxInspectedS3ObjectVersions, false},
+		{maxInspectedS3ObjectVersions + 1, maxInspectedS3ObjectVersions, true},
+		{inspectedS3ObjectVersionsPageSize - 1, inspectedS3ObjectVersionsPageSize - 1, false},
+	} {
+		got, truncated, err := listInspectedS3ObjectVersions(ctx, &inspectorListClient{entries: versions(c.versions)}, "/buckets/b/k.versions")
+		if err != nil || len(got) != c.want || truncated != c.truncated {
+			t.Errorf("%d versions: got %d truncated=%v err=%v", c.versions, len(got), truncated, err)
+		}
+	}
+	got, truncated, err := listInspectedS3ObjectVersions(ctx, &inspectorListClient{}, "/buckets/b/k.versions")
+	if err != nil || len(got) != 0 || truncated {
+		t.Errorf("empty: got %d truncated=%v err=%v", len(got), truncated, err)
 	}
 }

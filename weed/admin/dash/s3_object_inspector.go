@@ -21,7 +21,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 )
 
-const maxInspectedS3ObjectVersions = 10000
+const (
+	maxInspectedS3ObjectVersions      = 10000
+	inspectedS3ObjectVersionsPageSize = 1024
+)
 
 type S3ObjectInspection struct {
 	Bucket    string                      `json:"bucket"`
@@ -153,17 +156,8 @@ func (s *AdminServer) InspectS3Object(ctx context.Context, bucket, key string) (
 		if versionsEntry == nil {
 			return nil
 		}
-		return filer_pb.SeaweedList(ctx, client, versionsDir, "", func(entry *filer_pb.Entry, isLast bool) error {
-			if s3api.VersionIdFromEntry(entry) == "" {
-				return nil
-			}
-			if len(versionEntries) >= maxInspectedS3ObjectVersions {
-				inspection.Truncated = true
-				return nil
-			}
-			versionEntries = append(versionEntries, entry)
-			return nil
-		}, "", false, maxInspectedS3ObjectVersions+1)
+		versionEntries, inspection.Truncated, err = listInspectedS3ObjectVersions(ctx, client, versionsDir)
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -193,6 +187,32 @@ func (s *AdminServer) InspectS3Object(ctx context.Context, bucket, key string) (
 	}
 	inspection.Volumes = summarizeS3ObjectVolumes(volumeIds, topology)
 	return inspection, nil
+}
+
+// listInspectedS3ObjectVersions pages through versionsDir, skipping entries
+// without a version id, until it holds maxInspectedS3ObjectVersions versions.
+func listInspectedS3ObjectVersions(ctx context.Context, client filer_pb.SeaweedFilerClient, versionsDir string) (versions []*filer_pb.Entry, truncated bool, err error) {
+	startFrom := ""
+	for {
+		listed, last := 0, false
+		err = filer_pb.SeaweedList(ctx, client, versionsDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+			listed++
+			last = isLast
+			startFrom = entry.Name
+			if s3api.VersionIdFromEntry(entry) == "" {
+				return nil
+			}
+			if len(versions) >= maxInspectedS3ObjectVersions {
+				truncated = true
+				return nil
+			}
+			versions = append(versions, entry)
+			return nil
+		}, startFrom, false, inspectedS3ObjectVersionsPageSize)
+		if err != nil || truncated || last || listed == 0 {
+			return versions, truncated, err
+		}
+	}
 }
 
 func splitInspectedS3ObjectKey(bucketDir, key string) (dir, name string) {
