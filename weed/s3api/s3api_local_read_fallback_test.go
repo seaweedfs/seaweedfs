@@ -403,3 +403,41 @@ func TestS3ReadFailingAfterCommitCountsAbortedRead(t *testing.T) {
 	assert.Equal(t, content[:5], w.Body.Bytes())
 	assert.Equal(t, before+1, aborted(), "a read that dies after the status line must be counted")
 }
+
+type failingResponseWriter struct {
+	*httptest.ResponseRecorder
+	err error
+}
+
+func (f failingResponseWriter) Write(p []byte) (int, error) { return 0, f.err }
+
+func TestS3InlineReadFailingWriteCountsAbortedRead(t *testing.T) {
+	const bucket = "abortedinlinebkt"
+	content := []byte("0123456789")
+	s3a := newLocalReadFallbackServer(t, startStreamThroughFiler(t, "faketest-abortedinline", nil))
+	entry := &filer_pb.Entry{
+		Name:       "obj.bin",
+		Attributes: &filer_pb.FuseAttributes{FileSize: uint64(len(content))},
+		Content:    content,
+	}
+	aborted := func() float64 {
+		return testutil.ToFloat64(stats_collect.S3ReadAbortedCounter.WithLabelValues(bucket, readAbortedReadError))
+	}
+	defer stats_collect.DeleteBucketMetrics(bucket)
+
+	for _, rangeHeader := range []string{"", "bytes=2-5"} {
+		before := aborted()
+		r := httptest.NewRequest(http.MethodGet, "/"+bucket+"/obj.bin", nil)
+		if rangeHeader != "" {
+			r.Header.Set("Range", rangeHeader)
+		}
+		r = mux.SetURLVars(r, map[string]string{"bucket": bucket, "object": "obj.bin"})
+		w := failingResponseWriter{ResponseRecorder: httptest.NewRecorder(), err: errors.New("write: connection reset by peer")}
+
+		err := s3a.streamFromVolumeServers(w, r, entry, "", bucket, "obj.bin", "")
+
+		var streamErr *StreamError
+		require.True(t, errors.As(err, &streamErr) && streamErr.ResponseWritten, "range %q: %v", rangeHeader, err)
+		assert.Equal(t, before+1, aborted(), "range %q: a failed inline write must be counted", rangeHeader)
+	}
+}

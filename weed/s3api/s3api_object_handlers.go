@@ -643,6 +643,7 @@ func (s3a *S3ApiServer) serveDirectoryContent(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(statusCode)
 	if len(content) > 0 {
 		if _, err := w.Write(content); err != nil {
+			BucketReadAborted(err, r)
 			glog.Errorf("serveDirectoryContent: failed to write response: %v", err)
 		}
 	}
@@ -1274,6 +1275,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 				BucketTrafficSent(int64(written), r)
 			}
 			if err != nil {
+				BucketReadAborted(err, r)
 				return newStreamErrorWithResponse(err)
 			}
 			return nil
@@ -1286,6 +1288,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 			BucketTrafficSent(int64(written), r)
 		}
 		if err != nil {
+			BucketReadAborted(err, r)
 			return newStreamErrorWithResponse(err)
 		}
 		return nil
