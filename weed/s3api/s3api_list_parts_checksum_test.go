@@ -62,3 +62,32 @@ func TestListPartsReturnsPartChecksums(t *testing.T) {
 		t.Fatalf("ListParts body has checksum elements for an unchecksummed part:\n%s", body)
 	}
 }
+
+func TestListPartsReturnsUploadChecksumAlgorithm(t *testing.T) {
+	upload := uploadRecordEntry("checksum-upload")
+	upload.Extended[s3_constants.ExtChecksumAlgorithm] = []byte(s3_constants.AmzChecksumSHA256)
+	upload.Extended[s3_constants.ExtChecksumType] = []byte(s3_constants.ChecksumTypeComposite)
+	s3a := newListPartsServer(t, &fakePartsFiler{uploadEntry: upload})
+
+	output, code := s3a.listObjectParts(listPartsInput("checksum-upload"))
+
+	if code != s3err.ErrNone {
+		t.Fatalf("code = %v, want ErrNone", code)
+	}
+	if output.ChecksumAlgorithm != "SHA256" || output.ChecksumType != s3_constants.ChecksumTypeComposite {
+		t.Fatalf("checksum algorithm/type = %q/%q, want SHA256/%s", output.ChecksumAlgorithm, output.ChecksumType, s3_constants.ChecksumTypeComposite)
+	}
+	body := string(s3err.EncodeXMLBody(output))
+	if !strings.Contains(body, "<ChecksumAlgorithm>SHA256</ChecksumAlgorithm><ChecksumType>COMPOSITE</ChecksumType>") {
+		t.Fatalf("ListParts body missing the upload checksum algorithm:\n%s", body)
+	}
+
+	plain := newListPartsServer(t, &fakePartsFiler{uploadEntry: uploadRecordEntry("plain-upload")})
+	output, code = plain.listObjectParts(listPartsInput("plain-upload"))
+	if code != s3err.ErrNone {
+		t.Fatalf("code = %v, want ErrNone", code)
+	}
+	if body := string(s3err.EncodeXMLBody(output)); strings.Contains(body, "<ChecksumAlgorithm>") || strings.Contains(body, "<ChecksumType>") {
+		t.Fatalf("ListParts body names a checksum for an upload created without one:\n%s", body)
+	}
+}

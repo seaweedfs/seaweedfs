@@ -1623,6 +1623,8 @@ type ListPartsResult struct {
 	Part                 []*ListPartsPart `locationName:"Part" type:"list" flattened:"true"`
 	StorageClass         *string          `type:"string" enum:"StorageClass"`
 	UploadId             *string          `type:"string"`
+	ChecksumAlgorithm    string           `xml:"ChecksumAlgorithm,omitempty"`
+	ChecksumType         string           `xml:"ChecksumType,omitempty"`
 }
 
 type ListPartsPart struct {
@@ -1662,6 +1664,12 @@ func (s3a *S3ApiServer) listObjectParts(input *s3.ListPartsInput) (output *ListP
 		MaxParts:         input.MaxParts,         // the maximum number of parts to return.
 		PartNumberMarker: input.PartNumberMarker, // the part number starts after this, exclusive
 		StorageClass:     aws.String("STANDARD"),
+	}
+	if pentry.Extended != nil {
+		output.ChecksumAlgorithm = checksumAlgorithmNameFromHeaderName(string(pentry.Extended[s3_constants.ExtChecksumAlgorithm]))
+		if output.ChecksumAlgorithm != "" {
+			output.ChecksumType = string(pentry.Extended[s3_constants.ExtChecksumType])
+		}
 	}
 
 	// part files are "%04d_<uuid>.part" (legacy "%04d.part"). '_' sorts after
