@@ -62,7 +62,12 @@ func (f *ttlFiler) checkpoint() *walkCheckpoint {
 func (f *ttlFiler) CreateEntry(_ context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.files[req.Directory+"/"+req.Entry.Name] = proto.Clone(req.Entry).(*filer_pb.Entry)
+	key := req.Directory + "/" + req.Entry.Name
+	entry := proto.Clone(req.Entry).(*filer_pb.Entry)
+	if old := f.files[key]; old != nil && old.Attributes != nil && entry.Attributes != nil {
+		entry.Attributes.Crtime = old.Attributes.Crtime
+	}
+	f.files[key] = entry
 	return &filer_pb.CreateEntryResponse{}, nil
 }
 
@@ -485,6 +490,31 @@ func TestExecuteSavesTheFailurePointBeforeWalkingOn(t *testing.T) {
 	}
 	if ttl := time.Duration(duringLaterPrefix.GetAttributes().GetTtlSec()) * time.Second; ttl != checkpointMaxAge {
 		t.Fatalf("checkpoint ttl = %v, want %v so a path TTL rule cannot shorten it", ttl, checkpointMaxAge)
+	}
+}
+
+func TestExecuteReplacesARejectedCheckpointWithAFreshRecord(t *testing.T) {
+	f := resumeTree()
+	key := checkpointDir + "/" + checkpointName(f.signature)
+	old := time.Now().Add(-6 * 24 * time.Hour)
+	content, _ := json.Marshal(walkCheckpoint{Prefixes: []string{"/a/"}, Prefix: "/a/", Cursor: "/a/d2", StartedNs: old.UnixNano()})
+	f.files[key] = &filer_pb.Entry{Name: checkpointName(f.signature), Content: content, Attributes: &filer_pb.FuseAttributes{Crtime: old.Unix(), TtlSec: int32(checkpointMaxAge / time.Second)}}
+	f.failList = func(req *filer_pb.ListEntriesRequest) bool {
+		return req.Directory == "/a/d2" && req.StartFromFileName != ""
+	}
+	address := serveFiler(t, f)
+
+	if done := executeOn(t, address, "/a/", "/b/"); done.Success {
+		t.Fatal("the interrupted walk reported success")
+	}
+	f.mu.Lock()
+	entry := f.files[key]
+	f.mu.Unlock()
+	if entry == nil {
+		t.Fatal("the interrupted walk stored no checkpoint")
+	}
+	if created := time.Unix(entry.GetAttributes().GetCrtime(), 0); time.Since(created) > time.Minute {
+		t.Fatalf("checkpoint created at %v, so its TTL counts from the rejected record", created)
 	}
 }
 

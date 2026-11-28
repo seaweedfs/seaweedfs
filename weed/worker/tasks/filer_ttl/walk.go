@@ -149,12 +149,17 @@ func (w *walker) load(ctx context.Context, prefixes []string) *walkCheckpoint {
 	var cp walkCheckpoint
 	if err := json.Unmarshal(content, &cp); err != nil {
 		glog.Warningf("filer_ttl: decode checkpoint: %v; walking every prefix", err)
-		return nil
+	} else if slices.Equal(cp.Prefixes, prefixes) && slices.Contains(prefixes, cp.Prefix) && time.Since(time.Unix(0, cp.StartedNs)) <= checkpointMaxAge {
+		return &cp
 	}
-	if !slices.Equal(cp.Prefixes, prefixes) || !slices.Contains(prefixes, cp.Prefix) || time.Since(time.Unix(0, cp.StartedNs)) > checkpointMaxAge {
-		return nil
+	// An overwrite keeps the old Crtime, which the record's TTL counts from,
+	// so a record this pass does not resume from is removed first.
+	if err := w.clear(ctx); err != nil {
+		glog.Warningf("filer_ttl: %v", err)
+	} else {
+		w.onDisk = false
 	}
-	return &cp
+	return nil
 }
 
 // stop saves the checkpoint at the first place this run failed; later
