@@ -360,3 +360,29 @@ func summarizeS3ObjectVolumes(volumeIds []uint32, topology *master_pb.TopologyIn
 	}
 	return result
 }
+
+type S3ObjectInspectorData struct {
+	Username   string              `json:"username"`
+	Bucket     string              `json:"bucket"`
+	Key        string              `json:"key"`
+	Inspection *S3ObjectInspection `json:"inspection,omitempty"`
+	Error      string              `json:"error,omitempty"`
+}
+
+func (s *AdminServer) GetS3ObjectInspectorData(ctx context.Context, bucket, key string) S3ObjectInspectorData {
+	data := S3ObjectInspectorData{Bucket: bucket, Key: key}
+	if key == "" {
+		return data
+	}
+	if err := validateInspectedS3Object(bucket, key); err != nil {
+		data.Error = err.Error()
+		return data
+	}
+	inspection, err := s.InspectS3Object(ctx, bucket, strings.TrimPrefix(key, "/"))
+	if err != nil {
+		data.Error = err.Error()
+		return data
+	}
+	data.Inspection = inspection
+	return data
+}

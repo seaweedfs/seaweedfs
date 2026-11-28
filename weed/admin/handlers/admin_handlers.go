@@ -108,6 +108,7 @@ func (h *AdminHandlers) registerUIRoutes(r *mux.Router) {
 	// Object Store management routes
 	r.HandleFunc("/object-store/buckets", h.ShowS3Buckets).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/buckets/{bucket}", h.ShowBucketDetails).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/buckets/{bucket}/inspect", h.ShowS3ObjectInspector).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/users", h.userHandlers.ShowObjectStoreUsers).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/policies", h.policyHandlers.ShowPolicies).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/groups", h.groupHandlers.ShowGroups).Methods(http.MethodGet)
@@ -615,6 +616,18 @@ func (h *AdminHandlers) ShowBucketDetails(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, details)
+}
+
+func (h *AdminHandlers) ShowS3ObjectInspector(w http.ResponseWriter, r *http.Request) {
+	username := h.getUsername(r)
+	data := h.adminServer.GetS3ObjectInspectorData(r.Context(), mux.Vars(r)["bucket"], r.URL.Query().Get("key"))
+	data.Username = username
+
+	w.Header().Set("Content-Type", "text/html")
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
+	if err := layout.Layout(viewCtx, app.S3ObjectInspector(data)).Render(r.Context(), w); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
+	}
 }
 
 // getS3BucketsData retrieves Object Store buckets data from the server with pagination
