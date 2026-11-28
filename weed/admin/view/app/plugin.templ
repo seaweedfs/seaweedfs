@@ -625,6 +625,8 @@ templ Plugin(page string, initialJob string, lane string) {
                 monitorRowsScope: null,
                 detectionActivities: [],
                 detectionRowsScope: null,
+                monitorRefreshSeq: 0,
+                monitorCommittedRefreshID: 0,
                 refreshError: '',
                 loadedJobType: '',
                 descriptor: null,
@@ -3122,6 +3124,7 @@ templ Plugin(page string, initialJob string, lane string) {
                 var rowsScope = scopedJobType + '|' + scopedVolume;
                 var sameScope = state.monitorRowsScope === rowsScope;
                 var scopedRows = scopedJobType || scopedVolume;
+                var refreshID = ++state.monitorRefreshSeq;
 
                 // A failed request keeps its last rows; the rest still land and the failure is rethrown.
                 var failure = null;
@@ -3156,9 +3159,10 @@ templ Plugin(page string, initialJob string, lane string) {
                 } catch (e) {
                     schedulerStatus = null;
                 }
-                if (monitorJobTypeScope() !== scopedJobType || readMonitorVolumeFilter() !== scopedVolume) {
+                if (monitorJobTypeScope() !== scopedJobType || readMonitorVolumeFilter() !== scopedVolume || refreshID < state.monitorCommittedRefreshID) {
                     return;
                 }
+                state.monitorCommittedRefreshID = refreshID;
 
                 state.allJobs = Array.isArray(allJobs) ? allJobs : [];
                 state.allActivities = Array.isArray(allActivities) ? allActivities : [];
