@@ -655,7 +655,7 @@ templ Plugin(page string, initialJob string, lane string) {
             function readMonitorVolumeFilter() {
                 var input = document.getElementById('plugin-monitor-volume-filter');
                 var value = input ? String(input.value || '').trim() : '';
-                return /^[1-9][0-9]*$/.test(value) ? value : '';
+                return /^[0-9]+$/.test(value) && Number(value) > 0 ? String(Number(value)) : '';
             }
 
             function getCSRFToken() {
